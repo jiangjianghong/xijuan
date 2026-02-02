@@ -260,6 +260,25 @@ INDEX (file_id)
 
 队列式解析（后期直接使用minerU-center进行管理），队列宽度为1，超时设置可控，及时提交解析状态到数据库的files 表中。
 
+**MinerU 请求方式：**
+
+```
+POST {mineru.base_url}/file_parse
+```
+
+请求参数：
+- **files**（multipart 文件上传）：`files = {"files": (file_name, file_content, "application/pdf")}`
+- **data**（表单参数）：
+  - `return_middle_json`：`"false"` — 不返回中间 JSON
+  - `return_model_output`：`"false"` — 不返回模型输出
+  - `return_md`：`"true"` — 返回 Markdown
+  - `return_images`：`"false"` — 不返回图片
+  - `start_page_id`：`"0"` — 起始页
+  - `end_page_id`：`"99999"` — 结束页
+  - `parse_method`：`"auto"` — 解析方法自动选择
+  - `lang_list`：`"ch"` — 语言中文
+  - `output_dir`：`"."` — 输出目录
+
 这里的接口需要先生成file_id 然后去数据库进行检索，如果存在则检查其状态：
 - 状态为 **parsing_failed** → 清理 file_content, file_table, file_chunk, Milvus，然后重新开始解析
 - 状态为 **chunking_failed** → 清理 file_chunk, Milvus，然后从分块阶段重新开始

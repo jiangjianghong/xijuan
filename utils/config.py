@@ -23,6 +23,7 @@ class ServerConfig(BaseModel):
 
 
 class MineruConfig(BaseModel):
+    base_url: str = "http://localhost:8888"
     queue_width: int = 1
     parse_timeout: int = 300
     max_file_size: int = 104857600
