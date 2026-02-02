@@ -1,7 +1,32 @@
 [project]
 name = "wanz-prase2-001"
 version = "0.1.0"
-description = "Add your description here"
+description = "文档解析、字段提取与逻辑分析系统"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "pydantic-settings",
+    "sqlalchemy",
+    "pymysql",
+    "aiomysql",
+    "pymilvus",
+    "httpx",
+    "pyyaml",
+    "python-multipart",
+    "numexpr",
+    "loguru",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
