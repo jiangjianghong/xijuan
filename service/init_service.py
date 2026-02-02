@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from loguru import logger
-from sqlalchemy import select, update, delete
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update, delete, text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from model.database import get_engine, get_session_factory
+from utils.config import get_config
 from model.tables import (
     AnalysisResult,
     Base,
@@ -19,8 +20,33 @@ from model.tables import (
 from utils.milvus_client import MilvusClient
 
 
+async def ensure_database_exists() -> None:
+    """确保数据库存在，如果不存在则创建。"""
+    cfg = get_config().mysql
+    # 连接到 MySQL 服务器（不指定数据库）
+    server_url = f"mysql+aiomysql://{cfg.username}:{cfg.password}@{cfg.host}:{cfg.port}/?charset=utf8mb4"
+    temp_engine = create_async_engine(server_url, echo=False)
+
+    async with temp_engine.begin() as conn:
+        # 检查数据库是否存在
+        result = await conn.execute(text(f"SHOW DATABASES LIKE '{cfg.database}'"))
+        exists = result.fetchone() is not None
+
+        if not exists:
+            logger.info("数据库 {} 不存在，正在创建...", cfg.database)
+            await conn.execute(text(f"CREATE DATABASE `{cfg.database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
+            logger.info("数据库 {} 创建成功", cfg.database)
+        else:
+            logger.info("数据库 {} 已存在", cfg.database)
+
+    await temp_engine.dispose()
+
+
 async def init_database() -> None:
     """检查并创建所有数据库表。"""
+    # 先确保数据库存在
+    await ensure_database_exists()
+
     logger.info("正在检查并创建数据库表...")
     engine = get_engine()
     async with engine.begin() as conn:

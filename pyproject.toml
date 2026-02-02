@@ -18,6 +18,7 @@ dependencies = [
     "python-multipart",
     "numexpr",
     "loguru",
+    "cryptography>=46.0.4",
 ]
 
 [dependency-groups]

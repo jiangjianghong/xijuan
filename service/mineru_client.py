@@ -49,6 +49,7 @@ async def parse_pdf(
         "parse_method": "auto",
         "lang_list": "ch",
         "output_dir": ".",
+        "backend": cfg.backend,
     }
 
     logger.info("调用 MinerU 解析: file_name={}", file_name)
