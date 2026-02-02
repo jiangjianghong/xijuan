@@ -83,23 +83,25 @@ PRIMARY KEY (file_id, chunk_id)
 
 ### 5. extraction_field 表（字段提取配置表）
 
+删除字段时使用**软删除**（enabled=0），不物理删除记录，不影响已有提取结果。
+
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | field_id | VARCHAR(100) PK | 字段ID（用户输入，字母数字下划线，唯一，用于逻辑分析引用） |
 | field_name | VARCHAR(200) | 字段中文名（展示用） |
 | source_type | ENUM('table','text') | 来源类型：表格/文本 |
-| enabled | TINYINT DEFAULT 1 | 是否启用 |
+| enabled | TINYINT DEFAULT 1 | 是否启用（0=软删除/禁用） |
 | priority | INT DEFAULT 0 | 优先级（执行顺序） |
 | created_at | DATETIME | 创建时间 |
 | updated_at | DATETIME | 更新时间 |
 | **表格类专用** | | |
 | table_name_pattern | VARCHAR(500) | 预检索表格名 |
 | table_match_type | ENUM('exact','fuzzy','contains','llm') | 表格匹配规则 |
-| table_extract_prompt | TEXT | 表格字段提取提示词 |
+| table_extract_prompt | TEXT | 表格字段提取提示词（使用 `<search_result>` 占位符表示匹配到的表格内容） |
 | **文本类专用** | | |
-| search_type | ENUM('context','section','rule','chunk_db','vector_db') | 检索类型 |
+| search_type | ENUM('context','section','rule','chunk_db','vector_db') | 检索类型（一个字段只配一种） |
 | search_config | JSON | 检索配置（见下方说明） |
-| text_extract_prompt | TEXT | 文本字段提取提示词 |
+| text_extract_prompt | TEXT | 文本字段提取提示词（使用 `<search_result>` 占位符表示检索结果） |
 
 **search_config JSON 结构：**
 
@@ -154,26 +156,30 @@ PRIMARY KEY (file_id, chunk_id)
 | rule_id | VARCHAR(100) PK | 规则ID（用户输入，字母数字下划线，唯一） |
 | rule_name | VARCHAR(200) | 规则中文名 |
 | rule_type | ENUM('judge','calc') | 规则类型：判断/计算 |
-| expression | TEXT | 表达式（判断类为提示词，计算类为公式） |
-| depend_fields | JSON | 依赖的字段列表（field_id 数组） |
-| enabled | TINYINT DEFAULT 1 | 是否启用 |
+| expression | TEXT | 表达式（判断类为提示词，计算类为公式，使用 `<field_result>field_id</field_result>` 占位符引用字段值） |
+| depend_fields | JSON | 依赖的字段列表（field_id 数组，系统据此从 extraction_result 获取值替换占位符） |
+| enabled | TINYINT DEFAULT 1 | 是否启用（0=软删除/禁用） |
 | priority | INT DEFAULT 0 | 执行优先级 |
 | created_at | DATETIME | 创建时间 |
 | updated_at | DATETIME | 更新时间 |
+
+**expression 占位符格式：** `<field_result>field_id</field_result>`
+
+系统执行时，从 extraction_result 中获取对应 field_id 的 extracted_value，替换占位符后再发送给 LLM 或进行计算。
 
 **expression 示例：**
 
 判断类（rule_type='judge'）：
 ```
 你是一个专业的判断系统，你需要根据以下内容判断该项目是否符合投资要求。
-当前内容是：{total_investment}
+当前内容是：<field_result>total_investment</field_result>
 请根据以上内容判断该项目是否符合投资要求，符合返回true，不符合返回false。
 请只返回true或false，不要添加其他内容。
 ```
 
 计算类（rule_type='calc'）：
 ```
-{field1}+{field2}*0.2
+<field_result>field1</field_result>+<field_result>field2</field_result>*0.2
 ```
 
 向量数据库：
@@ -376,21 +382,94 @@ chunk_id = hashlib.sha256((file_id + str(chunk_index)).encode('utf-8')).hexdiges
 **执行流程：**
 1. 更新 files.progress = 'extracting'
 2. 获取所有 enabled=1 的 extraction_field，按 priority 排序
-3. 对每个字段执行提取：
-   - source_type='table'：根据 table_match_type 匹配表格，用 table_extract_prompt 提取
-   - source_type='text'：根据 search_type 检索内容，用 text_extract_prompt 提取
-4. 结果写入 extraction_result 表
-5. 全部成功则进入逻辑分析阶段
+3. 对每个字段执行提取（详见下方各类型流程）
+4. 结果写入 extraction_result 表（extracted_value 存 LLM 原始返回）
+5. 全部字段处理完毕后，更新 end_extracting_time，进入逻辑分析阶段
 
-**错误恢复：** 清理 extraction_result 中 file_id 对应记录，重新执行提取
+**单字段失败处理：** 某个字段提取失败（LLM超时/返回空/检索无结果）时，**跳过继续**处理下一个字段，extraction_result 中写入空字符串（extracted_value=''），不阻塞整体流程。
 
-**检索类型说明：**
+**整体错误恢复：** 清理 extraction_result 中 file_id 对应的所有记录，重新执行全部提取。
 
-- **context（上下文检索）**：加载 file_content，搜索关键词，取前后指定字节数的上下文
-- **section（章节检索）**：加载 file_content，解析章节结构，按匹配规则定位章节内容
-- **rule（规则检索）**：加载 file_content，搜索关键词，以停用词为边界截取文本片段
-- **chunk_db（关系数据库检索）**：从 file_chunk 表检索 file_id 对应的分块，可选关键词过滤
-- **vector_db（向量数据库检索）**：从 Milvus 检索 file_id 对应的相似分块
+---
+
+#### 7.1 表格类提取流程（source_type='table'）
+
+```
+1. 从 file_table 表加载该 file_id 的所有表格
+2. 按 table_match_type 匹配 table_name_pattern：
+   - exact：table_name == table_name_pattern
+   - fuzzy：模糊匹配（编辑距离或相似度）
+   - contains：table_name 包含 table_name_pattern
+   - llm：将所有 table_name 列表发给 LLM，让其选择最匹配的
+3. 匹配到多个表格时：逐个表格发送给 LLM 提取，取第一个返回非空结果的值
+4. 表格内容以原始 HTML 格式（<table>...</table>）发送给 LLM
+5. 构造 LLM 输入：将 table_extract_prompt 中的 <search_result> 占位符替换为表格 HTML 内容
+6. 发送给 LLM，extracted_value 存 LLM 原始返回文本
+```
+
+**table_extract_prompt 示例：**
+```
+请从以下表格中提取"总投资金额"字段的值，只返回数值，不要添加其他内容。
+
+<search_result>
+```
+
+#### 7.2 文本类提取流程（source_type='text'）
+
+```
+1. 根据 search_type 执行对应检索（详见 7.3）
+2. 检索返回多条结果时：按 sort_order 排序后全部拼接（用 \n---\n 分隔）
+3. 构造 LLM 输入：将 text_extract_prompt 中的 <search_result> 占位符替换为拼接后的检索内容
+4. 一次性发送给 LLM 提取
+5. extracted_value 存 LLM 原始返回文本
+```
+
+**text_extract_prompt 示例：**
+```
+请从以下内容中提取"项目总投资金额"，只返回数值和单位，不要添加其他内容。
+
+<search_result>
+```
+
+#### 7.3 检索类型详细说明
+
+**context（上下文检索）：**
+1. 加载 file_content 全文
+2. 在全文中搜索 keywords 中的每个关键词
+3. 对每个命中位置，取前 context_before 字节 + 关键词 + 后 context_after 字节
+4. 按 sort_order 排序（asc=按出现位置顺序，desc=逆序）
+5. 取前 max_results 条
+
+**section（章节检索）：**
+1. 加载 file_content，调用 parse_sections() 解析章节结构
+2. 按 section_match_type 匹配 section_pattern：
+   - exact：title == section_pattern
+   - fuzzy：模糊匹配
+   - contains：title 包含 section_pattern
+   - llm：将所有 title 列表发给 LLM 选择
+3. 取匹配章节的 content[start_pos:end_pos] 作为检索结果
+4. 按 sort_order 排序，取前 max_results 条
+
+**rule（规则检索：关键词+停用词边界）：**
+1. 加载 file_content 全文
+2. 搜索 keywords 中的每个关键词位置
+3. 从关键词位置出发，按 direction 方向扩展，直到遇到 stop_words 中的任一停用词为止：
+   - forward：关键词位置向后扩展到停用词
+   - backward：关键词位置向前扩展到停用词
+   - both：双向扩展
+4. 结果文本长度 < min_length 则丢弃，> max_length 则截断
+5. 按 sort_order 排序，取前 max_results 条
+
+**chunk_db（关系数据库检索）：**
+1. 从 file_chunk 表查询 file_id 对应的所有分块
+2. 如果配置了 keyword_filter，过滤 chunk_content 包含该关键词的分块
+3. 按 chunk_index 排序（sort_order），取前 max_results 条
+
+**vector_db（向量数据库检索）：**
+1. 将 query_text 向量化
+2. 在 Milvus 中检索 file_id 对应的相似分块
+3. 过滤 score < score_threshold 的结果
+4. 取前 top_k 条
 
 参考函数（章节解析）：
 
@@ -447,14 +526,22 @@ def parse_sections(content: str) -> list[SectionInfo]:
 1. 更新 files.progress = 'analyzing'
 2. 获取所有 enabled=1 的 analysis_rule，按 priority 排序
 3. 对每个规则：
-   - 解析 expression 中的 {field_id} 占位符
-   - 从 extraction_result 获取对应字段值
-   - rule_type='judge'：发送给 LLM，期望返回 true/false
-   - rule_type='calc'：本地执行公式计算（eval 或安全解析器）
+   a. 解析 expression 中的 `<field_result>field_id</field_result>` 占位符
+   b. 根据 depend_fields 从 extraction_result 获取对应字段值
+   c. 将占位符替换为实际的 extracted_value
+   d. 记录 input_values 快照（用于结果追溯）
+   e. 按 rule_type 执行：
+      - **judge**：将替换后的完整文本作为 prompt 发送给 LLM，期望返回 true/false
+      - **calc**：使用安全解析库（如 numexpr）执行公式计算，结果保留 calc_precision 位小数
 4. 结果写入 analysis_result 表
-5. 全部成功则更新 files.progress = 'complete'
 
-**错误恢复：** 清理 analysis_result 中 file_id 对应记录，重新执行分析
+**单条规则失败处理：** 某条规则执行失败（依赖字段值为空、计算异常、LLM超时）时，**跳过继续**处理下一条规则，result_value 存空字符串，不阻塞整体流程。
+
+5. 全部规则处理完毕后，更新 end_analyzing_time，更新 files.progress = 'complete'
+
+**calc 安全执行：** 使用 Python 安全解析库（如 numexpr、simpleeval），**禁止**使用原生 eval。只允许基本数学运算（+、-、*、/、()、**），不允许函数调用、模块导入等。
+
+**整体错误恢复：** 清理 analysis_result 中 file_id 对应的所有记录，重新执行全部分析。
 
 ---
 
@@ -471,18 +558,84 @@ def parse_sections(content: str) -> list[SectionInfo]:
 | GET | /file/{file_id}/chunks | 获取文件分块列表 |
 | GET | /extraction/fields | 获取字段提取配置列表 |
 | POST | /extraction/fields | 新增/更新字段提取配置（根据 field_id 判断 upsert） |
-| DELETE | /extraction/fields/{field_id} | 删除字段提取配置 |
-| POST | /extraction/test | 字段提取调试接口 |
+| DELETE | /extraction/fields/{field_id} | 软删除字段提取配置（enabled=0） |
+| POST | /extraction/test | 字段提取调试接口（支持两种模式，返回中间过程） |
 | GET | /extraction/fields/{field_id}/check | 检查 field_id 是否已存在 |
 | GET | /analysis/rules | 获取逻辑分析配置列表 |
 | POST | /analysis/rules | 新增/更新逻辑分析配置（根据 rule_id 判断 upsert） |
-| DELETE | /analysis/rules/{rule_id} | 删除逻辑分析配置 |
-| POST | /analysis/test | 逻辑分析调试接口 |
+| DELETE | /analysis/rules/{rule_id} | 软删除逻辑分析配置（enabled=0） |
+| POST | /analysis/test | 逻辑分析调试接口（支持两种模式，返回中间过程） |
 | GET | /analysis/rules/{rule_id}/check | 检查 rule_id 是否已存在 |
 | GET | /file/{file_id}/extraction | 获取文件字段提取结果 |
 | GET | /file/{file_id}/analysis | 获取文件逻辑分析结果 |
 | POST | /file/{file_id}/retry/extracting | 重试字段提取 |
 | POST | /file/{file_id}/retry/analyzing | 重试逻辑分析 |
+
+#### 调试接口详细说明
+
+**POST /extraction/test - 字段提取调试**
+
+支持两种模式：
+
+模式一：全自动（传 field_id + file_id）
+```json
+// 请求
+{ "field_id": "total_investment", "file_id": "abc123" }
+// 响应：返回检索中间结果 + LLM提取结果
+{
+  "search_results": [      // 检索到的原始内容列表
+    { "index": 0, "content": "...", "source": "context_match_pos_1234" }
+  ],
+  "llm_input": "...",      // 实际发送给LLM的完整输入
+  "llm_output": "1500万元", // LLM原始返回
+  "extracted_value": "1500万元"
+}
+```
+
+模式二：传完整配置直接测试（不需要先入库）
+```json
+// 请求
+{
+  "file_id": "abc123",
+  "config": {
+    "source_type": "text",
+    "search_type": "context",
+    "search_config": { "keywords": ["总投资"], "context_before": 200, "context_after": 200, "max_results": 5, "sort_order": "asc" },
+    "text_extract_prompt": "请从以下内容中提取总投资金额：\n<search_result>"
+  }
+}
+// 响应：同上
+```
+
+**POST /analysis/test - 逻辑分析调试**
+
+支持两种模式：
+
+模式一：全自动（传 rule_id + file_id）
+```json
+// 请求
+{ "rule_id": "check_investment", "file_id": "abc123" }
+// 响应
+{
+  "input_values": { "total_investment": "1500万元" },
+  "expression_resolved": "你是一个专业的判断系统...当前内容是：1500万元...",
+  "result_value": "true"
+}
+```
+
+模式二：传完整配置直接测试
+```json
+// 请求
+{
+  "file_id": "abc123",
+  "config": {
+    "rule_type": "calc",
+    "expression": "<field_result>field1</field_result>+<field_result>field2</field_result>*0.2",
+    "depend_fields": ["field1", "field2"]
+  }
+}
+// 响应：同上
+```
 
 ---
 
