@@ -6,6 +6,7 @@ import asyncio
 from typing import List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +28,7 @@ from model.tables import (
     FileContent,
     FileTable,
 )
-from service.pipeline_service import run_from_stage, run_pipeline
+from service.pipeline_service import run_from_stage, run_pipeline, run_pipeline_stream
 from utils.config import get_config
 from utils.file_utils import generate_file_id
 from utils.milvus_client import MilvusClient
@@ -47,7 +48,17 @@ async def _run_pipeline_background(file_id: str, file_name: str, file_content_by
             logger.error("Pipeline 后台执行失败: {}", e)
 
 
-@router.post("/parse", response_model=ResponseWrapper)
+async def _stream_pipeline_generator(file_id: str, file_name: str, file_content_bytes: bytes):
+    """流式 pipeline 生成器，内部管理数据库会话。"""
+    from model.database import get_session_factory
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        async for event in run_pipeline_stream(file_id, file_name, file_content_bytes, session):
+            yield event
+
+
+@router.post("/parse")
 async def parse_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
@@ -138,6 +149,16 @@ async def parse_file(
                         message="文件已提交处理（异步）",
                         data={"file_id": file_id},
                     )
+                elif mode == "stream":
+                    return StreamingResponse(
+                        _stream_pipeline_generator(file_id, file_name, file_content_bytes),
+                        media_type="text/event-stream",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "Connection": "keep-alive",
+                            "X-Accel-Buffering": "no",
+                        },
+                    )
                 else:
                     await run_pipeline(file_id, file_name, file_content_bytes, db)
                     return ResponseWrapper(
@@ -186,6 +207,16 @@ async def parse_file(
         return ResponseWrapper(
             message="文件已提交处理（异步）",
             data={"file_id": file_id},
+        )
+    elif mode == "stream":
+        return StreamingResponse(
+            _stream_pipeline_generator(file_id, file_name, file_content_bytes),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
         )
     else:
         await run_pipeline(file_id, file_name, file_content_bytes, db)
