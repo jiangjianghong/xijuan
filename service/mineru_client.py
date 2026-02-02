@@ -58,5 +58,12 @@ async def parse_pdf(
         resp = await client.post(url, files=files, data=data)
         resp.raise_for_status()
         result = resp.json()
-        # TODO: 根据 MinerU 实际返回格式提取 Markdown 内容
-        return result.get("content", "")
+
+        # 从 results 中提取 md_content
+        # 响应格式: {"results": {"文件名(无后缀)": {"md_content": "..."}}}
+        results = result.get("results", {})
+        if results:
+            # 获取第一个结果的 md_content
+            first_result = next(iter(results.values()), {})
+            return first_result.get("md_content", "")
+        return ""
