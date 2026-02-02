@@ -3,7 +3,7 @@
 <aside>
 💡
 
-**minerU解析(yield)→存整个md到关系数据库→表格提取→分块→分块存数据库(yield)→向量化(yield)→提交milvus(yield)→获取关键词提取及逻辑分析任务(yield)→关键词提取(yield)→逻辑分析(yield)**
+**minerU解析(yield)→存整个md到关系数据库→表格提取→分块→分块存数据库(yield)→向量化(yield)→提交milvus(yield)→字段提取(yield)→逻辑分析(yield)**
 
 </aside>
 
@@ -38,11 +38,13 @@ def generate_file_id(file_name: str) -> str:
 | end_chunking_time | DATETIME | 分块完成时间 |
 | start_embedding_time | DATETIME | 开始向量化时间 |
 | end_embedding_time | DATETIME | 向量化完成时间 |
+| end_extracting_time | DATETIME | 字段提取完成时间 |
+| end_analyzing_time | DATETIME | 逻辑分析完成时间 |
 | progress | VARCHAR(32) | 当前进度状态 |
 | error | TEXT | 错误信息 |
 | updated_at | DATETIME | 最后更新时间 |
 
-其中progress包含**parsing,chunking,embedding,complete,parsing_failed,chunking_failed,embedding_failed**
+其中progress包含**parsing, chunking, embedding, extracting, analyzing, complete, parsing_failed, chunking_failed, embedding_failed, extracting_failed, analyzing_failed**
 
 ### **2.file_content表**
 
@@ -79,13 +81,100 @@ PRIMARY KEY (file_id, table_index)
 
 PRIMARY KEY (file_id, chunk_id)
 
-### 5.字段提取表
+### 5. extraction_field 表（字段提取配置表）
 
-存储要提取的字段及规则
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| field_id | VARCHAR(100) PK | 字段ID（用户输入，字母数字下划线，唯一，用于逻辑分析引用） |
+| field_name | VARCHAR(200) | 字段中文名（展示用） |
+| source_type | ENUM('table','text') | 来源类型：表格/文本 |
+| enabled | TINYINT DEFAULT 1 | 是否启用 |
+| priority | INT DEFAULT 0 | 优先级（执行顺序） |
+| created_at | DATETIME | 创建时间 |
+| updated_at | DATETIME | 更新时间 |
+| **表格类专用** | | |
+| table_name_pattern | VARCHAR(500) | 预检索表格名 |
+| table_match_type | ENUM('exact','fuzzy','contains','llm') | 表格匹配规则 |
+| table_extract_prompt | TEXT | 表格字段提取提示词 |
+| **文本类专用** | | |
+| search_type | ENUM('context','section','rule','chunk_db','vector_db') | 检索类型 |
+| search_config | JSON | 检索配置（见下方说明） |
+| text_extract_prompt | TEXT | 文本字段提取提示词 |
 
-### 6.逻辑分析表
+**search_config JSON 结构：**
 
-存储逻辑分析相关
+```json
+// context（上下文检索）
+{
+  "keywords": ["关键词1", "关键词2"],
+  "context_before": 200,
+  "context_after": 200,
+  "max_results": 5,
+  "sort_order": "asc"
+}
+
+// section（章节检索）
+{
+  "section_pattern": "投资估算",
+  "section_match_type": "contains",
+  "max_results": 3,
+  "sort_order": "asc"
+}
+
+// chunk_db（关系数据库检索）
+{
+  "keyword_filter": "投资",
+  "max_results": 10,
+  "sort_order": "asc"
+}
+
+// rule（规则检索：关键词+停用词边界）
+{
+  "keywords": ["总投资", "投资总额"],
+  "stop_words": ["#", "##", "###", "\n\n", "\n", "。", ".", "；", ";"],
+  "direction": "forward",
+  "min_length": 2,
+  "max_length": 200,
+  "max_results": 5,
+  "sort_order": "asc"
+}
+
+// vector_db（向量数据库检索）
+{
+  "query_text": "项目总投资金额",
+  "top_k": 5,
+  "score_threshold": 0.7
+}
+```
+
+### 6. analysis_rule 表（逻辑分析配置表）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| rule_id | VARCHAR(100) PK | 规则ID（用户输入，字母数字下划线，唯一） |
+| rule_name | VARCHAR(200) | 规则中文名 |
+| rule_type | ENUM('judge','calc') | 规则类型：判断/计算 |
+| expression | TEXT | 表达式（判断类为提示词，计算类为公式） |
+| depend_fields | JSON | 依赖的字段列表（field_id 数组） |
+| enabled | TINYINT DEFAULT 1 | 是否启用 |
+| priority | INT DEFAULT 0 | 执行优先级 |
+| created_at | DATETIME | 创建时间 |
+| updated_at | DATETIME | 更新时间 |
+
+**expression 示例：**
+
+判断类（rule_type='judge'）：
+```
+你是一个专业的判断系统，你需要根据以下内容判断该项目是否符合投资要求。
+当前内容是：{total_investment}
+请根据以上内容判断该项目是否符合投资要求，符合返回true，不符合返回false。
+请只返回true或false，不要添加其他内容。
+```
+
+计算类（rule_type='calc'）：
+```
+{field1}+{field2}*0.2
+```
 
 向量数据库：
 
@@ -100,6 +189,29 @@ PRIMARY KEY (file_id, chunk_id)
 | chunk_content | VARCHAR(65535) | 分块文本（含完整`<table></table>`标签） |
 | embedding | FLOAT_VECTOR(dim) | 向量（维度由模型决定） |
 
+### 8. extraction_result 表（字段提取结果表）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| file_id | VARCHAR(64) | 文件ID |
+| field_id | VARCHAR(100) | 字段ID（关联 extraction_field.field_id） |
+| extracted_value | TEXT | 提取的值 |
+
+PRIMARY KEY (file_id, field_id)
+INDEX (file_id)
+
+### 9. analysis_result 表（逻辑分析结果表）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| file_id | VARCHAR(64) | 文件ID |
+| rule_id | VARCHAR(100) | 规则ID（关联 analysis_rule.rule_id） |
+| result_value | VARCHAR(500) | 结果值（判断类为true/false，计算类为数值） |
+| input_values | JSON | 输入值快照 {"field1": "100", "field2": "200"} |
+
+PRIMARY KEY (file_id, rule_id)
+INDEX (file_id)
+
 ### 索引设计
 
 **关系数据库索引：**
@@ -107,6 +219,10 @@ PRIMARY KEY (file_id, chunk_id)
 - file_content 表：PRIMARY KEY (file_id)
 - file_table 表：PRIMARY KEY (file_id, table_index)，INDEX (file_id)
 - file_chunk 表：PRIMARY KEY (file_id, chunk_id)，INDEX (file_id)
+- extraction_field 表：PRIMARY KEY (field_id)
+- analysis_rule 表：PRIMARY KEY (rule_id)
+- extraction_result 表：PRIMARY KEY (file_id, field_id)，INDEX (file_id)
+- analysis_result 表：PRIMARY KEY (file_id, rule_id)，INDEX (file_id)
 
 **Milvus 索引：**
 - embedding：向量索引 (IVF_FLAT 或 HNSW)
@@ -123,10 +239,14 @@ PRIMARY KEY (file_id, chunk_id)
    - parsing → parsing_failed
    - chunking → chunking_failed
    - embedding → embedding_failed
+   - extracting → extracting_failed
+   - analyzing → analyzing_failed
 3. **垃圾数据清理**：根据失败状态执行对应清理（与错误恢复逻辑一致）
    - parsing_failed → 清理 file_content, file_table, file_chunk, Milvus
    - chunking_failed → 清理 file_chunk, Milvus
    - embedding_failed → 清理 Milvus 中 file_id 对应记录
+   - extracting_failed → 清理 extraction_result 中 file_id 对应记录
+   - analyzing_failed → 清理 analysis_result 中 file_id 对应记录
 
 ---
 
@@ -138,7 +258,9 @@ PRIMARY KEY (file_id, chunk_id)
 - 状态为 **parsing_failed** → 清理 file_content, file_table, file_chunk, Milvus，然后重新开始解析
 - 状态为 **chunking_failed** → 清理 file_chunk, Milvus，然后从分块阶段重新开始
 - 状态为 **embedding_failed** → 清理 Milvus 中 file_id 对应记录，然后从向量化阶段重新开始
-- 状态为 **parsing/chunking/embedding**（处理中） → 拒绝重复提交，返回当前状态
+- 状态为 **extracting_failed** → 清理 extraction_result 中 file_id 对应记录，然后从字段提取阶段重新开始
+- 状态为 **analyzing_failed** → 清理 analysis_result 中 file_id 对应记录，然后从逻辑分析阶段重新开始
+- 状态为 **parsing/chunking/embedding/extracting/analyzing**（处理中） → 拒绝重复提交，返回当前状态
 - 状态为 **complete** → 返回已完成
 
 ### 2.存整个md到关系数据库
@@ -247,6 +369,93 @@ chunk_id = hashlib.sha256((file_id + str(chunk_index)).encode('utf-8')).hexdiges
 
 这里批量提交到Milvus中，支持配置批量大小
 
+### 7. 字段提取
+
+完成向量化后，按 priority 顺序执行启用的字段提取规则。
+
+**执行流程：**
+1. 更新 files.progress = 'extracting'
+2. 获取所有 enabled=1 的 extraction_field，按 priority 排序
+3. 对每个字段执行提取：
+   - source_type='table'：根据 table_match_type 匹配表格，用 table_extract_prompt 提取
+   - source_type='text'：根据 search_type 检索内容，用 text_extract_prompt 提取
+4. 结果写入 extraction_result 表
+5. 全部成功则进入逻辑分析阶段
+
+**错误恢复：** 清理 extraction_result 中 file_id 对应记录，重新执行提取
+
+**检索类型说明：**
+
+- **context（上下文检索）**：加载 file_content，搜索关键词，取前后指定字节数的上下文
+- **section（章节检索）**：加载 file_content，解析章节结构，按匹配规则定位章节内容
+- **rule（规则检索）**：加载 file_content，搜索关键词，以停用词为边界截取文本片段
+- **chunk_db（关系数据库检索）**：从 file_chunk 表检索 file_id 对应的分块，可选关键词过滤
+- **vector_db（向量数据库检索）**：从 Milvus 检索 file_id 对应的相似分块
+
+参考函数（章节解析）：
+
+```python
+import re
+from dataclasses import dataclass
+
+@dataclass
+class SectionInfo:
+    """章节信息"""
+    index: int        # 章节索引
+    number: str       # 章节号如 "6" 或 "7.2"
+    title: str        # 标题如 "投资估算"
+    start_pos: int    # 起始位置
+    end_pos: int      # 结束位置
+
+
+def parse_sections(content: str) -> list[SectionInfo]:
+    """
+    解析 Markdown 文档中所有章节
+
+    Args:
+        content: Markdown 文档内容
+
+    Returns:
+        章节信息列表
+    """
+    pattern = re.compile(
+        r'^#\s+([\d.]+)\s+(.+?)(?:\s+\d+)?\s*$',
+        re.MULTILINE
+    )
+
+    matches = list(pattern.finditer(content))
+    sections = []
+
+    for i, match in enumerate(matches):
+        end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+        sections.append(SectionInfo(
+            index=i,
+            number=match.group(1),
+            title=match.group(2).strip(),
+            start_pos=match.start(),
+            end_pos=end_pos
+        ))
+
+    return sections
+```
+
+### 8. 逻辑分析
+
+完成字段提取后，按 priority 顺序执行启用的逻辑分析规则。
+
+**执行流程：**
+1. 更新 files.progress = 'analyzing'
+2. 获取所有 enabled=1 的 analysis_rule，按 priority 排序
+3. 对每个规则：
+   - 解析 expression 中的 {field_id} 占位符
+   - 从 extraction_result 获取对应字段值
+   - rule_type='judge'：发送给 LLM，期望返回 true/false
+   - rule_type='calc'：本地执行公式计算（eval 或安全解析器）
+4. 结果写入 analysis_result 表
+5. 全部成功则更新 files.progress = 'complete'
+
+**错误恢复：** 清理 analysis_result 中 file_id 对应记录，重新执行分析
+
 ---
 
 ### API 接口定义
@@ -256,10 +465,24 @@ chunk_id = hashlib.sha256((file_id + str(chunk_index)).encode('utf-8')).hexdiges
 | POST | /file/parse | 提交文件解析（支持 sync/async/stream） |
 | GET | /file/{file_id}/status | 查询文件处理进度 |
 | DELETE | /file/{file_id} | 删除文件及所有关联数据 |
-| POST | /file/{file_id}/retry/{stage} | 从指定阶段重试（stage: parsing/chunking/embedding） |
+| POST | /file/{file_id}/retry/{stage} | 从指定阶段重试（stage: parsing/chunking/embedding/extracting/analyzing） |
 | POST | /search | 向量检索 |
 | GET | /file/{file_id}/tables | 获取文件表格列表 |
 | GET | /file/{file_id}/chunks | 获取文件分块列表 |
+| GET | /extraction/fields | 获取字段提取配置列表 |
+| POST | /extraction/fields | 新增/更新字段提取配置（根据 field_id 判断 upsert） |
+| DELETE | /extraction/fields/{field_id} | 删除字段提取配置 |
+| POST | /extraction/test | 字段提取调试接口 |
+| GET | /extraction/fields/{field_id}/check | 检查 field_id 是否已存在 |
+| GET | /analysis/rules | 获取逻辑分析配置列表 |
+| POST | /analysis/rules | 新增/更新逻辑分析配置（根据 rule_id 判断 upsert） |
+| DELETE | /analysis/rules/{rule_id} | 删除逻辑分析配置 |
+| POST | /analysis/test | 逻辑分析调试接口 |
+| GET | /analysis/rules/{rule_id}/check | 检查 rule_id 是否已存在 |
+| GET | /file/{file_id}/extraction | 获取文件字段提取结果 |
+| GET | /file/{file_id}/analysis | 获取文件逻辑分析结果 |
+| POST | /file/{file_id}/retry/extracting | 重试字段提取 |
+| POST | /file/{file_id}/retry/analyzing | 重试逻辑分析 |
 
 ---
 
@@ -305,6 +528,19 @@ mysql:
   port: 3306
   database: "file_parser"
   pool_size: 10
+
+# 字段提取配置
+extraction:
+  llm_base_url: "http://localhost:8000/v1"
+  llm_model: "qwen-7b"
+  llm_timeout: 60
+  llm_retry_count: 3
+  max_context_length: 4096  # LLM最大输入长度
+
+# 逻辑分析配置
+analysis:
+  calc_precision: 2         # 计算结果小数位数
+  judge_timeout: 30         # 判断类LLM超时
 ```
 
 ---
@@ -321,142 +557,5 @@ mysql:
 - parsing_failed → 清理 file_content, file_table, file_chunk, Milvus
 - chunking_failed → 清理 file_chunk, Milvus
 - embedding_failed → 清理 Milvus 中 file_id 对应记录
-
----
-
-## 接下来是字段抽取的功能
-
-这里只需要提供一个抽取失败时重新抽取的接口，然后给一个单次调用接口（用于测试），其他的应该是内部逻辑
-
-抽取分为从表格中抽取字段和从一般文本中抽取字段两种
-
-对于表格抽取，需要提供表格名，表格匹配规则，字段名，字段提取规则
-
-对于一般文本抽取，需要提供字段名，字段提取规则
-
-**从表格提取字段**
-提供预检索表格名
-表格匹配规则 包括完全匹配，模糊匹配，包含匹配，LLM匹配
-字段名
-字段提取规则 基于LLM的规则抽取，这里需要提供提示词
-**从一般文本提取字段**
-字段名 中文名和变量名
- 需要配置检索规则以及提示词
-检索规则 包括直接上下文检索（直接加载file_content,然后使用直接搜索关键词），章节检索（加载file_content，获取所有章节名，然后检索提取），关系数据库检索（检索file_id相同的块），向量数据库检索（检索file_id相同的块），
-    (1),上下文检索提取
-    需要配置，上下文大小正负区间 即取到关键词前后多少字节，最大检索数量，排序规则（顺序排序还是逆序排序）
-    (2),章节检索提取
-    需要配置，章节匹配规则（完全匹配，模糊匹配，包含匹配, LLM匹配），最大检索数量，排序规则
-    参考函数：
-
-```
-    import re
-    from dataclasses import dataclass                                                                                                                                
-    
-    @dataclass
-    class SectionInfo:
-        """章节信息"""
-        index: int        # 章节索引
-        number: str       # 章节号如 "6" 或 "7.2"
-        title: str        # 标题如 "投资估算"
-        start_pos: int    # 起始位置
-        end_pos: int      # 结束位置
-
-
-    def parse_sections(content: str) -> list[SectionInfo]:
-        """
-        解析 Markdown 文档中所有章节
-
-        Args:
-            content: Markdown 文档内容
-
-        Returns:
-            章节信息列表
-        """
-        # 匹配模式：# 数字[.数字] 标题 [可选页码]
-        pattern = re.compile(
-            r'^#\s+([\d.]+)\s+(.+?)(?:\s+\d+)?\s*$',
-            re.MULTILINE
-        )
-
-        matches = list(pattern.finditer(content))
-        sections = []
-
-        for i, match in enumerate(matches):
-            end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(content)
-            sections.append(SectionInfo(
-                index=i,
-                number=match.group(1),
-                title=match.group(2).strip(),
-                start_pos=match.start(),
-                end_pos=end_pos
-            ))
-
-        return sections
-
-    使用示例：
-
-    text = """
-    # 1 概述
-    这是概述内容...
-
-    # 2 项目背景
-    这是背景内容...
-
-    # 2.1 技术方案
-    技术细节...
-
-    # 3 总结
-    总结内容...
-    """
-
-    sections = parse_sections(text)
-    for s in sections:
-        print(f"[{s.index}] {s.number} {s.title} ({s.start_pos}-{s.end_pos})")
-
-    输出：
-    [0] 1 概述 (1-25)
-    [1] 2 项目背景 (25-50)
-    [2] 2.1 技术方案 (50-72)
-    [3] 3 总结 (72-85)
-                                                                            
-
-    ● 输出是 list[SectionInfo]，即一个 dataclass 列表，每个元素包含：                                                                                                                                                                           ┌───────────┬──────┬──────────────────────────────────────────────────────────┐                                                                                                                                                         
-    │   字段    │ 类型 │                           含义                       │                                                                                                                                          ├───────────┼──────┼──────────────────────────────────────────────────────────┤
-    │ index     │ int  │ 章节索引，从 0 开始                                      │                                                                                                                                                      
-    ├───────────┼──────┼──────────────────────────────────────────────────────────┤
-    │ number    │ str  │ 章节编号，如 "6" 或 "7.2"                                │
-    ├───────────┼──────┼──────────────────────────────────────────────────────────┤
-    │ title     │ str  │ 章节标题，如 "投资估算"                                  │
-    ├───────────┼──────┼──────────────────────────────────────────────────────────┤
-    │ start_pos │ int  │ 该章节在原文中的起始字符位置                             │
-    ├───────────┼──────┼──────────────────────────────────────────────────────────┤
-    │ end_pos   │ int  │ 该章节在原文中的结束字符位置（下一章节起始 或 文档末尾） │
-    └───────────┴──────┴──────────────────────────────────────────────────────────┘
-    拿到之后可以用 start_pos 和 end_pos 切片取章节内容：
-
-    sections = parse_sections(content)
-    for s in sections:
-        chapter_text = content[s.start_pos:s.end_pos]
-```
-
-    (3),关系数据库检索提取 
-    检索规则， 排序规则，最大检索数量
-    (4),向量数据库提取
-    检索规则，排序规则，最大检索数量
-提示词 需要提供完整的提示词
-
-这里的配置都需要前后端写到我这边的配置表里，这边会提供检索调试接口。
-
-逻辑分析
-分为判断类和计算类两种
-判断类 需要配置好判断逻辑的提示词
-只返回true or false
-数据库中存储的是一个string类型文本 这里是用户配置好的提示词
-例如 你是一个专业的判断系统 你需要根据以下内容判断该项目是否符合投资要求，当前内容是：{字段唯一名}，请根据以上内容判断该项目是否符合投资要求，符合返回true，不符合返回false，请只返回true or false，不要添加其他内容。
-
-计算类 需要配置好计算逻辑的提示词
-数据库中存储的是一个string类型的公式文本 这里是用户配置好的提示词
-{字段1}+{字段2}*0.2 之类的 直接返回计算结果，这里不需要LLM
-
-
+- extracting_failed → 清理 extraction_result 中 file_id 对应记录
+- analyzing_failed → 清理 analysis_result 中 file_id 对应记录
