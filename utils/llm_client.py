@@ -116,7 +116,14 @@ async def get_embeddings(
                     all_embeddings.extend(batch_embeddings)
                     logger.debug("Embedding batch {}/{} 完成", i // batch_size + 1, (len(texts) + batch_size - 1) // batch_size)
                     break
-                except (httpx.HTTPStatusError, httpx.RequestError) as e:
+                except httpx.HTTPStatusError as e:
+                    wait_time = 2 ** attempt
+                    error_detail = e.response.text if e.response else str(e)
+                    logger.warning("Embedding 请求失败 (尝试 {}/{}): {}, 响应: {}, 等待 {}s 后重试", attempt + 1, max_retries, str(e), error_detail, wait_time)
+                    if attempt + 1 == max_retries:
+                        raise
+                    await asyncio.sleep(wait_time)
+                except httpx.RequestError as e:
                     wait_time = 2 ** attempt
                     logger.warning("Embedding 请求失败 (尝试 {}/{}): {}, 等待 {}s 后重试", attempt + 1, max_retries, str(e), wait_time)
                     if attempt + 1 == max_retries:
