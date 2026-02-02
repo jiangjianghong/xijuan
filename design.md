@@ -253,13 +253,13 @@ chunk_id = hashlib.sha256((file_id + str(chunk_index)).encode('utf-8')).hexdiges
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | /api/v1/files/parse | 提交文件解析（支持 sync/async/stream） |
-| GET | /api/v1/files/{file_id}/status | 查询文件处理进度 |
-| DELETE | /api/v1/files/{file_id} | 删除文件及所有关联数据 |
-| POST | /api/v1/files/{file_id}/retry/{stage} | 从指定阶段重试（stage: parsing/chunking/embedding） |
-| POST | /api/v1/search | 向量检索 |
-| GET | /api/v1/files/{file_id}/tables | 获取文件表格列表 |
-| GET | /api/v1/files/{file_id}/chunks | 获取文件分块列表 |
+| POST | /file/parse | 提交文件解析（支持 sync/async/stream） |
+| GET | /file/{file_id}/status | 查询文件处理进度 |
+| DELETE | /file/{file_id} | 删除文件及所有关联数据 |
+| POST | /file/{file_id}/retry/{stage} | 从指定阶段重试（stage: parsing/chunking/embedding） |
+| POST | /search | 向量检索 |
+| GET | /file/{file_id}/tables | 获取文件表格列表 |
+| GET | /file/{file_id}/chunks | 获取文件分块列表 |
 
 ---
 
@@ -324,6 +324,139 @@ mysql:
 
 ---
 
-接下来是字段抽取的功能
+## 接下来是字段抽取的功能
 
 这里只需要提供一个抽取失败时重新抽取的接口，然后给一个单次调用接口（用于测试），其他的应该是内部逻辑
+
+抽取分为从表格中抽取字段和从一般文本中抽取字段两种
+
+对于表格抽取，需要提供表格名，表格匹配规则，字段名，字段提取规则
+
+对于一般文本抽取，需要提供字段名，字段提取规则
+
+**从表格提取字段**
+提供预检索表格名
+表格匹配规则 包括完全匹配，模糊匹配，包含匹配，LLM匹配
+字段名
+字段提取规则 基于LLM的规则抽取，这里需要提供提示词
+**从一般文本提取字段**
+字段名 中文名和变量名
+ 需要配置检索规则以及提示词
+检索规则 包括直接上下文检索（直接加载file_content,然后使用直接搜索关键词），章节检索（加载file_content，获取所有章节名，然后检索提取），关系数据库检索（检索file_id相同的块），向量数据库检索（检索file_id相同的块），
+    (1),上下文检索提取
+    需要配置，上下文大小正负区间 即取到关键词前后多少字节，最大检索数量，排序规则（顺序排序还是逆序排序）
+    (2),章节检索提取
+    需要配置，章节匹配规则（完全匹配，模糊匹配，包含匹配, LLM匹配），最大检索数量，排序规则
+    参考函数：
+
+```
+    import re
+    from dataclasses import dataclass                                                                                                                                
+    
+    @dataclass
+    class SectionInfo:
+        """章节信息"""
+        index: int        # 章节索引
+        number: str       # 章节号如 "6" 或 "7.2"
+        title: str        # 标题如 "投资估算"
+        start_pos: int    # 起始位置
+        end_pos: int      # 结束位置
+
+
+    def parse_sections(content: str) -> list[SectionInfo]:
+        """
+        解析 Markdown 文档中所有章节
+
+        Args:
+            content: Markdown 文档内容
+
+        Returns:
+            章节信息列表
+        """
+        # 匹配模式：# 数字[.数字] 标题 [可选页码]
+        pattern = re.compile(
+            r'^#\s+([\d.]+)\s+(.+?)(?:\s+\d+)?\s*$',
+            re.MULTILINE
+        )
+
+        matches = list(pattern.finditer(content))
+        sections = []
+
+        for i, match in enumerate(matches):
+            end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+            sections.append(SectionInfo(
+                index=i,
+                number=match.group(1),
+                title=match.group(2).strip(),
+                start_pos=match.start(),
+                end_pos=end_pos
+            ))
+
+        return sections
+
+    使用示例：
+
+    text = """
+    # 1 概述
+    这是概述内容...
+
+    # 2 项目背景
+    这是背景内容...
+
+    # 2.1 技术方案
+    技术细节...
+
+    # 3 总结
+    总结内容...
+    """
+
+    sections = parse_sections(text)
+    for s in sections:
+        print(f"[{s.index}] {s.number} {s.title} ({s.start_pos}-{s.end_pos})")
+
+    输出：
+    [0] 1 概述 (1-25)
+    [1] 2 项目背景 (25-50)
+    [2] 2.1 技术方案 (50-72)
+    [3] 3 总结 (72-85)
+                                                                            
+
+    ● 输出是 list[SectionInfo]，即一个 dataclass 列表，每个元素包含：                                                                                                                                                                           ┌───────────┬──────┬──────────────────────────────────────────────────────────┐                                                                                                                                                         
+    │   字段    │ 类型 │                           含义                       │                                                                                                                                          ├───────────┼──────┼──────────────────────────────────────────────────────────┤
+    │ index     │ int  │ 章节索引，从 0 开始                                      │                                                                                                                                                      
+    ├───────────┼──────┼──────────────────────────────────────────────────────────┤
+    │ number    │ str  │ 章节编号，如 "6" 或 "7.2"                                │
+    ├───────────┼──────┼──────────────────────────────────────────────────────────┤
+    │ title     │ str  │ 章节标题，如 "投资估算"                                  │
+    ├───────────┼──────┼──────────────────────────────────────────────────────────┤
+    │ start_pos │ int  │ 该章节在原文中的起始字符位置                             │
+    ├───────────┼──────┼──────────────────────────────────────────────────────────┤
+    │ end_pos   │ int  │ 该章节在原文中的结束字符位置（下一章节起始 或 文档末尾） │
+    └───────────┴──────┴──────────────────────────────────────────────────────────┘
+    拿到之后可以用 start_pos 和 end_pos 切片取章节内容：
+
+    sections = parse_sections(content)
+    for s in sections:
+        chapter_text = content[s.start_pos:s.end_pos]
+```
+
+    (3),关系数据库检索提取 
+    检索规则， 排序规则，最大检索数量
+    (4),向量数据库提取
+    检索规则，排序规则，最大检索数量
+提示词 需要提供完整的提示词
+
+这里的配置都需要前后端写到我这边的配置表里，这边会提供检索调试接口。
+
+逻辑分析
+分为判断类和计算类两种
+判断类 需要配置好判断逻辑的提示词
+只返回true or false
+数据库中存储的是一个string类型文本 这里是用户配置好的提示词
+例如 你是一个专业的判断系统 你需要根据以下内容判断该项目是否符合投资要求，当前内容是：{字段唯一名}，请根据以上内容判断该项目是否符合投资要求，符合返回true，不符合返回false，请只返回true or false，不要添加其他内容。
+
+计算类 需要配置好计算逻辑的提示词
+数据库中存储的是一个string类型的公式文本 这里是用户配置好的提示词
+{字段1}+{字段2}*0.2 之类的 直接返回计算结果，这里不需要LLM
+
+
