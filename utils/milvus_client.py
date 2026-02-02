@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from loguru import logger
 from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
 
 from utils.config import MilvusConfig, get_config
@@ -18,11 +19,16 @@ class MilvusClient:
 
     def connect(self) -> None:
         """建立 Milvus 连接。"""
-        connections.connect(
-            alias="default",
-            host=self.config.host,
-            port=self.config.port,
-        )
+        connect_kwargs = {
+            "alias": "default",
+            "host": self.config.host,
+            "port": self.config.port,
+        }
+        if self.config.user:
+            connect_kwargs["user"] = self.config.user
+        if self.config.password:
+            connect_kwargs["password"] = self.config.password
+        connections.connect(**connect_kwargs)
 
     def ensure_collection(self, embedding_dim: Optional[int] = None) -> Collection:
         """确保 Collection 存在，不存在则创建。
@@ -38,6 +44,7 @@ class MilvusClient:
 
         if utility.has_collection(name):
             self._collection = Collection(name)
+            self._collection.load()
             return self._collection
 
         fields = [
@@ -50,7 +57,15 @@ class MilvusClient:
         ]
         schema = CollectionSchema(fields=fields, description="file_chunks")
         self._collection = Collection(name=name, schema=schema)
-        # TODO: 创建索引
+
+        index_params = {
+            "index_type": self.config.index_type,
+            "metric_type": self.config.metric_type,
+            "params": {"nlist": self.config.nlist},
+        }
+        self._collection.create_index(field_name="embedding", index_params=index_params)
+        logger.info("Milvus collection '{}' 创建完成，索引已建立", name)
+        self._collection.load()
         return self._collection
 
     def insert(self, data: List[Dict[str, Any]]) -> None:
@@ -60,8 +75,38 @@ class MilvusClient:
             data: 待插入记录列表，每条记录包含 chunk_id, file_id, chunk_index,
                   total_chunks, chunk_content, embedding。
         """
-        # TODO: 实现批量插入
-        pass
+        if not data:
+            return
+
+        collection = self._collection
+        if collection is None:
+            collection = self.ensure_collection()
+
+        # 行转列格式
+        columns = {
+            "chunk_id": [],
+            "file_id": [],
+            "chunk_index": [],
+            "total_chunks": [],
+            "chunk_content": [],
+            "embedding": [],
+        }
+        for row in data:
+            for key in columns:
+                columns[key].append(row[key])
+
+        insert_data = [
+            columns["chunk_id"],
+            columns["file_id"],
+            columns["chunk_index"],
+            columns["total_chunks"],
+            columns["chunk_content"],
+            columns["embedding"],
+        ]
+
+        collection.insert(insert_data)
+        collection.flush()
+        logger.info("Milvus 插入 {} 条记录", len(data))
 
     def search(
         self,
@@ -81,8 +126,44 @@ class MilvusClient:
         Returns:
             检索结果列表。
         """
-        # TODO: 实现向量检索
-        return []
+        collection = self._collection
+        if collection is None:
+            collection = self.ensure_collection()
+
+        search_params = {
+            "metric_type": self.config.metric_type,
+            "params": {"nprobe": 16},
+        }
+
+        expr = None
+        if file_id:
+            expr = f'file_id == "{file_id}"'
+
+        results = collection.search(
+            data=[query_vector],
+            anns_field="embedding",
+            param=search_params,
+            limit=top_k,
+            expr=expr,
+            output_fields=["chunk_id", "file_id", "chunk_index", "total_chunks", "chunk_content"],
+        )
+
+        hits = []
+        for result in results:
+            for hit in result:
+                score = hit.distance
+                if score_threshold is not None and score > score_threshold:
+                    continue
+                hits.append({
+                    "chunk_id": hit.entity.get("chunk_id"),
+                    "file_id": hit.entity.get("file_id"),
+                    "chunk_index": hit.entity.get("chunk_index"),
+                    "total_chunks": hit.entity.get("total_chunks"),
+                    "chunk_content": hit.entity.get("chunk_content"),
+                    "score": score,
+                })
+
+        return hits
 
     def delete_by_file_id(self, file_id: str) -> None:
         """删除指定 file_id 的所有记录。
@@ -90,5 +171,11 @@ class MilvusClient:
         Args:
             file_id: 文件 ID。
         """
-        # TODO: 实现按 file_id 删除
-        pass
+        collection = self._collection
+        if collection is None:
+            collection = self.ensure_collection()
+
+        expr = f'file_id == "{file_id}"'
+        collection.delete(expr)
+        collection.flush()
+        logger.info("Milvus 删除 file_id={} 的所有记录", file_id)

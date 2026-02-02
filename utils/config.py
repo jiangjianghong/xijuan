@@ -49,6 +49,8 @@ class EmbeddingConfig(BaseModel):
 class MilvusConfig(BaseModel):
     host: str = "localhost"
     port: int = 19530
+    user: str = ""
+    password: str = ""
     collection_name: str = "file_chunks"
     index_type: str = "IVF_FLAT"
     metric_type: str = "L2"
@@ -68,6 +70,7 @@ class MySQLConfig(BaseModel):
 class ExtractionConfig(BaseModel):
     llm_base_url: str = "http://localhost:8000/v1"
     llm_model: str = "qwen-7b"
+    llm_api_key: str = ""
     llm_timeout: int = 60
     llm_retry_count: int = 3
     max_context_length: int = 4096

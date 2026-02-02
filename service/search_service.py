@@ -6,6 +6,9 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
+from utils.llm_client import get_embeddings
+from utils.milvus_client import MilvusClient
+
 
 async def search(
     query: str,
@@ -24,6 +27,30 @@ async def search(
     Returns:
         检索结果列表。
     """
-    # TODO: 实现向量检索
     logger.info("执行向量检索: query={}, top_k={}", query, top_k)
-    return []
+
+    if not query.strip():
+        return []
+
+    # 向量化查询文本
+    embeddings = await get_embeddings([query])
+    if not embeddings:
+        logger.warning("查询文本向量化失败")
+        return []
+
+    query_vector = embeddings[0]
+
+    # Milvus 检索
+    milvus_client = MilvusClient()
+    milvus_client.connect()
+    milvus_client.ensure_collection()
+
+    results = milvus_client.search(
+        query_vector=query_vector,
+        top_k=top_k,
+        file_id=file_id,
+        score_threshold=score_threshold,
+    )
+
+    logger.info("向量检索完成，返回 {} 条结果", len(results))
+    return results

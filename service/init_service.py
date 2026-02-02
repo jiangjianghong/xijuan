@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 from loguru import logger
+from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from model.database import get_engine
-from model.tables import Base
+from model.database import get_engine, get_session_factory
+from model.tables import (
+    AnalysisResult,
+    Base,
+    ExtractionResult,
+    File,
+    FileChunk,
+    FileContent,
+    FileTable,
+)
+from utils.milvus_client import MilvusClient
 
 
 async def init_database() -> None:
@@ -27,7 +37,25 @@ async def recover_abnormal_status(session: AsyncSession) -> None:
     - extracting → extracting_failed
     - analyzing → analyzing_failed
     """
-    # TODO: 实现异常状态恢复
+    status_mapping = {
+        "parsing": "parsing_failed",
+        "chunking": "chunking_failed",
+        "embedding": "embedding_failed",
+        "extracting": "extracting_failed",
+        "analyzing": "analyzing_failed",
+    }
+
+    for ing_status, failed_status in status_mapping.items():
+        stmt = (
+            update(File)
+            .where(File.progress == ing_status)
+            .values(progress=failed_status, error=f"服务重启时状态恢复：{ing_status} -> {failed_status}")
+        )
+        result = await session.execute(stmt)
+        if result.rowcount > 0:
+            logger.info("恢复 {} 状态为 {}: {} 条记录", ing_status, failed_status, result.rowcount)
+
+    await session.commit()
     logger.info("异常状态恢复完成")
 
 
@@ -40,12 +68,88 @@ async def cleanup_garbage_data(session: AsyncSession) -> None:
     - extracting_failed → 清理 extraction_result 中 file_id 对应记录
     - analyzing_failed → 清理 analysis_result 中 file_id 对应记录
     """
-    # TODO: 实现垃圾数据清理
+    milvus_client = MilvusClient()
+    milvus_client.connect()
+
+    # parsing_failed: 清理 file_content, file_table, file_chunk, Milvus
+    stmt = select(File.file_id).where(File.progress == "parsing_failed")
+    result = await session.execute(stmt)
+    parsing_failed_ids = [row[0] for row in result.fetchall()]
+    for file_id in parsing_failed_ids:
+        await session.execute(delete(FileContent).where(FileContent.file_id == file_id))
+        await session.execute(delete(FileTable).where(FileTable.file_id == file_id))
+        await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
+        try:
+            milvus_client.delete_by_file_id(file_id)
+        except Exception as e:
+            logger.warning("Milvus 删除 file_id={} 失败: {}", file_id, e)
+    if parsing_failed_ids:
+        logger.info("清理 parsing_failed 数据: {} 个文件", len(parsing_failed_ids))
+
+    # chunking_failed: 清理 file_chunk, Milvus
+    stmt = select(File.file_id).where(File.progress == "chunking_failed")
+    result = await session.execute(stmt)
+    chunking_failed_ids = [row[0] for row in result.fetchall()]
+    for file_id in chunking_failed_ids:
+        await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
+        try:
+            milvus_client.delete_by_file_id(file_id)
+        except Exception as e:
+            logger.warning("Milvus 删除 file_id={} 失败: {}", file_id, e)
+    if chunking_failed_ids:
+        logger.info("清理 chunking_failed 数据: {} 个文件", len(chunking_failed_ids))
+
+    # embedding_failed: 清理 Milvus
+    stmt = select(File.file_id).where(File.progress == "embedding_failed")
+    result = await session.execute(stmt)
+    embedding_failed_ids = [row[0] for row in result.fetchall()]
+    for file_id in embedding_failed_ids:
+        try:
+            milvus_client.delete_by_file_id(file_id)
+        except Exception as e:
+            logger.warning("Milvus 删除 file_id={} 失败: {}", file_id, e)
+    if embedding_failed_ids:
+        logger.info("清理 embedding_failed 数据: {} 个文件", len(embedding_failed_ids))
+
+    # extracting_failed: 清理 extraction_result
+    stmt = select(File.file_id).where(File.progress == "extracting_failed")
+    result = await session.execute(stmt)
+    extracting_failed_ids = [row[0] for row in result.fetchall()]
+    for file_id in extracting_failed_ids:
+        await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
+    if extracting_failed_ids:
+        logger.info("清理 extracting_failed 数据: {} 个文件", len(extracting_failed_ids))
+
+    # analyzing_failed: 清理 analysis_result
+    stmt = select(File.file_id).where(File.progress == "analyzing_failed")
+    result = await session.execute(stmt)
+    analyzing_failed_ids = [row[0] for row in result.fetchall()]
+    for file_id in analyzing_failed_ids:
+        await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+    if analyzing_failed_ids:
+        logger.info("清理 analyzing_failed 数据: {} 个文件", len(analyzing_failed_ids))
+
+    await session.commit()
     logger.info("垃圾数据清理完成")
 
 
 async def run_init() -> None:
     """启动时执行完整初始化流程。"""
     await init_database()
-    # TODO: 获取 session 执行状态恢复和垃圾清理
+
+    # 确保 Milvus Collection 存在
+    try:
+        milvus_client = MilvusClient()
+        milvus_client.connect()
+        milvus_client.ensure_collection()
+        logger.info("Milvus collection 检查完成")
+    except Exception as e:
+        logger.error("Milvus 初始化失败: {}", e)
+
+    # 执行状态恢复和垃圾清理
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        await recover_abnormal_status(session)
+        await cleanup_garbage_data(session)
+
     logger.info("服务初始化完成")

@@ -3,26 +3,74 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import List, Dict
 
 from loguru import logger
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from model.tables import File, FileContent, FileTable
+from service.mineru_client import parse_pdf
+from utils.config import get_config
 
-async def parse_file(file_path: str, file_id: str, session: AsyncSession) -> str:
+
+async def parse_file(file_path: str, file_content_bytes: bytes, file_id: str, session: AsyncSession) -> str:
     """调用 MinerU 解析文件，返回 Markdown 内容。
 
     Args:
-        file_path: 文件路径。
+        file_path: 文件路径/文件名。
+        file_content_bytes: 文件二进制内容。
         file_id: 文件 ID。
         session: 数据库会话。
 
     Returns:
         解析后的 Markdown 文本。
     """
-    # TODO: 实现 MinerU 解析调用
     logger.info("开始解析文件: {}", file_id)
-    return ""
+
+    # 更新状态为 parsing，记录开始时间
+    stmt = (
+        update(File)
+        .where(File.file_id == file_id)
+        .values(progress="parsing", start_parsing_time=datetime.now())
+    )
+    await session.execute(stmt)
+    await session.commit()
+
+    try:
+        # 调用 MinerU 解析
+        cfg = get_config().mineru
+        content = await parse_pdf(
+            file_name=file_path,
+            file_content=file_content_bytes,
+            base_url=cfg.base_url,
+            timeout=cfg.parse_timeout,
+        )
+
+        # 更新解析完成时间
+        stmt = (
+            update(File)
+            .where(File.file_id == file_id)
+            .values(end_parsing_time=datetime.now())
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+        logger.info("文件解析完成: {}, 内容长度: {}", file_id, len(content))
+        return content
+
+    except Exception as e:
+        # 更新状态为 parsing_failed
+        stmt = (
+            update(File)
+            .where(File.file_id == file_id)
+            .values(progress="parsing_failed", error=str(e))
+        )
+        await session.execute(stmt)
+        await session.commit()
+        logger.error("文件解析失败: {}, 错误: {}", file_id, e)
+        raise
 
 
 async def save_file_content(file_id: str, content: str, session: AsyncSession) -> None:
@@ -33,8 +81,19 @@ async def save_file_content(file_id: str, content: str, session: AsyncSession) -
         content: Markdown 内容。
         session: 数据库会话。
     """
-    # TODO: 实现存储
-    pass
+    # 检查是否已存在
+    stmt = select(FileContent).where(FileContent.file_id == file_id)
+    result = await session.execute(stmt)
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        existing.file_content = content
+    else:
+        file_content = FileContent(file_id=file_id, file_content=content)
+        session.add(file_content)
+
+    await session.commit()
+    logger.info("文件内容已保存: {}", file_id)
 
 
 def parse_tables(content: str, file_id: str) -> List[Dict]:
@@ -94,5 +153,18 @@ async def save_tables(tables: List[Dict], session: AsyncSession) -> None:
         tables: parse_tables 返回的表格列表。
         session: 数据库会话。
     """
-    # TODO: 实现批量存储
-    pass
+    if not tables:
+        return
+
+    for table_data in tables:
+        file_table = FileTable(
+            file_id=table_data["file_id"],
+            table_index=table_data["table_index"],
+            total_table=table_data["total_table"],
+            table_name=table_data["table_name"],
+            table_content=table_data["table_content"],
+        )
+        session.add(file_table)
+
+    await session.commit()
+    logger.info("表格已保存: {} 个", len(tables))
