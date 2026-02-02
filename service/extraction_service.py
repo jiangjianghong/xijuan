@@ -70,6 +70,8 @@ async def search_context(
             - keywords: 关键词列表
             - context_before: 关键词前取的字节数（默认 200）
             - context_after: 关键词后取的字节数（默认 200）
+            - max_results: 最大返回条数（默认 5）
+            - sort_order: 排序方式 asc/desc（默认 asc，按出现位置）
 
     Returns:
         检索结果列表，每项包含 keyword, position, context。
@@ -77,6 +79,8 @@ async def search_context(
     keywords = config.get("keywords", [])
     context_before = config.get("context_before", 200)
     context_after = config.get("context_after", 200)
+    max_results = config.get("max_results", 5)
+    sort_order = config.get("sort_order", "asc")
 
     results = []
     for keyword in keywords:
@@ -91,7 +95,11 @@ async def search_context(
                 "context": context_text,
             })
 
-    return results
+    # 按 position 排序
+    results.sort(key=lambda x: x["position"], reverse=(sort_order == "desc"))
+
+    # 限制返回条数
+    return results[:max_results]
 
 
 async def search_section(
@@ -103,15 +111,20 @@ async def search_section(
         content: 文档全文。
         config: search_config 配置，包含:
             - section_pattern: 章节标题模式
-            - match_type: 匹配方式 (exact/fuzzy/contains/llm)
+            - section_match_type 或 match_type: 匹配方式 (exact/fuzzy/contains/llm)
             - threshold: 模糊匹配阈值（默认 0.8）
+            - max_results: 最大返回条数（默认 3）
+            - sort_order: 排序方式 asc/desc（默认 asc，按章节顺序）
 
     Returns:
         检索结果列表，每项包含 section_number, section_title, content。
     """
     section_pattern = config.get("section_pattern", "")
-    match_type = config.get("match_type", "contains")
+    # 兼容两种字段名：section_match_type（设计文档）和 match_type
+    match_type = config.get("section_match_type") or config.get("match_type", "contains")
     threshold = config.get("threshold", 0.8)
+    max_results = config.get("max_results", 3)
+    sort_order = config.get("sort_order", "asc")
 
     sections = parse_sections(content)
     results = []
@@ -140,10 +153,15 @@ async def search_section(
             results.append({
                 "section_number": section.number,
                 "section_title": section.title,
+                "section_index": section.index,
                 "content": section_content,
             })
 
-    return results
+    # 按章节索引排序
+    results.sort(key=lambda x: x["section_index"], reverse=(sort_order == "desc"))
+
+    # 限制返回条数
+    return results[:max_results]
 
 
 async def search_rule(
@@ -155,17 +173,25 @@ async def search_rule(
         content: 文档全文。
         config: search_config 配置，包含:
             - keywords: 关键词列表
-            - stop_words: 停用词列表
+            - stop_words: 停用词列表（默认 ["#", "##", "###", "\\n\\n", "\\n", "。", ".", "；", ";"]）
             - direction: 扩展方向 (forward/backward/both)
-            - max_length: 最大提取长度（默认 500）
+            - min_length: 最小提取长度（默认 2）
+            - max_length: 最大提取长度（默认 200）
+            - max_results: 最大返回条数（默认 5）
+            - sort_order: 排序方式 asc/desc（默认 asc，按出现位置）
 
     Returns:
-        检索结果列表，每项包含 keyword, extracted_text。
+        检索结果列表，每项包含 keyword, position, extracted_text。
     """
     keywords = config.get("keywords", [])
-    stop_words = config.get("stop_words", ["\n\n", "。\n", "\n#"])
-    direction = config.get("direction", "both")
-    max_length = config.get("max_length", 500)
+    # 设计文档指定的默认停用词
+    default_stop_words = ["#", "##", "###", "\n\n", "\n", "。", ".", "；", ";"]
+    stop_words = config.get("stop_words", default_stop_words)
+    direction = config.get("direction", "forward")
+    min_length = config.get("min_length", 2)
+    max_length = config.get("max_length", 200)
+    max_results = config.get("max_results", 5)
+    sort_order = config.get("sort_order", "asc")
 
     results = []
 
@@ -184,7 +210,7 @@ async def search_rule(
                         # 取停用词之后的位置，保留最近的（最大的 idx）
                         start = max(start, idx + len(stop_word))
 
-            # 向后扩展
+            # 向前扩展（找关键词之后最近的停用词）
             end = end_pos
             if direction in ("forward", "both"):
                 search_end = min(len(content), end_pos + max_length)
@@ -196,12 +222,22 @@ async def search_rule(
                     end = search_end
 
             extracted_text = content[start:end].strip()
+
+            # 检查最小长度
+            if len(extracted_text) < min_length:
+                continue
+
             results.append({
                 "keyword": keyword,
+                "position": pos,
                 "extracted_text": extracted_text,
             })
 
-    return results
+    # 按 position 排序
+    results.sort(key=lambda x: x["position"], reverse=(sort_order == "desc"))
+
+    # 限制返回条数
+    return results[:max_results]
 
 
 async def search_chunk_db(
@@ -212,30 +248,42 @@ async def search_chunk_db(
     Args:
         file_id: 文件 ID。
         config: search_config 配置，包含:
-            - keywords: 关键词列表
-            - top_k: 返回条数（默认 5）
+            - keyword_filter 或 keywords: 关键词（单个字符串或列表）
+            - max_results 或 top_k: 返回条数（默认 10）
+            - sort_order: 排序方式 asc/desc（默认 asc，按 chunk_index）
 
     Returns:
         检索结果列表，每项包含 chunk_id, chunk_index, chunk_content。
     """
+    # 兼容两种字段名：keyword_filter（设计文档，单个字符串）和 keywords（列表）
+    keyword_filter = config.get("keyword_filter")
     keywords = config.get("keywords", [])
-    top_k = config.get("top_k", 5)
+    if keyword_filter:
+        # 如果是单个字符串，转为列表
+        keywords = [keyword_filter] if isinstance(keyword_filter, str) else keyword_filter
+    # 兼容两种字段名：max_results（设计文档）和 top_k
+    max_results = config.get("max_results") or config.get("top_k", 10)
+    sort_order = config.get("sort_order", "asc")
 
     stmt = select(FileChunk).where(FileChunk.file_id == file_id)
     result = await session.execute(stmt)
     chunks = result.scalars().all()
 
-    # 按关键词匹配数量排序
-    scored_chunks = []
-    for chunk in chunks:
-        score = sum(1 for kw in keywords if kw.lower() in chunk.chunk_content.lower())
-        if score > 0:
-            scored_chunks.append((score, chunk))
+    # 按关键词过滤
+    if keywords:
+        filtered_chunks = []
+        for chunk in chunks:
+            # 检查是否包含任一关键词
+            if any(kw.lower() in chunk.chunk_content.lower() for kw in keywords):
+                filtered_chunks.append(chunk)
+        chunks = filtered_chunks
 
-    scored_chunks.sort(key=lambda x: x[0], reverse=True)
+    # 按 chunk_index 排序（设计文档要求）
+    chunks.sort(key=lambda x: x.chunk_index, reverse=(sort_order == "desc"))
 
+    # 限制返回条数
     results = []
-    for _, chunk in scored_chunks[:top_k]:
+    for chunk in chunks[:max_results]:
         results.append({
             "chunk_id": chunk.chunk_id,
             "chunk_index": chunk.chunk_index,
@@ -342,22 +390,25 @@ async def extract_table_field(
     if not matched_tables:
         return ""
 
-    # 构建 LLM 输入，用 <search_result> 占位符
-    search_results_text = "\n---\n".join([
-        f"表格名称: {t.table_name}\n{t.table_content}"
-        for t in matched_tables
-    ])
-
+    # 设计文档要求：逐个表格发送给 LLM 提取，取第一个返回非空结果的值
     prompt_template = field.table_extract_prompt or "从以下表格中提取信息：\n<search_result>\n请提取相关字段值。"
-    llm_input = prompt_template.replace("<search_result>", search_results_text)
 
-    # 调用 LLM 提取
-    try:
-        extracted_value = await chat_completion(llm_input)
-        return extracted_value.strip()
-    except Exception as e:
-        logger.error("LLM 表格提取失败: {}", e)
-        return ""
+    for table in matched_tables:
+        search_result_text = f"表格名称: {table.table_name}\n{table.table_content}"
+        llm_input = prompt_template.replace("<search_result>", search_result_text)
+
+        try:
+            extracted_value = await chat_completion(llm_input)
+            extracted_value = extracted_value.strip()
+            # 如果返回非空结果，立即返回
+            if extracted_value:
+                return extracted_value
+        except Exception as e:
+            logger.warning("LLM 表格提取失败 (table={}): {}", table.table_name, e)
+            continue
+
+    # 所有表格都没有提取到非空结果
+    return ""
 
 
 async def extract_text_field(
