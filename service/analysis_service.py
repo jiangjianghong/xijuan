@@ -16,21 +16,36 @@ from utils.config import get_config
 from utils.llm_client import chat_completion
 
 
-def resolve_expression(expression: str, field_values: Dict[str, str]) -> str:
+def resolve_expression(
+    expression: str,
+    field_values: Dict[str, str],
+    no_result_hint: str = "（未找到字段 '{}' 的提取结果）"
+) -> str:
     """将表达式中的 <field_result>field_id</field_result> 占位符替换为实际值。
 
     Args:
         expression: 原始表达式。
         field_values: {field_id: extracted_value} 映射。
+        no_result_hint: 无结果时的提示模板，{} 会被替换为字段标识。
 
     Returns:
         替换后的表达式。
     """
-    def replacer(match: re.Match) -> str:
-        field_id = match.group(1)
-        return field_values.get(field_id, "")
+    pattern = r"<field_result>(.+?)</field_result>"
 
-    return re.sub(r"<field_result>(\w+)</field_result>", replacer, expression)
+    def replacer(match: re.Match) -> str:
+        field_id = match.group(1).strip()
+        if field_id in field_values and field_values[field_id]:
+            return field_values[field_id]
+        return no_result_hint.format(field_id)
+
+    return re.sub(pattern, replacer, expression)
+
+
+def validate_expression_has_placeholder(expression: str) -> bool:
+    """校验 expression 中是否包含至少一个有效的字段占位符。"""
+    pattern = r"<field_result>.+?</field_result>"
+    return bool(re.search(pattern, expression))
 
 
 async def execute_judge(resolved_expression: str) -> Tuple[str, str]:

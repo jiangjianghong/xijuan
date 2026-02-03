@@ -827,7 +827,7 @@ curl "http://localhost:5019/analysis/rules"
       "rule_id": "revenue_check",
       "rule_name": "营收达标检查",
       "rule_type": "judge",
-      "expression": "{total_revenue} > 1000000",
+      "expression": "请判断营业总收入 <field_result>total_revenue</field_result> 是否大于 1000000",
       "depend_fields": ["total_revenue"],
       "enabled": 1,
       "priority": 0,
@@ -838,7 +838,7 @@ curl "http://localhost:5019/analysis/rules"
       "rule_id": "profit_rate",
       "rule_name": "利润率计算",
       "rule_type": "calc",
-      "expression": "{net_profit} / {total_revenue} * 100",
+      "expression": "<field_result>net_profit</field_result> / <field_result>total_revenue</field_result> * 100",
       "depend_fields": ["net_profit", "total_revenue"],
       "enabled": 1,
       "priority": 1,
@@ -865,7 +865,7 @@ curl "http://localhost:5019/analysis/rules"
 | `rule_id` | `string` | 是 | - | 规则 ID（字母数字下划线，最长 100） |
 | `rule_name` | `string` | 是 | - | 规则名称（最长 200） |
 | `rule_type` | `string` | 是 | - | 规则类型：`judge`（判断） / `calc`（计算） |
-| `expression` | `string` | 是 | - | 表达式（使用 `{field_id}` 引用提取字段） |
+| `expression` | `string` | 是 | - | 表达式（使用 `<field_result>字段标识</field_result>` 引用提取字段） |
 | `depend_fields` | `string[]` | 否 | `null` | 依赖的字段 ID 列表 |
 | `enabled` | `int` | 否 | `1` | 是否启用：1=启用, 0=禁用 |
 | `priority` | `int` | 否 | `0` | 优先级（数值越小越优先） |
@@ -877,7 +877,7 @@ curl "http://localhost:5019/analysis/rules"
   "rule_id": "revenue_check",
   "rule_name": "营收达标检查",
   "rule_type": "judge",
-  "expression": "{total_revenue} > 1000000",
+  "expression": "请判断营业总收入 <field_result>total_revenue</field_result> 是否大于 1000000",
   "depend_fields": ["total_revenue"]
 }
 ```
@@ -889,9 +889,18 @@ curl "http://localhost:5019/analysis/rules"
   "rule_id": "profit_rate",
   "rule_name": "利润率计算",
   "rule_type": "calc",
-  "expression": "{net_profit} / {total_revenue} * 100",
+  "expression": "<field_result>net_profit</field_result> / <field_result>total_revenue</field_result> * 100",
   "depend_fields": ["net_profit", "total_revenue"]
 }
+```
+
+**字段占位符说明**
+
+| 占位符格式 | 说明 |
+|-----------|------|
+| `<field_result>字段标识</field_result>` | 字段结果占位符，标签不可为空 |
+| 字段标识 | 使用 depend_fields 中声明的 field_id |
+| 无提取结果时 | 替换为 `（未找到字段 '字段标识' 的提取结果）` |
 ```
 
 **响应示例（新增）**
@@ -1020,7 +1029,7 @@ curl "http://localhost:5019/analysis/rules/revenue_check/check"
   "file_id": "a1b2c3d4e5f6",
   "config": {
     "rule_type": "calc",
-    "expression": "{net_profit} / {total_revenue} * 100",
+    "expression": "<field_result>net_profit</field_result> / <field_result>total_revenue</field_result> * 100",
     "depend_fields": ["net_profit", "total_revenue"]
   }
 }

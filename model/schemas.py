@@ -121,6 +121,13 @@ class AnalysisRuleCreate(BaseModel):
     enabled: int = 1
     priority: int = 0
 
+    @field_validator("expression")
+    @classmethod
+    def validate_expression(cls, v):
+        if v and not re.search(r"<field_result>.+?</field_result>", v):
+            raise ValueError("expression 必须包含至少一个 <field_result>字段标识</field_result> 占位符")
+        return v
+
 
 class AnalysisRuleResponse(AnalysisRuleCreate):
     created_at: Optional[datetime] = None
