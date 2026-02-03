@@ -1,0 +1,29 @@
+# 使用官方 Python 3.12 镜像
+FROM python:3.12-slim
+
+# 设置工作目录
+WORKDIR /app
+
+# 设置环境变量
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# 安装 uv
+RUN pip install uv
+
+# 复制依赖文件
+COPY pyproject.toml uv.lock ./
+
+# 安装依赖（不安装开发依赖）
+RUN uv sync --frozen --no-dev --no-install-project
+
+# 复制应用代码
+COPY . .
+
+# 暴露端口（与 config.yaml 中的端口一致）
+EXPOSE 5019
+
+# 启动命令
+CMD ["uv", "run", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5019"]

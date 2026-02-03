@@ -1,0 +1,24 @@
+services:
+  wanz-prase2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wanz-prase2-001
+    image: wanz-prase2-001:latest
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      # 挂载配置文件，支持热更新配置
+      - ./configs/config.yaml:/app/configs/config.yaml:ro
+      # 挂载日志目录，持久化日志
+      - ./logs:/app/logs
+      # 挂载数据目录（如需要持久化数据）
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5019/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
