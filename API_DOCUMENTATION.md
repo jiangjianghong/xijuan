@@ -429,12 +429,14 @@ curl "http://localhost:5019/file/a1b2c3d4e5f6/extraction"
     {
       "file_id": "a1b2c3d4e5f6",
       "field_id": "company_name",
-      "extracted_value": "某某科技有限公司"
+      "extracted_value": "某某科技有限公司",
+      "reason": "从文档第一段'公司名称：某某科技有限公司'中提取"
     },
     {
       "file_id": "a1b2c3d4e5f6",
       "field_id": "total_revenue",
-      "extracted_value": "1500000"
+      "extracted_value": "1500000",
+      "reason": "从利润表第3行'营业总收入'列提取"
     }
   ]
 }
@@ -480,7 +482,8 @@ curl "http://localhost:5019/file/a1b2c3d4e5f6/analysis"
       "input_values": {
         "total_revenue": "1500000",
         "threshold": "1000000"
-      }
+      },
+      "reason": "营业总收入1500000大于阈值1000000，判断为达标"
     }
   ]
 }
@@ -751,7 +754,8 @@ curl "http://localhost:5019/extraction/fields/total_revenue/check"
     ],
     "llm_input": "请从表格中提取营业总收入金额",
     "llm_output": "1500000",
-    "extracted_value": "1500000"
+    "extracted_value": "1500000",
+    "reason": "从利润表第3行'营业总收入'列提取得到数值1500000"
   }
 }
 ```
@@ -1003,7 +1007,8 @@ curl "http://localhost:5019/analysis/rules/revenue_check/check"
       "total_revenue": "1500000"
     },
     "expression_resolved": "500000 / 1500000 * 100",
-    "result_value": "33.33"
+    "result_value": "33.33",
+    "reason": "计算公式: 500000 / 1500000 * 100 = 33.33"
   }
 }
 ```
@@ -1165,6 +1170,7 @@ curl "http://localhost:5019/analysis/rules/revenue_check/check"
 | `file_id` | VARCHAR(64) | PK (复合) | 文件 ID |
 | `field_id` | VARCHAR(100) | PK (复合) | 字段 ID |
 | `extracted_value` | TEXT | DEFAULT "" | 提取值 |
+| `reason` | TEXT | NULLABLE | 提取理由/依据 |
 
 #### analysis_result - 分析结果表
 
@@ -1174,6 +1180,7 @@ curl "http://localhost:5019/analysis/rules/revenue_check/check"
 | `rule_id` | VARCHAR(100) | PK (复合) | 规则 ID |
 | `result_value` | VARCHAR(500) | DEFAULT "" | 分析结果 |
 | `input_values` | JSON | NULLABLE | 输入字段值 |
+| `reason` | TEXT | NULLABLE | 分析理由/依据 |
 
 ---
 

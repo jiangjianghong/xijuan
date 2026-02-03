@@ -142,6 +142,7 @@ async def test_extraction(
     llm_input = ""
     llm_output = ""
     extracted_value = ""
+    reason = ""
 
     # 构建临时 ExtractionField 对象
     if req.field_id:
@@ -181,7 +182,7 @@ async def test_extraction(
                 for t in tables
             ]
 
-            extracted_value = await extract_table_field(file_id, field, db)
+            extracted_value, reason = await extract_table_field(file_id, field, db)
             llm_input = field.table_extract_prompt or ""
             llm_output = extracted_value
 
@@ -211,7 +212,7 @@ async def test_extraction(
                 search_results = await search_vector_db(file_id, search_config)
 
             # 执行提取
-            extracted_value = await extract_text_field(file_id, field, db)
+            extracted_value, reason = await extract_text_field(file_id, field, db)
             llm_input = field.text_extract_prompt or ""
             llm_output = extracted_value
 
@@ -225,5 +226,6 @@ async def test_extraction(
             llm_input=llm_input,
             llm_output=llm_output,
             extracted_value=extracted_value,
+            reason=reason,
         ).model_dump()
     )

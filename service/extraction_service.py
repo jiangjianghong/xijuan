@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 from sqlalchemy import select
@@ -15,6 +16,48 @@ from model.tables import ExtractionField, ExtractionResult, FileChunk, FileConte
 from utils.config import get_config
 from utils.llm_client import chat_completion, get_embeddings
 from utils.milvus_client import MilvusClient
+
+
+# ── JSON 解析辅助 ────────────────────────────────────────────
+
+def parse_llm_json_response(response: str) -> Tuple[str, str]:
+    """解析 LLM 返回的 JSON 响应，提取 value 和 reason。
+
+    Args:
+        response: LLM 返回的原始响应（可能是 JSON 或纯文本）。
+
+    Returns:
+        (value, reason) 元组。如果解析失败，reason 为空。
+    """
+    response = response.strip()
+
+    # 尝试提取 JSON 块（支持 ```json ... ``` 格式）
+    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response, re.DOTALL)
+    if json_match:
+        response = json_match.group(1)
+
+    # 尝试解析 JSON
+    try:
+        data = json.loads(response)
+        value = str(data.get("value", "")).strip()
+        reason = str(data.get("reason", "")).strip()
+        return value, reason
+    except json.JSONDecodeError:
+        pass
+
+    # 尝试直接提取 JSON 对象
+    json_obj_match = re.search(r"\{[^{}]*\"value\"[^{}]*\}", response, re.DOTALL)
+    if json_obj_match:
+        try:
+            data = json.loads(json_obj_match.group())
+            value = str(data.get("value", "")).strip()
+            reason = str(data.get("reason", "")).strip()
+            return value, reason
+        except json.JSONDecodeError:
+            pass
+
+    # 解析失败，返回原始响应作为 value
+    return response.strip(), ""
 
 
 # ── 章节解析 ────────────────────────────────────────────────
@@ -339,9 +382,16 @@ async def search_vector_db(
 
 # ── 提取主流程 ──────────────────────────────────────────────
 
+# JSON 输出格式说明（附加到 prompt 末尾）
+JSON_OUTPUT_INSTRUCTION = """
+
+请以 JSON 格式返回结果，包含 value（提取的值）和 reason（提取理由/依据）两个字段：
+{"value": "提取的值", "reason": "说明从哪里提取、为什么这样提取"}"""
+
+
 async def extract_table_field(
     file_id: str, field: ExtractionField, session: AsyncSession
-) -> str:
+) -> Tuple[str, str]:
     """表格类字段提取。
 
     Args:
@@ -350,7 +400,7 @@ async def extract_table_field(
         session: 数据库会话。
 
     Returns:
-        提取的值。
+        (extracted_value, reason) 元组。
     """
     # 查询所有表格
     stmt = select(FileTable).where(FileTable.file_id == file_id)
@@ -358,7 +408,7 @@ async def extract_table_field(
     tables = result.scalars().all()
 
     if not tables:
-        return ""
+        return "", ""
 
     # 4 种表格匹配方式
     match_type = field.table_match_type or "contains"
@@ -388,7 +438,7 @@ async def extract_table_field(
             matched_tables.append(table)
 
     if not matched_tables:
-        return ""
+        return "", ""
 
     # 设计文档要求：逐个表格发送给 LLM 提取，取第一个返回非空结果的值
     prompt_template = field.table_extract_prompt or "从以下表格中提取信息：\n<search_result>\n请提取相关字段值。"
@@ -396,24 +446,25 @@ async def extract_table_field(
     for table in matched_tables:
         search_result_text = f"表格名称: {table.table_name}\n{table.table_content}"
         llm_input = prompt_template.replace("<search_result>", search_result_text)
+        llm_input += JSON_OUTPUT_INSTRUCTION
 
         try:
-            extracted_value = await chat_completion(llm_input)
-            extracted_value = extracted_value.strip()
+            response = await chat_completion(llm_input)
+            extracted_value, reason = parse_llm_json_response(response)
             # 如果返回非空结果，立即返回
             if extracted_value:
-                return extracted_value
+                return extracted_value, reason
         except Exception as e:
             logger.warning("LLM 表格提取失败 (table={}): {}", table.table_name, e)
             continue
 
     # 所有表格都没有提取到非空结果
-    return ""
+    return "", ""
 
 
 async def extract_text_field(
     file_id: str, field: ExtractionField, session: AsyncSession
-) -> str:
+) -> Tuple[str, str]:
     """文本类字段提取。
 
     Args:
@@ -422,7 +473,7 @@ async def extract_text_field(
         session: 数据库会话。
 
     Returns:
-        提取的值。
+        (extracted_value, reason) 元组。
     """
     # 获取文件内容
     stmt = select(FileContent).where(FileContent.file_id == file_id)
@@ -430,7 +481,7 @@ async def extract_text_field(
     file_content = result.scalar_one_or_none()
 
     if not file_content:
-        return ""
+        return "", ""
 
     content = file_content.file_content
     search_type = field.search_type or "context"
@@ -450,7 +501,7 @@ async def extract_text_field(
         search_results = await search_vector_db(file_id, search_config)
 
     if not search_results:
-        return ""
+        return "", ""
 
     # 拼接检索结果
     if search_type == "context":
@@ -467,14 +518,15 @@ async def extract_text_field(
     # 构建 LLM 输入
     prompt_template = field.text_extract_prompt or "从以下内容中提取信息：\n<search_result>\n请提取相关字段值。"
     llm_input = prompt_template.replace("<search_result>", results_text)
+    llm_input += JSON_OUTPUT_INSTRUCTION
 
     # 调用 LLM 提取
     try:
-        extracted_value = await chat_completion(llm_input)
-        return extracted_value.strip()
+        response = await chat_completion(llm_input)
+        return parse_llm_json_response(response)
     except Exception as e:
         logger.error("LLM 文本提取失败: {}", e)
-        return ""
+        return "", ""
 
 
 async def run_extraction(file_id: str, session: AsyncSession) -> None:
@@ -503,9 +555,9 @@ async def run_extraction(file_id: str, session: AsyncSession) -> None:
     for field in fields:
         try:
             if field.source_type == "table":
-                extracted_value = await extract_table_field(file_id, field, session)
+                extracted_value, reason = await extract_table_field(file_id, field, session)
             else:
-                extracted_value = await extract_text_field(file_id, field, session)
+                extracted_value, reason = await extract_text_field(file_id, field, session)
 
             # 保存结果
             stmt = select(ExtractionResult).where(
@@ -516,11 +568,13 @@ async def run_extraction(file_id: str, session: AsyncSession) -> None:
 
             if existing:
                 existing.extracted_value = extracted_value
+                existing.reason = reason
             else:
                 extraction_result = ExtractionResult(
                     file_id=file_id,
                     field_id=field.field_id,
                     extracted_value=extracted_value,
+                    reason=reason,
                 )
                 session.add(extraction_result)
 
@@ -538,11 +592,13 @@ async def run_extraction(file_id: str, session: AsyncSession) -> None:
 
             if existing:
                 existing.extracted_value = ""
+                existing.reason = ""
             else:
                 extraction_result = ExtractionResult(
                     file_id=file_id,
                     field_id=field.field_id,
                     extracted_value="",
+                    reason="",
                 )
                 session.add(extraction_result)
 

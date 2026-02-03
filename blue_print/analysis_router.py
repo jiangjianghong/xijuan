@@ -122,6 +122,7 @@ async def test_analysis(
     input_values: Dict[str, str] = {}
     expression_resolved = ""
     result_value = ""
+    reason = ""
 
     if req.rule_id:
         # 模式 1: 从数据库加载配置
@@ -163,11 +164,12 @@ async def test_analysis(
         # 执行计算/判断
         cfg = get_config().analysis
         if rule_type == "judge":
-            result_value = await execute_judge(expression_resolved)
+            result_value, reason = await execute_judge(expression_resolved)
         elif rule_type == "calc":
-            result_value = await execute_calc(expression_resolved, cfg.calc_precision)
+            result_value, reason = await execute_calc(expression_resolved, cfg.calc_precision)
         else:
             result_value = f"未知规则类型: {rule_type}"
+            reason = ""
 
     except Exception as e:
         logger.error("分析测试失败: {}", e)
@@ -178,5 +180,6 @@ async def test_analysis(
             input_values=input_values,
             expression_resolved=expression_resolved,
             result_value=result_value,
+            reason=reason,
         ).model_dump()
     )

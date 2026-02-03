@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numexpr
 from loguru import logger
@@ -33,42 +33,81 @@ def resolve_expression(expression: str, field_values: Dict[str, str]) -> str:
     return re.sub(r"<field_result>(\w+)</field_result>", replacer, expression)
 
 
-async def execute_judge(resolved_expression: str) -> str:
-    """执行判断类规则：将表达式发送给 LLM，返回 true/false。
+async def execute_judge(resolved_expression: str) -> Tuple[str, str]:
+    """执行判断类规则：将表达式发送给 LLM，返回 true/false 及理由。
 
     Args:
         resolved_expression: 已替换占位符的完整 prompt。
 
     Returns:
-        LLM 返回的 true/false 字符串。
+        (result, reason) 元组，result 为 true/false 字符串。
     """
     prompt = f"""{resolved_expression}
 
-请根据以上内容进行判断，只回答 'true' 或 'false'（小写）。"""
+请根据以上内容进行判断，以 JSON 格式返回结果：
+{{"result": "true 或 false", "reason": "判断理由/依据"}}"""
 
     try:
         response = await chat_completion(prompt)
-        response_lower = response.lower().strip()
+        response = response.strip()
 
-        # 规范化返回值
+        # 尝试提取 JSON 块
+        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response, re.DOTALL)
+        if json_match:
+            response = json_match.group(1)
+
+        # 尝试解析 JSON
+        try:
+            data = json.loads(response)
+            result_raw = str(data.get("result", "")).lower().strip()
+            reason = str(data.get("reason", "")).strip()
+
+            # 规范化返回值
+            if "true" in result_raw or "是" in result_raw:
+                return "true", reason
+            elif "false" in result_raw or "否" in result_raw:
+                return "false", reason
+            else:
+                return result_raw, reason
+        except json.JSONDecodeError:
+            pass
+
+        # 尝试提取 JSON 对象
+        json_obj_match = re.search(r"\{[^{}]*\"result\"[^{}]*\}", response, re.DOTALL)
+        if json_obj_match:
+            try:
+                data = json.loads(json_obj_match.group())
+                result_raw = str(data.get("result", "")).lower().strip()
+                reason = str(data.get("reason", "")).strip()
+                if "true" in result_raw or "是" in result_raw:
+                    return "true", reason
+                elif "false" in result_raw or "否" in result_raw:
+                    return "false", reason
+                else:
+                    return result_raw, reason
+            except json.JSONDecodeError:
+                pass
+
+        # JSON 解析失败，尝试从文本中提取结果
+        response_lower = response.lower()
         if "true" in response_lower:
-            return "true"
+            return "true", ""
         elif "false" in response_lower:
-            return "false"
+            return "false", ""
         elif "是" in response_lower:
-            return "true"
+            return "true", ""
         elif "否" in response_lower:
-            return "false"
+            return "false", ""
         else:
             logger.warning("LLM 判断返回非标准值: {}", response)
-            return response_lower
+            return response_lower, ""
 
     except Exception as e:
         logger.error("LLM 判断执行失败: {}", e)
         raise
 
 
-async def execute_calc(resolved_expression: str, precision: int = 2) -> str:
+async def execute_calc(resolved_expression: str, precision: int = 2) -> Tuple[str, str]:
     """执行计算类规则：使用 numexpr 安全计算公式。
 
     Args:
@@ -76,7 +115,7 @@ async def execute_calc(resolved_expression: str, precision: int = 2) -> str:
         precision: 小数保留位数。
 
     Returns:
-        计算结果字符串。
+        (result, reason) 元组，result 为计算结果字符串。
     """
     # 清理表达式：只保留数学运算符和数字
     expr = resolved_expression.strip()
@@ -101,9 +140,13 @@ async def execute_calc(resolved_expression: str, precision: int = 2) -> str:
 
         # 格式化结果
         if result_float == int(result_float):
-            return str(int(result_float))
+            result_str = str(int(result_float))
         else:
-            return f"{result_float:.{precision}f}"
+            result_str = f"{result_float:.{precision}f}"
+
+        # 自动生成计算理由
+        reason = f"计算公式: {cleaned_expr} = {result_str}"
+        return result_str, reason
 
     except Exception as e:
         logger.error("numexpr 计算失败: expr={}, error={}", cleaned_expr, e)
@@ -159,12 +202,13 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
 
             # 根据规则类型执行
             if rule.rule_type == "judge":
-                result_value = await execute_judge(resolved_expression)
+                result_value, reason = await execute_judge(resolved_expression)
             elif rule.rule_type == "calc":
-                result_value = await execute_calc(resolved_expression, cfg.calc_precision)
+                result_value, reason = await execute_calc(resolved_expression, cfg.calc_precision)
             else:
                 logger.warning("未知规则类型: {}", rule.rule_type)
                 result_value = ""
+                reason = ""
 
             # 保存结果
             stmt = select(AnalysisResult).where(
@@ -176,12 +220,14 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
             if existing:
                 existing.result_value = result_value
                 existing.input_values = input_values
+                existing.reason = reason
             else:
                 analysis_result = AnalysisResult(
                     file_id=file_id,
                     rule_id=rule.rule_id,
                     result_value=result_value,
                     input_values=input_values,
+                    reason=reason,
                 )
                 session.add(analysis_result)
 
@@ -204,12 +250,14 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
             if existing:
                 existing.result_value = ""
                 existing.input_values = input_values
+                existing.reason = ""
             else:
                 analysis_result = AnalysisResult(
                     file_id=file_id,
                     rule_id=rule.rule_id,
                     result_value="",
                     input_values=input_values,
+                    reason="",
                 )
                 session.add(analysis_result)
 

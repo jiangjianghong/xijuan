@@ -116,6 +116,7 @@ class ExtractionResultItem(BaseModel):
     file_id: str
     field_id: str
     extracted_value: str
+    reason: Optional[str] = None
 
 
 class AnalysisResultItem(BaseModel):
@@ -123,6 +124,7 @@ class AnalysisResultItem(BaseModel):
     rule_id: str
     result_value: str
     input_values: Optional[Dict[str, str]] = None
+    reason: Optional[str] = None
 
 
 # ── 调试接口 ────────────────────────────────────────────────
@@ -139,6 +141,7 @@ class ExtractionTestResponse(BaseModel):
     llm_input: str = ""
     llm_output: str = ""
     extracted_value: str = ""
+    reason: str = ""
 
 
 class AnalysisTestRequest(BaseModel):
@@ -152,6 +155,7 @@ class AnalysisTestResponse(BaseModel):
     input_values: Dict[str, str] = {}
     expression_resolved: str = ""
     result_value: str = ""
+    reason: str = ""
 
 
 # ── 向量检索 ────────────────────────────────────────────────

@@ -394,6 +394,7 @@ async def get_extraction_results(file_id: str, db: AsyncSession = Depends(get_db
                 file_id=r.file_id,
                 field_id=r.field_id,
                 extracted_value=r.extracted_value,
+                reason=r.reason,
             ).model_dump()
             for r in extraction_results
         ]
@@ -414,6 +415,7 @@ async def get_analysis_results(file_id: str, db: AsyncSession = Depends(get_db))
                 rule_id=r.rule_id,
                 result_value=r.result_value,
                 input_values=r.input_values,
+                reason=r.reason,
             ).model_dump()
             for r in analysis_results
         ]

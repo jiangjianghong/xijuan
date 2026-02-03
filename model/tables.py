@@ -147,6 +147,7 @@ class ExtractionResult(Base):
     file_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     field_id: Mapped[str] = mapped_column(String(100), primary_key=True)
     extracted_value: Mapped[str] = mapped_column(Text, default="")
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_extraction_result_file_id", "file_id"),
@@ -162,6 +163,7 @@ class AnalysisResult(Base):
     rule_id: Mapped[str] = mapped_column(String(100), primary_key=True)
     result_value: Mapped[str] = mapped_column(String(500), default="")
     input_values: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_analysis_result_file_id", "file_id"),
