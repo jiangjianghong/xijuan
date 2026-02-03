@@ -18,10 +18,10 @@ from model.tables import (
     FileContent,
     FileTable,
 )
-from service.analysis_service import run_analysis
+from service.analysis_service import run_analysis, run_analysis_stream
 from service.chunk_service import chunk_content, save_chunks
 from service.embedding_service import embed_chunks, submit_to_milvus
-from service.extraction_service import run_extraction
+from service.extraction_service import run_extraction, run_extraction_stream
 from service.parse_service import parse_file, parse_tables, save_file_content, save_tables
 from utils.milvus_client import MilvusClient
 
@@ -39,14 +39,17 @@ async def run_pipeline_stream(
     事件类型：
     - parsing: MinerU 解析完成
     - content_saved: MD 存储完成
+    - md_content: MD 文档内容（包含完整 MD 文本）
     - tables_extracted: 表格提取完成
     - chunking: 分块完成
     - chunks_saved: 分块存储完成
     - embedding: 向量化完成
     - milvus_submitted: Milvus 提交完成
     - tasks_loaded: 获取提取/分析任务完成
-    - extraction: 关键词提取完成
-    - analysis: 逻辑分析完成
+    - field_extracted: 单个字段提取完成（每个字段独立发送）
+    - extraction: 全部关键词提取完成
+    - rule_analyzed: 单条规则分析完成（每条规则独立发送）
+    - analysis: 全部逻辑分析完成
     - complete: 全部完成
     - error: 发生错误
     """
@@ -74,6 +77,14 @@ async def run_pipeline_stream(
             "file_id": file_id,
             "stage": "content_saved",
             "message": "MD 内容已存储",
+        })
+
+        # 发送 MD 文档内容事件
+        yield _sse_event("md_content", {
+            "file_id": file_id,
+            "stage": "md_content",
+            "message": "MD 文档内容",
+            "content": content,
         })
 
         # 表格提取
@@ -223,7 +234,21 @@ async def run_pipeline_stream(
         })
 
         try:
-            await run_extraction(file_id, session)
+            # 使用流式版本，每提取完一个字段发送一个事件
+            async for field_result in run_extraction_stream(file_id, session):
+                yield _sse_event("field_extracted", {
+                    "file_id": file_id,
+                    "stage": "field_extracted",
+                    "message": f"字段提取完成: {field_result.get('field_name', '')}",
+                    "field_id": field_result.get("field_id"),
+                    "field_name": field_result.get("field_name"),
+                    "extracted_value": field_result.get("extracted_value"),
+                    "reason": field_result.get("reason"),
+                    "success": field_result.get("success"),
+                    "current": field_result.get("current"),
+                    "total": field_result.get("total"),
+                })
+
             yield _sse_event("extraction", {
                 "file_id": file_id,
                 "stage": "extraction",
@@ -263,7 +288,23 @@ async def run_pipeline_stream(
         await session.commit()
 
         try:
-            await run_analysis(file_id, session)
+            # 使用流式版本，每分析完一条规则发送一个事件
+            async for rule_result in run_analysis_stream(file_id, session):
+                yield _sse_event("rule_analyzed", {
+                    "file_id": file_id,
+                    "stage": "rule_analyzed",
+                    "message": f"规则分析完成: {rule_result.get('rule_name', '')}",
+                    "rule_id": rule_result.get("rule_id"),
+                    "rule_name": rule_result.get("rule_name"),
+                    "rule_type": rule_result.get("rule_type"),
+                    "result_value": rule_result.get("result_value"),
+                    "input_values": rule_result.get("input_values"),
+                    "reason": rule_result.get("reason"),
+                    "success": rule_result.get("success"),
+                    "current": rule_result.get("current"),
+                    "total": rule_result.get("total"),
+                })
+
             yield _sse_event("analysis", {
                 "file_id": file_id,
                 "stage": "analysis",

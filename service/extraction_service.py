@@ -659,3 +659,108 @@ async def run_extraction(file_id: str, session: AsyncSession) -> None:
             await session.commit()
 
     logger.info("字段提取完成: {}", file_id)
+
+
+async def run_extraction_stream(file_id: str, session: AsyncSession):
+    """流式执行文件的完整字段提取流程，每提取完一个字段 yield 一次结果。
+
+    1. 获取所有 enabled=1 的 extraction_field，按 priority 排序
+    2. 对每个字段执行提取，提取完成后立即 yield 结果
+    3. 结果写入 extraction_result 表
+    4. 单字段失败跳过继续
+
+    Args:
+        file_id: 文件 ID。
+        session: 数据库会话。
+
+    Yields:
+        Dict: 每个字段的提取结果，包含 field_id, field_name, extracted_value, reason, success
+    """
+    logger.info("开始流式字段提取: {}", file_id)
+
+    # 获取所有启用的字段配置，按 priority 排序
+    stmt = (
+        select(ExtractionField)
+        .where(ExtractionField.enabled == 1)
+        .order_by(ExtractionField.priority)
+    )
+    result = await session.execute(stmt)
+    fields = result.scalars().all()
+
+    total_fields = len(fields)
+
+    for idx, field in enumerate(fields):
+        try:
+            if field.source_type == "table":
+                extracted_value, reason = await extract_table_field(file_id, field, session)
+            else:
+                extracted_value, reason = await extract_text_field(file_id, field, session)
+
+            # 保存结果
+            stmt = select(ExtractionResult).where(
+                ExtractionResult.file_id == file_id,
+                ExtractionResult.field_id == field.field_id,
+            )
+            existing = (await session.execute(stmt)).scalar_one_or_none()
+
+            if existing:
+                existing.extracted_value = extracted_value
+                existing.reason = reason
+            else:
+                extraction_result = ExtractionResult(
+                    file_id=file_id,
+                    field_id=field.field_id,
+                    extracted_value=extracted_value,
+                    reason=reason,
+                )
+                session.add(extraction_result)
+
+            await session.commit()
+            logger.info("字段提取成功: field_id={}, value={}", field.field_id, extracted_value[:100] if extracted_value else "")
+
+            # yield 提取结果
+            yield {
+                "field_id": field.field_id,
+                "field_name": field.field_name,
+                "extracted_value": extracted_value,
+                "reason": reason,
+                "success": True,
+                "current": idx + 1,
+                "total": total_fields,
+            }
+
+        except Exception as e:
+            logger.error("字段提取失败: field_id={}, error={}", field.field_id, e)
+            # 保存空值
+            stmt = select(ExtractionResult).where(
+                ExtractionResult.file_id == file_id,
+                ExtractionResult.field_id == field.field_id,
+            )
+            existing = (await session.execute(stmt)).scalar_one_or_none()
+
+            if existing:
+                existing.extracted_value = ""
+                existing.reason = ""
+            else:
+                extraction_result = ExtractionResult(
+                    file_id=file_id,
+                    field_id=field.field_id,
+                    extracted_value="",
+                    reason="",
+                )
+                session.add(extraction_result)
+
+            await session.commit()
+
+            # yield 失败结果
+            yield {
+                "field_id": field.field_id,
+                "field_name": field.field_name,
+                "extracted_value": "",
+                "reason": str(e),
+                "success": False,
+                "current": idx + 1,
+                "total": total_fields,
+            }
+
+    logger.info("流式字段提取完成: {}", file_id)

@@ -89,7 +89,18 @@ paths:
             text/event-stream:
               schema:
                 type: string
-                description: SSE 事件流（stream 模式）
+                description: |
+                  SSE 事件流（stream 模式），包含以下事件类型：
+
+                  **基础阶段事件**：parsing_start, parsing, content_saved, md_content, tables_extracted,
+                  chunking_start, chunking, chunks_saving, chunks_saved, embedding_start, embedding,
+                  milvus_submitting, milvus_submitted, tasks_loading, tasks_loaded, extraction_start,
+                  extraction, analysis_start, analysis, complete, error
+
+                  **细粒度事件**（每个字段/规则独立推送）：
+                  - `md_content`: 解析完成后推送完整 MD 文档内容
+                  - `field_extracted`: 每个字段提取完成后推送，包含 field_id, field_name, extracted_value, reason, success, current, total
+                  - `rule_analyzed`: 每条规则分析完成后推送，包含 rule_id, rule_name, rule_type, result_value, input_values, reason, success, current, total
         '400':
           description: 文件大小超过限制
           content:
@@ -779,6 +790,102 @@ components:
               type:
                 type: string
                 description: 错误类型
+
+    # ── SSE 事件数据模型 ────────────────────────────────────────
+    SSEEventBase:
+      type: object
+      description: SSE 事件基础结构
+      required:
+        - file_id
+        - stage
+        - message
+      properties:
+        file_id:
+          type: string
+          description: 文件唯一标识
+        stage:
+          type: string
+          description: 当前阶段
+        message:
+          type: string
+          description: 事件消息
+
+    SSEMdContentEvent:
+      allOf:
+        - $ref: '#/components/schemas/SSEEventBase'
+        - type: object
+          description: MD 文档内容事件
+          properties:
+            content:
+              type: string
+              description: 完整的 Markdown 文档内容
+
+    SSEFieldExtractedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SSEEventBase'
+        - type: object
+          description: 单个字段提取完成事件
+          properties:
+            field_id:
+              type: string
+              description: 字段唯一标识
+            field_name:
+              type: string
+              description: 字段名称
+            extracted_value:
+              type: string
+              description: 提取的值
+            reason:
+              type: string
+              description: 提取理由/依据
+            success:
+              type: boolean
+              description: 是否提取成功
+            current:
+              type: integer
+              description: 当前是第几个字段
+            total:
+              type: integer
+              description: 字段总数
+
+    SSERuleAnalyzedEvent:
+      allOf:
+        - $ref: '#/components/schemas/SSEEventBase'
+        - type: object
+          description: 单条规则分析完成事件
+          properties:
+            rule_id:
+              type: string
+              description: 规则唯一标识
+            rule_name:
+              type: string
+              description: 规则名称
+            rule_type:
+              type: string
+              description: 规则类型（judge/calc）
+              enum:
+                - judge
+                - calc
+            result_value:
+              type: string
+              description: 分析结果值
+            input_values:
+              type: object
+              description: 输入字段值
+              additionalProperties:
+                type: string
+            reason:
+              type: string
+              description: 分析理由/依据
+            success:
+              type: boolean
+              description: 是否分析成功
+            current:
+              type: integer
+              description: 当前是第几条规则
+            total:
+              type: integer
+              description: 规则总数
 
     # ── 枚举类型 ────────────────────────────────────────────────
     SourceTypeEnum:

@@ -288,3 +288,157 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
     await session.commit()
 
     logger.info("逻辑分析完成: {}", file_id)
+
+
+async def run_analysis_stream(file_id: str, session: AsyncSession):
+    """流式执行文件的完整逻辑分析流程，每分析完一条规则 yield 一次结果。
+
+    1. 获取所有 enabled=1 的 analysis_rule，按 priority 排序
+    2. 对每条规则解析占位符、获取依赖字段值、执行 judge/calc
+    3. 每分析完一条规则立即 yield 结果
+    4. 结果写入 analysis_result 表
+    5. 单条规则失败跳过继续
+    6. 完成后更新 files.progress = 'complete'
+
+    Args:
+        file_id: 文件 ID。
+        session: 数据库会话。
+
+    Yields:
+        Dict: 每条规则的分析结果，包含 rule_id, rule_name, rule_type, result_value, reason, success
+    """
+    logger.info("开始流式逻辑分析: {}", file_id)
+
+    cfg = get_config().analysis
+
+    # 获取所有启用的规则，按 priority 排序
+    stmt = (
+        select(AnalysisRule)
+        .where(AnalysisRule.enabled == 1)
+        .order_by(AnalysisRule.priority)
+    )
+    result = await session.execute(stmt)
+    rules = result.scalars().all()
+
+    total_rules = len(rules)
+
+    # 获取该文件的所有提取结果
+    stmt = select(ExtractionResult).where(ExtractionResult.file_id == file_id)
+    result = await session.execute(stmt)
+    extraction_results = result.scalars().all()
+
+    # 构建 field_id -> extracted_value 映射
+    field_values: Dict[str, str] = {
+        er.field_id: er.extracted_value for er in extraction_results
+    }
+
+    for idx, rule in enumerate(rules):
+        try:
+            # 获取依赖字段值
+            depend_fields = rule.depend_fields or []
+            input_values: Dict[str, str] = {}
+            for field_id in depend_fields:
+                input_values[field_id] = field_values.get(field_id, "")
+
+            # 解析表达式
+            resolved_expression = resolve_expression(rule.expression, field_values)
+
+            # 根据规则类型执行
+            if rule.rule_type == "judge":
+                result_value, reason = await execute_judge(resolved_expression)
+            elif rule.rule_type == "calc":
+                result_value, reason = await execute_calc(resolved_expression, cfg.calc_precision)
+            else:
+                logger.warning("未知规则类型: {}", rule.rule_type)
+                result_value = ""
+                reason = ""
+
+            # 保存结果
+            stmt = select(AnalysisResult).where(
+                AnalysisResult.file_id == file_id,
+                AnalysisResult.rule_id == rule.rule_id,
+            )
+            existing = (await session.execute(stmt)).scalar_one_or_none()
+
+            if existing:
+                existing.result_value = result_value
+                existing.input_values = input_values
+                existing.reason = reason
+            else:
+                analysis_result = AnalysisResult(
+                    file_id=file_id,
+                    rule_id=rule.rule_id,
+                    result_value=result_value,
+                    input_values=input_values,
+                    reason=reason,
+                )
+                session.add(analysis_result)
+
+            await session.commit()
+            logger.info("规则分析成功: rule_id={}, result={}", rule.rule_id, result_value)
+
+            # yield 分析结果
+            yield {
+                "rule_id": rule.rule_id,
+                "rule_name": rule.rule_name,
+                "rule_type": rule.rule_type,
+                "result_value": result_value,
+                "input_values": input_values,
+                "reason": reason,
+                "success": True,
+                "current": idx + 1,
+                "total": total_rules,
+            }
+
+        except Exception as e:
+            logger.error("规则分析失败: rule_id={}, error={}", rule.rule_id, e)
+            # 保存空值
+            stmt = select(AnalysisResult).where(
+                AnalysisResult.file_id == file_id,
+                AnalysisResult.rule_id == rule.rule_id,
+            )
+            existing = (await session.execute(stmt)).scalar_one_or_none()
+
+            input_values = {}
+            for field_id in (rule.depend_fields or []):
+                input_values[field_id] = field_values.get(field_id, "")
+
+            if existing:
+                existing.result_value = ""
+                existing.input_values = input_values
+                existing.reason = ""
+            else:
+                analysis_result = AnalysisResult(
+                    file_id=file_id,
+                    rule_id=rule.rule_id,
+                    result_value="",
+                    input_values=input_values,
+                    reason="",
+                )
+                session.add(analysis_result)
+
+            await session.commit()
+
+            # yield 失败结果
+            yield {
+                "rule_id": rule.rule_id,
+                "rule_name": rule.rule_name,
+                "rule_type": rule.rule_type,
+                "result_value": "",
+                "input_values": input_values,
+                "reason": str(e),
+                "success": False,
+                "current": idx + 1,
+                "total": total_rules,
+            }
+
+    # 更新文件状态为 complete
+    stmt = (
+        update(File)
+        .where(File.file_id == file_id)
+        .values(progress="complete")
+    )
+    await session.execute(stmt)
+    await session.commit()
+
+    logger.info("流式逻辑分析完成: {}", file_id)

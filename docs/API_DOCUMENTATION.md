@@ -102,6 +102,53 @@ curl -X POST "http://localhost:5019/file/parse?mode=async" \
 
 返回 `text/event-stream` 格式的 SSE 流，逐步推送处理进度事件。
 
+**SSE 事件类型说明**
+
+| 事件名 | 阶段 | 说明 |
+|--------|------|------|
+| `parsing_start` | 解析 | 开始 MinerU 解析 |
+| `parsing` | 解析 | MinerU 解析完成 |
+| `content_saved` | 解析 | MD 内容已存储 |
+| `md_content` | 解析 | **MD 文档内容**（包含完整 Markdown 文本） |
+| `tables_extracted` | 解析 | 表格提取完成 |
+| `chunking_start` | 分块 | 开始分块 |
+| `chunking` | 分块 | 分块完成 |
+| `chunks_saving` | 分块 | 开始存储分块 |
+| `chunks_saved` | 分块 | 分块已存储到数据库 |
+| `embedding_start` | 向量化 | 开始向量化 |
+| `embedding` | 向量化 | 向量化完成 |
+| `milvus_submitting` | 向量化 | 开始提交向量到 Milvus |
+| `milvus_submitted` | 向量化 | 向量已提交到 Milvus |
+| `tasks_loading` | 提取/分析 | 开始获取提取/分析任务 |
+| `tasks_loaded` | 提取/分析 | 已获取提取/分析任务 |
+| `extraction_start` | 字段提取 | 开始关键词提取 |
+| `field_extracted` | 字段提取 | **单个字段提取完成**（每个字段独立发送） |
+| `extraction` | 字段提取 | 全部关键词提取完成 |
+| `analysis_start` | 逻辑分析 | 开始逻辑分析 |
+| `rule_analyzed` | 逻辑分析 | **单条规则分析完成**（每条规则独立发送） |
+| `analysis` | 逻辑分析 | 全部逻辑分析完成 |
+| `complete` | 完成 | 文件处理完成 |
+| `error` | 错误 | 处理过程中发生错误 |
+
+**SSE 事件数据格式示例**
+
+```
+event: parsing
+data: {"file_id": "abc123", "stage": "parsing", "message": "MinerU 解析完成", "content_length": 5000}
+
+event: md_content
+data: {"file_id": "abc123", "stage": "md_content", "message": "MD 文档内容", "content": "# 1 公司简介\n\n某某公司..."}
+
+event: field_extracted
+data: {"file_id": "abc123", "stage": "field_extracted", "message": "字段提取完成: 公司名称", "field_id": "company_name", "field_name": "公司名称", "extracted_value": "某某科技有限公司", "reason": "从第一段提取", "success": true, "current": 1, "total": 5}
+
+event: rule_analyzed
+data: {"file_id": "abc123", "stage": "rule_analyzed", "message": "规则分析完成: 是否盈利", "rule_id": "is_profitable", "rule_name": "是否盈利", "rule_type": "judge", "result_value": "true", "input_values": {"net_profit": "5000000"}, "reason": "净利润大于0", "success": true, "current": 1, "total": 3}
+
+event: complete
+data: {"file_id": "abc123", "stage": "complete", "message": "文件处理完成"}
+```
+
 **特殊逻辑说明**
 
 | 文件状态 | 行为 |
