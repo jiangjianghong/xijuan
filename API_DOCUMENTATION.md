@@ -587,11 +587,11 @@ curl "http://localhost:5019/extraction/fields"
   "priority": 1,
   "table_name_pattern": "利润表",
   "table_match_type": "fuzzy",
-  "table_extract_prompt": "请从表格中提取营业总收入金额，仅返回数值"
+  "table_extract_prompt": "检索到的表格如下：\n<search_result>利润表</search_result>\n\n请从表格中提取营业总收入金额，仅返回数值。"
 }
 ```
 
-**请求示例（文本类字段）**
+**请求示例（文本类字段 - 单关键词）**
 
 ```json
 {
@@ -600,10 +600,41 @@ curl "http://localhost:5019/extraction/fields"
   "source_type": "text",
   "priority": 0,
   "search_type": "context",
-  "search_config": {"keyword": "公司"},
-  "text_extract_prompt": "请从以下文本中提取公司全称"
+  "search_config": {
+    "keywords": ["公司名称"],
+    "context_before": 100,
+    "context_after": 200
+  },
+  "text_extract_prompt": "从以下内容中提取公司全称：\n<search_result>公司名称</search_result>\n\n请返回完整的公司名称。"
 }
 ```
+
+**请求示例（文本类字段 - 多关键词）**
+
+```json
+{
+  "field_id": "company_info",
+  "field_name": "公司基本信息",
+  "source_type": "text",
+  "priority": 0,
+  "search_type": "context",
+  "search_config": {
+    "keywords": ["公司名称", "注册地址", "法定代表人"],
+    "context_before": 100,
+    "context_after": 200
+  },
+  "text_extract_prompt": "请从以下内容中提取公司信息：\n\n关于公司名称的内容：\n<search_result>公司名称</search_result>\n\n关于注册地址的内容：\n<search_result>注册地址</search_result>\n\n关于法定代表人的内容：\n<search_result>法定代表人</search_result>\n\n请提取：1.公司全称 2.详细地址 3.法人姓名"
+}
+```
+
+**占位符说明**
+
+| 占位符格式 | 说明 |
+|-----------|------|
+| `<search_result>标签</search_result>` | 搜索结果占位符，标签不可为空 |
+| 文本类字段标签 | 使用 search_config.keywords 中的关键词 |
+| 表格类字段标签 | 使用 table_name_pattern 匹配的表格名称 |
+| 无匹配结果时 | 替换为 `（未找到 '标签' 的相关内容）` |
 
 **响应示例（新增）**
 

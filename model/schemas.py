@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── 通用响应包装 ────────────────────────────────────────────
@@ -81,6 +82,22 @@ class ExtractionFieldCreate(BaseModel):
     search_type: Optional[SearchTypeEnum] = None
     search_config: Optional[Dict[str, Any]] = None
     text_extract_prompt: Optional[str] = None
+
+    @field_validator("text_extract_prompt")
+    @classmethod
+    def validate_text_prompt(cls, v, info):
+        if info.data.get("source_type") == SourceTypeEnum.text and v:
+            if not re.search(r"<search_result>.+?</search_result>", v):
+                raise ValueError("text_extract_prompt 必须包含至少一个 <search_result>标签</search_result> 占位符")
+        return v
+
+    @field_validator("table_extract_prompt")
+    @classmethod
+    def validate_table_prompt(cls, v, info):
+        if info.data.get("source_type") == SourceTypeEnum.table and v:
+            if not re.search(r"<search_result>.+?</search_result>", v):
+                raise ValueError("table_extract_prompt 必须包含至少一个 <search_result>标签</search_result> 占位符")
+        return v
 
 
 class ExtractionFieldResponse(ExtractionFieldCreate):

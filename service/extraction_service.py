@@ -60,6 +60,41 @@ def parse_llm_json_response(response: str) -> Tuple[str, str]:
     return response.strip(), ""
 
 
+# ── 搜索结果占位符处理 ────────────────────────────────────────
+
+
+def replace_search_result_placeholders(
+    prompt_template: str,
+    results_by_label: Dict[str, str],
+    no_result_hint: str = "（未找到 '{}' 的相关内容）"
+) -> str:
+    """替换 prompt 中的 <search_result>标签</search_result> 占位符。
+
+    Args:
+        prompt_template: 包含占位符的提示词模板
+        results_by_label: {标签: 搜索结果文本} 字典
+        no_result_hint: 无结果时的提示模板，{} 会被替换为标签名
+
+    Returns:
+        替换后的提示词
+    """
+    pattern = r"<search_result>(.+?)</search_result>"
+
+    def replacer(match):
+        label = match.group(1).strip()
+        if label in results_by_label and results_by_label[label]:
+            return results_by_label[label]
+        return no_result_hint.format(label)
+
+    return re.sub(pattern, replacer, prompt_template)
+
+
+def validate_prompt_has_placeholder(prompt: str) -> bool:
+    """校验 prompt 中是否包含至少一个有效占位符。"""
+    pattern = r"<search_result>.+?</search_result>"
+    return bool(re.search(pattern, prompt))
+
+
 # ── 章节解析 ────────────────────────────────────────────────
 
 @dataclass
@@ -440,26 +475,32 @@ async def extract_table_field(
     if not matched_tables:
         return "", ""
 
-    # 设计文档要求：逐个表格发送给 LLM 提取，取第一个返回非空结果的值
-    prompt_template = field.table_extract_prompt or "从以下表格中提取信息：\n<search_result>\n请提取相关字段值。"
-
+    # 构建按表名分组的结果
+    results_text_by_label: Dict[str, str] = {}
     for table in matched_tables:
-        search_result_text = f"表格名称: {table.table_name}\n{table.table_content}"
-        llm_input = prompt_template.replace("<search_result>", search_result_text)
-        llm_input += JSON_OUTPUT_INSTRUCTION
+        table_name = table.table_name or f"表格{table.table_index}"
+        content = f"表格名称: {table_name}\n{table.table_content}"
+        if table_name in results_text_by_label:
+            results_text_by_label[table_name] += "\n---\n" + content
+        else:
+            results_text_by_label[table_name] = content
 
-        try:
-            response = await chat_completion(llm_input)
-            extracted_value, reason = parse_llm_json_response(response)
-            # 如果返回非空结果，立即返回
-            if extracted_value:
-                return extracted_value, reason
-        except Exception as e:
-            logger.warning("LLM 表格提取失败 (table={}): {}", table.table_name, e)
-            continue
+    # 构建 LLM 输入
+    prompt_template = field.table_extract_prompt or ""
+    if not validate_prompt_has_placeholder(prompt_template):
+        logger.warning("字段 {} 的 table_extract_prompt 缺少占位符", field.field_id)
+        return "", ""
 
-    # 所有表格都没有提取到非空结果
-    return "", ""
+    llm_input = replace_search_result_placeholders(prompt_template, results_text_by_label)
+    llm_input += JSON_OUTPUT_INSTRUCTION
+
+    # 调用 LLM 提取
+    try:
+        response = await chat_completion(llm_input)
+        return parse_llm_json_response(response)
+    except Exception as e:
+        logger.error("LLM 表格提取失败: {}", e)
+        return "", ""
 
 
 async def extract_text_field(
@@ -503,21 +544,34 @@ async def extract_text_field(
     if not search_results:
         return "", ""
 
-    # 拼接检索结果
-    if search_type == "context":
-        results_text = "\n---\n".join([r["context"] for r in search_results])
-    elif search_type == "section":
-        results_text = "\n---\n".join([r["content"] for r in search_results])
-    elif search_type == "rule":
-        results_text = "\n---\n".join([r["extracted_text"] for r in search_results])
-    elif search_type in ("chunk_db", "vector_db"):
-        results_text = "\n---\n".join([r["chunk_content"] for r in search_results])
-    else:
-        results_text = str(search_results)
+    # 按关键词分组搜索结果
+    results_by_keyword: Dict[str, List[Dict]] = {}
+    for r in search_results:
+        kw = r.get("keyword", "")
+        if kw:
+            if kw not in results_by_keyword:
+                results_by_keyword[kw] = []
+            results_by_keyword[kw].append(r)
+
+    # 将分组结果转换为文本
+    results_text_by_label: Dict[str, str] = {}
+    for keyword, items in results_by_keyword.items():
+        if search_type == "context":
+            results_text_by_label[keyword] = "\n---\n".join([r["context"] for r in items])
+        elif search_type == "section":
+            results_text_by_label[keyword] = "\n---\n".join([r["content"] for r in items])
+        elif search_type == "rule":
+            results_text_by_label[keyword] = "\n---\n".join([r["extracted_text"] for r in items])
+        elif search_type in ("chunk_db", "vector_db"):
+            results_text_by_label[keyword] = "\n---\n".join([r["chunk_content"] for r in items])
 
     # 构建 LLM 输入
-    prompt_template = field.text_extract_prompt or "从以下内容中提取信息：\n<search_result>\n请提取相关字段值。"
-    llm_input = prompt_template.replace("<search_result>", results_text)
+    prompt_template = field.text_extract_prompt or ""
+    if not validate_prompt_has_placeholder(prompt_template):
+        logger.warning("字段 {} 的 text_extract_prompt 缺少占位符", field.field_id)
+        return "", ""
+
+    llm_input = replace_search_result_placeholders(prompt_template, results_text_by_label)
     llm_input += JSON_OUTPUT_INSTRUCTION
 
     # 调用 LLM 提取
