@@ -15,6 +15,20 @@ NC='\033[0m' # No Color
 PROJECT_NAME="wanz-prase2-001"
 MYSQL_CONTAINER="wanz-prase2-mysql"
 COMPOSE_FILE="docker-compose.yaml"
+DOCKER_COMPOSE=""
+
+# 检测 docker compose 命令
+detect_compose_command() {
+    if docker compose version > /dev/null 2>&1; then
+        DOCKER_COMPOSE="docker compose"
+    elif command -v docker-compose > /dev/null 2>&1; then
+        DOCKER_COMPOSE="docker-compose"
+    else
+        log_error "未找到 docker compose 或 docker-compose 命令"
+        exit 1
+    fi
+    log_info "使用命令: $DOCKER_COMPOSE"
+}
 
 # 日志函数
 log_info() {
@@ -117,9 +131,9 @@ build_image() {
 
     if [ "$no_cache" = "true" ]; then
         log_info "使用 --no-cache 模式构建"
-        docker-compose -f "$COMPOSE_FILE" build --no-cache
+        $DOCKER_COMPOSE -f "$COMPOSE_FILE" build --no-cache
     else
-        docker-compose -f "$COMPOSE_FILE" build
+        $DOCKER_COMPOSE -f "$COMPOSE_FILE" build
     fi
 
     log_info "镜像构建完成"
@@ -132,10 +146,10 @@ start_container() {
     # 检查 MySQL 是否已在运行
     if docker ps --format '{{.Names}}' | grep -q "^${MYSQL_CONTAINER}$"; then
         log_info "MySQL 已在运行，仅启动应用容器..."
-        docker-compose -f "$COMPOSE_FILE" up -d --no-deps wanz-prase2
+        $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d --no-deps wanz-prase2
     else
         log_info "启动所有容器（MySQL + 应用）..."
-        docker-compose -f "$COMPOSE_FILE" up -d
+        $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d
     fi
 
     # 等待容器启动
@@ -163,7 +177,7 @@ start_container() {
 show_status() {
     echo ""
     log_info "容器状态:"
-    docker-compose -f "$COMPOSE_FILE" ps
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" ps
 }
 
 # 主函数
@@ -200,6 +214,7 @@ main() {
 
     # 执行部署流程
     check_docker
+    detect_compose_command
     check_compose_file
     check_config
     stop_existing_container

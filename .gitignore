@@ -17,6 +17,9 @@ env/
 .env
 .env.*
 
+# Config (contains sensitive data)
+configs/config.yaml
+
 # IDE
 .idea/
 .vscode/
