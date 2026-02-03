@@ -1,0 +1,1299 @@
+openapi: 3.0.3
+info:
+  title: 文档解析与逻辑分析系统 API
+  description: |
+    文档解析与逻辑分析系统提供完整的文档处理能力，包括：
+    - **文件处理**: 上传、解析、分块、向量化、字段提取、逻辑分析
+    - **字段提取配置**: 配置从文档中提取特定字段的规则
+    - **逻辑分析配置**: 配置基于提取字段进行逻辑判断或计算的规则
+    - **向量检索**: 基于向量相似度的文档内容检索
+  version: 0.1.0
+  contact:
+    name: API Support
+
+servers:
+  - url: http://localhost:5019
+    description: 本地开发服务器
+
+tags:
+  - name: file
+    description: 文件处理相关接口
+  - name: extraction
+    description: 字段提取配置相关接口
+  - name: analysis
+    description: 逻辑分析配置相关接口
+  - name: search
+    description: 向量检索相关接口
+
+paths:
+  # ══════════════════════════════════════════════════════════════
+  # 文件处理模块
+  # ══════════════════════════════════════════════════════════════
+  /file/parse:
+    post:
+      tags:
+        - file
+      summary: 提交文件解析
+      description: |
+        上传文件并提交解析处理，支持三种处理模式：
+        - `sync`: 同步模式，等待处理完成后返回
+        - `async`: 异步模式，立即返回 file_id，后台处理
+        - `stream`: 流式模式，通过 SSE 实时推送处理进度
+
+        处理流程：parsing → chunking → embedding → extracting → analyzing → complete
+      operationId: parseFile
+      parameters:
+        - name: mode
+          in: query
+          description: 处理模式
+          required: false
+          schema:
+            type: string
+            enum:
+              - sync
+              - async
+              - stream
+            default: async
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 要解析的文件（支持 PDF 等格式）
+      responses:
+        '200':
+          description: 处理成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          file_id:
+                            type: string
+                            description: 文件唯一标识
+                          progress:
+                            type: string
+                            description: 处理进度（仅在文件已存在时返回）
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE 事件流（stream 模式）
+        '400':
+          description: 文件大小超过限制
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseWrapper'
+        '409':
+          description: 文件正在处理中
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /file/{file_id}/status:
+    get:
+      tags:
+        - file
+      summary: 查询文件处理进度
+      description: 获取指定文件的处理状态和详细信息
+      operationId: getFileStatus
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/FileStatusResponse'
+        '404':
+          description: 文件不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /file/{file_id}:
+    delete:
+      tags:
+        - file
+      summary: 删除文件
+      description: 删除文件及所有关联数据（包括分块、表格、提取结果、分析结果、向量数据）
+      operationId: deleteFile
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseWrapper'
+        '404':
+          description: 文件不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /file/{file_id}/retry/{stage}:
+    post:
+      tags:
+        - file
+      summary: 从指定阶段重试
+      description: 从指定的处理阶段重新开始处理文件
+      operationId: retryFileFromStage
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+        - name: stage
+          in: path
+          required: true
+          description: 重试的起始阶段
+          schema:
+            type: string
+            enum:
+              - chunking
+              - embedding
+              - extracting
+              - analyzing
+      responses:
+        '200':
+          description: 重试已开始
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseWrapper'
+        '400':
+          description: 无效的阶段参数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 文件不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /file/{file_id}/retry/extracting:
+    post:
+      tags:
+        - file
+      summary: 重试字段提取
+      description: 重新执行字段提取阶段
+      operationId: retryExtracting
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: 重试已开始
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseWrapper'
+        '404':
+          description: 文件不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /file/{file_id}/retry/analyzing:
+    post:
+      tags:
+        - file
+      summary: 重试逻辑分析
+      description: 重新执行逻辑分析阶段
+      operationId: retryAnalyzing
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: 重试已开始
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseWrapper'
+        '404':
+          description: 文件不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /file/{file_id}/tables:
+    get:
+      tags:
+        - file
+      summary: 获取文件表格列表
+      description: 获取从文件中解析出的所有表格
+      operationId: getFileTables
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FileTableItem'
+
+  /file/{file_id}/chunks:
+    get:
+      tags:
+        - file
+      summary: 获取文件分块列表
+      description: 获取文件的所有文本分块
+      operationId: getFileChunks
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FileChunkItem'
+
+  /file/{file_id}/extraction:
+    get:
+      tags:
+        - file
+      summary: 获取字段提取结果
+      description: 获取文件的所有字段提取结果
+      operationId: getExtractionResults
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ExtractionResultItem'
+
+  /file/{file_id}/analysis:
+    get:
+      tags:
+        - file
+      summary: 获取逻辑分析结果
+      description: 获取文件的所有逻辑分析结果
+      operationId: getAnalysisResults
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AnalysisResultItem'
+
+  # ══════════════════════════════════════════════════════════════
+  # 字段提取配置模块
+  # ══════════════════════════════════════════════════════════════
+  /extraction/fields:
+    get:
+      tags:
+        - extraction
+      summary: 获取字段提取配置列表
+      description: 获取所有已启用的字段提取配置，按优先级排序
+      operationId: listExtractionFields
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ExtractionFieldResponse'
+
+    post:
+      tags:
+        - extraction
+      summary: 新增/更新字段提取配置
+      description: |
+        根据 field_id 判断执行新增或更新操作（upsert）。
+
+        **表格类字段** (source_type=table):
+        - 需要配置 table_name_pattern、table_match_type、table_extract_prompt
+
+        **文本类字段** (source_type=text):
+        - 需要配置 search_type、search_config、text_extract_prompt
+
+        **Prompt 占位符要求**:
+        - table_extract_prompt 和 text_extract_prompt 必须包含 `<search_result>...</search_result>` 占位符
+      operationId: upsertExtractionField
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtractionFieldCreate'
+      responses:
+        '200':
+          description: 操作成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          field_id:
+                            type: string
+        '422':
+          description: 验证失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+
+  /extraction/fields/{field_id}:
+    delete:
+      tags:
+        - extraction
+      summary: 删除字段配置
+      description: 软删除字段提取配置（设置 enabled=0）
+      operationId: deleteExtractionField
+      parameters:
+        - $ref: '#/components/parameters/FieldIdPath'
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseWrapper'
+        '404':
+          description: 字段配置不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /extraction/fields/{field_id}/check:
+    get:
+      tags:
+        - extraction
+      summary: 检查字段ID是否存在
+      description: 检查指定的 field_id 是否已被使用
+      operationId: checkExtractionFieldExists
+      parameters:
+        - $ref: '#/components/parameters/FieldIdPath'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          exists:
+                            type: boolean
+                            description: 是否存在
+
+  /extraction/test:
+    post:
+      tags:
+        - extraction
+      summary: 字段提取调试
+      description: |
+        调试字段提取功能，支持两种模式：
+        - **模式 1**: 提供 field_id + file_id，使用已保存的字段配置
+        - **模式 2**: 提供 config + file_id，使用临时配置进行测试
+      operationId: testExtraction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtractionTestRequest'
+      responses:
+        '200':
+          description: 测试成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ExtractionTestResponse'
+        '400':
+          description: 必须提供 field_id 或 config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 字段配置或文件内容不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 提取测试失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ══════════════════════════════════════════════════════════════
+  # 逻辑分析配置模块
+  # ══════════════════════════════════════════════════════════════
+  /analysis/rules:
+    get:
+      tags:
+        - analysis
+      summary: 获取逻辑分析配置列表
+      description: 获取所有已启用的逻辑分析规则配置，按优先级排序
+      operationId: listAnalysisRules
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AnalysisRuleResponse'
+
+    post:
+      tags:
+        - analysis
+      summary: 新增/更新逻辑分析配置
+      description: |
+        根据 rule_id 判断执行新增或更新操作（upsert）。
+
+        **规则类型**:
+        - `judge`: 判断类规则，使用 LLM 进行逻辑判断
+        - `calc`: 计算类规则，执行数值计算
+
+        **Expression 占位符要求**:
+        - expression 必须包含 `<field_result>...</field_result>` 占位符，用于引用字段提取结果
+      operationId: upsertAnalysisRule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisRuleCreate'
+      responses:
+        '200':
+          description: 操作成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          rule_id:
+                            type: string
+        '422':
+          description: 验证失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+
+  /analysis/rules/{rule_id}:
+    delete:
+      tags:
+        - analysis
+      summary: 删除规则配置
+      description: 软删除逻辑分析规则配置（设置 enabled=0）
+      operationId: deleteAnalysisRule
+      parameters:
+        - $ref: '#/components/parameters/RuleIdPath'
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseWrapper'
+        '404':
+          description: 规则配置不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /analysis/rules/{rule_id}/check:
+    get:
+      tags:
+        - analysis
+      summary: 检查规则ID是否存在
+      description: 检查指定的 rule_id 是否已被使用
+      operationId: checkAnalysisRuleExists
+      parameters:
+        - $ref: '#/components/parameters/RuleIdPath'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          exists:
+                            type: boolean
+                            description: 是否存在
+
+  /analysis/test:
+    post:
+      tags:
+        - analysis
+      summary: 逻辑分析调试
+      description: |
+        调试逻辑分析功能，支持两种模式：
+        - **模式 1**: 提供 rule_id + file_id，使用已保存的规则配置
+        - **模式 2**: 提供 config + file_id，使用临时配置进行测试
+      operationId: testAnalysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisTestRequest'
+      responses:
+        '200':
+          description: 测试成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AnalysisTestResponse'
+        '400':
+          description: 必须提供 rule_id 或 config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 规则配置不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 分析测试失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ══════════════════════════════════════════════════════════════
+  # 向量检索模块
+  # ══════════════════════════════════════════════════════════════
+  /search:
+    post:
+      tags:
+        - search
+      summary: 向量相似度检索
+      description: 基于向量相似度在文档分块中进行语义检索
+      operationId: vectorSearch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: 检索成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SearchResultItem'
+
+components:
+  # ══════════════════════════════════════════════════════════════
+  # 参数定义
+  # ══════════════════════════════════════════════════════════════
+  parameters:
+    FileIdPath:
+      name: file_id
+      in: path
+      required: true
+      description: 文件唯一标识
+      schema:
+        type: string
+
+    FieldIdPath:
+      name: field_id
+      in: path
+      required: true
+      description: 字段配置唯一标识
+      schema:
+        type: string
+        pattern: '^[a-zA-Z0-9_]+$'
+
+    RuleIdPath:
+      name: rule_id
+      in: path
+      required: true
+      description: 规则配置唯一标识
+      schema:
+        type: string
+        pattern: '^[a-zA-Z0-9_]+$'
+
+  # ══════════════════════════════════════════════════════════════
+  # 数据模型定义
+  # ══════════════════════════════════════════════════════════════
+  schemas:
+    # ── 通用响应 ────────────────────────────────────────────────
+    ResponseWrapper:
+      type: object
+      description: 通用响应包装
+      properties:
+        code:
+          type: integer
+          description: 响应码，200 表示成功
+          default: 200
+          example: 200
+        message:
+          type: string
+          description: 响应消息
+          default: success
+          example: success
+        data:
+          description: 响应数据
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      description: 错误响应
+      properties:
+        detail:
+          type: string
+          description: 错误详情
+
+    ValidationErrorResponse:
+      type: object
+      description: 验证错误响应
+      properties:
+        detail:
+          type: array
+          items:
+            type: object
+            properties:
+              loc:
+                type: array
+                items:
+                  oneOf:
+                    - type: string
+                    - type: integer
+                description: 错误位置
+              msg:
+                type: string
+                description: 错误消息
+              type:
+                type: string
+                description: 错误类型
+
+    # ── 枚举类型 ────────────────────────────────────────────────
+    SourceTypeEnum:
+      type: string
+      description: 数据源类型
+      enum:
+        - table
+        - text
+
+    TableMatchTypeEnum:
+      type: string
+      description: 表格匹配类型
+      enum:
+        - exact
+        - fuzzy
+        - contains
+        - llm
+
+    SearchTypeEnum:
+      type: string
+      description: 文本检索类型
+      enum:
+        - context
+        - section
+        - rule
+        - chunk_db
+        - vector_db
+
+    RuleTypeEnum:
+      type: string
+      description: 规则类型
+      enum:
+        - judge
+        - calc
+
+    # ── 文件模块 ────────────────────────────────────────────────
+    FileStatusResponse:
+      type: object
+      description: 文件状态响应
+      required:
+        - file_id
+        - file_name
+        - file_size
+        - progress
+      properties:
+        file_id:
+          type: string
+          description: 文件唯一标识
+          example: abc123def456
+        file_name:
+          type: string
+          description: 文件名
+          example: document.pdf
+        file_size:
+          type: integer
+          description: 文件大小（字节）
+          example: 1048576
+        progress:
+          type: string
+          description: |
+            处理进度状态：
+            - parsing: 正在解析
+            - parsing_failed: 解析失败
+            - chunking: 正在分块
+            - chunking_failed: 分块失败
+            - embedding: 正在向量化
+            - embedding_failed: 向量化失败
+            - extracting: 正在提取字段
+            - extracting_failed: 字段提取失败
+            - analyzing: 正在逻辑分析
+            - analyzing_failed: 逻辑分析失败
+            - complete: 处理完成
+          example: complete
+        error:
+          type: string
+          description: 错误信息（仅在失败时返回）
+          nullable: true
+        create_time:
+          type: string
+          format: date-time
+          description: 创建时间
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          description: 更新时间
+          nullable: true
+
+    FileTableItem:
+      type: object
+      description: 文件表格项
+      required:
+        - file_id
+        - table_index
+        - total_table
+        - table_name
+        - table_content
+      properties:
+        file_id:
+          type: string
+          description: 文件唯一标识
+        table_index:
+          type: integer
+          description: 表格索引（从 0 开始）
+          example: 0
+        total_table:
+          type: integer
+          description: 表格总数
+          example: 5
+        table_name:
+          type: string
+          description: 表格名称
+          example: 财务数据表
+        table_content:
+          type: string
+          description: 表格内容（Markdown 格式）
+          example: |
+            | 项目 | 金额 |
+            |------|------|
+            | 收入 | 1000 |
+
+    FileChunkItem:
+      type: object
+      description: 文件分块项
+      required:
+        - file_id
+        - chunk_id
+        - chunk_index
+        - total_chunks
+        - chunk_content
+      properties:
+        file_id:
+          type: string
+          description: 文件唯一标识
+        chunk_id:
+          type: string
+          description: 分块唯一标识
+        chunk_index:
+          type: integer
+          description: 分块索引（从 0 开始）
+          example: 0
+        total_chunks:
+          type: integer
+          description: 分块总数
+          example: 20
+        chunk_content:
+          type: string
+          description: 分块内容
+          example: 这是文档的第一个分块内容...
+
+    # ── 字段提取模块 ────────────────────────────────────────────
+    ExtractionFieldCreate:
+      type: object
+      description: 字段提取配置（创建/更新）
+      required:
+        - field_id
+        - field_name
+        - source_type
+      properties:
+        field_id:
+          type: string
+          description: 字段唯一标识（仅允许字母、数字、下划线）
+          pattern: '^[a-zA-Z0-9_]+$'
+          maxLength: 100
+          example: total_revenue
+        field_name:
+          type: string
+          description: 字段显示名称
+          maxLength: 200
+          example: 总收入
+        source_type:
+          $ref: '#/components/schemas/SourceTypeEnum'
+        enabled:
+          type: integer
+          description: 是否启用（1=启用，0=禁用）
+          default: 1
+          enum:
+            - 0
+            - 1
+        priority:
+          type: integer
+          description: 优先级（数值越小优先级越高）
+          default: 0
+        table_name_pattern:
+          type: string
+          description: 表格名称匹配模式（source_type=table 时使用）
+          nullable: true
+          example: 财务.*表
+        table_match_type:
+          $ref: '#/components/schemas/TableMatchTypeEnum'
+        table_extract_prompt:
+          type: string
+          description: |
+            表格提取 Prompt（source_type=table 时使用）
+            必须包含 `<search_result>...</search_result>` 占位符
+          nullable: true
+          example: |
+            请从以下表格中提取总收入：
+            <search_result>财务数据</search_result>
+        search_type:
+          $ref: '#/components/schemas/SearchTypeEnum'
+        search_config:
+          type: object
+          description: 检索配置（source_type=text 时使用）
+          nullable: true
+          additionalProperties: true
+          example:
+            keywords:
+              - 收入
+              - 营收
+            top_k: 5
+        text_extract_prompt:
+          type: string
+          description: |
+            文本提取 Prompt（source_type=text 时使用）
+            必须包含 `<search_result>...</search_result>` 占位符
+          nullable: true
+          example: |
+            请从以下文本中提取总收入：
+            <search_result>相关文本</search_result>
+
+    ExtractionFieldResponse:
+      allOf:
+        - $ref: '#/components/schemas/ExtractionFieldCreate'
+        - type: object
+          description: 字段提取配置响应
+          properties:
+            created_at:
+              type: string
+              format: date-time
+              description: 创建时间
+              nullable: true
+            updated_at:
+              type: string
+              format: date-time
+              description: 更新时间
+              nullable: true
+
+    ExtractionTestRequest:
+      type: object
+      description: 字段提取调试请求
+      required:
+        - file_id
+      properties:
+        file_id:
+          type: string
+          description: 要测试的文件 ID
+        field_id:
+          type: string
+          description: 使用已保存配置的字段 ID（模式 1）
+          nullable: true
+        config:
+          type: object
+          description: 临时配置（模式 2）
+          nullable: true
+          additionalProperties: true
+          example:
+            field_name: 测试字段
+            source_type: text
+            search_type: context
+            search_config:
+              keywords:
+                - 关键词
+            text_extract_prompt: |
+              请提取：
+              <search_result>内容</search_result>
+
+    ExtractionTestResponse:
+      type: object
+      description: 字段提取调试响应
+      properties:
+        search_results:
+          type: array
+          description: 检索结果
+          items:
+            type: object
+            additionalProperties: true
+          default: []
+        llm_input:
+          type: string
+          description: LLM 输入（Prompt）
+          default: ""
+        llm_output:
+          type: string
+          description: LLM 原始输出
+          default: ""
+        extracted_value:
+          type: string
+          description: 提取的字段值
+          default: ""
+        reason:
+          type: string
+          description: 提取理由/说明
+          default: ""
+
+    ExtractionResultItem:
+      type: object
+      description: 字段提取结果项
+      required:
+        - file_id
+        - field_id
+        - extracted_value
+      properties:
+        file_id:
+          type: string
+          description: 文件唯一标识
+        field_id:
+          type: string
+          description: 字段唯一标识
+        extracted_value:
+          type: string
+          description: 提取的字段值
+        reason:
+          type: string
+          description: 提取理由/说明
+          nullable: true
+
+    # ── 逻辑分析模块 ────────────────────────────────────────────
+    AnalysisRuleCreate:
+      type: object
+      description: 逻辑分析规则配置（创建/更新）
+      required:
+        - rule_id
+        - rule_name
+        - rule_type
+        - expression
+      properties:
+        rule_id:
+          type: string
+          description: 规则唯一标识（仅允许字母、数字、下划线）
+          pattern: '^[a-zA-Z0-9_]+$'
+          maxLength: 100
+          example: profit_check
+        rule_name:
+          type: string
+          description: 规则显示名称
+          maxLength: 200
+          example: 利润检查
+        rule_type:
+          $ref: '#/components/schemas/RuleTypeEnum'
+        expression:
+          type: string
+          description: |
+            规则表达式，必须包含 `<field_result>...</field_result>` 占位符引用字段值
+            - judge 类型：使用自然语言描述判断条件
+            - calc 类型：使用数学表达式
+          example: |
+            判断 <field_result>total_revenue</field_result> 是否大于 <field_result>total_cost</field_result>
+        depend_fields:
+          type: array
+          description: 依赖的字段 ID 列表
+          items:
+            type: string
+          nullable: true
+          example:
+            - total_revenue
+            - total_cost
+        enabled:
+          type: integer
+          description: 是否启用（1=启用，0=禁用）
+          default: 1
+          enum:
+            - 0
+            - 1
+        priority:
+          type: integer
+          description: 优先级（数值越小优先级越高）
+          default: 0
+
+    AnalysisRuleResponse:
+      allOf:
+        - $ref: '#/components/schemas/AnalysisRuleCreate'
+        - type: object
+          description: 逻辑分析规则配置响应
+          properties:
+            created_at:
+              type: string
+              format: date-time
+              description: 创建时间
+              nullable: true
+            updated_at:
+              type: string
+              format: date-time
+              description: 更新时间
+              nullable: true
+
+    AnalysisTestRequest:
+      type: object
+      description: 逻辑分析调试请求
+      required:
+        - file_id
+      properties:
+        file_id:
+          type: string
+          description: 要测试的文件 ID
+        rule_id:
+          type: string
+          description: 使用已保存配置的规则 ID（模式 1）
+          nullable: true
+        config:
+          type: object
+          description: 临时配置（模式 2）
+          nullable: true
+          additionalProperties: true
+          example:
+            rule_type: judge
+            expression: |
+              判断 <field_result>revenue</field_result> 是否为正数
+            depend_fields:
+              - revenue
+
+    AnalysisTestResponse:
+      type: object
+      description: 逻辑分析调试响应
+      properties:
+        input_values:
+          type: object
+          description: 依赖字段的输入值
+          additionalProperties:
+            type: string
+          default: {}
+        expression_resolved:
+          type: string
+          description: 占位符替换后的表达式
+          default: ""
+        result_value:
+          type: string
+          description: 分析结果值
+          default: ""
+        reason:
+          type: string
+          description: 分析理由/说明
+          default: ""
+
+    AnalysisResultItem:
+      type: object
+      description: 逻辑分析结果项
+      required:
+        - file_id
+        - rule_id
+        - result_value
+      properties:
+        file_id:
+          type: string
+          description: 文件唯一标识
+        rule_id:
+          type: string
+          description: 规则唯一标识
+        result_value:
+          type: string
+          description: 分析结果值
+        input_values:
+          type: object
+          description: 依赖字段的输入值
+          additionalProperties:
+            type: string
+          nullable: true
+        reason:
+          type: string
+          description: 分析理由/说明
+          nullable: true
+
+    # ── 向量检索模块 ────────────────────────────────────────────
+    SearchRequest:
+      type: object
+      description: 向量检索请求
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          description: 检索查询文本
+          example: 公司的总收入是多少？
+        file_id:
+          type: string
+          description: 限定检索的文件 ID（可选）
+          nullable: true
+        top_k:
+          type: integer
+          description: 返回结果数量
+          default: 10
+          minimum: 1
+          maximum: 100
+        score_threshold:
+          type: number
+          format: float
+          description: 相似度分数阈值（可选，低于此分数的结果将被过滤）
+          nullable: true
+          minimum: 0
+          maximum: 1
+
+    SearchResultItem:
+      type: object
+      description: 向量检索结果项
+      required:
+        - chunk_id
+        - file_id
+        - chunk_index
+        - chunk_content
+        - score
+      properties:
+        chunk_id:
+          type: string
+          description: 分块唯一标识
+        file_id:
+          type: string
+          description: 文件唯一标识
+        chunk_index:
+          type: integer
+          description: 分块索引
+        chunk_content:
+          type: string
+          description: 分块内容
+        score:
+          type: number
+          format: float
+          description: 相似度分数（0-1，越高越相似）
+          example: 0.85
