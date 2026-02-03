@@ -48,6 +48,68 @@ def validate_expression_has_placeholder(expression: str) -> bool:
     return bool(re.search(pattern, expression))
 
 
+def validate_field_values(
+    rule_type: str,
+    depend_fields: List[str],
+    field_values: Dict[str, str],
+) -> Tuple[bool, str]:
+    """校验依赖字段值是否有效。
+
+    校验规则：只要有至少一个依赖字段有有效值即通过校验。
+    - 通用校验：至少一个字段值非空
+    - calc 类型额外校验：至少一个字段值为有效数字
+
+    Args:
+        rule_type: 规则类型 (judge/calc)。
+        depend_fields: 依赖的字段 ID 列表。
+        field_values: {field_id: extracted_value} 映射。
+
+    Returns:
+        (is_valid, reason) 元组。
+        - is_valid: 是否通过校验。
+        - reason: 校验失败的原因说明。
+    """
+    if not depend_fields:
+        return True, ""
+
+    # 检查每个字段的状态
+    empty_fields = []
+    non_empty_fields = []
+    valid_number_fields = []
+    invalid_number_fields = []
+
+    for field_id in depend_fields:
+        value = field_values.get(field_id, "")
+
+        if not value or not value.strip():
+            empty_fields.append(field_id)
+        else:
+            non_empty_fields.append(field_id)
+
+            # 对于 calc 类型，检查是否为有效数字
+            if rule_type == "calc":
+                cleaned_value = value.strip().replace(",", "").replace(" ", "")
+                if re.match(r"^-?[\d.]+(?:[eE][+-]?\d+)?$", cleaned_value):
+                    valid_number_fields.append(field_id)
+                else:
+                    invalid_number_fields.append(field_id)
+
+    # 所有字段都为空 → 不通过
+    if not non_empty_fields:
+        return False, f"所有依赖字段均为空: {', '.join(empty_fields)}"
+
+    # calc 类型：至少需要一个有效数字
+    if rule_type == "calc" and not valid_number_fields:
+        reasons = []
+        if empty_fields:
+            reasons.append(f"字段为空: {', '.join(empty_fields)}")
+        if invalid_number_fields:
+            reasons.append(f"字段值不是有效数字: {', '.join(invalid_number_fields)}")
+        return False, "; ".join(reasons)
+
+    return True, ""
+
+
 async def execute_judge(resolved_expression: str) -> Tuple[str, str]:
     """执行判断类规则：将表达式发送给 LLM，返回 true/false 及理由。
 
@@ -212,6 +274,42 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
             for field_id in depend_fields:
                 input_values[field_id] = field_values.get(field_id, "")
 
+            # 校验依赖字段值
+            is_valid, validate_reason = validate_field_values(
+                rule.rule_type, depend_fields, field_values
+            )
+            if not is_valid:
+                logger.warning(
+                    "规则跳过(校验不通过): rule_id={}, reason={}",
+                    rule.rule_id, validate_reason,
+                )
+                result_value = ""
+                reason = validate_reason
+
+                # 保存空值结果
+                stmt = select(AnalysisResult).where(
+                    AnalysisResult.file_id == file_id,
+                    AnalysisResult.rule_id == rule.rule_id,
+                )
+                existing = (await session.execute(stmt)).scalar_one_or_none()
+
+                if existing:
+                    existing.result_value = result_value
+                    existing.input_values = input_values
+                    existing.reason = reason
+                else:
+                    analysis_result = AnalysisResult(
+                        file_id=file_id,
+                        rule_id=rule.rule_id,
+                        result_value=result_value,
+                        input_values=input_values,
+                        reason=reason,
+                    )
+                    session.add(analysis_result)
+
+                await session.commit()
+                continue
+
             # 解析表达式
             resolved_expression = resolve_expression(rule.expression, field_values)
 
@@ -339,6 +437,55 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
             input_values: Dict[str, str] = {}
             for field_id in depend_fields:
                 input_values[field_id] = field_values.get(field_id, "")
+
+            # 校验依赖字段值
+            is_valid, validate_reason = validate_field_values(
+                rule.rule_type, depend_fields, field_values
+            )
+            if not is_valid:
+                logger.warning(
+                    "规则跳过(校验不通过): rule_id={}, reason={}",
+                    rule.rule_id, validate_reason,
+                )
+                result_value = ""
+                reason = validate_reason
+
+                # 保存空值结果
+                stmt = select(AnalysisResult).where(
+                    AnalysisResult.file_id == file_id,
+                    AnalysisResult.rule_id == rule.rule_id,
+                )
+                existing = (await session.execute(stmt)).scalar_one_or_none()
+
+                if existing:
+                    existing.result_value = result_value
+                    existing.input_values = input_values
+                    existing.reason = reason
+                else:
+                    analysis_result = AnalysisResult(
+                        file_id=file_id,
+                        rule_id=rule.rule_id,
+                        result_value=result_value,
+                        input_values=input_values,
+                        reason=reason,
+                    )
+                    session.add(analysis_result)
+
+                await session.commit()
+
+                # yield 校验失败结果
+                yield {
+                    "rule_id": rule.rule_id,
+                    "rule_name": rule.rule_name,
+                    "rule_type": rule.rule_type,
+                    "result_value": "",
+                    "input_values": input_values,
+                    "reason": validate_reason,
+                    "success": False,
+                    "current": idx + 1,
+                    "total": total_rules,
+                }
+                continue
 
             # 解析表达式
             resolved_expression = resolve_expression(rule.expression, field_values)
