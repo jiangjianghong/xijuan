@@ -319,6 +319,26 @@ async def retry_file(
     return ResponseWrapper(message=f"已从 {stage} 阶段开始重试")
 
 
+@router.post("/{file_id}/retry/extracting", response_model=ResponseWrapper)
+async def retry_extracting(
+    file_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """重试字段提取。"""
+    return await retry_file(file_id, "extracting", background_tasks, db)
+
+
+@router.post("/{file_id}/retry/analyzing", response_model=ResponseWrapper)
+async def retry_analyzing(
+    file_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """重试逻辑分析。"""
+    return await retry_file(file_id, "analyzing", background_tasks, db)
+
+
 @router.get("/{file_id}/tables", response_model=ResponseWrapper)
 async def get_file_tables(file_id: str, db: AsyncSession = Depends(get_db)):
     """获取文件表格列表。"""
