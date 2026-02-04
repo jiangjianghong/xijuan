@@ -53,6 +53,8 @@ class MilvusClient:
             FieldSchema(name="chunk_index", dtype=DataType.INT64),
             FieldSchema(name="total_chunks", dtype=DataType.INT64),
             FieldSchema(name="chunk_content", dtype=DataType.VARCHAR, max_length=65535),
+            FieldSchema(name="start_pos", dtype=DataType.INT64),
+            FieldSchema(name="end_pos", dtype=DataType.INT64),
             FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dim),
         ]
         schema = CollectionSchema(fields=fields, description="file_chunks")
@@ -89,6 +91,8 @@ class MilvusClient:
             "chunk_index": [],
             "total_chunks": [],
             "chunk_content": [],
+            "start_pos": [],
+            "end_pos": [],
             "embedding": [],
         }
         for row in data:
@@ -101,6 +105,8 @@ class MilvusClient:
             columns["chunk_index"],
             columns["total_chunks"],
             columns["chunk_content"],
+            columns["start_pos"],
+            columns["end_pos"],
             columns["embedding"],
         ]
 
@@ -145,7 +151,7 @@ class MilvusClient:
             param=search_params,
             limit=top_k,
             expr=expr,
-            output_fields=["chunk_id", "file_id", "chunk_index", "total_chunks", "chunk_content"],
+            output_fields=["chunk_id", "file_id", "chunk_index", "total_chunks", "chunk_content", "start_pos", "end_pos"],
         )
 
         hits = []
@@ -160,6 +166,8 @@ class MilvusClient:
                     "chunk_index": hit.entity.get("chunk_index"),
                     "total_chunks": hit.entity.get("total_chunks"),
                     "chunk_content": hit.entity.get("chunk_content"),
+                    "start_pos": hit.entity.get("start_pos"),
+                    "end_pos": hit.entity.get("end_pos"),
                     "score": score,
                 })
 

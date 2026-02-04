@@ -171,6 +171,8 @@ async def search_context(
                 "keyword": keyword,
                 "position": pos,
                 "context": context_text,
+                "start_pos": start,
+                "end_pos": end,
             })
 
     # 按 position 排序
@@ -233,6 +235,8 @@ async def search_section(
                 "section_title": section.title,
                 "section_index": section.index,
                 "content": section_content,
+                "start_pos": section.start_pos,
+                "end_pos": section.end_pos,
             })
 
     # 按章节索引排序
@@ -309,6 +313,8 @@ async def search_rule(
                 "keyword": keyword,
                 "position": pos,
                 "extracted_text": extracted_text,
+                "start_pos": start,
+                "end_pos": end,
             })
 
     # 按 position 排序
@@ -366,6 +372,8 @@ async def search_chunk_db(
             "chunk_id": chunk.chunk_id,
             "chunk_index": chunk.chunk_index,
             "chunk_content": chunk.chunk_content,
+            "start_pos": chunk.start_pos,
+            "end_pos": chunk.end_pos,
         })
 
     return results
@@ -384,7 +392,7 @@ async def search_vector_db(
             - score_threshold: 分数阈值（可选）
 
     Returns:
-        检索结果列表，每项包含 chunk_id, chunk_index, chunk_content, score。
+        检索结果列表，每项包含 chunk_id, chunk_index, chunk_content, start_pos, end_pos, score。
     """
     query_text = config.get("query_text", "")
     top_k = config.get("top_k", 5)
@@ -426,7 +434,7 @@ JSON_OUTPUT_INSTRUCTION = """
 
 async def extract_table_field(
     file_id: str, field: ExtractionField, session: AsyncSession
-) -> Tuple[str, str]:
+) -> Tuple[str, str, Optional[Dict]]:
     """表格类字段提取。
 
     Args:
@@ -435,7 +443,7 @@ async def extract_table_field(
         session: 数据库会话。
 
     Returns:
-        (extracted_value, reason) 元组。
+        (extracted_value, reason, source_refs) 元组。
     """
     # 查询所有表格
     stmt = select(FileTable).where(FileTable.file_id == file_id)
@@ -443,7 +451,7 @@ async def extract_table_field(
     tables = result.scalars().all()
 
     if not tables:
-        return "", ""
+        return "", "", None
 
     # 4 种表格匹配方式
     match_type = field.table_match_type or "contains"
@@ -473,7 +481,20 @@ async def extract_table_field(
             matched_tables.append(table)
 
     if not matched_tables:
-        return "", ""
+        return "", "", None
+
+    # 构建 source_refs（表格类使用 _tables 键）
+    source_refs: Dict[str, List[Dict]] = {}
+    table_refs = []
+    for table in matched_tables:
+        table_refs.append({
+            "type": "table",
+            "table_index": table.table_index,
+            "table_name": table.table_name,
+            "start_pos": table.start_pos,
+            "end_pos": table.end_pos,
+        })
+    source_refs["_tables"] = table_refs
 
     # 构建按表名分组的结果
     results_text_by_label: Dict[str, str] = {}
@@ -489,7 +510,7 @@ async def extract_table_field(
     prompt_template = field.table_extract_prompt or ""
     if not validate_prompt_has_placeholder(prompt_template):
         logger.warning("字段 {} 的 table_extract_prompt 缺少占位符", field.field_id)
-        return "", ""
+        return "", "", None
 
     llm_input = replace_search_result_placeholders(prompt_template, results_text_by_label)
     llm_input += JSON_OUTPUT_INSTRUCTION
@@ -497,15 +518,16 @@ async def extract_table_field(
     # 调用 LLM 提取
     try:
         response = await chat_completion(llm_input)
-        return parse_llm_json_response(response)
+        value, reason = parse_llm_json_response(response)
+        return value, reason, source_refs
     except Exception as e:
         logger.error("LLM 表格提取失败: {}", e)
-        return "", ""
+        return "", "", None
 
 
 async def extract_text_field(
     file_id: str, field: ExtractionField, session: AsyncSession
-) -> Tuple[str, str]:
+) -> Tuple[str, str, Optional[Dict]]:
     """文本类字段提取。
 
     Args:
@@ -514,7 +536,7 @@ async def extract_text_field(
         session: 数据库会话。
 
     Returns:
-        (extracted_value, reason) 元组。
+        (extracted_value, reason, source_refs) 元组。
     """
     # 获取文件内容
     stmt = select(FileContent).where(FileContent.file_id == file_id)
@@ -522,7 +544,7 @@ async def extract_text_field(
     file_content = result.scalar_one_or_none()
 
     if not file_content:
-        return "", ""
+        return "", "", None
 
     content = file_content.file_content
     search_type = field.search_type or "context"
@@ -542,7 +564,28 @@ async def extract_text_field(
         search_results = await search_vector_db(file_id, search_config)
 
     if not search_results:
-        return "", ""
+        return "", "", None
+
+    # 按关键词分组收集 source_refs
+    source_refs: Dict[str, List[Dict]] = {}
+    for r in search_results:
+        keyword = r.get("keyword", "")
+        # section 类型没有 keyword，用 section_title 作为 key
+        if not keyword and "section_title" in r:
+            keyword = r.get("section_title", "")
+
+        ref: Dict[str, Any] = {
+            "type": search_type,
+            "start_pos": r.get("start_pos"),
+            "end_pos": r.get("end_pos"),
+        }
+        if "chunk_id" in r:
+            ref["chunk_id"] = r["chunk_id"]
+            ref["chunk_index"] = r["chunk_index"]
+
+        if keyword not in source_refs:
+            source_refs[keyword] = []
+        source_refs[keyword].append(ref)
 
     # 按关键词分组搜索结果
     results_by_keyword: Dict[str, List[Dict]] = {}
@@ -569,7 +612,7 @@ async def extract_text_field(
     prompt_template = field.text_extract_prompt or ""
     if not validate_prompt_has_placeholder(prompt_template):
         logger.warning("字段 {} 的 text_extract_prompt 缺少占位符", field.field_id)
-        return "", ""
+        return "", "", None
 
     llm_input = replace_search_result_placeholders(prompt_template, results_text_by_label)
     llm_input += JSON_OUTPUT_INSTRUCTION
@@ -577,10 +620,11 @@ async def extract_text_field(
     # 调用 LLM 提取
     try:
         response = await chat_completion(llm_input)
-        return parse_llm_json_response(response)
+        value, reason = parse_llm_json_response(response)
+        return value, reason, source_refs
     except Exception as e:
         logger.error("LLM 文本提取失败: {}", e)
-        return "", ""
+        return "", "", None
 
 
 async def run_extraction(file_id: str, session: AsyncSession) -> None:
@@ -609,9 +653,9 @@ async def run_extraction(file_id: str, session: AsyncSession) -> None:
     for field in fields:
         try:
             if field.source_type == "table":
-                extracted_value, reason = await extract_table_field(file_id, field, session)
+                extracted_value, reason, source_refs = await extract_table_field(file_id, field, session)
             else:
-                extracted_value, reason = await extract_text_field(file_id, field, session)
+                extracted_value, reason, source_refs = await extract_text_field(file_id, field, session)
 
             # 保存结果
             stmt = select(ExtractionResult).where(
@@ -623,12 +667,14 @@ async def run_extraction(file_id: str, session: AsyncSession) -> None:
             if existing:
                 existing.extracted_value = extracted_value
                 existing.reason = reason
+                existing.source_refs = source_refs
             else:
                 extraction_result = ExtractionResult(
                     file_id=file_id,
                     field_id=field.field_id,
                     extracted_value=extracted_value,
                     reason=reason,
+                    source_refs=source_refs,
                 )
                 session.add(extraction_result)
 
@@ -647,12 +693,14 @@ async def run_extraction(file_id: str, session: AsyncSession) -> None:
             if existing:
                 existing.extracted_value = ""
                 existing.reason = ""
+                existing.source_refs = None
             else:
                 extraction_result = ExtractionResult(
                     file_id=file_id,
                     field_id=field.field_id,
                     extracted_value="",
                     reason="",
+                    source_refs=None,
                 )
                 session.add(extraction_result)
 
@@ -674,7 +722,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
         session: 数据库会话。
 
     Yields:
-        Dict: 每个字段的提取结果，包含 field_id, field_name, extracted_value, reason, success
+        Dict: 每个字段的提取结果，包含 field_id, field_name, extracted_value, reason, source_refs, success
     """
     logger.info("开始流式字段提取: {}", file_id)
 
@@ -692,9 +740,9 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     for idx, field in enumerate(fields):
         try:
             if field.source_type == "table":
-                extracted_value, reason = await extract_table_field(file_id, field, session)
+                extracted_value, reason, source_refs = await extract_table_field(file_id, field, session)
             else:
-                extracted_value, reason = await extract_text_field(file_id, field, session)
+                extracted_value, reason, source_refs = await extract_text_field(file_id, field, session)
 
             # 保存结果
             stmt = select(ExtractionResult).where(
@@ -706,12 +754,14 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
             if existing:
                 existing.extracted_value = extracted_value
                 existing.reason = reason
+                existing.source_refs = source_refs
             else:
                 extraction_result = ExtractionResult(
                     file_id=file_id,
                     field_id=field.field_id,
                     extracted_value=extracted_value,
                     reason=reason,
+                    source_refs=source_refs,
                 )
                 session.add(extraction_result)
 
@@ -724,6 +774,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
                 "field_name": field.field_name,
                 "extracted_value": extracted_value,
                 "reason": reason,
+                "source_refs": source_refs,
                 "success": True,
                 "current": idx + 1,
                 "total": total_fields,
@@ -741,12 +792,14 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
             if existing:
                 existing.extracted_value = ""
                 existing.reason = ""
+                existing.source_refs = None
             else:
                 extraction_result = ExtractionResult(
                     file_id=file_id,
                     field_id=field.field_id,
                     extracted_value="",
                     reason="",
+                    source_refs=None,
                 )
                 session.add(extraction_result)
 
@@ -758,6 +811,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
                 "field_name": field.field_name,
                 "extracted_value": "",
                 "reason": str(e),
+                "source_refs": None,
                 "success": False,
                 "current": idx + 1,
                 "total": total_fields,

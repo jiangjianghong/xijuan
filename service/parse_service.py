@@ -140,6 +140,8 @@ def parse_tables(content: str, file_id: str) -> List[Dict]:
                 "total_table": total_table,
                 "table_name": table_name[:500],
                 "table_content": table_content,
+                "start_pos": match.start(),
+                "end_pos": match.end(),
             }
         )
 
@@ -163,6 +165,8 @@ async def save_tables(tables: List[Dict], session: AsyncSession) -> None:
             total_table=table_data["total_table"],
             table_name=table_data["table_name"],
             table_content=table_data["table_content"],
+            start_pos=table_data.get("start_pos", 0),
+            end_pos=table_data.get("end_pos", 0),
         )
         session.add(file_table)
 

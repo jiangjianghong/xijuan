@@ -65,6 +65,8 @@ class FileTable(Base):
     total_table: Mapped[int] = mapped_column(Integer, default=0)
     table_name: Mapped[str] = mapped_column(String(500), default="")
     table_content: Mapped[str] = mapped_column(LONGTEXT, nullable=False)
+    start_pos: Mapped[int] = mapped_column(Integer, default=0)  # 原文起始位置
+    end_pos: Mapped[int] = mapped_column(Integer, default=0)    # 原文结束位置
 
     __table_args__ = (
         Index("ix_file_table_file_id", "file_id"),
@@ -81,6 +83,8 @@ class FileChunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, default=0)
     total_chunks: Mapped[int] = mapped_column(Integer, default=0)
     chunk_content: Mapped[str] = mapped_column(Text, nullable=False)
+    start_pos: Mapped[int] = mapped_column(Integer, default=0)  # 原文起始位置
+    end_pos: Mapped[int] = mapped_column(Integer, default=0)    # 原文结束位置
 
     __table_args__ = (
         Index("ix_file_chunk_file_id", "file_id"),
@@ -148,6 +152,7 @@ class ExtractionResult(Base):
     field_id: Mapped[str] = mapped_column(String(100), primary_key=True)
     extracted_value: Mapped[str] = mapped_column(Text, default="")
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_refs: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 参考块列表
 
     __table_args__ = (
         Index("ix_extraction_result_file_id", "file_id"),
@@ -164,6 +169,7 @@ class AnalysisResult(Base):
     result_value: Mapped[str] = mapped_column(String(500), default="")
     input_values: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_refs: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 依赖字段的参考块
 
     __table_args__ = (
         Index("ix_analysis_result_file_id", "file_id"),

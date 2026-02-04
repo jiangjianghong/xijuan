@@ -85,6 +85,118 @@ def split_text(
     return chunks
 
 
+def split_text_with_positions(
+    text: str,
+    chunk_size: int,
+    chunk_overlap: int,
+    separators: List[str],
+    base_offset: int = 0,
+) -> List[Tuple[str, int, int]]:
+    """递归分割文本，返回带位置信息的分块。
+
+    Args:
+        text: 待分块文本。
+        chunk_size: 目标分块大小。
+        chunk_overlap: 分块重叠大小。
+        separators: 分隔符优先级列表。
+        base_offset: 当前文本在原文中的起始偏移量。
+
+    Returns:
+        列表，每项为 (chunk_text, start_pos, end_pos)。
+        位置是相对于原始完整文档的绝对位置。
+    """
+    if not text:
+        return []
+
+    if len(text) <= chunk_size:
+        return [(text, base_offset, base_offset + len(text))]
+
+    # 尝试按当前分隔符分割
+    for i, sep in enumerate(separators):
+        if sep in text:
+            # 追踪每个片段的位置
+            chunks_with_pos: List[Tuple[str, int, int]] = []
+            current_chunk = ""
+            current_start = 0  # 当前 chunk 在 text 中的起始位置
+            pos = 0  # 当前扫描位置
+
+            parts = text.split(sep)
+            for j, part in enumerate(parts):
+                # 计算这个 part 在 text 中的位置
+                part_start = pos
+                part_end = pos + len(part)
+
+                candidate = current_chunk + (sep if current_chunk else "") + part
+                if len(candidate) <= chunk_size:
+                    if not current_chunk:
+                        current_start = part_start
+                    current_chunk = candidate
+                else:
+                    if current_chunk:
+                        # 保存当前 chunk 的结束位置（不含分隔符）
+                        chunk_end = pos - len(sep) if j > 0 else part_start
+                        chunks_with_pos.append((
+                            current_chunk,
+                            base_offset + current_start,
+                            base_offset + chunk_end
+                        ))
+
+                    # 处理超长的 part
+                    if len(part) > chunk_size:
+                        sub_chunks = split_text_with_positions(
+                            part, chunk_size, chunk_overlap,
+                            separators[i + 1:] if i + 1 < len(separators) else [],
+                            base_offset + part_start
+                        )
+                        chunks_with_pos.extend(sub_chunks)
+                        current_chunk = ""
+                        current_start = part_end
+                    else:
+                        current_chunk = part
+                        current_start = part_start
+
+                pos = part_end + len(sep)  # 跳过分隔符
+
+            if current_chunk:
+                chunks_with_pos.append((
+                    current_chunk,
+                    base_offset + current_start,
+                    base_offset + len(text)
+                ))
+
+            # 处理 overlap
+            if chunk_overlap > 0 and len(chunks_with_pos) > 1:
+                overlapped: List[Tuple[str, int, int]] = []
+                for j, (chunk_text, start, end) in enumerate(chunks_with_pos):
+                    if j > 0:
+                        prev_chunk, prev_start, prev_end = chunks_with_pos[j - 1]
+                        overlap_len = min(chunk_overlap, len(prev_chunk))
+                        overlap_text = prev_chunk[-overlap_len:]
+                        new_chunk = overlap_text + sep + chunk_text
+                        new_start = prev_end - overlap_len
+                        overlapped.append((new_chunk, new_start, end))
+                    else:
+                        overlapped.append((chunk_text, start, end))
+                return overlapped
+
+            return chunks_with_pos
+
+    # 强制字符分割
+    chunks_with_pos: List[Tuple[str, int, int]] = []
+    start = 0
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        chunk_text = text[start:end]
+        chunks_with_pos.append((
+            chunk_text,
+            base_offset + start,
+            base_offset + end
+        ))
+        start = end - chunk_overlap if chunk_overlap > 0 else end
+
+    return chunks_with_pos
+
+
 def _find_table_positions(content: str) -> List[Tuple[int, int, str]]:
     """找出所有表格的位置。
 
@@ -119,7 +231,7 @@ async def chunk_content(
         session: 数据库会话。
 
     Returns:
-        分块列表，每项包含 file_id, chunk_id, chunk_index, total_chunks, chunk_content。
+        分块列表，每项包含 file_id, chunk_id, chunk_index, total_chunks, chunk_content, start_pos, end_pos。
     """
     logger.info("开始分块: {}", file_id)
 
@@ -134,42 +246,62 @@ async def chunk_content(
     # 找出所有表格位置
     table_positions = _find_table_positions(content)
 
-    all_chunks = []
+    # 存储 (chunk_text, start_pos, end_pos)
+    all_chunks: List[Tuple[str, int, int]] = []
     last_end = 0
 
     for start, end, table_content in table_positions:
         # 处理表格前的文本
         if start > last_end:
-            text_before = content[last_end:start].strip()
+            text_before_raw = content[last_end:start]
+            text_before = text_before_raw.strip()
             if text_before:
-                text_chunks = split_text(text_before, chunk_size, chunk_overlap, separators)
+                # 计算 strip 后的实际起始位置
+                strip_left = len(text_before_raw) - len(text_before_raw.lstrip())
+                actual_start = last_end + strip_left
+                text_chunks = split_text_with_positions(
+                    text_before, chunk_size, chunk_overlap, separators,
+                    base_offset=actual_start
+                )
                 all_chunks.extend(text_chunks)
 
         # 处理表格（作为独立块，前面加上 table_name）
+        # chunk_content 包含 table_name 前缀，但 start_pos/end_pos 是原始表格位置
         table_name = table_name_map.get(table_content, "")
         if table_name:
             table_chunk = f"{table_name}\n{table_content}"
         else:
             table_chunk = table_content
-        all_chunks.append(table_chunk)
+        all_chunks.append((table_chunk, start, end))
 
         last_end = end
 
     # 处理最后一个表格后的文本
     if last_end < len(content):
-        text_after = content[last_end:].strip()
+        text_after_raw = content[last_end:]
+        text_after = text_after_raw.strip()
         if text_after:
-            text_chunks = split_text(text_after, chunk_size, chunk_overlap, separators)
+            strip_left = len(text_after_raw) - len(text_after_raw.lstrip())
+            actual_start = last_end + strip_left
+            text_chunks = split_text_with_positions(
+                text_after, chunk_size, chunk_overlap, separators,
+                base_offset=actual_start
+            )
             all_chunks.extend(text_chunks)
 
     # 如果没有表格，整个内容按规则分块
     if not table_positions and content.strip():
-        all_chunks = split_text(content.strip(), chunk_size, chunk_overlap, separators)
+        text_stripped = content.strip()
+        strip_left = len(content) - len(content.lstrip())
+        all_chunks = split_text_with_positions(
+            text_stripped, chunk_size, chunk_overlap, separators,
+            base_offset=strip_left
+        )
 
     # 构建返回结构
     total_chunks = len(all_chunks)
     result = []
-    for chunk_index, chunk_text in enumerate(all_chunks):
+    for chunk_index, (chunk_text, start_pos, end_pos) in enumerate(all_chunks):
         chunk_id = generate_chunk_id(file_id, chunk_index)
         result.append({
             "file_id": file_id,
@@ -177,6 +309,8 @@ async def chunk_content(
             "chunk_index": chunk_index,
             "total_chunks": total_chunks,
             "chunk_content": chunk_text,
+            "start_pos": start_pos,
+            "end_pos": end_pos,
         })
 
     logger.info("分块完成: {}, 共 {} 个分块", file_id, total_chunks)
@@ -200,6 +334,8 @@ async def save_chunks(chunks: List[Dict], session: AsyncSession) -> None:
             chunk_index=chunk_data["chunk_index"],
             total_chunks=chunk_data["total_chunks"],
             chunk_content=chunk_data["chunk_content"],
+            start_pos=chunk_data.get("start_pos", 0),
+            end_pos=chunk_data.get("end_pos", 0),
         )
         session.add(file_chunk)
 

@@ -266,6 +266,11 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
         er.field_id: er.extracted_value for er in extraction_results
     }
 
+    # 构建 field_id -> source_refs 映射
+    field_source_refs: Dict[str, dict] = {
+        er.field_id: er.source_refs for er in extraction_results if er.source_refs
+    }
+
     for rule in rules:
         try:
             # 获取依赖字段值
@@ -273,6 +278,12 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
             input_values: Dict[str, str] = {}
             for field_id in depend_fields:
                 input_values[field_id] = field_values.get(field_id, "")
+
+            # 收集依赖字段的 source_refs
+            source_refs: Dict[str, dict] = {}
+            for field_id in depend_fields:
+                if field_id in field_source_refs:
+                    source_refs[field_id] = field_source_refs[field_id]
 
             # 校验依赖字段值
             is_valid, validate_reason = validate_field_values(
@@ -297,6 +308,7 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
                     existing.result_value = result_value
                     existing.input_values = input_values
                     existing.reason = reason
+                    existing.source_refs = source_refs if source_refs else None
                 else:
                     analysis_result = AnalysisResult(
                         file_id=file_id,
@@ -304,6 +316,7 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
                         result_value=result_value,
                         input_values=input_values,
                         reason=reason,
+                        source_refs=source_refs if source_refs else None,
                     )
                     session.add(analysis_result)
 
@@ -334,6 +347,7 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
                 existing.result_value = result_value
                 existing.input_values = input_values
                 existing.reason = reason
+                existing.source_refs = source_refs if source_refs else None
             else:
                 analysis_result = AnalysisResult(
                     file_id=file_id,
@@ -341,6 +355,7 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
                     result_value=result_value,
                     input_values=input_values,
                     reason=reason,
+                    source_refs=source_refs if source_refs else None,
                 )
                 session.add(analysis_result)
 
@@ -364,6 +379,7 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
                 existing.result_value = ""
                 existing.input_values = input_values
                 existing.reason = ""
+                existing.source_refs = None
             else:
                 analysis_result = AnalysisResult(
                     file_id=file_id,
@@ -371,6 +387,7 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
                     result_value="",
                     input_values=input_values,
                     reason="",
+                    source_refs=None,
                 )
                 session.add(analysis_result)
 
@@ -403,7 +420,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
         session: 数据库会话。
 
     Yields:
-        Dict: 每条规则的分析结果，包含 rule_id, rule_name, rule_type, result_value, reason, success
+        Dict: 每条规则的分析结果，包含 rule_id, rule_name, rule_type, result_value, reason, source_refs, success
     """
     logger.info("开始流式逻辑分析: {}", file_id)
 
@@ -430,6 +447,11 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
         er.field_id: er.extracted_value for er in extraction_results
     }
 
+    # 构建 field_id -> source_refs 映射
+    field_source_refs: Dict[str, dict] = {
+        er.field_id: er.source_refs for er in extraction_results if er.source_refs
+    }
+
     for idx, rule in enumerate(rules):
         try:
             # 获取依赖字段值
@@ -437,6 +459,12 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
             input_values: Dict[str, str] = {}
             for field_id in depend_fields:
                 input_values[field_id] = field_values.get(field_id, "")
+
+            # 收集依赖字段的 source_refs
+            source_refs: Dict[str, dict] = {}
+            for field_id in depend_fields:
+                if field_id in field_source_refs:
+                    source_refs[field_id] = field_source_refs[field_id]
 
             # 校验依赖字段值
             is_valid, validate_reason = validate_field_values(
@@ -461,6 +489,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
                     existing.result_value = result_value
                     existing.input_values = input_values
                     existing.reason = reason
+                    existing.source_refs = source_refs if source_refs else None
                 else:
                     analysis_result = AnalysisResult(
                         file_id=file_id,
@@ -468,6 +497,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
                         result_value=result_value,
                         input_values=input_values,
                         reason=reason,
+                        source_refs=source_refs if source_refs else None,
                     )
                     session.add(analysis_result)
 
@@ -481,6 +511,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
                     "result_value": "",
                     "input_values": input_values,
                     "reason": validate_reason,
+                    "source_refs": source_refs if source_refs else None,
                     "success": False,
                     "current": idx + 1,
                     "total": total_rules,
@@ -511,6 +542,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
                 existing.result_value = result_value
                 existing.input_values = input_values
                 existing.reason = reason
+                existing.source_refs = source_refs if source_refs else None
             else:
                 analysis_result = AnalysisResult(
                     file_id=file_id,
@@ -518,6 +550,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
                     result_value=result_value,
                     input_values=input_values,
                     reason=reason,
+                    source_refs=source_refs if source_refs else None,
                 )
                 session.add(analysis_result)
 
@@ -532,6 +565,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
                 "result_value": result_value,
                 "input_values": input_values,
                 "reason": reason,
+                "source_refs": source_refs if source_refs else None,
                 "success": True,
                 "current": idx + 1,
                 "total": total_rules,
@@ -554,6 +588,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
                 existing.result_value = ""
                 existing.input_values = input_values
                 existing.reason = ""
+                existing.source_refs = None
             else:
                 analysis_result = AnalysisResult(
                     file_id=file_id,
@@ -561,6 +596,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
                     result_value="",
                     input_values=input_values,
                     reason="",
+                    source_refs=None,
                 )
                 session.add(analysis_result)
 
@@ -574,6 +610,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
                 "result_value": "",
                 "input_values": input_values,
                 "reason": str(e),
+                "source_refs": None,
                 "success": False,
                 "current": idx + 1,
                 "total": total_rules,
