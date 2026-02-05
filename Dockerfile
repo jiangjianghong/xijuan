@@ -8,7 +8,9 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_HTTP_TIMEOUT=300 \
+    UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 安装 uv
 RUN pip install uv

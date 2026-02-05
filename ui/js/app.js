@@ -1,5 +1,6 @@
 /**
  * 主应用模块
+ * 上传和重试均使用异步接口，队列进度通过轮询 /file/{id}/status 更新
  */
 
 const App = {
@@ -10,16 +11,13 @@ const App = {
         statusFilter: '',
         selectedIds: new Set(),
         queue: new Map(), // fileId -> { fileName, stage, progress }
-        pollingFiles: new Set(), // 需要轮询的文件 ID
+        pollingInterval: null,
         currentFileId: null,
     },
 
     // DOM 元素引用
     els: {},
 
-    /**
-     * 初始化应用
-     */
     init() {
         this.cacheElements();
         this.bindEvents();
@@ -28,9 +26,6 @@ const App = {
         this.startPolling();
     },
 
-    /**
-     * 缓存 DOM 元素
-     */
     cacheElements() {
         this.els = {
             uploadArea: document.getElementById('upload-area'),
@@ -54,9 +49,6 @@ const App = {
         };
     },
 
-    /**
-     * 绑定事件
-     */
     bindEvents() {
         // 上传区域
         this.els.uploadArea.addEventListener('click', () => this.els.fileInput.click());
@@ -105,7 +97,7 @@ const App = {
     },
 
     // ─────────────────────────────────────────────────────────
-    // 上传处理
+    // 上传处理（异步接口 + 轮询）
     // ─────────────────────────────────────────────────────────
 
     handleFiles(files) {
@@ -114,46 +106,30 @@ const App = {
             Toast.error('请选择 PDF 文件');
             return;
         }
-
-        // 依次上传
-        this.uploadQueue(pdfFiles);
-    },
-
-    async uploadQueue(files) {
-        for (const file of files) {
-            await this.uploadFile(file);
-        }
+        pdfFiles.forEach(file => this.uploadFile(file));
     },
 
     async uploadFile(file) {
         const tempId = Utils.generateId();
-
-        // 添加到队列 UI
-        this.addToQueue(tempId, file.name, 'uploading', 10);
+        this.addToQueue(tempId, file.name, 'uploading', 5);
 
         try {
-            let fileId = null;
+            const result = await API.uploadFileAsync(file);
+            const fileId = result.data && result.data.file_id;
 
-            await API.uploadFileStream(file, (event) => {
-                if (event.file_id) fileId = event.file_id;
+            // 移除临时上传项
+            this.removeFromQueue(tempId);
 
-                if (event.stage) {
-                    const progress = Utils.getStageProgress(event.stage);
-                    this.updateQueueItem(fileId || tempId, file.name, event.stage, progress);
+            if (fileId) {
+                // 添加到队列，由轮询驱动后续进度
+                this.addToQueue(fileId, file.name, 'parsing', 20);
+                Toast.info(`${file.name} 已提交处理`);
+            } else {
+                // 可能是已完成的文件
+                Toast.info(result.message || `${file.name} 已提交`);
+            }
 
-                    if (event.stage === 'complete') {
-                        this.removeFromQueue(fileId || tempId);
-                        this.loadFileList();
-                        Toast.success(`${file.name} 处理完成`);
-                    }
-                }
-
-                if (event.error) {
-                    this.removeFromQueue(fileId || tempId);
-                    Toast.error(`${file.name}: ${event.error}`);
-                    this.loadFileList();
-                }
-            });
+            this.loadFileList();
         } catch (error) {
             this.removeFromQueue(tempId);
             Toast.error(`上传失败: ${error.message}`);
@@ -171,14 +147,13 @@ const App = {
         this.renderQueue();
     },
 
-    updateQueueItem(id, fileName, stage, progress) {
-        if (this.state.queue.has(id)) {
-            this.state.queue.set(id, { fileName, stage, progress });
-        } else {
-            // 可能是从 tempId 切换到真实 fileId
-            this.state.queue.set(id, { fileName, stage, progress });
+    updateQueueItem(id, stage, progress) {
+        const item = this.state.queue.get(id);
+        if (item) {
+            item.stage = stage;
+            item.progress = progress;
+            this.renderQueue();
         }
-        this.renderQueue();
     },
 
     removeFromQueue(id) {
@@ -194,7 +169,7 @@ const App = {
 
         let html = '';
         this.state.queue.forEach((item, id) => {
-            const stageText = item.stage === 'uploading' ? '上传中' : Utils.getStageText(item.stage);
+            const stageText = item.stage === 'uploading' ? '上传中' : Utils.getStatusText(item.stage);
             html += `
                 <div class="queue-card" data-id="${id}">
                     <div class="queue-card-name" title="${item.fileName}">${item.fileName}</div>
@@ -221,14 +196,6 @@ const App = {
             );
             this.renderFileList(data);
             this.renderPagination(data);
-
-            // 找出处理中的文件加入轮询
-            this.state.pollingFiles.clear();
-            data.items.forEach(item => {
-                if (Utils.isProcessing(item.progress)) {
-                    this.state.pollingFiles.add(item.file_id);
-                }
-            });
         } catch (error) {
             Toast.error('加载文件列表失败');
         }
@@ -303,11 +270,8 @@ const App = {
         }
 
         let html = '';
-
-        // 上一页
         html += `<button class="page-btn" ${page <= 1 ? 'disabled' : ''} onclick="App.goToPage(${page - 1})">&lt;</button>`;
 
-        // 页码
         const start = Math.max(1, page - 2);
         const end = Math.min(total_pages, page + 2);
 
@@ -325,9 +289,7 @@ const App = {
             html += `<button class="page-btn" onclick="App.goToPage(${total_pages})">${total_pages}</button>`;
         }
 
-        // 下一页
         html += `<button class="page-btn" ${page >= total_pages ? 'disabled' : ''} onclick="App.goToPage(${page + 1})">&gt;</button>`;
-
         this.els.pagination.innerHTML = html;
     },
 
@@ -370,15 +332,12 @@ const App = {
 
     updateRowSelection(fileId, checked) {
         const row = this.els.fileListBody.querySelector(`tr[data-id="${fileId}"]`);
-        if (row) {
-            row.classList.toggle('selected', checked);
-        }
+        if (row) row.classList.toggle('selected', checked);
     },
 
     updateSelectAllState() {
         const rows = this.els.fileListBody.querySelectorAll('tr[data-id]');
-        const allChecked = rows.length > 0 && this.state.selectedIds.size === rows.length;
-        this.els.selectAll.checked = allChecked;
+        this.els.selectAll.checked = rows.length > 0 && this.state.selectedIds.size === rows.length;
     },
 
     updateBatchDeleteBtn() {
@@ -387,11 +346,11 @@ const App = {
 
     async deleteFile(fileId) {
         if (!confirm('确定要删除此文件吗？')) return;
-
         try {
             await API.deleteFile(fileId);
             Toast.success('文件已删除');
             this.state.selectedIds.delete(fileId);
+            this.removeFromQueue(fileId);
             this.loadFileList();
         } catch (error) {
             Toast.error(`删除失败: ${error.message}`);
@@ -401,7 +360,6 @@ const App = {
     async batchDelete() {
         if (this.state.selectedIds.size === 0) return;
         if (!confirm(`确定要删除选中的 ${this.state.selectedIds.size} 个文件吗？`)) return;
-
         try {
             const result = await API.batchDeleteFiles(Array.from(this.state.selectedIds));
             Toast.success(`成功删除 ${result.deleted_count} 个文件`);
@@ -417,42 +375,22 @@ const App = {
     },
 
     // ─────────────────────────────────────────────────────────
-    // 重试
+    // 重试（异步接口 + 轮询）
     // ─────────────────────────────────────────────────────────
 
     async retryFile(fileId, progress) {
         const stage = Utils.getRetryStage(progress);
         if (!stage) return;
 
-        // 添加到队列
         const row = this.els.fileListBody.querySelector(`tr[data-id="${fileId}"]`);
         const fileName = row ? row.querySelector('.file-name-cell').textContent : 'unknown';
+
         this.addToQueue(fileId, fileName, stage, Utils.getStageProgress(stage));
 
         try {
-            await API.retryFileStream(fileId, stage, (event) => {
-                if (event.stage) {
-                    const progress = Utils.getStageProgress(event.stage);
-                    this.updateQueueItem(fileId, fileName, event.stage, progress);
-
-                    if (event.stage === 'complete') {
-                        this.removeFromQueue(fileId);
-                        this.loadFileList();
-                        Toast.success(`${fileName} 处理完成`);
-
-                        // 如果抽屉正在显示此文件，刷新详情
-                        if (this.state.currentFileId === fileId) {
-                            this.loadDrawerContent(fileId);
-                        }
-                    }
-                }
-
-                if (event.error) {
-                    this.removeFromQueue(fileId);
-                    Toast.error(`重试失败: ${event.error}`);
-                    this.loadFileList();
-                }
-            });
+            await API.retryFileAsync(fileId, stage);
+            Toast.info(`${fileName} 已开始重试`);
+            this.loadFileList();
         } catch (error) {
             this.removeFromQueue(fileId);
             Toast.error(`重试失败: ${error.message}`);
@@ -461,7 +399,6 @@ const App = {
 
     async retryCurrentFile() {
         if (!this.state.currentFileId) return;
-
         try {
             const detail = await API.getFileDetail(this.state.currentFileId);
             if (Utils.isFailed(detail.progress)) {
@@ -493,14 +430,10 @@ const App = {
     async loadDrawerContent(fileId) {
         try {
             const detail = await API.getFileDetail(fileId);
-
             this.els.drawerFilename.textContent = detail.file_name;
             this.els.drawerFilesize.textContent = Utils.formatFileSize(detail.file_size);
-
             this.renderTimeline(detail);
             this.renderErrorSection(detail);
-
-            // 加载默认 Tab
             this.switchTab('tables');
         } catch (error) {
             Toast.error('加载详情失败');
@@ -518,15 +451,12 @@ const App = {
 
         const currentStage = detail.progress.replace('_failed', '');
         const isFailed = Utils.isFailed(detail.progress);
-        const isComplete = detail.progress === 'complete';
-
-        let html = '';
         let prevEndTime = detail.start_parsing_time;
+        let html = '';
 
-        stages.forEach((stage, index) => {
+        stages.forEach(stage => {
             let status = 'pending';
             let duration = null;
-
             const startTime = stage.start ? detail[stage.start] : prevEndTime;
             const endTime = detail[stage.end];
 
@@ -560,7 +490,6 @@ const App = {
     },
 
     async switchTab(tab) {
-        // 更新 Tab 状态
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
@@ -662,33 +591,47 @@ const App = {
     },
 
     // ─────────────────────────────────────────────────────────
-    // 轮询
+    // 轮询（统一驱动队列状态更新）
     // ─────────────────────────────────────────────────────────
 
     startPolling() {
-        setInterval(() => this.pollProcessingFiles(), 3000);
+        this.state.pollingInterval = setInterval(() => this.pollQueueStatus(), 3000);
     },
 
-    async pollProcessingFiles() {
-        if (this.state.pollingFiles.size === 0) return;
+    async pollQueueStatus() {
+        if (this.state.queue.size === 0) return;
 
-        const fileIds = Array.from(this.state.pollingFiles);
+        // 只轮询真实 file_id，跳过临时 uploading ID（长度较短）
+        const entries = Array.from(this.state.queue.entries()).filter(
+            ([id, item]) => item.stage !== 'uploading'
+        );
 
-        for (const fileId of fileIds) {
+        for (const [fileId, item] of entries) {
             try {
                 const status = await API.getFileStatus(fileId);
 
-                if (!Utils.isProcessing(status.progress)) {
-                    this.state.pollingFiles.delete(fileId);
+                if (Utils.isProcessing(status.progress)) {
+                    // 更新队列中的阶段和进度
+                    this.updateQueueItem(fileId, status.progress, Utils.getStageProgress(status.progress));
+                } else {
+                    // 完成或失败，从队列移除
+                    this.removeFromQueue(fileId);
                     this.loadFileList();
 
                     if (status.progress === 'complete') {
-                        Toast.success(`${status.file_name} 处理完成`);
+                        Toast.success(`${item.fileName} 处理完成`);
+                    } else if (Utils.isFailed(status.progress)) {
+                        Toast.error(`${item.fileName} 处理失败`);
+                    }
+
+                    // 如果抽屉正在显示此文件，刷新详情
+                    if (this.state.currentFileId === fileId) {
+                        this.loadDrawerContent(fileId);
                     }
                 }
             } catch (error) {
                 // 文件可能已被删除
-                this.state.pollingFiles.delete(fileId);
+                this.removeFromQueue(fileId);
             }
         }
     },
