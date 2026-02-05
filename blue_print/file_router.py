@@ -299,14 +299,15 @@ async def delete_file(file_id: str, db: AsyncSession = Depends(get_db)):
     return ResponseWrapper(message="文件已删除")
 
 
-@router.post("/{file_id}/retry/{stage}", response_model=ResponseWrapper)
+@router.post("/{file_id}/retry/{stage}")
 async def retry_file(
     file_id: str,
     stage: str,
     background_tasks: BackgroundTasks,
+    mode: str = "async",
     db: AsyncSession = Depends(get_db),
 ):
-    """从指定阶段重试。"""
+    """从指定阶段重试（支持 async/stream/sync）。"""
     # 检查文件是否存在
     stmt = select(FileModel).where(FileModel.file_id == file_id)
     result = await db.execute(stmt)
@@ -322,40 +323,63 @@ async def retry_file(
             detail=f"无效的阶段: {stage}，有效值: {valid_stages}",
         )
 
-    # 后台执行
-    async def _run_from_stage_background():
-        from model.database import get_session_factory
+    if mode == "stream":
+        async def _retry_stream_generator():
+            from model.database import get_session_factory
 
-        session_factory = get_session_factory()
-        async with session_factory() as session:
-            try:
-                await run_from_stage(file_id, stage, session)
-            except Exception as e:
-                logger.error("从 {} 阶段重试失败: {}", stage, e)
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                async for event in run_from_stage_stream(file_id, stage, session):
+                    yield event
 
-    background_tasks.add_task(_run_from_stage_background)
+        return StreamingResponse(
+            _retry_stream_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    elif mode == "sync":
+        await run_from_stage(file_id, stage, db)
+        return ResponseWrapper(message=f"已从 {stage} 阶段重试完成")
+    else:
+        # async 模式（默认）
+        async def _run_from_stage_background():
+            from model.database import get_session_factory
 
-    return ResponseWrapper(message=f"已从 {stage} 阶段开始重试")
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                try:
+                    await run_from_stage(file_id, stage, session)
+                except Exception as e:
+                    logger.error("从 {} 阶段重试失败: {}", stage, e)
+
+        background_tasks.add_task(_run_from_stage_background)
+        return ResponseWrapper(message=f"已从 {stage} 阶段开始重试")
 
 
-@router.post("/{file_id}/retry/extracting", response_model=ResponseWrapper)
+@router.post("/{file_id}/retry/extracting")
 async def retry_extracting(
     file_id: str,
     background_tasks: BackgroundTasks,
+    mode: str = "async",
     db: AsyncSession = Depends(get_db),
 ):
-    """重试字段提取。"""
-    return await retry_file(file_id, "extracting", background_tasks, db)
+    """重试字段提取（支持 async/stream/sync）。"""
+    return await retry_file(file_id, "extracting", background_tasks, mode, db)
 
 
-@router.post("/{file_id}/retry/analyzing", response_model=ResponseWrapper)
+@router.post("/{file_id}/retry/analyzing")
 async def retry_analyzing(
     file_id: str,
     background_tasks: BackgroundTasks,
+    mode: str = "async",
     db: AsyncSession = Depends(get_db),
 ):
-    """重试逻辑分析。"""
-    return await retry_file(file_id, "analyzing", background_tasks, db)
+    """重试逻辑分析（支持 async/stream/sync）。"""
+    return await retry_file(file_id, "analyzing", background_tasks, mode, db)
 
 
 @router.get("/{file_id}/tables", response_model=ResponseWrapper)

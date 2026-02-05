@@ -249,7 +249,7 @@ curl -X DELETE "http://localhost:5019/file/a1b2c3d4e5f6"
 
 ### 3.4 从指定阶段重试
 
-从指定的处理阶段开始异步重试。
+从指定的处理阶段开始重试，支持同步、异步、流式三种处理模式。
 
 - **URL**: `POST /file/{file_id}/retry/{stage}`
 
@@ -260,13 +260,26 @@ curl -X DELETE "http://localhost:5019/file/a1b2c3d4e5f6"
 | `file_id` | `string` | 是 | 文件 ID |
 | `stage` | `string` | 是 | 重试阶段，可选值：`chunking` / `embedding` / `extracting` / `analyzing` |
 
+**查询参数**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `mode` | `string` | 否 | `"async"` | 处理模式：`async` / `stream` / `sync` |
+
 **请求示例**
 
 ```bash
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding"
+# async 模式（默认）
+curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding?mode=async"
+
+# stream 模式
+curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding?mode=stream"
+
+# sync 模式
+curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding?mode=sync"
 ```
 
-**响应示例**
+**响应示例（async 模式）**
 
 ```json
 {
@@ -276,11 +289,25 @@ curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding"
 }
 ```
 
+**响应示例（sync 模式）**
+
+```json
+{
+  "code": 200,
+  "message": "已从 embedding 阶段重试完成",
+  "data": null
+}
+```
+
+**响应示例（stream 模式）**
+
+返回 `text/event-stream` 格式的 SSE 流，从指定阶段开始推送处理进度事件（事件类型与 `/file/parse` 的 stream 模式一致）。
+
 **状态码**
 
 | 状态码 | 说明 |
 |--------|------|
-| 200 | 重试已提交 |
+| 200 | 重试已提交或处理完成 |
 | 400 | 无效的阶段名称 |
 | 404 | 文件不存在 |
 
@@ -288,7 +315,7 @@ curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding"
 
 ### 3.5 重试字段提取
 
-快捷重试字段提取阶段（等同于 `POST /file/{file_id}/retry/extracting`）。
+快捷重试字段提取阶段，支持同步、异步、流式三种处理模式。
 
 - **URL**: `POST /file/{file_id}/retry/extracting`
 
@@ -298,13 +325,26 @@ curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding"
 |------|------|------|------|
 | `file_id` | `string` | 是 | 文件 ID |
 
+**查询参数**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `mode` | `string` | 否 | `"async"` | 处理模式：`async` / `stream` / `sync` |
+
 **请求示例**
 
 ```bash
+# async 模式（默认）
 curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting"
+
+# stream 模式
+curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting?mode=stream"
+
+# sync 模式
+curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting?mode=sync"
 ```
 
-**响应示例**
+**响应示例（async 模式）**
 
 ```json
 {
@@ -314,18 +354,32 @@ curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting"
 }
 ```
 
+**响应示例（sync 模式）**
+
+```json
+{
+  "code": 200,
+  "message": "已从 extracting 阶段重试完成",
+  "data": null
+}
+```
+
+**响应示例（stream 模式）**
+
+返回 `text/event-stream` 格式的 SSE 流，从 extracting 阶段开始推送处理进度事件。
+
 **状态码**
 
 | 状态码 | 说明 |
 |--------|------|
-| 200 | 重试已提交 |
+| 200 | 重试已提交或处理完成 |
 | 404 | 文件不存在 |
 
 ---
 
 ### 3.6 重试逻辑分析
 
-快捷重试逻辑分析阶段（等同于 `POST /file/{file_id}/retry/analyzing`）。
+快捷重试逻辑分析阶段，支持同步、异步、流式三种处理模式。
 
 - **URL**: `POST /file/{file_id}/retry/analyzing`
 
@@ -335,13 +389,26 @@ curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting"
 |------|------|------|------|
 | `file_id` | `string` | 是 | 文件 ID |
 
+**查询参数**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `mode` | `string` | 否 | `"async"` | 处理模式：`async` / `stream` / `sync` |
+
 **请求示例**
 
 ```bash
+# async 模式（默认）
 curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/analyzing"
+
+# stream 模式
+curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/analyzing?mode=stream"
+
+# sync 模式
+curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/analyzing?mode=sync"
 ```
 
-**响应示例**
+**响应示例（async 模式）**
 
 ```json
 {
@@ -351,11 +418,25 @@ curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/analyzing"
 }
 ```
 
+**响应示例（sync 模式）**
+
+```json
+{
+  "code": 200,
+  "message": "已从 analyzing 阶段重试完成",
+  "data": null
+}
+```
+
+**响应示例（stream 模式）**
+
+返回 `text/event-stream` 格式的 SSE 流，从 analyzing 阶段开始推送处理进度事件。
+
 **状态码**
 
 | 状态码 | 说明 |
 |--------|------|
-| 200 | 重试已提交 |
+| 200 | 重试已提交或处理完成 |
 | 404 | 文件不存在 |
 
 ---

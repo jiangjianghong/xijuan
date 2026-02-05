@@ -170,7 +170,11 @@ paths:
       tags:
         - file
       summary: 从指定阶段重试
-      description: 从指定的处理阶段重新开始处理文件
+      description: |
+        从指定的处理阶段重新开始处理文件，支持三种处理模式：
+        - `async`: 异步模式（默认），立即返回，后台执行
+        - `stream`: 流式模式，通过 SSE 实时推送处理进度
+        - `sync`: 同步模式，等待处理完成后返回
       operationId: retryFileFromStage
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
@@ -185,13 +189,30 @@ paths:
               - embedding
               - extracting
               - analyzing
+        - name: mode
+          in: query
+          description: 处理模式
+          required: false
+          schema:
+            type: string
+            enum:
+              - async
+              - stream
+              - sync
+            default: async
       responses:
         '200':
-          description: 重试已开始
+          description: 重试已开始或处理完成
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ResponseWrapper'
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  SSE 事件流（stream 模式），事件类型与 /file/parse 的 stream 模式一致，
+                  从指定的 stage 阶段开始推送事件。
         '400':
           description: 无效的阶段参数
           content:
@@ -210,17 +231,36 @@ paths:
       tags:
         - file
       summary: 重试字段提取
-      description: 重新执行字段提取阶段
+      description: |
+        重新执行字段提取阶段，支持三种处理模式：
+        - `async`: 异步模式（默认），立即返回，后台执行
+        - `stream`: 流式模式，通过 SSE 实时推送处理进度
+        - `sync`: 同步模式，等待处理完成后返回
       operationId: retryExtracting
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
+        - name: mode
+          in: query
+          description: 处理模式
+          required: false
+          schema:
+            type: string
+            enum:
+              - async
+              - stream
+              - sync
+            default: async
       responses:
         '200':
-          description: 重试已开始
+          description: 重试已开始或处理完成
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ResponseWrapper'
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE 事件流（stream 模式），从 extracting 阶段开始推送事件。
         '404':
           description: 文件不存在
           content:
@@ -233,17 +273,36 @@ paths:
       tags:
         - file
       summary: 重试逻辑分析
-      description: 重新执行逻辑分析阶段
+      description: |
+        重新执行逻辑分析阶段，支持三种处理模式：
+        - `async`: 异步模式（默认），立即返回，后台执行
+        - `stream`: 流式模式，通过 SSE 实时推送处理进度
+        - `sync`: 同步模式，等待处理完成后返回
       operationId: retryAnalyzing
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
+        - name: mode
+          in: query
+          description: 处理模式
+          required: false
+          schema:
+            type: string
+            enum:
+              - async
+              - stream
+              - sync
+            default: async
       responses:
         '200':
-          description: 重试已开始
+          description: 重试已开始或处理完成
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ResponseWrapper'
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE 事件流（stream 模式），从 analyzing 阶段开始推送事件。
         '404':
           description: 文件不存在
           content:
