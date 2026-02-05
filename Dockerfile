@@ -12,8 +12,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_HTTP_TIMEOUT=300 \
     UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
-# 安装 uv
-RUN pip install uv
+# 安装 uv（使用国内镜像）
+RUN pip install uv -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 复制依赖文件
 COPY pyproject.toml uv.lock ./
