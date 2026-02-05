@@ -28,7 +28,7 @@ from model.tables import (
     FileContent,
     FileTable,
 )
-from service.pipeline_service import run_from_stage, run_pipeline, run_pipeline_stream
+from service.pipeline_service import run_from_stage, run_from_stage_stream, run_pipeline, run_pipeline_stream
 from utils.config import get_config
 from utils.file_utils import generate_file_id
 from utils.milvus_client import MilvusClient
@@ -177,11 +177,30 @@ async def parse_file(
                         except Exception as e:
                             logger.error("从 {} 阶段重试失败: {}", retry_stage, e)
 
+                async def _retry_from_stage_stream_generator():
+                    """流式重试生成器，内部管理数据库会话。"""
+                    from model.database import get_session_factory
+
+                    session_factory = get_session_factory()
+                    async with session_factory() as session:
+                        async for event in run_from_stage_stream(file_id, retry_stage, session):
+                            yield event
+
                 if mode == "async":
                     background_tasks.add_task(_retry_from_stage_background)
                     return ResponseWrapper(
                         message=f"文件已从 {retry_stage} 阶段重新提交处理（异步）",
                         data={"file_id": file_id},
+                    )
+                elif mode == "stream":
+                    return StreamingResponse(
+                        _retry_from_stage_stream_generator(),
+                        media_type="text/event-stream",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "Connection": "keep-alive",
+                            "X-Accel-Buffering": "no",
+                        },
                     )
                 else:
                     await run_from_stage(file_id, retry_stage, db)

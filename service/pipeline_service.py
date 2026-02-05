@@ -498,6 +498,392 @@ async def run_pipeline(file_id: str, file_path: str, file_content_bytes: bytes, 
         raise
 
 
+async def run_from_stage_stream(
+    file_id: str, stage: str, session: AsyncSession
+) -> AsyncGenerator[str, None]:
+    """从指定阶段重新开始处理（流式版本）。
+
+    Args:
+        file_id: 文件 ID。
+        stage: 起始阶段 (chunking/embedding/extracting/analyzing)。
+        session: 数据库会话。
+
+    Yields:
+        SSE 事件字符串。
+    """
+    logger.info("从 {} 阶段流式重新开始: {}", stage, file_id)
+
+    # 阶段顺序和名称映射
+    stage_order = ["parsing", "chunking", "embedding", "extracting", "analyzing"]
+    stage_names = {
+        "parsing": "MinerU 解析",
+        "chunking": "分块",
+        "embedding": "向量化",
+        "extracting": "字段提取",
+        "analyzing": "逻辑分析",
+    }
+
+    # 计算已完成的阶段
+    stage_index = stage_order.index(stage)
+    completed_stages = stage_order[:stage_index]
+    completed_names = [stage_names[s] for s in completed_stages]
+
+    # 发送恢复提示事件
+    if completed_names:
+        completed_msg = "、".join(completed_names)
+        yield _sse_event("resume", {
+            "file_id": file_id,
+            "stage": "resume",
+            "message": f"已完成: {completed_msg}，从「{stage_names[stage]}」阶段继续",
+            "completed_stages": completed_stages,
+            "resume_stage": stage,
+        })
+    else:
+        yield _sse_event("resume", {
+            "file_id": file_id,
+            "stage": "resume",
+            "message": f"从「{stage_names[stage]}」阶段开始",
+            "completed_stages": [],
+            "resume_stage": stage,
+        })
+
+    milvus_client = MilvusClient()
+    milvus_client.connect()
+
+    try:
+        # 根据阶段清理数据
+        if stage == "chunking":
+            await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
+            await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
+            await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+            try:
+                milvus_client.delete_by_file_id(file_id)
+            except Exception as e:
+                logger.warning("Milvus 删除失败: {}", e)
+            await session.commit()
+
+        elif stage == "embedding":
+            await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
+            await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+            try:
+                milvus_client.delete_by_file_id(file_id)
+            except Exception as e:
+                logger.warning("Milvus 删除失败: {}", e)
+            await session.commit()
+
+        elif stage == "extracting":
+            await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
+            await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+            await session.commit()
+
+        elif stage == "analyzing":
+            await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+            await session.commit()
+
+        else:
+            raise ValueError(f"无效的阶段: {stage}，流式重试不支持 parsing 阶段")
+
+        # 获取文件内容
+        stmt = select(FileContent).where(FileContent.file_id == file_id)
+        result = await session.execute(stmt)
+        file_content = result.scalar_one_or_none()
+
+        # 获取表格信息
+        stmt = select(FileTable).where(FileTable.file_id == file_id)
+        result = await session.execute(stmt)
+        tables_orm = result.scalars().all()
+        tables = [
+            {
+                "file_id": t.file_id,
+                "table_index": t.table_index,
+                "total_table": t.total_table,
+                "table_name": t.table_name,
+                "table_content": t.table_content,
+            }
+            for t in tables_orm
+        ]
+
+        current_stage = stage
+
+        # ── 阶段: 分块 ──────────────────────────────────────────
+        if current_stage == "chunking":
+            if not file_content:
+                raise ValueError("缺少文件内容，无法从 chunking 阶段开始")
+
+            content = file_content.file_content
+
+            yield _sse_event("chunking_start", {
+                "file_id": file_id,
+                "stage": "chunking_start",
+                "message": "开始分块",
+            })
+
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(progress="chunking", start_chunking_time=datetime.now(), error=None)
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+            try:
+                chunks = await chunk_content(file_id, content, tables, session)
+                yield _sse_event("chunking", {
+                    "file_id": file_id,
+                    "stage": "chunking",
+                    "message": "分块完成",
+                    "chunk_count": len(chunks),
+                })
+
+                yield _sse_event("chunks_saving", {
+                    "file_id": file_id,
+                    "stage": "chunks_saving",
+                    "message": "开始存储分块到数据库",
+                })
+
+                await save_chunks(chunks, session)
+                yield _sse_event("chunks_saved", {
+                    "file_id": file_id,
+                    "stage": "chunks_saved",
+                    "message": "分块已存储到数据库",
+                })
+
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(end_chunking_time=datetime.now())
+                )
+                await session.execute(stmt)
+                await session.commit()
+            except Exception as e:
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="chunking_failed", error=str(e))
+                )
+                await session.execute(stmt)
+                await session.commit()
+                raise
+
+            current_stage = "embedding"
+
+        # ── 阶段: 向量化 ────────────────────────────────────────
+        if current_stage == "embedding":
+            # 获取分块
+            stmt = select(FileChunk).where(FileChunk.file_id == file_id).order_by(FileChunk.chunk_index)
+            result = await session.execute(stmt)
+            chunks_orm = result.scalars().all()
+            chunks = [
+                {
+                    "file_id": c.file_id,
+                    "chunk_id": c.chunk_id,
+                    "chunk_index": c.chunk_index,
+                    "total_chunks": c.total_chunks,
+                    "chunk_content": c.chunk_content,
+                }
+                for c in chunks_orm
+            ]
+
+            if not chunks:
+                raise ValueError("缺少分块数据，无法从 embedding 阶段开始")
+
+            yield _sse_event("embedding_start", {
+                "file_id": file_id,
+                "stage": "embedding_start",
+                "message": "开始向量化",
+            })
+
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(progress="embedding", start_embedding_time=datetime.now(), error=None)
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+            try:
+                embeddings = await embed_chunks(chunks)
+                yield _sse_event("embedding", {
+                    "file_id": file_id,
+                    "stage": "embedding",
+                    "message": "向量化完成",
+                    "embedding_count": len(embeddings),
+                })
+
+                yield _sse_event("milvus_submitting", {
+                    "file_id": file_id,
+                    "stage": "milvus_submitting",
+                    "message": "开始提交向量到 Milvus",
+                })
+
+                await submit_to_milvus(chunks, embeddings)
+                yield _sse_event("milvus_submitted", {
+                    "file_id": file_id,
+                    "stage": "milvus_submitted",
+                    "message": "向量已提交到 Milvus",
+                })
+
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(end_embedding_time=datetime.now())
+                )
+                await session.execute(stmt)
+                await session.commit()
+            except Exception as e:
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="embedding_failed", error=str(e))
+                )
+                await session.execute(stmt)
+                await session.commit()
+                raise
+
+            current_stage = "extracting"
+
+        # ── 阶段: 字段提取 ──────────────────────────────────────
+        if current_stage == "extracting":
+            yield _sse_event("tasks_loading", {
+                "file_id": file_id,
+                "stage": "tasks_loading",
+                "message": "开始获取关键词提取及逻辑分析任务",
+            })
+
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(progress="extracting", error=None)
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+            yield _sse_event("tasks_loaded", {
+                "file_id": file_id,
+                "stage": "tasks_loaded",
+                "message": "已获取关键词提取及逻辑分析任务",
+            })
+
+            yield _sse_event("extraction_start", {
+                "file_id": file_id,
+                "stage": "extraction_start",
+                "message": "开始关键词提取",
+            })
+
+            try:
+                async for field_result in run_extraction_stream(file_id, session):
+                    yield _sse_event("field_extracted", {
+                        "file_id": file_id,
+                        "stage": "field_extracted",
+                        "message": f"字段提取完成: {field_result.get('field_name', '')}",
+                        "field_id": field_result.get("field_id"),
+                        "field_name": field_result.get("field_name"),
+                        "extracted_value": field_result.get("extracted_value"),
+                        "reason": field_result.get("reason"),
+                        "success": field_result.get("success"),
+                        "current": field_result.get("current"),
+                        "total": field_result.get("total"),
+                    })
+
+                yield _sse_event("extraction", {
+                    "file_id": file_id,
+                    "stage": "extraction",
+                    "message": "关键词提取完成",
+                })
+
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(end_extracting_time=datetime.now())
+                )
+                await session.execute(stmt)
+                await session.commit()
+            except Exception as e:
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="extracting_failed", error=str(e))
+                )
+                await session.execute(stmt)
+                await session.commit()
+                raise
+
+            current_stage = "analyzing"
+
+        # ── 阶段: 逻辑分析 ──────────────────────────────────────
+        if current_stage == "analyzing":
+            yield _sse_event("analysis_start", {
+                "file_id": file_id,
+                "stage": "analysis_start",
+                "message": "开始逻辑分析",
+            })
+
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(progress="analyzing", error=None)
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+            try:
+                async for rule_result in run_analysis_stream(file_id, session):
+                    yield _sse_event("rule_analyzed", {
+                        "file_id": file_id,
+                        "stage": "rule_analyzed",
+                        "message": f"规则分析完成: {rule_result.get('rule_name', '')}",
+                        "rule_id": rule_result.get("rule_id"),
+                        "rule_name": rule_result.get("rule_name"),
+                        "rule_type": rule_result.get("rule_type"),
+                        "result_value": rule_result.get("result_value"),
+                        "input_values": rule_result.get("input_values"),
+                        "reason": rule_result.get("reason"),
+                        "success": rule_result.get("success"),
+                        "current": rule_result.get("current"),
+                        "total": rule_result.get("total"),
+                    })
+
+                yield _sse_event("analysis", {
+                    "file_id": file_id,
+                    "stage": "analysis",
+                    "message": "逻辑分析完成",
+                })
+
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="complete", end_analyzing_time=datetime.now())
+                )
+                await session.execute(stmt)
+                await session.commit()
+            except Exception as e:
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="analyzing_failed", error=str(e))
+                )
+                await session.execute(stmt)
+                await session.commit()
+                raise
+
+        # 完成
+        yield _sse_event("complete", {
+            "file_id": file_id,
+            "stage": "complete",
+            "message": "文件处理完成",
+        })
+
+        logger.info("从 {} 阶段流式重新开始完成: {}", stage, file_id)
+
+    except Exception as e:
+        logger.error("从 {} 阶段流式重新开始失败: {}, error={}", stage, file_id, e)
+        yield _sse_event("error", {
+            "file_id": file_id,
+            "stage": "error",
+            "message": str(e),
+        })
+
+
 async def run_from_stage(
     file_id: str, stage: str, session: AsyncSession
 ) -> None:
