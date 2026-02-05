@@ -14,6 +14,7 @@ async def parse_pdf(
     file_name: str,
     file_content: bytes,
     *,
+    file_id: Optional[str] = None,
     base_url: Optional[str] = None,
     timeout: Optional[int] = None,
 ) -> str:
@@ -48,7 +49,7 @@ async def parse_pdf(
         "end_page_id": "99999",
         "parse_method": "auto",
         "lang_list": "ch",
-        "output_dir": ".",
+        "output_dir": f"./{file_id}" if file_id else ".",
         "backend": cfg.backend,
     }
 

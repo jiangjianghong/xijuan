@@ -44,6 +44,7 @@ async def parse_file(file_path: str, file_content_bytes: bytes, file_id: str, se
         content = await parse_pdf(
             file_name=file_path,
             file_content=file_content_bytes,
+            file_id=file_id,
             base_url=cfg.base_url,
             timeout=cfg.parse_timeout,
         )
