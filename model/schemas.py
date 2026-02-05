@@ -197,3 +197,49 @@ class SearchResultItem(BaseModel):
     chunk_index: int
     chunk_content: str
     score: float
+
+
+# ── 文件列表与详情 ────────────────────────────────────────────
+
+class FileListItem(BaseModel):
+    file_id: str
+    file_name: str
+    file_size: int
+    progress: str
+    error: Optional[str] = None
+    create_time: Optional[datetime] = None
+
+
+class FileListResponse(BaseModel):
+    items: List[FileListItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class FileDetailResponse(BaseModel):
+    file_id: str
+    file_name: str
+    file_size: int
+    progress: str
+    error: Optional[str] = None
+    create_time: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    start_parsing_time: Optional[datetime] = None
+    end_parsing_time: Optional[datetime] = None
+    start_chunking_time: Optional[datetime] = None
+    end_chunking_time: Optional[datetime] = None
+    start_embedding_time: Optional[datetime] = None
+    end_embedding_time: Optional[datetime] = None
+    end_extracting_time: Optional[datetime] = None
+    end_analyzing_time: Optional[datetime] = None
+
+
+class BatchDeleteRequest(BaseModel):
+    file_ids: List[str]
+
+
+class BatchDeleteResponse(BaseModel):
+    deleted_count: int
+    failed_ids: List[str] = []

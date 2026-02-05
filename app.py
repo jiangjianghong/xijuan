@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from blue_print import register_routers
 from service.init_service import run_init
@@ -23,6 +24,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="文档解析与逻辑分析系统", version="0.1.0", lifespan=lifespan)
 register_routers(app)
+
+# 挂载静态文件服务
+app.mount("/ui", StaticFiles(directory="ui", html=True), name="ui")
 
 
 if __name__ == "__main__":

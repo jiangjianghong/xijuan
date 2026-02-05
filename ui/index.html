@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF 文档智能处理系统</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header glass-card">
+        <h1>PDF 文档智能处理系统</h1>
+    </header>
+
+    <main class="main-content">
+        <!-- Upload Area -->
+        <section class="upload-section glass-card">
+            <div id="upload-area" class="upload-area">
+                <div class="upload-icon">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                </div>
+                <p class="upload-text">拖拽 PDF 文件到此处，或点击选择文件</p>
+                <p class="upload-hint">仅支持 .pdf 格式</p>
+                <input type="file" id="file-input" accept=".pdf" multiple hidden>
+            </div>
+        </section>
+
+        <!-- Queue Section -->
+        <section class="queue-section">
+            <h2 class="section-title">当前队列</h2>
+            <div id="queue-container" class="queue-container">
+                <div class="queue-empty">暂无处理任务</div>
+            </div>
+        </section>
+
+        <!-- File List Section -->
+        <section class="file-list-section glass-card">
+            <div class="list-header">
+                <h2 class="section-title">文件列表</h2>
+                <div class="list-actions">
+                    <select id="status-filter" class="status-filter">
+                        <option value="">全部状态</option>
+                        <option value="parsing">解析中</option>
+                        <option value="chunking">分块中</option>
+                        <option value="embedding">向量化中</option>
+                        <option value="extracting">提取中</option>
+                        <option value="analyzing">分析中</option>
+                        <option value="complete">已完成</option>
+                        <option value="parsing_failed">解析失败</option>
+                        <option value="chunking_failed">分块失败</option>
+                        <option value="embedding_failed">向量化失败</option>
+                        <option value="extracting_failed">提取失败</option>
+                        <option value="analyzing_failed">分析失败</option>
+                    </select>
+                    <button id="batch-delete-btn" class="btn btn-danger" disabled>删除选中</button>
+                </div>
+            </div>
+            <div class="table-wrapper">
+                <table class="file-table">
+                    <thead>
+                        <tr>
+                            <th class="col-checkbox"><input type="checkbox" id="select-all"></th>
+                            <th class="col-name">文件名</th>
+                            <th class="col-size">大小</th>
+                            <th class="col-time">创建时间</th>
+                            <th class="col-status">状态</th>
+                            <th class="col-actions">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="file-list-body">
+                        <!-- File rows will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+            <div id="pagination" class="pagination">
+                <!-- Pagination will be inserted here -->
+            </div>
+        </section>
+    </main>
+
+    <!-- Detail Drawer -->
+    <div id="drawer-overlay" class="drawer-overlay"></div>
+    <aside id="detail-drawer" class="detail-drawer">
+        <div class="drawer-header">
+            <div class="drawer-title">
+                <h3 id="drawer-filename">文件详情</h3>
+                <span id="drawer-filesize" class="drawer-filesize"></span>
+            </div>
+            <button id="drawer-close" class="drawer-close">&times;</button>
+        </div>
+        <div class="drawer-content">
+            <!-- Timeline -->
+            <div class="timeline-section">
+                <h4 class="drawer-section-title">处理时间线</h4>
+                <div id="timeline" class="timeline">
+                    <!-- Timeline items will be inserted here -->
+                </div>
+            </div>
+
+            <!-- Error display -->
+            <div id="error-section" class="error-section" style="display: none;">
+                <h4 class="drawer-section-title">错误信息</h4>
+                <div id="error-message" class="error-message"></div>
+                <button id="retry-btn" class="btn btn-primary">重试</button>
+            </div>
+
+            <!-- Data tabs -->
+            <div class="data-tabs-section">
+                <div class="tabs-header">
+                    <button class="tab-btn active" data-tab="tables">表格</button>
+                    <button class="tab-btn" data-tab="extraction">提取结果</button>
+                    <button class="tab-btn" data-tab="analysis">分析结果</button>
+                </div>
+                <div id="tab-content" class="tab-content">
+                    <!-- Tab content will be inserted here -->
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="js/utils.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

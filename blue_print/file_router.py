@@ -8,14 +8,19 @@ from typing import List
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from loguru import logger
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.database import get_db
 from model.schemas import (
     AnalysisResultItem,
+    BatchDeleteRequest,
+    BatchDeleteResponse,
     ExtractionResultItem,
     FileChunkItem,
+    FileDetailResponse,
+    FileListItem,
+    FileListResponse,
     FileStatusResponse,
     FileTableItem,
     ResponseWrapper,
@@ -34,6 +39,113 @@ from utils.file_utils import generate_file_id
 from utils.milvus_client import MilvusClient
 
 router = APIRouter(prefix="/file", tags=["file"])
+
+
+# ─────────────────────────────────────────────────────────────
+# 静态路由（必须放在 {file_id} 动态路由之前）
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/list", response_model=ResponseWrapper)
+async def list_files(
+    page: int = 1,
+    page_size: int = 20,
+    status: str = "",
+    db: AsyncSession = Depends(get_db),
+):
+    """分页查询文件列表。"""
+    # 构建基础查询
+    base_query = select(FileModel)
+    count_query = select(func.count(FileModel.file_id))
+
+    # 状态筛选
+    if status:
+        base_query = base_query.where(FileModel.progress == status)
+        count_query = count_query.where(FileModel.progress == status)
+
+    # 查询总数
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # 分页查询
+    offset = (page - 1) * page_size
+    stmt = base_query.order_by(FileModel.create_time.desc()).offset(offset).limit(page_size)
+    result = await db.execute(stmt)
+    files = result.scalars().all()
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+
+    return ResponseWrapper(
+        data=FileListResponse(
+            items=[
+                FileListItem(
+                    file_id=f.file_id,
+                    file_name=f.file_name,
+                    file_size=f.file_size,
+                    progress=f.progress,
+                    error=f.error,
+                    create_time=f.create_time,
+                )
+                for f in files
+            ],
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+        ).model_dump()
+    )
+
+
+@router.delete("/batch", response_model=ResponseWrapper)
+async def batch_delete_files(request: BatchDeleteRequest, db: AsyncSession = Depends(get_db)):
+    """批量删除文件及关联数据。"""
+    deleted_count = 0
+    failed_ids = []
+
+    for file_id in request.file_ids:
+        try:
+            # 检查文件是否存在
+            stmt = select(FileModel).where(FileModel.file_id == file_id)
+            result = await db.execute(stmt)
+            file_record = result.scalar_one_or_none()
+
+            if not file_record:
+                failed_ids.append(file_id)
+                continue
+
+            # 删除所有关联数据
+            await db.execute(delete(FileContent).where(FileContent.file_id == file_id))
+            await db.execute(delete(FileTable).where(FileTable.file_id == file_id))
+            await db.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
+            await db.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
+            await db.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+            await db.execute(delete(FileModel).where(FileModel.file_id == file_id))
+
+            # 删除 Milvus 数据
+            try:
+                milvus_client = MilvusClient()
+                milvus_client.connect()
+                milvus_client.delete_by_file_id(file_id)
+            except Exception as e:
+                logger.warning("Milvus 删除失败 (file_id={}): {}", file_id, e)
+
+            deleted_count += 1
+        except Exception as e:
+            logger.error("删除文件失败 (file_id={}): {}", file_id, e)
+            failed_ids.append(file_id)
+
+    await db.commit()
+
+    return ResponseWrapper(
+        data=BatchDeleteResponse(
+            deleted_count=deleted_count,
+            failed_ids=failed_ids,
+        ).model_dump()
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# 辅助函数
+# ─────────────────────────────────────────────────────────────
 
 
 async def _run_pipeline_background(file_id: str, file_name: str, file_content_bytes: bytes):
@@ -462,4 +574,35 @@ async def get_analysis_results(file_id: str, db: AsyncSession = Depends(get_db))
             ).model_dump()
             for r in analysis_results
         ]
+    )
+
+
+@router.get("/{file_id}/detail", response_model=ResponseWrapper)
+async def get_file_detail(file_id: str, db: AsyncSession = Depends(get_db)):
+    """获取文件完整详情（含所有时间字段）。"""
+    stmt = select(FileModel).where(FileModel.file_id == file_id)
+    result = await db.execute(stmt)
+    file_record = result.scalar_one_or_none()
+
+    if not file_record:
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    return ResponseWrapper(
+        data=FileDetailResponse(
+            file_id=file_record.file_id,
+            file_name=file_record.file_name,
+            file_size=file_record.file_size,
+            progress=file_record.progress,
+            error=file_record.error,
+            create_time=file_record.create_time,
+            updated_at=file_record.updated_at,
+            start_parsing_time=file_record.start_parsing_time,
+            end_parsing_time=file_record.end_parsing_time,
+            start_chunking_time=file_record.start_chunking_time,
+            end_chunking_time=file_record.end_chunking_time,
+            start_embedding_time=file_record.start_embedding_time,
+            end_embedding_time=file_record.end_embedding_time,
+            end_extracting_time=file_record.end_extracting_time,
+            end_analyzing_time=file_record.end_analyzing_time,
+        ).model_dump()
     )
