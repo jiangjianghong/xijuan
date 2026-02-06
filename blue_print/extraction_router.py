@@ -48,9 +48,11 @@ async def list_fields(db: AsyncSession = Depends(get_db)):
                 priority=f.priority,
                 table_name_pattern=f.table_name_pattern,
                 table_match_type=f.table_match_type,
+                table_system_prompt=f.table_system_prompt,
                 table_extract_prompt=f.table_extract_prompt,
                 search_type=f.search_type,
                 search_config=f.search_config,
+                text_system_prompt=f.text_system_prompt,
                 text_extract_prompt=f.text_extract_prompt,
                 created_at=f.created_at,
                 updated_at=f.updated_at,
@@ -77,9 +79,11 @@ async def upsert_field(
         existing.priority = field.priority
         existing.table_name_pattern = field.table_name_pattern
         existing.table_match_type = field.table_match_type
+        existing.table_system_prompt = field.table_system_prompt
         existing.table_extract_prompt = field.table_extract_prompt
         existing.search_type = field.search_type
         existing.search_config = field.search_config
+        existing.text_system_prompt = field.text_system_prompt
         existing.text_extract_prompt = field.text_extract_prompt
         await db.commit()
         return ResponseWrapper(message="字段配置已更新", data={"field_id": field.field_id})
@@ -93,9 +97,11 @@ async def upsert_field(
             priority=field.priority,
             table_name_pattern=field.table_name_pattern,
             table_match_type=field.table_match_type,
+            table_system_prompt=field.table_system_prompt,
             table_extract_prompt=field.table_extract_prompt,
             search_type=field.search_type,
             search_config=field.search_config,
+            text_system_prompt=field.text_system_prompt,
             text_extract_prompt=field.text_extract_prompt,
         )
         db.add(new_field)
@@ -162,9 +168,11 @@ async def test_extraction(
             source_type=config.get("source_type", "text"),
             table_name_pattern=config.get("table_name_pattern"),
             table_match_type=config.get("table_match_type"),
+            table_system_prompt=config.get("table_system_prompt"),
             table_extract_prompt=config.get("table_extract_prompt"),
             search_type=config.get("search_type"),
             search_config=config.get("search_config"),
+            text_system_prompt=config.get("text_system_prompt"),
             text_extract_prompt=config.get("text_extract_prompt"),
         )
     else:

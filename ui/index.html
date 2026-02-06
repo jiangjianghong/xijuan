@@ -4,35 +4,100 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PDF 文档智能处理系统</title>
+    <!-- TailwindCSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Nunito + Lora -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Tailwind Config -->
+    <script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                colors: {
+                    'bio-dark': '#2C4C3B',
+                    'bio-med': '#4F775D',
+                    'bio-light': '#8DAA91',
+                    'bio-pale': '#E8EFE6',
+                    'earth': '#8B735B',
+                    'sand': '#F5F2EB',
+                },
+                fontFamily: {
+                    sans: ['Nunito', 'sans-serif'],
+                    serif: ['Lora', 'Georgia', 'serif'],
+                },
+                animation: {
+                    'float': 'float 8s ease-in-out infinite',
+                    'breathe': 'breathe 6s ease-in-out infinite',
+                    'sway': 'sway 4s ease-in-out infinite',
+                },
+                keyframes: {
+                    float: {
+                        '0%, 100%': { transform: 'translateY(0) rotate(0deg)' },
+                        '50%': { transform: 'translateY(-20px) rotate(3deg)' },
+                    },
+                    breathe: {
+                        '0%, 100%': { transform: 'scale(1)', opacity: '0.3' },
+                        '50%': { transform: 'scale(1.05)', opacity: '0.5' },
+                    },
+                    sway: {
+                        '0%, 100%': { transform: 'rotate(-3deg)' },
+                        '50%': { transform: 'rotate(3deg)' },
+                    },
+                },
+            },
+        },
+    }
+    </script>
+    <!-- Custom Styles (loaded after Tailwind for higher specificity) -->
     <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
+<body class="antialiased font-sans bg-sand text-bio-dark">
+    <!-- Background Decorations -->
+    <div class="fixed inset-0 pointer-events-none z-0 overflow-hidden" aria-hidden="true">
+        <div class="absolute -top-20 -left-20 w-96 h-96 bg-bio-light/10 rounded-full blur-3xl animate-float"></div>
+        <div class="absolute -bottom-32 -right-16 w-[500px] h-[500px] bg-bio-pale/20 rounded-full blur-3xl animate-float" style="animation-delay:3s;"></div>
+    </div>
+
     <!-- Header -->
-    <header class="header glass-card">
-        <h1>PDF 文档智能处理系统</h1>
+    <header class="header glass-card relative z-10">
+        <i data-lucide="leaf" class="w-6 h-6 text-bio-med mr-2 flex-shrink-0"></i>
+        <h1 class="font-serif text-bio-dark">PDF 文档智能处理系统</h1>
         <nav class="header-nav">
-            <button class="nav-btn active" onclick="App.switchPage('file-processing')">文件处理</button>
-            <button class="nav-btn" onclick="App.switchPage('rule-config')">规则配置</button>
-            <a href="stream-demo.html" class="nav-btn" style="text-decoration:none;">流式演示</a>
+            <button class="nav-btn active rounded-full" data-page="file-processing" onclick="App.switchPage('file-processing')">
+                <i data-lucide="file-text" class="w-4 h-4"></i>
+                文件处理
+            </button>
+            <button class="nav-btn rounded-full" data-page="rule-config" onclick="App.switchPage('rule-config')">
+                <i data-lucide="settings" class="w-4 h-4"></i>
+                规则配置
+            </button>
+            <a href="stream-demo.html" class="nav-btn rounded-full" style="text-decoration:none;">
+                <i data-lucide="radio" class="w-4 h-4"></i>
+                流式演示
+            </a>
         </nav>
     </header>
 
     <!-- Page: File Processing -->
-    <div id="page-file-processing" class="page-container active">
+    <div id="page-file-processing" class="page-container active relative z-10">
     <main class="main-content">
         <!-- Upload Area -->
         <section class="upload-section glass-card">
-            <div id="upload-area" class="upload-area">
+            <div id="upload-area" class="upload-area rounded-3xl">
                 <div class="upload-icon">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="17 8 12 3 7 8"/>
-                        <line x1="12" y1="3" x2="12" y2="15"/>
-                    </svg>
+                    <i data-lucide="upload-cloud" class="w-12 h-12 mx-auto"></i>
                 </div>
                 <p class="upload-text">拖拽 PDF 文件到此处，或点击选择文件</p>
                 <p class="upload-hint">仅支持 .pdf 格式</p>
                 <input type="file" id="file-input" accept=".pdf" multiple hidden>
+                <!-- Corner leaf decoration -->
+                <svg class="absolute top-2 right-2 w-8 h-8 text-bio-light/30 pointer-events-none" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M17 8C8 10 5.9 16.17 3.82 21.34L5.71 22l1-2.3A4.49 4.49 0 0 0 8 20c4 0 8.5-3 9-8 .5-5-4-5.5-4-5.5s5 1 5 6c0 4.28-3.5 8-9 8a6.45 6.45 0 0 1-2-.3"/>
+                </svg>
             </div>
         </section>
 
@@ -91,12 +156,12 @@
     </div><!-- /page-file-processing -->
 
     <!-- Page: Rule Config -->
-    <div id="page-rule-config" class="page-container">
+    <div id="page-rule-config" class="page-container relative z-10">
     <div class="rule-config-content">
         <!-- Sub Tabs -->
         <div class="sub-tabs">
-            <button class="sub-tab-btn active" onclick="RuleConfig.switchTab('fields')">字段提取配置</button>
-            <button class="sub-tab-btn" onclick="RuleConfig.switchTab('rules')">逻辑分析配置</button>
+            <button class="sub-tab-btn active" data-rtab="fields" onclick="RuleConfig.switchTab('fields')">字段提取配置</button>
+            <button class="sub-tab-btn" data-rtab="rules" onclick="RuleConfig.switchTab('rules')">逻辑分析配置</button>
         </div>
 
         <!-- Fields Section -->
@@ -214,5 +279,7 @@
     <script src="js/api.js"></script>
     <script src="js/ruleConfig.js"></script>
     <script src="js/app.js"></script>
+    <!-- Initialize Lucide icons -->
+    <script>document.addEventListener('DOMContentLoaded', () => lucide.createIcons());</script>
 </body>
 </html>

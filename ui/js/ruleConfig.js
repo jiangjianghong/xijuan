@@ -41,7 +41,7 @@ const RuleConfig = {
         this.state.currentTab = tab;
 
         document.querySelectorAll('.sub-tab-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.textContent.includes(tab === 'fields' ? '字段' : '逻辑'));
+            btn.classList.toggle('active', btn.dataset.rtab === tab);
         });
 
         this.els.sectionFields.classList.toggle('active', tab === 'fields');
@@ -262,9 +262,14 @@ const RuleConfig = {
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">表格提取 Prompt</label>
+                    <label class="form-label">系统提示词</label>
+                    <textarea class="form-textarea" id="fm-table-system-prompt" rows="3" placeholder="可选，设置 LLM 的角色和行为约束">${Utils.escapeHtml(field.table_system_prompt || '')}</textarea>
+                    <div class="form-hint">作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">用户提示词</label>
                     <textarea class="form-textarea" id="fm-table-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.table_extract_prompt || '')}</textarea>
-                    <div class="form-hint">LLM 提取提示词，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
+                    <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
                 </div>
             </div>
 
@@ -286,9 +291,14 @@ const RuleConfig = {
                     ${this.buildSearchConfigFields(searchType, field.search_config || {})}
                 </div>
                 <div class="form-group">
-                    <label class="form-label">文本提取 Prompt</label>
+                    <label class="form-label">系统提示词</label>
+                    <textarea class="form-textarea" id="fm-text-system-prompt" rows="3" placeholder="可选，设置 LLM 的角色和行为约束">${Utils.escapeHtml(field.text_system_prompt || '')}</textarea>
+                    <div class="form-hint">作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">用户提示词</label>
                     <textarea class="form-textarea" id="fm-text-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.text_extract_prompt || '')}</textarea>
-                    <div class="form-hint">LLM 提取提示词，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
+                    <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
                 </div>
             </div>
         `;
@@ -556,20 +566,24 @@ const RuleConfig = {
             priority: parseInt(document.getElementById('fm-priority').value) || 0,
             table_name_pattern: null,
             table_match_type: null,
+            table_system_prompt: null,
             table_extract_prompt: null,
             search_type: null,
             search_config: null,
+            text_system_prompt: null,
             text_extract_prompt: null,
         };
 
         if (sourceType === 'table') {
             data.table_name_pattern = document.getElementById('fm-table-name-pattern').value.trim() || null;
             data.table_match_type = document.getElementById('fm-table-match-type').value;
+            data.table_system_prompt = document.getElementById('fm-table-system-prompt').value.trim() || null;
             data.table_extract_prompt = document.getElementById('fm-table-extract-prompt').value.trim() || null;
         } else {
             const searchType = document.getElementById('fm-search-type').value;
             data.search_type = searchType;
             data.search_config = this.collectSearchConfig(searchType);
+            data.text_system_prompt = document.getElementById('fm-text-system-prompt').value.trim() || null;
             data.text_extract_prompt = document.getElementById('fm-text-extract-prompt').value.trim() || null;
         }
 

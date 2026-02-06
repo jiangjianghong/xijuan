@@ -440,12 +440,15 @@ paths:
 
         **表格类字段** (source_type=table):
         - 需要配置 table_name_pattern、table_match_type、table_extract_prompt
+        - 可选配置 table_system_prompt（系统提示词）
 
         **文本类字段** (source_type=text):
         - 需要配置 search_type、search_config、text_extract_prompt
+        - 可选配置 text_system_prompt（系统提示词）
 
-        **Prompt 占位符要求**:
-        - table_extract_prompt 和 text_extract_prompt 必须包含 `<search_result>...</search_result>` 占位符
+        **提示词说明**:
+        - system_prompt 作为 system message 发送给 LLM，用于定义角色和全局约束
+        - extract_prompt 作为 user message 发送给 LLM，必须包含 `<search_result>...</search_result>` 占位符
       operationId: upsertExtractionField
       requestBody:
         required: true
@@ -1138,12 +1141,19 @@ components:
         table_extract_prompt:
           type: string
           description: |
-            表格提取 Prompt（source_type=table 时使用）
-            必须包含 `<search_result>...</search_result>` 占位符
+            表格提取用户提示词（source_type=table 时使用）
+            作为 user message 发送给 LLM，必须包含 `<search_result>...</search_result>` 占位符
           nullable: true
           example: |
             请从以下表格中提取总收入：
             <search_result>财务数据</search_result>
+        table_system_prompt:
+          type: string
+          description: |
+            表格提取系统提示词（source_type=table 时使用）
+            作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束
+          nullable: true
+          example: 你是一个专业的财务数据提取助手，请严格按照JSON格式返回结果。
         search_type:
           $ref: '#/components/schemas/SearchTypeEnum'
         search_config:
@@ -1159,12 +1169,19 @@ components:
         text_extract_prompt:
           type: string
           description: |
-            文本提取 Prompt（source_type=text 时使用）
-            必须包含 `<search_result>...</search_result>` 占位符
+            文本提取用户提示词（source_type=text 时使用）
+            作为 user message 发送给 LLM，必须包含 `<search_result>...</search_result>` 占位符
           nullable: true
           example: |
             请从以下文本中提取总收入：
             <search_result>相关文本</search_result>
+        text_system_prompt:
+          type: string
+          description: |
+            文本提取系统提示词（source_type=text 时使用）
+            作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束
+          nullable: true
+          example: 你是一个专业的文档信息提取助手，请严格按照JSON格式返回结果。
 
     ExtractionFieldResponse:
       allOf:

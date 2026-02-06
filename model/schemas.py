@@ -77,10 +77,12 @@ class ExtractionFieldCreate(BaseModel):
     # 表格类
     table_name_pattern: Optional[str] = None
     table_match_type: Optional[TableMatchTypeEnum] = None
+    table_system_prompt: Optional[str] = None
     table_extract_prompt: Optional[str] = None
     # 文本类
     search_type: Optional[SearchTypeEnum] = None
     search_config: Optional[Dict[str, Any]] = None
+    text_system_prompt: Optional[str] = None
     text_extract_prompt: Optional[str] = None
 
     @field_validator("text_extract_prompt")

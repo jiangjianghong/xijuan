@@ -517,7 +517,15 @@ async def extract_table_field(
 
     # 调用 LLM 提取
     try:
-        response = await chat_completion(llm_input)
+        system_prompt = (field.table_system_prompt or "").strip()
+        if system_prompt:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": llm_input},
+            ]
+            response = await chat_completion("", messages=messages)
+        else:
+            response = await chat_completion(llm_input)
         value, reason = parse_llm_json_response(response)
         return value, reason, source_refs
     except Exception as e:
@@ -619,7 +627,15 @@ async def extract_text_field(
 
     # 调用 LLM 提取
     try:
-        response = await chat_completion(llm_input)
+        system_prompt = (field.text_system_prompt or "").strip()
+        if system_prompt:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": llm_input},
+            ]
+            response = await chat_completion("", messages=messages)
+        else:
+            response = await chat_completion(llm_input)
         value, reason = parse_llm_json_response(response)
         return value, reason, source_refs
     except Exception as e:

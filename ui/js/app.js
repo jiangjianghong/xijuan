@@ -25,6 +25,7 @@ const App = {
         RuleConfig.init();
         this.loadFileList();
         this.startPolling();
+        if (typeof lucide !== 'undefined') lucide.createIcons();
     },
 
     cacheElements() {
@@ -595,7 +596,7 @@ const App = {
     switchPage(page) {
         // 切换导航按钮
         document.querySelectorAll('.nav-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.textContent.includes(page === 'file-processing' ? '文件处理' : '规则配置'));
+            btn.classList.toggle('active', btn.dataset.page === page);
         });
 
         // 切换页面容器
