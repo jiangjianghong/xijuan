@@ -159,6 +159,31 @@ const Utils = {
         div.textContent = text;
         return div.innerHTML;
     },
+
+    /**
+     * 清理表格 HTML，只保留表格相关标签
+     */
+    sanitizeTableHtml(html) {
+        if (!html) return '';
+        const allowedTags = ['table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption', 'colgroup', 'col'];
+        const tagPattern = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
+        return html.replace(tagPattern, (match, tagName) => {
+            if (allowedTags.includes(tagName.toLowerCase())) {
+                // 只保留标签本身，去掉属性中可能的危险内容，但保留 rowspan/colspan 等安全属性
+                const isClosing = match.startsWith('</');
+                if (isClosing) return `</${tagName.toLowerCase()}>`;
+                const safeAttrs = [];
+                const attrPattern = /\b(rowspan|colspan|scope)\s*=\s*"([^"]*)"/gi;
+                let attrMatch;
+                while ((attrMatch = attrPattern.exec(match)) !== null) {
+                    safeAttrs.push(`${attrMatch[1].toLowerCase()}="${this.escapeHtml(attrMatch[2])}"`);
+                }
+                return `<${tagName.toLowerCase()}${safeAttrs.length ? ' ' + safeAttrs.join(' ') : ''}>`;
+            }
+            // 非白名单标签 → 转义
+            return this.escapeHtml(match);
+        });
+    },
 };
 
 /**

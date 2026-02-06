@@ -776,6 +776,38 @@ h1, h2, h3, h4, h5, h6,
     overflow-y: auto;
 }
 
+.data-card-content.table-rendered {
+    white-space: normal;
+    word-break: normal;
+    max-height: 400px;
+    overflow: auto;
+}
+
+.data-card-content.table-rendered table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.data-card-content.table-rendered th,
+.data-card-content.table-rendered td {
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.data-card-content.table-rendered th {
+    background: var(--bio-pale);
+    font-weight: 600;
+    color: var(--bio-dark);
+    white-space: nowrap;
+}
+
+.data-card-content.table-rendered tr:hover td {
+    background: rgba(141, 170, 145, 0.08);
+}
+
 .data-card-field {
     display: flex;
     gap: 8px;
@@ -1985,6 +2017,186 @@ h1, h2, h3, h4, h5, h6,
     word-break: break-all;
 }
 
+/* ── Pipeline Enhancements: Duration, Preview, Expandable ── */
+
+/* Duration badge */
+.stage-duration {
+    display: none;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--bio-med);
+    background: rgba(79, 119, 93, 0.10);
+    padding: 1px 8px;
+    border-radius: 9999px;
+    margin-left: auto;
+    margin-right: 8px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Content preview (parsing stage) */
+.stage-content-preview {
+    max-height: 120px;
+    overflow: hidden;
+    position: relative;
+    background: rgba(232, 239, 230, 0.5);
+    border: 1px solid rgba(79, 119, 93, 0.1);
+    border-radius: 8px;
+    margin-top: 8px;
+    animation: fadeInUp 0.3s ease-out;
+}
+
+.content-preview-text {
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    padding: 10px 12px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.content-preview-fade {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40px;
+    background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.92));
+    pointer-events: none;
+}
+
+/* Expandable section (extracting / analyzing) */
+.stage-expandable {
+    margin-top: 8px;
+    animation: fadeInUp 0.3s ease-out;
+}
+
+.expandable-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid rgba(79, 119, 93, 0.15);
+    border-radius: 8px;
+    background: rgba(232, 239, 230, 0.3);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+    transition: var(--transition);
+}
+
+.expandable-toggle:hover {
+    border-color: rgba(79, 119, 93, 0.3);
+    background: rgba(232, 239, 230, 0.5);
+}
+
+.expandable-toggle-icon {
+    transition: transform 0.25s ease;
+    flex-shrink: 0;
+}
+
+.expandable-toggle.expanded .expandable-toggle-icon {
+    transform: rotate(90deg);
+}
+
+.expandable-toggle-text {
+    flex: 1;
+    text-align: left;
+}
+
+.expandable-toggle-count {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Expandable body */
+.expandable-body {
+    max-height: 240px;
+    overflow-y: auto;
+    margin-top: 6px;
+    border: 1px solid rgba(79, 119, 93, 0.1);
+    border-radius: 8px;
+}
+
+/* Result table */
+.result-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.result-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.result-table th {
+    text-align: left;
+    padding: 6px 10px;
+    font-weight: 500;
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: var(--bio-pale);
+    border-bottom: 1px solid rgba(79, 119, 93, 0.1);
+}
+
+.result-table td {
+    padding: 5px 10px;
+    border-bottom: 1px solid rgba(44, 76, 59, 0.04);
+    color: var(--text-primary);
+    vertical-align: middle;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.result-table tbody tr {
+    animation: fadeIn 0.2s ease-out;
+}
+
+.result-table tbody tr:hover {
+    background: rgba(79, 119, 93, 0.04);
+}
+
+/* Status dot */
+.result-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.result-status::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+}
+
+.result-status.success {
+    color: var(--bio-med);
+}
+
+.result-status.success::before {
+    background: var(--bio-med);
+}
+
+.result-status.fail {
+    color: var(--error);
+}
+
+.result-status.fail::before {
+    background: var(--error);
+}
+
 /* ── Stream Demo Animations ── */
 @keyframes stagePulse {
     0%, 100% {
@@ -2114,5 +2326,17 @@ input[type="checkbox"] {
     .log-event {
         min-width: 70px;
         font-size: 11px;
+    }
+
+    .stage-content-preview {
+        max-height: 80px;
+    }
+
+    .expandable-body {
+        max-height: 180px;
+    }
+
+    .result-table td {
+        max-width: 120px;
     }
 }

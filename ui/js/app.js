@@ -515,7 +515,7 @@ const App = {
                             html += `
                                 <div class="data-card">
                                     <div class="data-card-title">${item.table_name || `表格 ${item.table_index + 1}`}</div>
-                                    <div class="data-card-content">${this.escapeHtml(item.table_content)}</div>
+                                    <div class="data-card-content table-rendered">${Utils.sanitizeTableHtml(item.table_content)}</div>
                                 </div>
                             `;
                         });

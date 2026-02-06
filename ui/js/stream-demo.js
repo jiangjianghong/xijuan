@@ -6,6 +6,8 @@ const StreamDemo = {
     // ── State ──
     selectedFile: null,
     isProcessing: false,
+    stageTimes: {},
+    parsedContent: '',
 
     // Stage mapping: SSE event → pipeline stage key
     stageMap: {
@@ -122,6 +124,17 @@ const StreamDemo = {
         // Clear log
         clearLog.addEventListener('click', () => {
             this.clearLog();
+        });
+
+        // Expand/collapse event delegation for result tables
+        document.getElementById('pipeline-stages').addEventListener('click', (e) => {
+            const toggle = e.target.closest('.expandable-toggle');
+            if (!toggle) return;
+            const body = toggle.closest('.stage-expandable').querySelector('.expandable-body');
+            const expanded = toggle.classList.toggle('expanded');
+            body.style.display = expanded ? 'block' : 'none';
+            // Re-initialize lucide icons for the chevron
+            if (typeof lucide !== 'undefined') lucide.createIcons();
         });
     },
 
@@ -299,10 +312,37 @@ const StreamDemo = {
             if (this.stageStartEvents[stage]) {
                 this.setStageActive(pipelineStage);
                 this.updateStageDetail(pipelineStage, message);
+                this.stageTimes[pipelineStage] = { start: Date.now() };
+
+                // Show expandable section when extraction/analysis starts
+                if (stage === 'extraction_start' || stage === 'analysis_start') {
+                    const stageEl = document.querySelector(`.pipeline-stage[data-stage="${pipelineStage}"]`);
+                    const expandable = stageEl ? stageEl.querySelector('.stage-expandable') : null;
+                    if (expandable) expandable.style.display = 'block';
+                }
             } else if (this.stageCompletionEvents[stage]) {
                 this.setStageCompleted(pipelineStage);
+                if (this.stageTimes[pipelineStage]) {
+                    this.stageTimes[pipelineStage].end = Date.now();
+                    this.showStageDuration(pipelineStage);
+                }
             } else {
                 this.updateStageDetail(pipelineStage, message);
+            }
+
+            // Handle md_content event: show content preview
+            if (stage === 'md_content' && data.content) {
+                this.showContentPreview(data.content);
+            }
+
+            // Handle field_extracted: add row to extraction table
+            if (stage === 'field_extracted' && data.field_name) {
+                this.addExtractionRow(data);
+            }
+
+            // Handle rule_analyzed: add row to analysis table
+            if (stage === 'rule_analyzed' && data.rule_name) {
+                this.addAnalysisRow(data);
             }
 
             // Update sub-progress for extraction/analysis
@@ -325,7 +365,37 @@ const StreamDemo = {
             el.querySelector('.stage-status').textContent = '';
             el.querySelector('.stage-detail').textContent = '';
             el.querySelector('.stage-progress-fill').style.width = '';
+
+            // Reset duration badge
+            const duration = el.querySelector('.stage-duration');
+            if (duration) {
+                duration.style.display = 'none';
+                duration.textContent = '';
+            }
         });
+
+        // Reset content preview
+        const preview = document.querySelector('.stage-content-preview');
+        if (preview) {
+            preview.style.display = 'none';
+            preview.querySelector('.content-preview-text').textContent = '';
+        }
+
+        // Reset expandable sections
+        document.querySelectorAll('.stage-expandable').forEach(el => {
+            el.style.display = 'none';
+            const toggle = el.querySelector('.expandable-toggle');
+            if (toggle) toggle.classList.remove('expanded');
+            const body = el.querySelector('.expandable-body');
+            if (body) body.style.display = 'none';
+            const tbody = el.querySelector('.result-table-body');
+            if (tbody) tbody.innerHTML = '';
+            const count = el.querySelector('.expandable-toggle-count');
+            if (count) count.textContent = '';
+        });
+
+        this.stageTimes = {};
+        this.parsedContent = '';
         this.updateOverallProgress();
     },
 
@@ -395,6 +465,84 @@ const StreamDemo = {
 
         document.getElementById('overall-fill').style.width = pct + '%';
         document.getElementById('overall-percent').textContent = pct + '%';
+    },
+
+    // ── Pipeline Enhancement Methods ──
+    showStageDuration(stageKey) {
+        const el = document.querySelector(`.pipeline-stage[data-stage="${stageKey}"]`);
+        if (!el) return;
+        const badge = el.querySelector('.stage-duration');
+        if (!badge) return;
+        const t = this.stageTimes[stageKey];
+        if (!t || !t.start || !t.end) return;
+        const seconds = ((t.end - t.start) / 1000).toFixed(1);
+        badge.textContent = `耗时 ${seconds}s`;
+        badge.style.display = 'inline-block';
+    },
+
+    showContentPreview(content) {
+        this.parsedContent = content;
+        const preview = document.querySelector('.stage-content-preview');
+        if (!preview) return;
+        const textEl = preview.querySelector('.content-preview-text');
+        textEl.textContent = content.substring(0, 500);
+        preview.style.display = 'block';
+    },
+
+    addExtractionRow(data) {
+        const stageEl = document.querySelector('.pipeline-stage[data-stage="extracting"]');
+        if (!stageEl) return;
+        const tbody = stageEl.querySelector('.result-table-body');
+        if (!tbody) return;
+
+        const tr = document.createElement('tr');
+        const statusClass = data.success ? 'success' : 'fail';
+        const statusText = data.success ? 'OK' : 'FAIL';
+        const val = data.extracted_value || '-';
+        const reason = data.reason || '-';
+
+        tr.innerHTML = `
+            <td title="${this.escapeHtml(data.field_name)}">${this.escapeHtml(data.field_name)}</td>
+            <td title="${this.escapeHtml(String(val))}">${this.escapeHtml(String(val))}</td>
+            <td title="${this.escapeHtml(String(reason))}">${this.escapeHtml(String(reason))}</td>
+            <td><span class="result-status ${statusClass}">${statusText}</span></td>
+        `;
+        tbody.appendChild(tr);
+
+        // Update count
+        const count = stageEl.querySelector('.expandable-toggle-count');
+        if (count && data.current && data.total) {
+            count.textContent = `${data.current}/${data.total}`;
+        }
+    },
+
+    addAnalysisRow(data) {
+        const stageEl = document.querySelector('.pipeline-stage[data-stage="analyzing"]');
+        if (!stageEl) return;
+        const tbody = stageEl.querySelector('.result-table-body');
+        if (!tbody) return;
+
+        const tr = document.createElement('tr');
+        const statusClass = data.success ? 'success' : 'fail';
+        const statusText = data.success ? 'OK' : 'FAIL';
+        const val = data.result_value || '-';
+        const ruleType = data.rule_type === 'judge' ? '判断' : data.rule_type === 'calc' ? '计算' : (data.rule_type || '-');
+        const reason = data.reason || '-';
+
+        tr.innerHTML = `
+            <td title="${this.escapeHtml(data.rule_name)}">${this.escapeHtml(data.rule_name)}</td>
+            <td>${this.escapeHtml(ruleType)}</td>
+            <td title="${this.escapeHtml(String(val))}">${this.escapeHtml(String(val))}</td>
+            <td title="${this.escapeHtml(String(reason))}">${this.escapeHtml(String(reason))}</td>
+            <td><span class="result-status ${statusClass}">${statusText}</span></td>
+        `;
+        tbody.appendChild(tr);
+
+        // Update count
+        const count = stageEl.querySelector('.expandable-toggle-count');
+        if (count && data.current && data.total) {
+            count.textContent = `${data.current}/${data.total}`;
+        }
     },
 
     // ── Stream Lifecycle ──
