@@ -59,10 +59,10 @@ const StreamDemo = {
     },
 
     bindEvents() {
-        const uploadArea = document.getElementById('upload-area');
-        const fileInput = document.getElementById('file-input');
-        const startBtn = document.getElementById('start-btn');
-        const removeFile = document.getElementById('remove-file');
+        const uploadArea = document.getElementById('stream-upload-area');
+        const fileInput = document.getElementById('stream-file-input');
+        const startBtn = document.getElementById('stream-start-btn');
+        const removeFile = document.getElementById('stream-remove-file');
         const clearLog = document.getElementById('clear-log');
 
         // Upload area click
@@ -129,11 +129,11 @@ const StreamDemo = {
     selectFile(file) {
         this.selectedFile = file;
 
-        const uploadArea = document.getElementById('upload-area');
-        const fileInfo = document.getElementById('file-info');
-        const fileName = document.getElementById('file-name');
-        const fileSize = document.getElementById('file-size');
-        const startBtn = document.getElementById('start-btn');
+        const uploadArea = document.getElementById('stream-upload-area');
+        const fileInfo = document.getElementById('stream-file-info');
+        const fileName = document.getElementById('stream-file-name');
+        const fileSize = document.getElementById('stream-file-size');
+        const startBtn = document.getElementById('stream-start-btn');
 
         uploadArea.classList.add('has-file');
         fileInfo.style.display = 'flex';
@@ -145,10 +145,10 @@ const StreamDemo = {
     clearFile() {
         this.selectedFile = null;
 
-        const uploadArea = document.getElementById('upload-area');
-        const fileInfo = document.getElementById('file-info');
-        const fileInput = document.getElementById('file-input');
-        const startBtn = document.getElementById('start-btn');
+        const uploadArea = document.getElementById('stream-upload-area');
+        const fileInfo = document.getElementById('stream-file-info');
+        const fileInput = document.getElementById('stream-file-input');
+        const startBtn = document.getElementById('stream-start-btn');
 
         uploadArea.classList.remove('has-file');
         fileInfo.style.display = 'none';
@@ -162,7 +162,7 @@ const StreamDemo = {
 
         this.isProcessing = true;
 
-        const startBtn = document.getElementById('start-btn');
+        const startBtn = document.getElementById('stream-start-btn');
         startBtn.classList.add('processing');
         startBtn.innerHTML = `
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -421,7 +421,7 @@ const StreamDemo = {
         document.getElementById('completion-banner').style.display = 'flex';
 
         // Reset button
-        const startBtn = document.getElementById('start-btn');
+        const startBtn = document.getElementById('stream-start-btn');
         startBtn.classList.remove('processing');
         startBtn.innerHTML = `
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -452,7 +452,7 @@ const StreamDemo = {
         document.getElementById('error-banner').style.display = 'flex';
 
         // Reset button
-        const startBtn = document.getElementById('start-btn');
+        const startBtn = document.getElementById('stream-start-btn');
         startBtn.classList.remove('processing');
         startBtn.innerHTML = `
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -502,6 +502,11 @@ const StreamDemo = {
 
     // ── Toast ──
     showToast(message, type = 'info') {
+        // Use main page Toast module if available
+        if (typeof Toast !== 'undefined' && Toast[type]) {
+            Toast[type](message);
+            return;
+        }
         const container = document.getElementById('toast-container');
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;

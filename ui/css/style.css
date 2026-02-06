@@ -1326,6 +1326,728 @@ h1, h2, h3, h4, h5, h6,
     opacity: 0.5;
 }
 
+/* ── Stream Demo ── */
+
+.stream-demo-content {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.stream-layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+.stream-panel {
+    padding: 24px;
+}
+
+.stream-panel.upload {
+    position: sticky;
+    top: 16px;
+}
+
+.stream-panel.pipeline {
+    min-height: 400px;
+}
+
+.stream-panel.log {
+    padding: 20px 24px;
+}
+
+.panel-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 20px;
+    font-family: 'Lora', 'Georgia', serif;
+}
+
+.panel-title svg,
+.panel-title i {
+    color: var(--text-secondary);
+}
+
+/* ── Stream Upload Area ── */
+.stream-upload-area {
+    border: 2px dashed var(--bio-light);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition);
+    overflow: hidden;
+}
+
+.stream-upload-area:hover {
+    border-color: var(--bio-med);
+    background: rgba(79, 119, 93, 0.04);
+}
+
+.stream-upload-area.drag-over {
+    border-color: var(--bio-dark);
+    background: rgba(79, 119, 93, 0.08);
+    transform: scale(1.02);
+}
+
+.stream-upload-area.has-file {
+    border-color: var(--bio-med);
+    border-style: solid;
+    background: rgba(79, 119, 93, 0.06);
+    pointer-events: none;
+}
+
+.stream-upload-area.uploading {
+    pointer-events: none;
+    opacity: 0.5;
+}
+
+.upload-area-inner {
+    padding: 32px 20px;
+    text-align: center;
+}
+
+.upload-icon-wrapper {
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 16px;
+    background: linear-gradient(135deg, rgba(79, 119, 93, 0.1), rgba(141, 170, 145, 0.08));
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--bio-med);
+    transition: var(--transition);
+}
+
+.stream-upload-area:hover .upload-icon-wrapper {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(79, 119, 93, 0.15);
+}
+
+/* ── File Info ── */
+.file-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: rgba(79, 119, 93, 0.08);
+    border: 1px solid rgba(79, 119, 93, 0.2);
+    border-radius: var(--radius-sm);
+    margin-top: 12px;
+    animation: fadeInUp 0.3s ease-out;
+}
+
+.file-info-icon {
+    color: var(--bio-med);
+    flex-shrink: 0;
+}
+
+.file-info-detail {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.file-info-name {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-info-size {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.file-info-remove {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: var(--bio-pale);
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    transition: var(--transition);
+    flex-shrink: 0;
+}
+
+.file-info-remove:hover {
+    background: rgba(196, 91, 74, 0.12);
+    color: var(--error);
+}
+
+/* ── Start Button ── */
+.start-btn {
+    width: 100%;
+    padding: 12px 20px;
+    margin-top: 16px;
+    border: none;
+    border-radius: 9999px;
+    background: linear-gradient(135deg, var(--bio-dark), var(--bio-med));
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    position: relative;
+    overflow: hidden;
+}
+
+.start-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
+    transition: left 0.5s ease;
+}
+
+.start-btn:hover:not(:disabled)::before {
+    left: 100%;
+}
+
+.start-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(44, 76, 59, 0.3);
+}
+
+.start-btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.start-btn:disabled {
+    background: linear-gradient(135deg, #c7c7cc, #d1d1d6);
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.start-btn.processing {
+    background: linear-gradient(135deg, var(--warning), #c98a2e);
+    pointer-events: none;
+}
+
+/* ── Pipeline Stages ── */
+.pipeline-stages {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.pipeline-stage {
+    display: flex;
+    gap: 16px;
+    transition: var(--transition);
+}
+
+.stage-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 24px;
+    flex-shrink: 0;
+}
+
+.stage-dot {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2.5px solid var(--border);
+    background: white;
+    transition: var(--transition);
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
+}
+
+.stage-line {
+    width: 2px;
+    flex: 1;
+    background: var(--border);
+    transition: background 0.5s ease;
+    min-height: 16px;
+}
+
+.pipeline-stage:last-child .stage-line {
+    display: none;
+}
+
+.stage-content {
+    flex: 1;
+    padding-bottom: 20px;
+    min-width: 0;
+}
+
+.pipeline-stage:last-child .stage-content {
+    padding-bottom: 0;
+}
+
+.stage-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 24px;
+    margin-bottom: 4px;
+}
+
+.stage-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    transition: var(--transition);
+}
+
+.stage-status {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 12px;
+    transition: var(--transition);
+    white-space: nowrap;
+}
+
+.stage-detail {
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-height: 0;
+    overflow: hidden;
+    transition: var(--transition);
+}
+
+.stage-progress-bar {
+    height: 3px;
+    background: rgba(44, 76, 59, 0.06);
+    border-radius: 2px;
+    margin-top: 8px;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+/* Stage States — Waiting */
+.pipeline-stage.waiting .stage-name {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+/* Stage States — Active / Processing */
+.pipeline-stage.active .stage-dot {
+    border-color: var(--bio-med);
+    background: var(--bio-med);
+    box-shadow: 0 0 0 4px rgba(79, 119, 93, 0.15);
+    animation: stagePulse 2s ease-in-out infinite;
+}
+
+.pipeline-stage.active .stage-line {
+    background: linear-gradient(to bottom, var(--bio-med), var(--border));
+}
+
+.pipeline-stage.active .stage-name {
+    color: var(--bio-med);
+    font-weight: 600;
+}
+
+.pipeline-stage.active .stage-status {
+    background: rgba(79, 119, 93, 0.1);
+    color: var(--bio-med);
+}
+
+.pipeline-stage.active .stage-progress-bar {
+    opacity: 1;
+}
+
+.pipeline-stage.active .stage-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--bio-med), var(--bio-dark));
+    border-radius: 2px;
+    width: 30%;
+    animation: progressIndeterminate 1.5s ease-in-out infinite;
+}
+
+/* Stage States — Completed */
+.pipeline-stage.completed .stage-dot {
+    border-color: var(--bio-med);
+    background: var(--bio-med);
+    box-shadow: none;
+    animation: none;
+}
+
+.pipeline-stage.completed .stage-dot::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 8px;
+    height: 5px;
+    border-left: 2px solid white;
+    border-bottom: 2px solid white;
+    transform: translate(-50%, -60%) rotate(-45deg);
+}
+
+.pipeline-stage.completed .stage-line {
+    background: var(--bio-med);
+}
+
+.pipeline-stage.completed .stage-status {
+    background: rgba(79, 119, 93, 0.1);
+    color: var(--bio-med);
+}
+
+.pipeline-stage.completed .stage-progress-bar {
+    opacity: 1;
+}
+
+.pipeline-stage.completed .stage-progress-fill {
+    height: 100%;
+    width: 100% !important;
+    background: var(--bio-med);
+    border-radius: 2px;
+    animation: none;
+    transition: width 0.5s ease;
+}
+
+/* Stage States — Failed */
+.pipeline-stage.failed .stage-dot {
+    border-color: var(--error);
+    background: var(--error);
+    box-shadow: 0 0 0 4px rgba(196, 91, 74, 0.15);
+    animation: none;
+}
+
+.pipeline-stage.failed .stage-dot::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 10px;
+    height: 2px;
+    background: white;
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.pipeline-stage.failed .stage-dot::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 10px;
+    height: 2px;
+    background: white;
+    transform: translate(-50%, -50%) rotate(-45deg);
+    z-index: 1;
+}
+
+.pipeline-stage.failed .stage-name {
+    color: var(--error);
+}
+
+.pipeline-stage.failed .stage-status {
+    background: rgba(196, 91, 74, 0.1);
+    color: var(--error);
+}
+
+/* ── Overall Progress ── */
+.overall-progress {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    animation: fadeInUp 0.3s ease-out;
+}
+
+.overall-progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.overall-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.overall-percent {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--bio-med);
+    font-variant-numeric: tabular-nums;
+}
+
+.overall-bar {
+    height: 6px;
+    background: rgba(44, 76, 59, 0.06);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.overall-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--bio-dark), var(--bio-med), var(--earth));
+    background-size: 200% 100%;
+    border-radius: 3px;
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: gradientShift 3s ease infinite;
+}
+
+/* ── Completion Banner ── */
+.completion-banner {
+    margin-top: 20px;
+    padding: 20px;
+    background: linear-gradient(135deg, rgba(79, 119, 93, 0.08), rgba(79, 119, 93, 0.02));
+    border: 1px solid rgba(79, 119, 93, 0.2);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    animation: completionSlideIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.completion-icon {
+    color: var(--bio-med);
+    animation: completionCheck 0.6s ease-out 0.2s both;
+}
+
+.completion-text {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--bio-med);
+    font-family: 'Lora', 'Georgia', serif;
+}
+
+/* ── Error Banner ── */
+.error-banner {
+    margin-top: 20px;
+    padding: 16px 20px;
+    background: rgba(196, 91, 74, 0.08);
+    border: 1px solid rgba(196, 91, 74, 0.2);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    animation: fadeInUp 0.3s ease-out;
+}
+
+.error-icon {
+    color: var(--error);
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.error-text {
+    font-size: 13px;
+    color: var(--error);
+    word-break: break-all;
+    line-height: 1.5;
+}
+
+/* ── Log Panel ── */
+.log-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0;
+}
+
+.log-header .panel-title {
+    margin-bottom: 0;
+}
+
+.clear-log-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    border-radius: 9999px;
+    transition: var(--transition);
+}
+
+.clear-log-btn:hover {
+    background: var(--bio-pale);
+    color: var(--text-primary);
+}
+
+.log-container {
+    margin-top: 12px;
+    max-height: 280px;
+    overflow-y: auto;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    scroll-behavior: smooth;
+}
+
+.log-container::-webkit-scrollbar {
+    width: 4px;
+}
+
+.log-container::-webkit-scrollbar-thumb {
+    background: var(--bio-light);
+    border-radius: 2px;
+}
+
+.log-container::-webkit-scrollbar-thumb:hover {
+    background: var(--bio-med);
+}
+
+.log-empty {
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 24px;
+    font-family: inherit;
+    font-size: 13px;
+}
+
+.log-entry {
+    display: flex;
+    gap: 10px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    animation: logFadeIn 0.25s ease-out;
+    transition: background 0.15s ease;
+}
+
+.log-entry:hover {
+    background: rgba(79, 119, 93, 0.04);
+}
+
+.log-time {
+    color: var(--text-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.6;
+}
+
+.log-event {
+    padding: 0 6px;
+    border-radius: 3px;
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-width: 100px;
+    text-align: center;
+}
+
+.log-event.event-start {
+    background: rgba(79, 119, 93, 0.1);
+    color: var(--bio-med);
+}
+
+.log-event.event-progress {
+    background: rgba(139, 115, 91, 0.1);
+    color: var(--earth);
+}
+
+.log-event.event-done {
+    background: rgba(79, 119, 93, 0.1);
+    color: var(--bio-med);
+}
+
+.log-event.event-error {
+    background: rgba(196, 91, 74, 0.1);
+    color: var(--error);
+}
+
+.log-event.event-info {
+    background: rgba(196, 154, 60, 0.1);
+    color: var(--warning);
+}
+
+.log-message {
+    color: var(--text-secondary);
+    word-break: break-all;
+}
+
+/* ── Stream Demo Animations ── */
+@keyframes stagePulse {
+    0%, 100% {
+        box-shadow: 0 0 0 4px rgba(79, 119, 93, 0.15);
+    }
+    50% {
+        box-shadow: 0 0 0 8px rgba(79, 119, 93, 0.08);
+    }
+}
+
+@keyframes progressIndeterminate {
+    0% {
+        margin-left: 0%;
+        width: 30%;
+    }
+    50% {
+        margin-left: 35%;
+        width: 40%;
+    }
+    100% {
+        margin-left: 70%;
+        width: 30%;
+    }
+}
+
+@keyframes completionSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.98);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes completionCheck {
+    from {
+        transform: scale(0) rotate(-45deg);
+        opacity: 0;
+    }
+    to {
+        transform: scale(1) rotate(0);
+        opacity: 1;
+    }
+}
+
+@keyframes logFadeIn {
+    from {
+        opacity: 0;
+        transform: translateX(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes gradientShift {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+}
+
 /* ── Checkbox Styling ── */
 input[type="checkbox"] {
     accent-color: var(--bio-med);
@@ -1374,5 +2096,23 @@ input[type="checkbox"] {
     .rule-config-content {
         padding: 16px;
         gap: 16px;
+    }
+
+    .stream-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .stream-panel.upload {
+        position: static;
+    }
+
+    .stream-demo-content {
+        padding: 16px;
+        gap: 16px;
+    }
+
+    .log-event {
+        min-width: 70px;
+        font-size: 11px;
     }
 }

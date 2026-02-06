@@ -75,10 +75,10 @@
                 <i data-lucide="settings" class="w-4 h-4"></i>
                 规则配置
             </button>
-            <a href="stream-demo.html" class="nav-btn rounded-full" style="text-decoration:none;">
+            <button class="nav-btn rounded-full" data-page="stream-demo" onclick="App.switchPage('stream-demo')">
                 <i data-lucide="radio" class="w-4 h-4"></i>
                 流式演示
-            </a>
+            </button>
         </nav>
     </header>
 
@@ -216,6 +216,178 @@
     </div>
     </div><!-- /page-rule-config -->
 
+    <!-- Page: Stream Demo -->
+    <div id="page-stream-demo" class="page-container relative z-10">
+    <div class="stream-demo-content">
+        <!-- Main Layout -->
+        <div class="stream-layout">
+            <!-- Left: Upload Panel -->
+            <section class="stream-panel upload glass-card">
+                <h2 class="panel-title">
+                    <i data-lucide="upload" class="w-5 h-5"></i>
+                    上传文件
+                </h2>
+
+                <div id="stream-upload-area" class="stream-upload-area">
+                    <div class="upload-area-inner">
+                        <div class="upload-icon-wrapper">
+                            <i data-lucide="file-up" class="w-10 h-10"></i>
+                        </div>
+                        <p class="upload-text">拖拽 PDF 文件到此处</p>
+                        <p class="upload-hint">或点击选择文件 (仅支持 .pdf)</p>
+                        <input type="file" id="stream-file-input" accept=".pdf" hidden>
+                    </div>
+                </div>
+
+                <!-- File Info (shown after selection) -->
+                <div id="stream-file-info" class="file-info" style="display: none;">
+                    <div class="file-info-icon">
+                        <i data-lucide="file-text" class="w-6 h-6"></i>
+                    </div>
+                    <div class="file-info-detail">
+                        <span id="stream-file-name" class="file-info-name"></span>
+                        <span id="stream-file-size" class="file-info-size"></span>
+                    </div>
+                    <button id="stream-remove-file" class="file-info-remove" title="移除文件">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                </div>
+
+                <button id="stream-start-btn" class="start-btn" disabled>
+                    <i data-lucide="play" class="w-4 h-4"></i>
+                    开始流式处理
+                </button>
+            </section>
+
+            <!-- Right: Pipeline Visualization -->
+            <section class="stream-panel pipeline glass-card">
+                <h2 class="panel-title">
+                    <i data-lucide="activity" class="w-5 h-5"></i>
+                    处理管线
+                </h2>
+
+                <!-- Pipeline Stages -->
+                <div id="pipeline-stages" class="pipeline-stages">
+                    <div class="pipeline-stage" data-stage="parsing">
+                        <div class="stage-indicator">
+                            <div class="stage-dot"></div>
+                            <div class="stage-line"></div>
+                        </div>
+                        <div class="stage-content">
+                            <div class="stage-header">
+                                <span class="stage-name">MinerU 解析</span>
+                                <span class="stage-status"></span>
+                            </div>
+                            <div class="stage-detail"></div>
+                            <div class="stage-progress-bar"><div class="stage-progress-fill"></div></div>
+                        </div>
+                    </div>
+                    <div class="pipeline-stage" data-stage="chunking">
+                        <div class="stage-indicator">
+                            <div class="stage-dot"></div>
+                            <div class="stage-line"></div>
+                        </div>
+                        <div class="stage-content">
+                            <div class="stage-header">
+                                <span class="stage-name">文档分块</span>
+                                <span class="stage-status"></span>
+                            </div>
+                            <div class="stage-detail"></div>
+                            <div class="stage-progress-bar"><div class="stage-progress-fill"></div></div>
+                        </div>
+                    </div>
+                    <div class="pipeline-stage" data-stage="embedding">
+                        <div class="stage-indicator">
+                            <div class="stage-dot"></div>
+                            <div class="stage-line"></div>
+                        </div>
+                        <div class="stage-content">
+                            <div class="stage-header">
+                                <span class="stage-name">向量化</span>
+                                <span class="stage-status"></span>
+                            </div>
+                            <div class="stage-detail"></div>
+                            <div class="stage-progress-bar"><div class="stage-progress-fill"></div></div>
+                        </div>
+                    </div>
+                    <div class="pipeline-stage" data-stage="extracting">
+                        <div class="stage-indicator">
+                            <div class="stage-dot"></div>
+                            <div class="stage-line"></div>
+                        </div>
+                        <div class="stage-content">
+                            <div class="stage-header">
+                                <span class="stage-name">字段提取</span>
+                                <span class="stage-status"></span>
+                            </div>
+                            <div class="stage-detail"></div>
+                            <div class="stage-progress-bar"><div class="stage-progress-fill"></div></div>
+                        </div>
+                    </div>
+                    <div class="pipeline-stage" data-stage="analyzing">
+                        <div class="stage-indicator">
+                            <div class="stage-dot"></div>
+                            <div class="stage-line"></div>
+                        </div>
+                        <div class="stage-content">
+                            <div class="stage-header">
+                                <span class="stage-name">逻辑分析</span>
+                                <span class="stage-status"></span>
+                            </div>
+                            <div class="stage-detail"></div>
+                            <div class="stage-progress-bar"><div class="stage-progress-fill"></div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Overall Progress -->
+                <div id="overall-progress" class="overall-progress" style="display: none;">
+                    <div class="overall-progress-header">
+                        <span class="overall-label">总进度</span>
+                        <span id="overall-percent" class="overall-percent">0%</span>
+                    </div>
+                    <div class="overall-bar">
+                        <div id="overall-fill" class="overall-fill"></div>
+                    </div>
+                </div>
+
+                <!-- Completion Banner -->
+                <div id="completion-banner" class="completion-banner" style="display: none;">
+                    <div class="completion-icon">
+                        <i data-lucide="check-circle" class="w-8 h-8"></i>
+                    </div>
+                    <span class="completion-text">处理完成</span>
+                </div>
+
+                <!-- Error Banner -->
+                <div id="error-banner" class="error-banner" style="display: none;">
+                    <div class="error-icon">
+                        <i data-lucide="x-circle" class="w-6 h-6"></i>
+                    </div>
+                    <span id="error-text" class="error-text"></span>
+                </div>
+            </section>
+        </div>
+
+        <!-- Event Log -->
+        <section class="stream-panel log glass-card">
+            <div class="log-header">
+                <h2 class="panel-title">
+                    <i data-lucide="scroll-text" class="w-5 h-5"></i>
+                    事件日志
+                </h2>
+                <button id="clear-log" class="clear-log-btn">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                    清空
+                </button>
+            </div>
+            <div id="log-container" class="log-container">
+                <div class="log-empty">等待处理开始...</div>
+            </div>
+        </section>
+    </div>
+    </div><!-- /page-stream-demo -->
+
     <!-- Rule Modal -->
     <div id="rule-modal-overlay" class="rule-modal-overlay">
         <div class="rule-modal">
@@ -279,6 +451,7 @@
     <script src="js/api.js"></script>
     <script src="js/ruleConfig.js"></script>
     <script src="js/app.js"></script>
+    <script src="js/stream-demo.js"></script>
     <!-- Initialize Lucide icons -->
     <script>document.addEventListener('DOMContentLoaded', () => lucide.createIcons());</script>
 </body>
