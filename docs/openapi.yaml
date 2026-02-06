@@ -414,7 +414,7 @@ paths:
       tags:
         - extraction
       summary: 获取字段提取配置列表
-      description: 获取所有已启用的字段提取配置，按优先级排序
+      description: 获取所有字段提取配置，按优先级排序
       operationId: listExtractionFields
       responses:
         '200':
@@ -480,7 +480,7 @@ paths:
       tags:
         - extraction
       summary: 删除字段配置
-      description: 软删除字段提取配置（设置 enabled=0）
+      description: 删除字段提取配置（硬删除，从数据库中移除记录）
       operationId: deleteExtractionField
       parameters:
         - $ref: '#/components/parameters/FieldIdPath'
@@ -579,7 +579,7 @@ paths:
       tags:
         - analysis
       summary: 获取逻辑分析配置列表
-      description: 获取所有已启用的逻辑分析规则配置，按优先级排序
+      description: 获取所有逻辑分析规则配置，按优先级排序
       operationId: listAnalysisRules
       responses:
         '200':
@@ -643,7 +643,7 @@ paths:
       tags:
         - analysis
       summary: 删除规则配置
-      description: 软删除逻辑分析规则配置（设置 enabled=0）
+      description: 删除逻辑分析规则配置（硬删除，从数据库中移除记录）
       operationId: deleteAnalysisRule
       parameters:
         - $ref: '#/components/parameters/RuleIdPath'

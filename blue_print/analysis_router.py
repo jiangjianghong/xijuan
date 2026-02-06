@@ -27,7 +27,7 @@ router = APIRouter(prefix="/analysis", tags=["analysis"])
 @router.get("/rules", response_model=ResponseWrapper)
 async def list_rules(db: AsyncSession = Depends(get_db)):
     """获取逻辑分析配置列表。"""
-    stmt = select(AnalysisRule).where(AnalysisRule.enabled == 1).order_by(AnalysisRule.priority)
+    stmt = select(AnalysisRule).order_by(AnalysisRule.priority)
     result = await db.execute(stmt)
     rules = result.scalars().all()
 
@@ -86,7 +86,7 @@ async def upsert_rule(
 
 @router.delete("/rules/{rule_id}", response_model=ResponseWrapper)
 async def delete_rule(rule_id: str, db: AsyncSession = Depends(get_db)):
-    """软删除逻辑分析配置（enabled=0）。"""
+    """删除逻辑分析配置。"""
     stmt = select(AnalysisRule).where(AnalysisRule.rule_id == rule_id)
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
@@ -94,9 +94,9 @@ async def delete_rule(rule_id: str, db: AsyncSession = Depends(get_db)):
     if not existing:
         raise HTTPException(status_code=404, detail="规则配置不存在")
 
-    existing.enabled = 0
+    await db.delete(existing)
     await db.commit()
-    return ResponseWrapper(message="规则配置已禁用")
+    return ResponseWrapper(message="规则配置已删除")
 
 
 @router.get("/rules/{rule_id}/check", response_model=ResponseWrapper)

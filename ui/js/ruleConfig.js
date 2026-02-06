@@ -95,11 +95,17 @@ const RuleConfig = {
         let html = '';
         fields.forEach(f => {
             html += `
-                <tr>
+                <tr class="${f.enabled ? '' : 'row-disabled'}">
                     <td>${Utils.escapeHtml(f.field_id)}</td>
                     <td>${Utils.escapeHtml(f.field_name)}</td>
                     <td>${sourceTypeText[f.source_type] || f.source_type}</td>
                     <td>${f.priority}</td>
+                    <td>
+                        <label class="toggle-switch" onclick="event.stopPropagation()">
+                            <input type="checkbox" ${f.enabled ? 'checked' : ''} onchange="RuleConfig.toggleFieldEnabled('${f.field_id}', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </td>
                     <td>
                         <div class="action-btns">
                             <button class="action-btn" onclick="RuleConfig.openFieldForm(${JSON.stringify(f).replace(/"/g, '&quot;')})" title="编辑">
@@ -135,11 +141,17 @@ const RuleConfig = {
         let html = '';
         rules.forEach(r => {
             html += `
-                <tr>
+                <tr class="${r.enabled ? '' : 'row-disabled'}">
                     <td>${Utils.escapeHtml(r.rule_id)}</td>
                     <td>${Utils.escapeHtml(r.rule_name)}</td>
                     <td>${ruleTypeText[r.rule_type] || r.rule_type}</td>
                     <td>${r.priority}</td>
+                    <td>
+                        <label class="toggle-switch" onclick="event.stopPropagation()">
+                            <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="RuleConfig.toggleRuleEnabled('${r.rule_id}', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </td>
                     <td>
                         <div class="action-btns">
                             <button class="action-btn" onclick="RuleConfig.openRuleForm(${JSON.stringify(r).replace(/"/g, '&quot;')})" title="编辑">
@@ -535,11 +547,12 @@ const RuleConfig = {
 
     collectFieldFormData() {
         const sourceType = document.getElementById('fm-source-type').value;
+        const existingField = this.state.editingField;
         const data = {
             field_id: document.getElementById('fm-field-id').value.trim(),
             field_name: document.getElementById('fm-field-name').value.trim(),
             source_type: sourceType,
-            enabled: 1,
+            enabled: existingField ? existingField.enabled : 1,
             priority: parseInt(document.getElementById('fm-priority').value) || 0,
             table_name_pattern: null,
             table_match_type: null,
@@ -623,13 +636,14 @@ const RuleConfig = {
 
     collectRuleFormData() {
         const dependFieldsStr = document.getElementById('fm-depend-fields').value.trim();
+        const existingRule = this.state.editingRule;
         return {
             rule_id: document.getElementById('fm-rule-id').value.trim(),
             rule_name: document.getElementById('fm-rule-name').value.trim(),
             rule_type: document.getElementById('fm-rule-type').value,
             expression: document.getElementById('fm-expression').value.trim(),
             depend_fields: dependFieldsStr ? dependFieldsStr.split(/[,，]/).map(s => s.trim()).filter(Boolean) : [],
-            enabled: 1,
+            enabled: existingRule ? existingRule.enabled : 1,
             priority: parseInt(document.getElementById('fm-rule-priority').value) || 0,
         };
     },
@@ -749,6 +763,40 @@ const RuleConfig = {
             } catch (error) {
                 Toast.error('保存失败: ' + error.message);
             }
+        }
+    },
+
+    // ─────────────────────────────────────────────────────────
+    // 启用/禁用切换
+    // ─────────────────────────────────────────────────────────
+
+    async toggleFieldEnabled(fieldId, enabled) {
+        const field = this.state.fields.find(f => f.field_id === fieldId);
+        if (!field) return;
+
+        const data = Object.assign({}, field, { enabled: enabled ? 1 : 0 });
+        try {
+            await API.saveExtractionField(data);
+            Toast.success(enabled ? '字段已启用' : '字段已禁用');
+            await this.loadFields();
+        } catch (error) {
+            Toast.error('操作失败: ' + error.message);
+            await this.loadFields();
+        }
+    },
+
+    async toggleRuleEnabled(ruleId, enabled) {
+        const rule = this.state.rules.find(r => r.rule_id === ruleId);
+        if (!rule) return;
+
+        const data = Object.assign({}, rule, { enabled: enabled ? 1 : 0 });
+        try {
+            await API.saveAnalysisRule(data);
+            Toast.success(enabled ? '规则已启用' : '规则已禁用');
+            await this.loadRules();
+        } catch (error) {
+            Toast.error('操作失败: ' + error.message);
+            await this.loadRules();
         }
     },
 

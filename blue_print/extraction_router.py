@@ -34,7 +34,7 @@ router = APIRouter(prefix="/extraction", tags=["extraction"])
 @router.get("/fields", response_model=ResponseWrapper)
 async def list_fields(db: AsyncSession = Depends(get_db)):
     """获取字段提取配置列表。"""
-    stmt = select(ExtractionField).where(ExtractionField.enabled == 1).order_by(ExtractionField.priority)
+    stmt = select(ExtractionField).order_by(ExtractionField.priority)
     result = await db.execute(stmt)
     fields = result.scalars().all()
 
@@ -105,7 +105,7 @@ async def upsert_field(
 
 @router.delete("/fields/{field_id}", response_model=ResponseWrapper)
 async def delete_field(field_id: str, db: AsyncSession = Depends(get_db)):
-    """软删除字段提取配置（enabled=0）。"""
+    """删除字段提取配置。"""
     stmt = select(ExtractionField).where(ExtractionField.field_id == field_id)
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
@@ -113,9 +113,9 @@ async def delete_field(field_id: str, db: AsyncSession = Depends(get_db)):
     if not existing:
         raise HTTPException(status_code=404, detail="字段配置不存在")
 
-    existing.enabled = 0
+    await db.delete(existing)
     await db.commit()
-    return ResponseWrapper(message="字段配置已禁用")
+    return ResponseWrapper(message="字段配置已删除")
 
 
 @router.get("/fields/{field_id}/check", response_model=ResponseWrapper)
