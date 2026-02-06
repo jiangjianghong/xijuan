@@ -607,8 +607,8 @@ paths:
         根据 rule_id 判断执行新增或更新操作（upsert）。
 
         **规则类型**:
-        - `judge`: 判断类规则，使用 LLM 进行逻辑判断
-        - `calc`: 计算类规则，执行数值计算
+        - `judge`: 判断类规则，使用 LLM 进行逻辑判断，支持配置系统提示词（system_prompt）和用户提示词（expression）
+        - `calc`: 计算类规则，使用 numexpr 执行数值计算，不经过 LLM
 
         **Expression 占位符要求**:
         - expression 必须包含 `<field_result>...</field_result>` 占位符，用于引用字段提取结果
@@ -1225,6 +1225,7 @@ components:
             search_config:
               keywords:
                 - 关键词
+            text_system_prompt: 你是一个专业的文档信息提取助手。
             text_extract_prompt: |
               请提取：
               <search_result>内容</search_result>
@@ -1305,11 +1306,17 @@ components:
         expression:
           type: string
           description: |
-            规则表达式，必须包含 `<field_result>...</field_result>` 占位符引用字段值
-            - judge 类型：使用自然语言描述判断条件
-            - calc 类型：使用数学表达式
+            - judge 类型：用户提示词，作为 user message 发送给 LLM，必须包含 `<field_result>...</field_result>` 占位符引用字段值
+            - calc 类型：计算表达式，必须包含 `<field_result>...</field_result>` 占位符引用字段值，系统使用 numexpr 执行数值计算
           example: |
             判断 <field_result>total_revenue</field_result> 是否大于 <field_result>total_cost</field_result>
+        system_prompt:
+          type: string
+          description: |
+            系统提示词（仅 judge 类型使用）
+            作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束。calc 类型不经过 LLM，此字段无效。
+          nullable: true
+          example: 你是一个专业的财务分析师，请严格根据提供的数据进行判断。
         depend_fields:
           type: array
           description: 依赖的字段 ID 列表
@@ -1368,6 +1375,7 @@ components:
           additionalProperties: true
           example:
             rule_type: judge
+            system_prompt: 你是一个专业的财务分析师。
             expression: |
               判断 <field_result>revenue</field_result> 是否为正数
             depend_fields:

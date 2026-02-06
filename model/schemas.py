@@ -119,6 +119,7 @@ class AnalysisRuleCreate(BaseModel):
     rule_name: str = Field(..., max_length=200)
     rule_type: RuleTypeEnum
     expression: str
+    system_prompt: Optional[str] = None
     depend_fields: Optional[List[str]] = None
     enabled: int = 1
     priority: int = 0

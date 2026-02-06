@@ -136,6 +136,7 @@ class AnalysisRule(Base):
         Enum("judge", "calc", name="rule_type_enum"), nullable=False
     )
     expression: Mapped[str] = mapped_column(Text, nullable=False)
+    system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     depend_fields: Mapped[list | None] = mapped_column(JSON, nullable=True)
     enabled: Mapped[int] = mapped_column(TINYINT, default=1)
     priority: Mapped[int] = mapped_column(Integer, default=0)

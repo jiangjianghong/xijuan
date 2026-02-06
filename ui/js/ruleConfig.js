@@ -532,23 +532,43 @@ const RuleConfig = {
                 <input class="form-input" id="fm-depend-fields" value="${Utils.escapeHtml(dependFields)}" placeholder="多个 field_id 用逗号分隔">
                 <div class="form-hint">此规则依赖的提取字段 ID 列表</div>
             </div>
-            <div class="form-group">
-                <label class="form-label">表达式</label>
-                <textarea class="form-textarea" id="fm-expression" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(rule.expression || '')}</textarea>
-                <div class="form-hint" id="fm-expression-hint"></div>
+
+            <!-- 判断型配置区 -->
+            <div id="fm-judge-section">
+                <div class="form-section-divider"></div>
+                <div class="form-section-title">判断配置</div>
+                <div class="form-group">
+                    <label class="form-label">系统提示词</label>
+                    <textarea class="form-textarea" id="fm-system-prompt" rows="3" placeholder="可选，设置 LLM 的角色和行为约束">${Utils.escapeHtml(rule.system_prompt || '')}</textarea>
+                    <div class="form-hint">作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">用户提示词</label>
+                    <textarea class="form-textarea" id="fm-expression" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(rule.expression || '')}</textarea>
+                    <div class="form-hint">作为 user message 发送给 LLM，用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，LLM 返回 true/false 及原因</div>
+                </div>
+            </div>
+
+            <!-- 计算型配置区 -->
+            <div id="fm-calc-section">
+                <div class="form-section-divider"></div>
+                <div class="form-section-title">计算配置</div>
+                <div class="form-group">
+                    <label class="form-label">计算表达式</label>
+                    <textarea class="form-textarea" id="fm-expression-calc" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(rule.expression || '')}</textarea>
+                    <div class="form-hint">用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，系统执行数值计算并返回结果</div>
+                </div>
             </div>
         `;
     },
 
     onRuleTypeChange(type) {
-        const hint = document.getElementById('fm-expression-hint');
-        if (!hint) return;
+        const judgeSection = document.getElementById('fm-judge-section');
+        const calcSection = document.getElementById('fm-calc-section');
+        if (!judgeSection || !calcSection) return;
 
-        if (type === 'judge') {
-            hint.textContent = '判断型：用 <field_result>字段ID</field_result> 引用字段值，LLM 返回 true/false 及原因';
-        } else {
-            hint.textContent = '计算型：用 <field_result>字段ID</field_result> 引用字段值，LLM 执行数值计算并返回结果';
-        }
+        judgeSection.style.display = type === 'judge' ? 'block' : 'none';
+        calcSection.style.display = type === 'calc' ? 'block' : 'none';
     },
 
     // ─────────────────────────────────────────────────────────
@@ -651,11 +671,21 @@ const RuleConfig = {
     collectRuleFormData() {
         const dependFieldsStr = document.getElementById('fm-depend-fields').value.trim();
         const existingRule = this.state.editingRule;
+        const ruleType = document.getElementById('fm-rule-type').value;
+
+        // judge 用 fm-expression, calc 用 fm-expression-calc
+        const expression = ruleType === 'calc'
+            ? document.getElementById('fm-expression-calc').value.trim()
+            : document.getElementById('fm-expression').value.trim();
+
         return {
             rule_id: document.getElementById('fm-rule-id').value.trim(),
             rule_name: document.getElementById('fm-rule-name').value.trim(),
-            rule_type: document.getElementById('fm-rule-type').value,
-            expression: document.getElementById('fm-expression').value.trim(),
+            rule_type: ruleType,
+            expression: expression,
+            system_prompt: ruleType === 'judge'
+                ? (document.getElementById('fm-system-prompt').value.trim() || null)
+                : null,
             depend_fields: dependFieldsStr ? dependFieldsStr.split(/[,，]/).map(s => s.trim()).filter(Boolean) : [],
             enabled: existingRule ? existingRule.enabled : 1,
             priority: parseInt(document.getElementById('fm-rule-priority').value) || 0,
@@ -737,11 +767,13 @@ const RuleConfig = {
             return false;
         }
         if (!data.expression) {
-            Toast.error('表达式不能为空');
+            const label = data.rule_type === 'judge' ? '用户提示词' : '计算表达式';
+            Toast.error(label + '不能为空');
             return false;
         }
         if (!data.expression.includes('<field_result>')) {
-            Toast.error('表达式须包含 <field_result>...</field_result> 占位符');
+            const label = data.rule_type === 'judge' ? '用户提示词' : '计算表达式';
+            Toast.error(label + '须包含 <field_result>...</field_result> 占位符');
             return false;
         }
 

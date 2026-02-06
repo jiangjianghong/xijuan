@@ -38,6 +38,7 @@ async def list_rules(db: AsyncSession = Depends(get_db)):
                 rule_name=r.rule_name,
                 rule_type=r.rule_type,
                 expression=r.expression,
+                system_prompt=r.system_prompt,
                 depend_fields=r.depend_fields,
                 enabled=r.enabled,
                 priority=r.priority,
@@ -63,6 +64,7 @@ async def upsert_rule(
         existing.rule_name = rule.rule_name
         existing.rule_type = rule.rule_type
         existing.expression = rule.expression
+        existing.system_prompt = rule.system_prompt
         existing.depend_fields = rule.depend_fields
         existing.enabled = rule.enabled
         existing.priority = rule.priority
@@ -75,6 +77,7 @@ async def upsert_rule(
             rule_name=rule.rule_name,
             rule_type=rule.rule_type,
             expression=rule.expression,
+            system_prompt=rule.system_prompt,
             depend_fields=rule.depend_fields,
             enabled=rule.enabled,
             priority=rule.priority,
@@ -135,12 +138,14 @@ async def test_analysis(
 
         rule_type = rule.rule_type
         expression = rule.expression
+        system_prompt = rule.system_prompt or ""
         depend_fields = rule.depend_fields or []
     elif req.config:
         # 模式 2: 使用临时配置
         config = req.config
         rule_type = config.get("rule_type", "judge")
         expression = config.get("expression", "")
+        system_prompt = config.get("system_prompt", "")
         depend_fields = config.get("depend_fields", [])
     else:
         raise HTTPException(status_code=400, detail="必须提供 rule_id 或 config")
@@ -164,7 +169,7 @@ async def test_analysis(
         # 执行计算/判断
         cfg = get_config().analysis
         if rule_type == "judge":
-            result_value, reason = await execute_judge(expression_resolved)
+            result_value, reason = await execute_judge(expression_resolved, system_prompt=system_prompt)
         elif rule_type == "calc":
             result_value, reason = await execute_calc(expression_resolved, cfg.calc_precision)
         else:

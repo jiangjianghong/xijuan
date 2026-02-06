@@ -110,11 +110,12 @@ def validate_field_values(
     return True, ""
 
 
-async def execute_judge(resolved_expression: str) -> Tuple[str, str]:
+async def execute_judge(resolved_expression: str, *, system_prompt: str = "") -> Tuple[str, str]:
     """执行判断类规则：将表达式发送给 LLM，返回 true/false 及理由。
 
     Args:
         resolved_expression: 已替换占位符的完整 prompt。
+        system_prompt: 可选的系统提示词，作为 system message 发送。
 
     Returns:
         (result, reason) 元组，result 为 true/false 字符串。
@@ -125,7 +126,15 @@ async def execute_judge(resolved_expression: str) -> Tuple[str, str]:
 {{"result": "true 或 false", "reason": "判断理由/依据"}}"""
 
     try:
-        response = await chat_completion(prompt)
+        sys_prompt = (system_prompt or "").strip()
+        if sys_prompt:
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": prompt},
+            ]
+            response = await chat_completion("", messages=messages)
+        else:
+            response = await chat_completion(prompt)
         response = response.strip()
 
         # 尝试提取 JSON 块
@@ -328,7 +337,7 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
 
             # 根据规则类型执行
             if rule.rule_type == "judge":
-                result_value, reason = await execute_judge(resolved_expression)
+                result_value, reason = await execute_judge(resolved_expression, system_prompt=rule.system_prompt or "")
             elif rule.rule_type == "calc":
                 result_value, reason = await execute_calc(resolved_expression, cfg.calc_precision)
             else:
@@ -523,7 +532,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
 
             # 根据规则类型执行
             if rule.rule_type == "judge":
-                result_value, reason = await execute_judge(resolved_expression)
+                result_value, reason = await execute_judge(resolved_expression, system_prompt=rule.system_prompt or "")
             elif rule.rule_type == "calc":
                 result_value, reason = await execute_calc(resolved_expression, cfg.calc_precision)
             else:
