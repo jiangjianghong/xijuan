@@ -10,8 +10,14 @@
     <!-- Header -->
     <header class="header glass-card">
         <h1>PDF 文档智能处理系统</h1>
+        <nav class="header-nav">
+            <button class="nav-btn active" onclick="App.switchPage('file-processing')">文件处理</button>
+            <button class="nav-btn" onclick="App.switchPage('rule-config')">规则配置</button>
+        </nav>
     </header>
 
+    <!-- Page: File Processing -->
+    <div id="page-file-processing" class="page-container active">
     <main class="main-content">
         <!-- Upload Area -->
         <section class="upload-section glass-card">
@@ -81,6 +87,82 @@
             </div>
         </section>
     </main>
+    </div><!-- /page-file-processing -->
+
+    <!-- Page: Rule Config -->
+    <div id="page-rule-config" class="page-container">
+    <div class="rule-config-content">
+        <!-- Sub Tabs -->
+        <div class="sub-tabs">
+            <button class="sub-tab-btn active" onclick="RuleConfig.switchTab('fields')">字段提取配置</button>
+            <button class="sub-tab-btn" onclick="RuleConfig.switchTab('rules')">逻辑分析配置</button>
+        </div>
+
+        <!-- Fields Section -->
+        <section id="section-fields" class="rule-section active glass-card" style="padding: 20px;">
+            <div class="rule-section-header">
+                <h2 class="section-title">字段提取配置</h2>
+                <button class="btn btn-primary" onclick="RuleConfig.openFieldForm()">新增字段</button>
+            </div>
+            <div class="table-wrapper">
+                <table class="rule-table">
+                    <thead>
+                        <tr>
+                            <th>字段 ID</th>
+                            <th>字段名称</th>
+                            <th>来源类型</th>
+                            <th>优先级</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="field-list-body">
+                    </tbody>
+                </table>
+            </div>
+            <div id="field-empty" class="rule-empty" style="display:none;">暂无字段提取配置</div>
+        </section>
+
+        <!-- Rules Section -->
+        <section id="section-rules" class="rule-section glass-card" style="padding: 20px;">
+            <div class="rule-section-header">
+                <h2 class="section-title">逻辑分析配置</h2>
+                <button class="btn btn-primary" onclick="RuleConfig.openRuleForm()">新增规则</button>
+            </div>
+            <div class="table-wrapper">
+                <table class="rule-table">
+                    <thead>
+                        <tr>
+                            <th>规则 ID</th>
+                            <th>规则名称</th>
+                            <th>规则类型</th>
+                            <th>优先级</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rule-list-body">
+                    </tbody>
+                </table>
+            </div>
+            <div id="rule-empty" class="rule-empty" style="display:none;">暂无逻辑分析配置</div>
+        </section>
+    </div>
+    </div><!-- /page-rule-config -->
+
+    <!-- Rule Modal -->
+    <div id="rule-modal-overlay" class="rule-modal-overlay">
+        <div class="rule-modal">
+            <div class="rule-modal-header">
+                <h3 id="rule-modal-title">新增配置</h3>
+                <button class="rule-modal-close" onclick="RuleConfig.closeModal()">&times;</button>
+            </div>
+            <div id="rule-modal-body" class="rule-modal-body">
+            </div>
+            <div class="rule-modal-footer">
+                <button class="btn btn-ghost" onclick="RuleConfig.closeModal()">取消</button>
+                <button class="btn btn-primary" onclick="RuleConfig.saveForm()">保存</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Detail Drawer -->
     <div id="drawer-overlay" class="drawer-overlay"></div>
@@ -127,6 +209,7 @@
 
     <script src="js/utils.js"></script>
     <script src="js/api.js"></script>
+    <script src="js/ruleConfig.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

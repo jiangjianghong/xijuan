@@ -22,6 +22,7 @@ const App = {
         this.cacheElements();
         this.bindEvents();
         Toast.init();
+        RuleConfig.init();
         this.loadFileList();
         this.startPolling();
     },
@@ -584,10 +585,30 @@ const App = {
     },
 
     escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return Utils.escapeHtml(text);
+    },
+
+    // ─────────────────────────────────────────────────────────
+    // 页面切换
+    // ─────────────────────────────────────────────────────────
+
+    switchPage(page) {
+        // 切换导航按钮
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.textContent.includes(page === 'file-processing' ? '文件处理' : '规则配置'));
+        });
+
+        // 切换页面容器
+        document.querySelectorAll('.page-container').forEach(el => {
+            el.classList.remove('active');
+        });
+        const target = document.getElementById('page-' + page);
+        if (target) target.classList.add('active');
+
+        // 首次进入规则配置时加载数据
+        if (page === 'rule-config' && !RuleConfig.state.loaded.fields) {
+            RuleConfig.loadFields();
+        }
     },
 
     // ─────────────────────────────────────────────────────────

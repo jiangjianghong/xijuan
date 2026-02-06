@@ -149,6 +149,16 @@ const Utils = {
     generateId() {
         return Date.now().toString(36) + Math.random().toString(36).substr(2);
     },
+
+    /**
+     * HTML 转义
+     */
+    escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    },
 };
 
 /**

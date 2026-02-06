@@ -227,4 +227,74 @@ const API = {
     async retryFileAsync(fileId, stage) {
         return this.request(`/file/${fileId}/retry/${stage}?mode=async`, { method: 'POST' });
     },
+
+    // ─── 字段提取配置 ───
+
+    /**
+     * 获取字段提取配置列表
+     */
+    async getExtractionFields() {
+        const result = await this.request('/extraction/fields');
+        return result.data;
+    },
+
+    /**
+     * 新增/更新字段提取配置
+     */
+    async saveExtractionField(data) {
+        return this.request('/extraction/fields', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    },
+
+    /**
+     * 删除字段提取配置
+     */
+    async deleteExtractionField(id) {
+        return this.request(`/extraction/fields/${id}`, { method: 'DELETE' });
+    },
+
+    /**
+     * 检查 field_id 是否存在
+     */
+    async checkExtractionField(id) {
+        const result = await this.request(`/extraction/fields/${id}/check`);
+        return result.data;
+    },
+
+    // ─── 逻辑分析配置 ───
+
+    /**
+     * 获取逻辑分析配置列表
+     */
+    async getAnalysisRules() {
+        const result = await this.request('/analysis/rules');
+        return result.data;
+    },
+
+    /**
+     * 新增/更新逻辑分析配置
+     */
+    async saveAnalysisRule(data) {
+        return this.request('/analysis/rules', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    },
+
+    /**
+     * 删除逻辑分析配置
+     */
+    async deleteAnalysisRule(id) {
+        return this.request(`/analysis/rules/${id}`, { method: 'DELETE' });
+    },
+
+    /**
+     * 检查 rule_id 是否存在
+     */
+    async checkAnalysisRule(id) {
+        const result = await this.request(`/analysis/rules/${id}/check`);
+        return result.data;
+    },
 };
