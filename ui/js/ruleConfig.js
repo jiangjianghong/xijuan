@@ -190,6 +190,66 @@ const RuleConfig = {
     },
 
     // ─────────────────────────────────────────────────────────
+    // Tag 标签式输入
+    // ─────────────────────────────────────────────────────────
+
+    buildKeywordTagsHtml(id, label, values, placeholder) {
+        values = values || [];
+        let tagsHtml = '';
+        for (const v of values) {
+            tagsHtml += `<span class="keyword-tag">${Utils.escapeHtml(v)}<button type="button" class="keyword-tag-remove" onclick="RuleConfig.removeKeywordTag(this)">&times;</button></span>`;
+        }
+        return `
+            <div class="form-group">
+                <label class="form-label">${Utils.escapeHtml(label)}</label>
+                <div class="keyword-tags-container" id="${id}">
+                    <div class="keyword-tags-list">${tagsHtml}</div>
+                    <div class="keyword-input-row">
+                        <input type="text" placeholder="${Utils.escapeHtml(placeholder || '输入后按回车或点击添加')}" onkeydown="if(event.key==='Enter'){event.preventDefault();RuleConfig.addKeywordTag('${id}',this.value);this.value='';}">
+                        <button type="button" onclick="RuleConfig.addKeywordTag('${id}',this.previousElementSibling.value);this.previousElementSibling.value='';">+ 添加</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    addKeywordTag(containerId, value) {
+        value = (value || '').trim();
+        if (!value) return;
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const list = container.querySelector('.keyword-tags-list');
+        // Avoid duplicates
+        const existing = this.getKeywordTags(containerId);
+        if (existing.includes(value)) return;
+        const span = document.createElement('span');
+        span.className = 'keyword-tag';
+        span.innerHTML = `${Utils.escapeHtml(value)}<button type="button" class="keyword-tag-remove" onclick="RuleConfig.removeKeywordTag(this)">&times;</button>`;
+        list.appendChild(span);
+    },
+
+    removeKeywordTag(button) {
+        const tag = button.parentElement;
+        if (tag) tag.remove();
+    },
+
+    getKeywordTags(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return [];
+        const tags = container.querySelectorAll('.keyword-tag');
+        const values = [];
+        tags.forEach(tag => {
+            // Get text content excluding the remove button
+            const clone = tag.cloneNode(true);
+            const btn = clone.querySelector('.keyword-tag-remove');
+            if (btn) btn.remove();
+            const text = clone.textContent.trim();
+            if (text) values.push(text);
+        });
+        return values;
+    },
+
+    // ─────────────────────────────────────────────────────────
     // 字段表单
     // ─────────────────────────────────────────────────────────
 
@@ -311,10 +371,7 @@ const RuleConfig = {
         switch (searchType) {
             case 'context':
                 html = `
-                    <div class="form-group">
-                        <label class="form-label">关键词</label>
-                        <input class="form-input" id="fm-sc-keywords" value="${Utils.escapeHtml((config.keywords || []).join(', '))}" placeholder="多个关键词用逗号分隔">
-                    </div>
+                    ${this.buildKeywordTagsHtml('fm-sc-keywords', '关键词', config.keywords || [], '输入关键词后按回车或点击添加')}
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">上文行数</label>
@@ -373,14 +430,8 @@ const RuleConfig = {
 
             case 'rule':
                 html = `
-                    <div class="form-group">
-                        <label class="form-label">关键词</label>
-                        <input class="form-input" id="fm-sc-keywords" value="${Utils.escapeHtml((config.keywords || []).join(', '))}" placeholder="多个关键词用逗号分隔">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">停用词</label>
-                        <input class="form-input" id="fm-sc-stop-words" value="${Utils.escapeHtml((config.stop_words || []).join(', '))}" placeholder="多个停用词用逗号分隔">
-                    </div>
+                    ${this.buildKeywordTagsHtml('fm-sc-keywords', '关键词', config.keywords || [], '输入关键词后按回车或点击添加')}
+                    ${this.buildKeywordTagsHtml('fm-sc-stop-words', '停用词', config.stop_words || [], '输入停用词后按回车或点击添加')}
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">方向</label>
@@ -415,12 +466,14 @@ const RuleConfig = {
                 `;
                 break;
 
-            case 'chunk_db':
+            case 'chunk_db': {
+                // Backward compat: prefer config.keywords, fallback to config.keyword_filter (comma-split)
+                let chunkKeywords = config.keywords || [];
+                if (chunkKeywords.length === 0 && config.keyword_filter) {
+                    chunkKeywords = config.keyword_filter.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+                }
                 html = `
-                    <div class="form-group">
-                        <label class="form-label">关键词过滤</label>
-                        <input class="form-input" id="fm-sc-keyword-filter" value="${Utils.escapeHtml(config.keyword_filter || '')}" placeholder="过滤关键词">
-                    </div>
+                    ${this.buildKeywordTagsHtml('fm-sc-keywords', '关键词', chunkKeywords, '输入关键词后按回车或点击添加')}
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">最大结果数</label>
@@ -436,6 +489,7 @@ const RuleConfig = {
                     </div>
                 `;
                 break;
+            }
 
             case 'vector_db':
                 html = `
@@ -632,7 +686,7 @@ const RuleConfig = {
 
         switch (searchType) {
             case 'context':
-                config.keywords = getList('fm-sc-keywords');
+                config.keywords = this.getKeywordTags('fm-sc-keywords');
                 config.context_before = getInt('fm-sc-context-before', 3);
                 config.context_after = getInt('fm-sc-context-after', 3);
                 config.max_results = getInt('fm-sc-max-results', 5);
@@ -645,8 +699,8 @@ const RuleConfig = {
                 config.sort_order = getVal('fm-sc-sort-order') || 'first';
                 break;
             case 'rule':
-                config.keywords = getList('fm-sc-keywords');
-                config.stop_words = getList('fm-sc-stop-words');
+                config.keywords = this.getKeywordTags('fm-sc-keywords');
+                config.stop_words = this.getKeywordTags('fm-sc-stop-words');
                 config.direction = getVal('fm-sc-direction') || 'forward';
                 config.min_length = getInt('fm-sc-min-length', 0);
                 config.max_length = getInt('fm-sc-max-length', 1000);
@@ -654,7 +708,7 @@ const RuleConfig = {
                 config.sort_order = getVal('fm-sc-sort-order') || 'first';
                 break;
             case 'chunk_db':
-                config.keyword_filter = getVal('fm-sc-keyword-filter') || null;
+                config.keywords = this.getKeywordTags('fm-sc-keywords');
                 config.max_results = getInt('fm-sc-max-results', 5);
                 config.sort_order = getVal('fm-sc-sort-order') || 'first';
                 break;

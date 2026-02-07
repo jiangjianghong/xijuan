@@ -1300,6 +1300,105 @@ h1, h2, h3, h4, h5, h6,
     margin-bottom: 12px;
 }
 
+/* ── Keyword Tag Input ── */
+.keyword-tags-container {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: white;
+    padding: 8px;
+    transition: var(--transition);
+}
+
+.keyword-tags-container:focus-within {
+    border-color: var(--bio-med);
+    box-shadow: 0 0 0 3px rgba(79, 119, 93, 0.15);
+}
+
+.keyword-tags-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 4px;
+}
+
+.keyword-tags-list:not(:empty) {
+    margin-bottom: 8px;
+}
+
+.keyword-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: var(--bio-pale);
+    border-radius: 9999px;
+    font-size: 13px;
+    color: var(--text-primary);
+    animation: fadeIn 0.2s ease-out;
+}
+
+.keyword-tag-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border: none;
+    background: transparent;
+    border-radius: 50%;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: var(--transition);
+    padding: 0;
+}
+
+.keyword-tag-remove:hover {
+    background: rgba(196, 91, 74, 0.15);
+    color: var(--error);
+}
+
+.keyword-input-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.keyword-input-row input {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    color: var(--text-primary);
+    outline: none;
+    background: transparent;
+    font-family: inherit;
+    transition: var(--transition);
+}
+
+.keyword-input-row input:focus {
+    border-color: var(--bio-med);
+}
+
+.keyword-input-row button {
+    padding: 4px 12px;
+    border: none;
+    border-radius: 9999px;
+    background: var(--bio-dark);
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: var(--transition);
+}
+
+.keyword-input-row button:hover {
+    background: var(--bio-med);
+}
+
 .rule-empty {
     text-align: center;
     padding: 40px;

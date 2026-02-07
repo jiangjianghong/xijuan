@@ -349,15 +349,12 @@ async def search_chunk_db(
     Returns:
         检索结果列表，每项包含 chunk_id, chunk_index, chunk_content。
     """
-    # 兼容两种字段名：keyword_filter（设计文档，单个字符串）和 keywords（列表）
-    keyword_filter = config.get("keyword_filter")
+    # 统一优先读 keywords（数组），兼容旧 keyword_filter（逗号分隔字符串）
     keywords = config.get("keywords", [])
-    if keyword_filter:
-        if isinstance(keyword_filter, str):
-            # 按中英文逗号拆分为多个关键词
+    if not keywords:
+        keyword_filter = config.get("keyword_filter")
+        if keyword_filter and isinstance(keyword_filter, str):
             keywords = [k.strip() for k in re.split(r"[,，]", keyword_filter) if k.strip()]
-        else:
-            keywords = keyword_filter
     # 兼容两种字段名：max_results（设计文档）和 top_k
     max_results = config.get("max_results") or config.get("top_k", 10)
     sort_order = config.get("sort_order", "asc")
