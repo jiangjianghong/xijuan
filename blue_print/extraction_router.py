@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +28,7 @@ from service.extraction_service import (
     search_rule,
     search_section,
     search_vector_db,
+    test_field_extraction_stream,
 )
 
 router = APIRouter(prefix="/extraction", tags=["extraction"])
@@ -236,4 +239,56 @@ async def test_extraction(
             extracted_value=extracted_value,
             reason=reason,
         ).model_dump()
+    )
+
+
+def _sse_event(event: str, data: Dict[str, Any]) -> str:
+    """格式化 SSE 事件。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/test/stream")
+async def test_extraction_stream(
+    req: ExtractionTestRequest, db: AsyncSession = Depends(get_db)
+):
+    """字段提取调试流式接口，分步返回检索结果、提示词、LLM 响应和提取结果。"""
+    file_id = req.file_id
+
+    # 构建临时 ExtractionField 对象（复用 /test 端点的逻辑）
+    if req.field_id:
+        stmt = select(ExtractionField).where(ExtractionField.field_id == req.field_id)
+        result = await db.execute(stmt)
+        field = result.scalar_one_or_none()
+        if not field:
+            raise HTTPException(status_code=404, detail="字段配置不存在")
+    elif req.config:
+        config = req.config
+        field = ExtractionField(
+            field_id="__test__",
+            field_name=config.get("field_name", "测试字段"),
+            source_type=config.get("source_type", "text"),
+            table_name_pattern=config.get("table_name_pattern"),
+            table_match_type=config.get("table_match_type"),
+            table_system_prompt=config.get("table_system_prompt"),
+            table_extract_prompt=config.get("table_extract_prompt"),
+            search_type=config.get("search_type"),
+            search_config=config.get("search_config"),
+            text_system_prompt=config.get("text_system_prompt"),
+            text_extract_prompt=config.get("text_extract_prompt"),
+        )
+    else:
+        raise HTTPException(status_code=400, detail="必须提供 field_id 或 config")
+
+    async def event_generator():
+        async for item in test_field_extraction_stream(file_id, field, db):
+            yield _sse_event(item["event"], item["data"])
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )

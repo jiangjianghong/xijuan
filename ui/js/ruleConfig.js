@@ -11,6 +11,8 @@ const RuleConfig = {
         editingRule: null,
         modalType: null, // 'field' | 'rule'
         loaded: { fields: false, rules: false },
+        debugMode: false,
+        debugTestRunning: false,
     },
 
     els: {},
@@ -30,6 +32,7 @@ const RuleConfig = {
             modalBody: document.getElementById('rule-modal-body'),
             sectionFields: document.getElementById('section-fields'),
             sectionRules: document.getElementById('section-rules'),
+            debugBtn: document.getElementById('debug-field-btn'),
         };
     },
 
@@ -183,7 +186,12 @@ const RuleConfig = {
     },
 
     closeModal() {
+        if (this.state.debugMode) {
+            this.exitDebugMode();
+        }
         this.els.modalOverlay.classList.remove('active');
+        this.els.modalOverlay.classList.remove('debug-overlay');
+        if (this.els.debugBtn) this.els.debugBtn.style.display = 'none';
         this.state.editingField = null;
         this.state.editingRule = null;
         this.state.modalType = null;
@@ -260,6 +268,7 @@ const RuleConfig = {
 
         this.els.modalTitle.textContent = isEdit ? '编辑字段配置' : '新增字段配置';
         this.els.modalBody.innerHTML = this.buildFieldForm(field || {});
+        if (this.els.debugBtn) this.els.debugBtn.style.display = '';
         this.showModal();
 
         // 初始化动态区域
@@ -546,6 +555,7 @@ const RuleConfig = {
 
         this.els.modalTitle.textContent = isEdit ? '编辑规则配置' : '新增规则配置';
         this.els.modalBody.innerHTML = this.buildRuleForm(rule || {});
+        if (this.els.debugBtn) this.els.debugBtn.style.display = 'none';
         this.showModal();
 
         this.onRuleTypeChange((rule && rule.rule_type) || 'judge');
@@ -924,5 +934,472 @@ const RuleConfig = {
         } catch (error) {
             Toast.error('删除失败: ' + error.message);
         }
+    },
+
+    // ─────────────────────────────────────────────────────────
+    // 调试模式
+    // ─────────────────────────────────────────────────────────
+
+    toggleDebugMode() {
+        if (this.state.debugMode) {
+            this.exitDebugMode();
+        } else {
+            this.enterDebugMode();
+        }
+    },
+
+    enterDebugMode() {
+        this.state.debugMode = true;
+
+        // 保存关键词 tags 值（innerHTML 重写前）
+        const savedKeywords = this._saveKeywordTagsState();
+
+        // 获取当前表单内容
+        const formHtml = this.els.modalBody.innerHTML;
+
+        // 获取表单元素当前值
+        const formValues = this._saveFormValues();
+
+        // 构建分屏布局
+        this.els.modalBody.innerHTML = `
+            <div class="debug-split">
+                <div class="debug-left">${formHtml}</div>
+                <div class="debug-right">${this.buildDebugPanel()}</div>
+            </div>
+        `;
+
+        // 恢复表单元素值
+        this._restoreFormValues(formValues);
+
+        // 恢复关键词 tags
+        this._restoreKeywordTagsState(savedKeywords);
+
+        // 添加 debug-mode 类实现全屏动画
+        const modal = this.els.modalOverlay.querySelector('.rule-modal');
+        if (modal) modal.classList.add('debug-mode');
+        this.els.modalOverlay.classList.add('debug-overlay');
+
+        // 更新按钮文字
+        if (this.els.debugBtn) this.els.debugBtn.textContent = '退出调试';
+
+        // 恢复表单动态区域显隐
+        const sourceType = document.getElementById('fm-source-type');
+        if (sourceType) {
+            this.onSourceTypeChange(sourceType.value);
+            if (sourceType.value === 'text') {
+                const searchType = document.getElementById('fm-search-type');
+                if (searchType) this.onSearchTypeChange(searchType.value);
+            }
+        }
+
+        // 加载已完成文件列表
+        this.loadDebugFileList();
+    },
+
+    exitDebugMode() {
+        this.state.debugMode = false;
+        this.state.debugTestRunning = false;
+
+        // 保存关键词 tags 值
+        const savedKeywords = this._saveKeywordTagsState();
+
+        // 取出左侧表单内容
+        const debugLeft = this.els.modalBody.querySelector('.debug-left');
+        const formHtml = debugLeft ? debugLeft.innerHTML : '';
+
+        // 获取表单值
+        const formValues = this._saveFormValues();
+
+        // 还原 body
+        this.els.modalBody.innerHTML = formHtml;
+
+        // 恢复表单值
+        this._restoreFormValues(formValues);
+
+        // 恢复关键词 tags
+        this._restoreKeywordTagsState(savedKeywords);
+
+        // 移除 debug-mode 类
+        const modal = this.els.modalOverlay.querySelector('.rule-modal');
+        if (modal) modal.classList.remove('debug-mode');
+        this.els.modalOverlay.classList.remove('debug-overlay');
+
+        // 更新按钮文字
+        if (this.els.debugBtn) this.els.debugBtn.textContent = '调试';
+
+        // 恢复表单动态区域
+        const sourceType = document.getElementById('fm-source-type');
+        if (sourceType) {
+            this.onSourceTypeChange(sourceType.value);
+            if (sourceType.value === 'text') {
+                const searchType = document.getElementById('fm-search-type');
+                if (searchType) this.onSearchTypeChange(searchType.value);
+            }
+        }
+    },
+
+    /**
+     * 保存所有表单 input/select/textarea 的当前值
+     */
+    _saveFormValues() {
+        const values = {};
+        const inputs = this.els.modalBody.querySelectorAll('input[id], select[id], textarea[id]');
+        inputs.forEach(el => {
+            if (el.type === 'checkbox') {
+                values[el.id] = el.checked;
+            } else {
+                values[el.id] = el.value;
+            }
+        });
+        return values;
+    },
+
+    /**
+     * 恢复表单 input/select/textarea 值
+     */
+    _restoreFormValues(values) {
+        for (const [id, val] of Object.entries(values)) {
+            const el = document.getElementById(id);
+            if (!el) continue;
+            if (el.type === 'checkbox') {
+                el.checked = val;
+            } else {
+                el.value = val;
+            }
+        }
+    },
+
+    /**
+     * 保存关键词 tag 组件的状态
+     */
+    _saveKeywordTagsState() {
+        const state = {};
+        const containers = this.els.modalBody.querySelectorAll('.keyword-tags-container[id]');
+        containers.forEach(c => {
+            state[c.id] = this.getKeywordTags(c.id);
+        });
+        return state;
+    },
+
+    /**
+     * 恢复关键词 tag 组件的状态
+     */
+    _restoreKeywordTagsState(state) {
+        for (const [containerId, tags] of Object.entries(state)) {
+            const container = document.getElementById(containerId);
+            if (!container) continue;
+            // 清除已有 tags
+            const list = container.querySelector('.keyword-tags-list');
+            if (list) list.innerHTML = '';
+            // 重建
+            for (const tag of tags) {
+                this.addKeywordTag(containerId, tag);
+            }
+        }
+    },
+
+    buildDebugPanel() {
+        return `
+            <div class="debug-panel">
+                <div class="debug-controls">
+                    <select id="debug-file-select">
+                        <option value="">-- 选择测试文件 --</option>
+                    </select>
+                    <button class="debug-test-btn" id="debug-test-btn" onclick="RuleConfig.runFieldTest()" disabled>测试</button>
+                </div>
+
+                <div class="debug-section" id="debug-sec-config" style="display:none;">
+                    <div class="debug-section-header">检索配置</div>
+                    <div class="debug-section-body">
+                        <div class="debug-code-block" id="debug-config-preview"></div>
+                    </div>
+                </div>
+
+                <div class="debug-section" id="debug-sec-search" style="display:none;">
+                    <div class="debug-section-header">检索结果</div>
+                    <div class="debug-section-body" id="debug-search-results"></div>
+                </div>
+
+                <div class="debug-section" id="debug-sec-prompt" style="display:none;">
+                    <div class="debug-section-header">LLM 提示词</div>
+                    <div class="debug-section-body" id="debug-prompt-content"></div>
+                </div>
+
+                <div class="debug-section" id="debug-sec-llm" style="display:none;">
+                    <div class="debug-section-header">LLM 原始响应</div>
+                    <div class="debug-section-body">
+                        <div class="debug-code-block" id="debug-llm-response"></div>
+                    </div>
+                </div>
+
+                <div class="debug-section" id="debug-sec-result" style="display:none;">
+                    <div class="debug-section-header">提取结果</div>
+                    <div class="debug-section-body" id="debug-result-content"></div>
+                </div>
+
+                <div id="debug-error-area"></div>
+                <div id="debug-loading-area"></div>
+            </div>
+        `;
+    },
+
+    async loadDebugFileList() {
+        const select = document.getElementById('debug-file-select');
+        const testBtn = document.getElementById('debug-test-btn');
+        if (!select) return;
+
+        try {
+            const data = await API.getCompletedFiles();
+            const files = data.items || data || [];
+
+            select.innerHTML = '<option value="">-- 选择测试文件 --</option>';
+            files.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f.file_id;
+                opt.textContent = f.file_name || f.file_id;
+                select.appendChild(opt);
+            });
+
+            // 选择文件后启用测试按钮
+            select.onchange = () => {
+                if (testBtn) testBtn.disabled = !select.value;
+            };
+        } catch (error) {
+            console.error('加载文件列表失败:', error);
+            select.innerHTML = '<option value="">加载失败</option>';
+        }
+    },
+
+    async runFieldTest() {
+        const fileSelect = document.getElementById('debug-file-select');
+        const fileId = fileSelect ? fileSelect.value : '';
+        if (!fileId) {
+            Toast.error('请先选择测试文件');
+            return;
+        }
+
+        if (this.state.debugTestRunning) return;
+        this.state.debugTestRunning = true;
+
+        // 收集当前表单数据
+        const formData = this.collectFieldFormData();
+
+        // 显示检索配置预览
+        this.showDebugConfigPreview(formData);
+
+        // 重置结果区域
+        this.resetDebugResults();
+
+        // 显示 loading
+        this._showDebugLoading('正在执行测试...');
+
+        // 禁用测试按钮
+        const testBtn = document.getElementById('debug-test-btn');
+        if (testBtn) {
+            testBtn.disabled = true;
+            testBtn.textContent = '测试中...';
+        }
+
+        const payload = {
+            file_id: fileId,
+            config: formData,
+        };
+
+        try {
+            await API.testFieldStream(payload, (evt) => {
+                this.handleDebugEvent(evt);
+            });
+        } catch (error) {
+            this.showDebugError(error.message);
+        } finally {
+            this.state.debugTestRunning = false;
+            this._hideDebugLoading();
+            if (testBtn) {
+                testBtn.disabled = !fileSelect.value;
+                testBtn.textContent = '测试';
+            }
+        }
+    },
+
+    showDebugConfigPreview(config) {
+        const section = document.getElementById('debug-sec-config');
+        const preview = document.getElementById('debug-config-preview');
+        if (!section || !preview) return;
+
+        // 构建精简的配置预览
+        const displayConfig = {};
+        displayConfig.source_type = config.source_type;
+        if (config.source_type === 'table') {
+            displayConfig.table_name_pattern = config.table_name_pattern;
+            displayConfig.table_match_type = config.table_match_type;
+        } else {
+            displayConfig.search_type = config.search_type;
+            displayConfig.search_config = config.search_config;
+        }
+
+        preview.textContent = JSON.stringify(displayConfig, null, 2);
+        section.style.display = '';
+    },
+
+    handleDebugEvent(evt) {
+        const { event, data } = evt;
+        switch (event) {
+            case 'search_results':
+                this._hideDebugLoading();
+                this._showDebugLoading('正在构建提示词...');
+                this.renderDebugSearchResults(data);
+                break;
+            case 'prompt':
+                this._hideDebugLoading();
+                this._showDebugLoading('正在调用 LLM...');
+                this.renderDebugPrompt(data);
+                break;
+            case 'llm_response':
+                this._hideDebugLoading();
+                this._showDebugLoading('正在解析结果...');
+                this.renderDebugLlmResponse(data);
+                break;
+            case 'result':
+                this._hideDebugLoading();
+                this.renderDebugResult(data);
+                break;
+            case 'error':
+                this._hideDebugLoading();
+                this.showDebugError(data.message);
+                break;
+            case 'done':
+                this._hideDebugLoading();
+                break;
+        }
+    },
+
+    renderDebugSearchResults(data) {
+        const section = document.getElementById('debug-sec-search');
+        const container = document.getElementById('debug-search-results');
+        if (!section || !container) return;
+
+        let html = '';
+
+        if (data.source_type === 'table') {
+            // 表格匹配结果
+            const tables = data.matched_tables || [];
+            if (tables.length === 0) {
+                html = '<div style="color: var(--text-secondary); font-size: 13px;">未匹配到表格</div>';
+            } else {
+                html += `<div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">匹配到 ${tables.length} 个表格</div>`;
+                tables.forEach(t => {
+                    html += `
+                        <div class="debug-result-group">
+                            <div class="debug-result-group-header">${Utils.escapeHtml(t.table_name || '未命名表格')}</div>
+                            <div class="debug-result-item-content">${Utils.escapeHtml(t.table_content)}</div>
+                        </div>
+                    `;
+                });
+            }
+        } else {
+            // 文本检索结果（按关键词分组）
+            const resultsByLabel = data.results_by_label || {};
+            const labels = Object.keys(resultsByLabel);
+            if (labels.length === 0) {
+                html = '<div style="color: var(--text-secondary); font-size: 13px;">未检索到结果</div>';
+            } else {
+                html += `<div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">检索类型: ${data.search_type || '-'}，共 ${(data.results || []).length} 条结果</div>`;
+                labels.forEach(label => {
+                    html += `
+                        <div class="debug-result-group">
+                            <div class="debug-result-group-header">${Utils.escapeHtml(label)}</div>
+                            <div class="debug-result-item-content">${Utils.escapeHtml(resultsByLabel[label])}</div>
+                        </div>
+                    `;
+                });
+            }
+        }
+
+        container.innerHTML = html;
+        section.style.display = '';
+    },
+
+    renderDebugPrompt(data) {
+        const section = document.getElementById('debug-sec-prompt');
+        const container = document.getElementById('debug-prompt-content');
+        if (!section || !container) return;
+
+        let html = '';
+
+        if (data.system_prompt) {
+            html += `
+                <div class="debug-prompt-block">
+                    <div class="debug-prompt-label">System Prompt</div>
+                    <div class="debug-code-block">${Utils.escapeHtml(data.system_prompt)}</div>
+                </div>
+            `;
+        }
+
+        html += `
+            <div class="debug-prompt-block">
+                <div class="debug-prompt-label">User Prompt</div>
+                <div class="debug-code-block">${Utils.escapeHtml(data.user_prompt)}</div>
+            </div>
+        `;
+
+        container.innerHTML = html;
+        section.style.display = '';
+    },
+
+    renderDebugLlmResponse(data) {
+        const section = document.getElementById('debug-sec-llm');
+        const container = document.getElementById('debug-llm-response');
+        if (!section || !container) return;
+
+        container.textContent = data.raw_response || '(空响应)';
+        section.style.display = '';
+    },
+
+    renderDebugResult(data) {
+        const section = document.getElementById('debug-sec-result');
+        const container = document.getElementById('debug-result-content');
+        if (!section || !container) return;
+
+        container.innerHTML = `
+            <div class="debug-result-card">
+                <div class="debug-result-row">
+                    <span class="label">提取值:</span>
+                    <span class="value">${Utils.escapeHtml(data.extracted_value || '(空)')}</span>
+                </div>
+                <div class="debug-result-row">
+                    <span class="label">理由:</span>
+                    <span class="reason">${Utils.escapeHtml(data.reason || '(无)')}</span>
+                </div>
+            </div>
+        `;
+        section.style.display = '';
+    },
+
+    showDebugError(msg) {
+        const area = document.getElementById('debug-error-area');
+        if (!area) return;
+        area.innerHTML = `<div class="debug-error-banner">${Utils.escapeHtml(msg)}</div>`;
+    },
+
+    resetDebugResults() {
+        // 隐藏所有结果区块
+        ['debug-sec-search', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+        // 清除错误
+        const errorArea = document.getElementById('debug-error-area');
+        if (errorArea) errorArea.innerHTML = '';
+    },
+
+    _showDebugLoading(msg) {
+        const area = document.getElementById('debug-loading-area');
+        if (!area) return;
+        area.innerHTML = `<div class="debug-loading"><div class="spinner"></div>${Utils.escapeHtml(msg)}</div>`;
+    },
+
+    _hideDebugLoading() {
+        const area = document.getElementById('debug-loading-area');
+        if (area) area.innerHTML = '';
     },
 };

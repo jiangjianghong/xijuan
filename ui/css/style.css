@@ -1152,7 +1152,7 @@ h1, h2, h3, h4, h5, h6,
     flex-direction: column;
     transform: scale(0.95) translateY(10px);
     opacity: 0;
-    transition: transform 0.3s ease, opacity 0.3s ease;
+    transition: transform 0.3s ease, opacity 0.3s ease, width 0.35s ease, max-width 0.35s ease, max-height 0.35s ease, border-radius 0.35s ease, height 0.35s ease;
 }
 
 .rule-modal-overlay.active .rule-modal {
@@ -1208,6 +1208,274 @@ h1, h2, h3, h4, h5, h6,
     padding: 16px 24px;
     border-top: 1px solid var(--border);
     flex-shrink: 0;
+}
+
+/* ── Debug Button ── */
+.btn-debug {
+    background: var(--earth);
+    color: white;
+}
+
+.btn-debug:hover:not(:disabled) {
+    background: #7a6550;
+    filter: brightness(1.1);
+}
+
+/* ── Debug Mode — Full-screen Split Layout ── */
+.rule-modal.debug-mode {
+    width: 100vw;
+    height: 100vh;
+    max-width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+}
+
+.rule-modal-overlay.active.debug-overlay {
+    background: rgba(44, 76, 59, 0.6);
+}
+
+.debug-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    height: calc(100vh - 140px);
+    overflow: hidden;
+}
+
+.debug-left {
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 20px 24px;
+    height: calc(100vh - 140px);
+}
+
+.debug-right {
+    overflow-y: auto;
+    padding: 20px 24px;
+    height: calc(100vh - 140px);
+    background: rgba(245, 242, 235, 0.5);
+}
+
+/* ── Debug Panel Sections ── */
+.debug-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.debug-section {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.debug-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--bio-pale);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--bio-dark);
+    cursor: default;
+    font-family: 'Lora', 'Georgia', serif;
+}
+
+.debug-section-body {
+    padding: 12px 14px;
+}
+
+/* ── Debug File Selector & Test Button ── */
+.debug-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.debug-controls select {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: white;
+    font-size: 13px;
+    color: var(--text-primary);
+    outline: none;
+    transition: var(--transition);
+}
+
+.debug-controls select:focus {
+    border-color: var(--bio-med);
+    box-shadow: 0 0 0 3px rgba(79, 119, 93, 0.15);
+}
+
+.debug-test-btn {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 9999px;
+    background: var(--bio-dark);
+    color: white;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: var(--transition);
+}
+
+.debug-test-btn:hover:not(:disabled) {
+    background: var(--bio-med);
+}
+
+.debug-test-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ── Debug Code Block (JSON / Prompt preview) ── */
+.debug-code-block {
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    background: rgba(44, 76, 59, 0.04);
+    border-radius: 8px;
+    padding: 12px;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--text-secondary);
+}
+
+/* ── Debug Search Result Groups ── */
+.debug-result-group {
+    margin-bottom: 12px;
+}
+
+.debug-result-group:last-child {
+    margin-bottom: 0;
+}
+
+.debug-result-group-header {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--bio-med);
+    margin-bottom: 6px;
+    padding: 4px 8px;
+    background: rgba(79, 119, 93, 0.08);
+    border-radius: 6px;
+    display: inline-block;
+}
+
+.debug-result-item-content {
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    padding: 8px 10px;
+    background: rgba(44, 76, 59, 0.03);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    max-height: 120px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* ── Debug Prompt Blocks ── */
+.debug-prompt-block {
+    margin-bottom: 12px;
+}
+
+.debug-prompt-block:last-child {
+    margin-bottom: 0;
+}
+
+.debug-prompt-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--earth);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+/* ── Debug Result Card ── */
+.debug-result-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.debug-result-row {
+    display: flex;
+    gap: 8px;
+}
+
+.debug-result-row .label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 60px;
+    flex-shrink: 0;
+}
+
+.debug-result-row .value {
+    font-size: 13px;
+    color: var(--bio-med);
+    word-break: break-all;
+    font-weight: 500;
+}
+
+.debug-result-row .reason {
+    font-size: 13px;
+    color: var(--text-secondary);
+    word-break: break-all;
+}
+
+/* ── Debug Error Banner ── */
+.debug-error-banner {
+    padding: 12px 16px;
+    background: rgba(196, 91, 74, 0.08);
+    border: 1px solid rgba(196, 91, 74, 0.2);
+    border-radius: var(--radius-sm);
+    color: var(--error);
+    font-size: 13px;
+    animation: fadeInUp 0.3s ease-out;
+}
+
+/* ── Debug Loading ── */
+.debug-loading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.debug-loading .spinner {
+    flex-shrink: 0;
+}
+
+/* ── Debug Mode Responsive ── */
+@media (max-width: 900px) {
+    .debug-split {
+        grid-template-columns: 1fr;
+        height: auto;
+    }
+
+    .debug-left {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        height: auto;
+        max-height: 50vh;
+    }
+
+    .debug-right {
+        height: auto;
+        max-height: 50vh;
+    }
 }
 
 /* ── Form Elements ── */

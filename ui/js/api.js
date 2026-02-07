@@ -297,4 +297,72 @@ const API = {
         const result = await this.request(`/analysis/rules/${id}/check`);
         return result.data;
     },
+
+    // ─── 调试相关 ───
+
+    /**
+     * 获取已完成文件列表（用于调试面板文件选择器）
+     */
+    async getCompletedFiles() {
+        const result = await this.request('/file/list?page=1&page_size=100&status=complete');
+        return result.data;
+    },
+
+    /**
+     * 流式测试字段提取（SSE）
+     */
+    testFieldStream(payload, onEvent) {
+        return new Promise((resolve, reject) => {
+            fetch(`${this.baseUrl}/extraction/test/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            }).then(response => {
+                if (!response.ok) {
+                    response.json().then(data => {
+                        reject(new Error(data.detail || `测试失败: ${response.status}`));
+                    }).catch(() => {
+                        reject(new Error(`测试失败: ${response.status}`));
+                    });
+                    return;
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                function read() {
+                    reader.read().then(({ done, value }) => {
+                        if (done) {
+                            resolve();
+                            return;
+                        }
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        let currentEvent = null;
+                        for (const line of lines) {
+                            if (line.startsWith('event: ')) {
+                                currentEvent = line.slice(7).trim();
+                            } else if (line.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(line.slice(6));
+                                    onEvent({ event: currentEvent || 'message', data });
+                                } catch (e) {
+                                    console.warn('SSE parse error:', e);
+                                }
+                                currentEvent = null;
+                            }
+                        }
+
+                        read();
+                    }).catch(reject);
+                }
+
+                read();
+            }).catch(reject);
+        });
+    },
 };

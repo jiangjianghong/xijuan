@@ -6,7 +6,7 @@ import json
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from loguru import logger
 from sqlalchemy import select
@@ -854,3 +854,212 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
             }
 
     logger.info("流式字段提取完成: {}", file_id)
+
+
+async def test_field_extraction_stream(
+    file_id: str, field: ExtractionField, session: AsyncSession
+) -> AsyncIterator[Dict[str, Any]]:
+    """单字段提取调试流式生成器，分 4 步 yield 中间结果。
+
+    Args:
+        file_id: 文件 ID。
+        field: ExtractionField ORM 对象（可以是临时构建的）。
+        session: 数据库会话。
+
+    Yields:
+        Dict: 每步包含 event 和 data 两个键。
+    """
+    try:
+        source_type = field.source_type or "text"
+
+        # ── Step 1: 检索 ──────────────────────────────────────
+        search_results: List[Dict[str, Any]] = []
+        matched_tables: List[Dict[str, Any]] = []
+        results_by_label: Dict[str, str] = {}
+
+        try:
+            if source_type == "table":
+                # 表格检索
+                stmt = select(FileTable).where(FileTable.file_id == file_id)
+                result = await session.execute(stmt)
+                tables = result.scalars().all()
+
+                match_type = field.table_match_type or "contains"
+                pattern = field.table_name_pattern or ""
+
+                for table in tables:
+                    matched = False
+                    if match_type == "exact":
+                        matched = table.table_name == pattern
+                    elif match_type == "fuzzy":
+                        ratio = SequenceMatcher(None, table.table_name, pattern).ratio()
+                        matched = ratio >= 0.8
+                    elif match_type == "contains":
+                        matched = pattern.lower() in table.table_name.lower()
+                    elif match_type == "llm":
+                        prompt = f"判断以下表格名称是否与查询匹配。\n\n查询: {pattern}\n表格名称: {table.table_name}\n\n只回答'是'或'否'。"
+                        try:
+                            resp = await chat_completion(prompt)
+                            matched = "是" in resp
+                        except Exception:
+                            matched = False
+
+                    if matched:
+                        matched_tables.append({
+                            "table_index": table.table_index,
+                            "table_name": table.table_name,
+                            "table_content": table.table_content[:500] + "..." if len(table.table_content) > 500 else table.table_content,
+                        })
+                        table_name = table.table_name or f"表格{table.table_index}"
+                        content = f"表格名称: {table_name}\n{table.table_content}"
+                        if table_name in results_by_label:
+                            results_by_label[table_name] += "\n---\n" + content
+                        else:
+                            results_by_label[table_name] = content
+
+                yield {
+                    "event": "search_results",
+                    "data": {
+                        "source_type": "table",
+                        "search_type": None,
+                        "results": [],
+                        "matched_tables": matched_tables,
+                        "results_by_label": {k: v[:500] for k, v in results_by_label.items()},
+                    },
+                }
+
+            else:
+                # 文本检索
+                search_type = field.search_type or "context"
+                search_config = field.search_config or {}
+
+                # 获取文件内容
+                stmt = select(FileContent).where(FileContent.file_id == file_id)
+                result = await session.execute(stmt)
+                file_content = result.scalar_one_or_none()
+
+                if not file_content:
+                    yield {"event": "error", "data": {"message": "文件内容不存在"}}
+                    return
+
+                content = file_content.file_content
+
+                if search_type == "context":
+                    search_results = await search_context(content, search_config)
+                elif search_type == "section":
+                    search_results = await search_section(content, search_config)
+                elif search_type == "rule":
+                    search_results = await search_rule(content, search_config)
+                elif search_type == "chunk_db":
+                    search_results = await search_chunk_db(file_id, search_config, session)
+                elif search_type == "vector_db":
+                    search_results = await search_vector_db(file_id, search_config)
+
+                # 按关键词分组构建 results_by_label
+                results_by_keyword: Dict[str, List[Dict]] = {}
+                for r in search_results:
+                    kw = r.get("keyword", "") or r.get("section_title", "")
+                    if kw:
+                        if kw not in results_by_keyword:
+                            results_by_keyword[kw] = []
+                        results_by_keyword[kw].append(r)
+
+                for keyword, items in results_by_keyword.items():
+                    if search_type == "context":
+                        results_by_label[keyword] = "\n---\n".join([r["context"] for r in items])
+                    elif search_type == "section":
+                        results_by_label[keyword] = "\n---\n".join([r["content"] for r in items])
+                    elif search_type == "rule":
+                        results_by_label[keyword] = "\n---\n".join([r["extracted_text"] for r in items])
+                    elif search_type in ("chunk_db", "vector_db"):
+                        results_by_label[keyword] = "\n---\n".join([r["chunk_content"] for r in items])
+
+                yield {
+                    "event": "search_results",
+                    "data": {
+                        "source_type": "text",
+                        "search_type": search_type,
+                        "results": search_results,
+                        "matched_tables": [],
+                        "results_by_label": {k: v[:1000] for k, v in results_by_label.items()},
+                    },
+                }
+
+        except Exception as e:
+            logger.error("调试检索步骤失败: {}", e)
+            yield {"event": "error", "data": {"message": f"检索失败: {str(e)}"}}
+            return
+
+        # ── Step 2: 构建提示词 ──────────────────────────────────
+        try:
+            if source_type == "table":
+                prompt_template = field.table_extract_prompt or ""
+                system_prompt = (field.table_system_prompt or "").strip()
+            else:
+                prompt_template = field.text_extract_prompt or ""
+                system_prompt = (field.text_system_prompt or "").strip()
+
+            if not validate_prompt_has_placeholder(prompt_template):
+                yield {"event": "error", "data": {"message": "提示词模板缺少 <search_result>...</search_result> 占位符"}}
+                return
+
+            user_prompt = replace_search_result_placeholders(prompt_template, results_by_label)
+            user_prompt += JSON_OUTPUT_INSTRUCTION
+
+            yield {
+                "event": "prompt",
+                "data": {
+                    "system_prompt": system_prompt,
+                    "user_prompt": user_prompt,
+                },
+            }
+
+        except Exception as e:
+            logger.error("调试提示词构建失败: {}", e)
+            yield {"event": "error", "data": {"message": f"提示词构建失败: {str(e)}"}}
+            return
+
+        # ── Step 3: 调用 LLM ──────────────────────────────────
+        try:
+            if system_prompt:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+                raw_response = await chat_completion("", messages=messages)
+            else:
+                raw_response = await chat_completion(user_prompt)
+
+            yield {
+                "event": "llm_response",
+                "data": {"raw_response": raw_response},
+            }
+
+        except Exception as e:
+            logger.error("调试 LLM 调用失败: {}", e)
+            yield {"event": "error", "data": {"message": f"LLM 调用失败: {str(e)}"}}
+            return
+
+        # ── Step 4: 解析结果 ──────────────────────────────────
+        try:
+            value, reason = parse_llm_json_response(raw_response)
+
+            yield {
+                "event": "result",
+                "data": {
+                    "extracted_value": value,
+                    "reason": reason,
+                },
+            }
+
+        except Exception as e:
+            logger.error("调试结果解析失败: {}", e)
+            yield {"event": "error", "data": {"message": f"结果解析失败: {str(e)}"}}
+            return
+
+        # ── 完成 ──────────────────────────────────────────────
+        yield {"event": "done", "data": {}}
+
+    except Exception as e:
+        logger.error("调试流式提取意外错误: {}", e)
+        yield {"event": "error", "data": {"message": f"意外错误: {str(e)}"}}
