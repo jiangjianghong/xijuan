@@ -1542,6 +1542,86 @@ h1, h2, h3, h4, h5, h6,
     min-height: 180px;
 }
 
+/* ── Insert Tag Button ── */
+.form-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.form-label-row .form-label {
+    margin-bottom: 0;
+}
+
+.insert-tag-wrap {
+    position: relative;
+}
+
+.insert-tag-btn {
+    width: 28px;
+    height: 22px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bio-pale);
+    color: var(--text-secondary);
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+    transition: var(--transition);
+}
+
+.insert-tag-btn:hover {
+    background: var(--bio-light);
+    color: white;
+    border-color: var(--bio-light);
+}
+
+.insert-tag-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    min-width: 140px;
+    max-height: 200px;
+    overflow-y: auto;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(44, 76, 59, 0.15);
+    z-index: 10;
+    padding: 4px 0;
+    animation: fadeInUp 0.15s ease-out;
+}
+
+.insert-tag-dropdown .dropdown-item {
+    padding: 6px 12px;
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.15s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.insert-tag-dropdown .dropdown-item:hover {
+    background: var(--bio-pale);
+    color: var(--bio-dark);
+}
+
+.insert-tag-dropdown .dropdown-empty {
+    padding: 8px 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
 .form-hint {
     font-size: 12px;
     color: var(--text-secondary);

@@ -258,6 +258,90 @@ const RuleConfig = {
     },
 
     // ─────────────────────────────────────────────────────────
+    // 占位符快捷插入
+    // ─────────────────────────────────────────────────────────
+
+    showInsertTagDropdown(textareaId, tagType, btnEl) {
+        // 先关闭已有 dropdown
+        this.closeInsertTagDropdown();
+
+        // 收集标签列表
+        let labels = [];
+        if (textareaId === 'fm-table-extract-prompt') {
+            const val = (document.getElementById('fm-table-name-pattern') || {}).value;
+            if (val && val.trim()) labels = [val.trim()];
+        } else if (textareaId === 'fm-text-extract-prompt') {
+            labels = this.getKeywordTags('fm-sc-keywords');
+        } else if (textareaId === 'fm-expression' || textareaId === 'fm-expression-calc') {
+            const raw = (document.getElementById('fm-depend-fields') || {}).value || '';
+            labels = raw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+        }
+
+        // 创建 dropdown
+        const dropdown = document.createElement('div');
+        dropdown.className = 'insert-tag-dropdown';
+        dropdown.id = '_insert-tag-dropdown';
+
+        if (labels.length === 0) {
+            dropdown.innerHTML = '<div class="dropdown-empty">暂无可用标签</div>';
+        } else {
+            labels.forEach(label => {
+                const item = document.createElement('div');
+                item.className = 'dropdown-item';
+                item.textContent = label;
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    RuleConfig.insertTagAtCursor(textareaId, tagType, label);
+                });
+                dropdown.appendChild(item);
+            });
+        }
+
+        // 插入到按钮的父元素（insert-tag-wrap）
+        const wrap = btnEl.closest('.insert-tag-wrap');
+        if (wrap) wrap.appendChild(dropdown);
+
+        // 点击外部关闭
+        const closeHandler = (e) => {
+            if (!dropdown.contains(e.target) && e.target !== btnEl) {
+                RuleConfig.closeInsertTagDropdown();
+            }
+        };
+        document.addEventListener('click', closeHandler, true);
+        dropdown._closeHandler = closeHandler;
+    },
+
+    insertTagAtCursor(textareaId, tagType, label) {
+        const textarea = document.getElementById(textareaId);
+        if (!textarea) return;
+
+        const text = '<' + tagType + '>' + label + '</' + tagType + '>';
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const before = textarea.value.substring(0, start);
+        const after = textarea.value.substring(end);
+
+        textarea.value = before + text + after;
+        textarea.focus();
+
+        const cursorPos = start + text.length;
+        textarea.selectionStart = cursorPos;
+        textarea.selectionEnd = cursorPos;
+
+        this.closeInsertTagDropdown();
+    },
+
+    closeInsertTagDropdown() {
+        const dropdown = document.getElementById('_insert-tag-dropdown');
+        if (dropdown) {
+            if (dropdown._closeHandler) {
+                document.removeEventListener('click', dropdown._closeHandler, true);
+            }
+            dropdown.remove();
+        }
+    },
+
+    // ─────────────────────────────────────────────────────────
     // 字段表单
     // ─────────────────────────────────────────────────────────
 
@@ -336,7 +420,12 @@ const RuleConfig = {
                     <div class="form-hint">作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束</div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">用户提示词</label>
+                    <div class="form-label-row">
+                        <label class="form-label">用户提示词</label>
+                        <div class="insert-tag-wrap">
+                            <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-table-extract-prompt','search_result',this)" title="插入占位符">{x}</button>
+                        </div>
+                    </div>
                     <textarea class="form-textarea" id="fm-table-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.table_extract_prompt || '')}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
                 </div>
@@ -365,7 +454,12 @@ const RuleConfig = {
                     <div class="form-hint">作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束</div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">用户提示词</label>
+                    <div class="form-label-row">
+                        <label class="form-label">用户提示词</label>
+                        <div class="insert-tag-wrap">
+                            <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-text-extract-prompt','search_result',this)" title="插入占位符">{x}</button>
+                        </div>
+                    </div>
                     <textarea class="form-textarea" id="fm-text-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.text_extract_prompt || '')}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
                 </div>
@@ -607,7 +701,12 @@ const RuleConfig = {
                     <div class="form-hint">作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束</div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">用户提示词</label>
+                    <div class="form-label-row">
+                        <label class="form-label">用户提示词</label>
+                        <div class="insert-tag-wrap">
+                            <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-expression','field_result',this)" title="插入占位符">{x}</button>
+                        </div>
+                    </div>
                     <textarea class="form-textarea" id="fm-expression" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(rule.expression || '')}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，LLM 返回 true/false 及原因</div>
                 </div>
@@ -618,7 +717,12 @@ const RuleConfig = {
                 <div class="form-section-divider"></div>
                 <div class="form-section-title">计算配置</div>
                 <div class="form-group">
-                    <label class="form-label">计算表达式</label>
+                    <div class="form-label-row">
+                        <label class="form-label">计算表达式</label>
+                        <div class="insert-tag-wrap">
+                            <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-expression-calc','field_result',this)" title="插入占位符">{x}</button>
+                        </div>
+                    </div>
                     <textarea class="form-textarea" id="fm-expression-calc" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(rule.expression || '')}</textarea>
                     <div class="form-hint">用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，系统执行数值计算并返回结果</div>
                 </div>
