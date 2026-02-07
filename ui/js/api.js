@@ -330,6 +330,7 @@ const API = {
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
+                let currentEvent = null;
 
                 function read() {
                     reader.read().then(({ done, value }) => {
@@ -342,7 +343,6 @@ const API = {
                         const lines = buffer.split('\n');
                         buffer = lines.pop() || '';
 
-                        let currentEvent = null;
                         for (const line of lines) {
                             if (line.startsWith('event: ')) {
                                 currentEvent = line.slice(7).trim();
