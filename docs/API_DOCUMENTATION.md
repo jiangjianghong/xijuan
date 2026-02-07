@@ -930,6 +930,81 @@ curl "http://localhost:5019/extraction/fields/total_revenue/check"
 
 ---
 
+### 4.6 字段提取流式调试
+
+流式调试字段提取逻辑，通过 SSE 分步返回检索结果、提示词、LLM 响应和提取结果。
+
+- **URL**: `POST /extraction/test/stream`
+- **Content-Type**: `application/json`
+- **响应类型**: `text/event-stream`
+
+**请求体**
+
+与 4.5 字段提取调试相同。
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `file_id` | `string` | 是 | 目标文件 ID |
+| `field_id` | `string` | 否* | 模式 1：使用已保存的字段配置 |
+| `config` | `object` | 否* | 模式 2：使用临时配置 |
+
+> \* `field_id` 和 `config` 必须提供其中一个。
+
+**请求示例**
+
+```json
+{
+  "file_id": "a1b2c3d4e5f6",
+  "config": {
+    "field_name": "测试字段",
+    "source_type": "text",
+    "search_type": "context",
+    "search_config": {"keywords": ["利润"]},
+    "text_extract_prompt": "请提取净利润数值：\n<search_result>利润</search_result>"
+  }
+}
+```
+
+**SSE 事件序列**
+
+| 步骤 | event | data 字段 | 说明 |
+|------|-------|-----------|------|
+| 1 | `search_results` | `source_type`, `matched_tables` / `results_by_label`, `results` | 检索结果 |
+| 2 | `prompt` | `system_prompt`, `user_prompt` | LLM 提示词 |
+| 3 | `llm_response` | `raw_response` | LLM 原始响应 |
+| 4 | `result` | `extracted_value`, `reason` | 提取结果 |
+| 5 | `done` | `{}` | 完成 |
+| - | `error` | `message` | 任意步骤失败时触发 |
+
+**SSE 事件数据格式示例**
+
+```
+event: search_results
+data: {"source_type": "text", "search_type": "context", "results": [...], "results_by_label": {"利润": "...相关文本..."}}
+
+event: prompt
+data: {"system_prompt": "", "user_prompt": "请提取净利润数值：\n..."}
+
+event: llm_response
+data: {"raw_response": "{\"value\": \"500000\", \"reason\": \"从文本中提取\"}"}
+
+event: result
+data: {"extracted_value": "500000", "reason": "从文本中提取"}
+
+event: done
+data: {}
+```
+
+**状态码**
+
+| 状态码 | 说明 |
+|--------|------|
+| 200 | 开始流式调试（SSE 流） |
+| 400 | 未提供 `field_id` 或 `config` |
+| 404 | 字段配置不存在 |
+
+---
+
 ## 5. 逻辑分析配置接口
 
 ### 5.1 获取分析规则列表
@@ -1189,6 +1264,123 @@ curl "http://localhost:5019/analysis/rules/revenue_check/check"
 | 400 | 未提供 `rule_id` 或 `config` |
 | 404 | 规则配置不存在 |
 | 500 | 分析过程异常 |
+
+---
+
+### 5.6 逻辑分析流式调试
+
+流式调试逻辑分析规则，通过 SSE 分步返回依赖字段值、表达式解析、LLM 提示词/响应和分析结果。
+
+- **URL**: `POST /analysis/test/stream`
+- **Content-Type**: `application/json`
+- **响应类型**: `text/event-stream`
+
+**请求体**
+
+与 5.5 逻辑分析调试相同。
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `file_id` | `string` | 是 | 目标文件 ID |
+| `rule_id` | `string` | 否* | 模式 1：使用已保存的规则配置 |
+| `config` | `object` | 否* | 模式 2：使用临时配置 |
+
+> \* `rule_id` 和 `config` 必须提供其中一个。
+
+**请求示例（judge 类型）**
+
+```json
+{
+  "file_id": "a1b2c3d4e5f6",
+  "config": {
+    "rule_type": "judge",
+    "system_prompt": "你是一个专业的财务分析师。",
+    "expression": "请判断营业总收入 <field_result>total_revenue</field_result> 是否大于 1000000",
+    "depend_fields": ["total_revenue"]
+  }
+}
+```
+
+**请求示例（calc 类型）**
+
+```json
+{
+  "file_id": "a1b2c3d4e5f6",
+  "config": {
+    "rule_type": "calc",
+    "expression": "<field_result>net_profit</field_result> / <field_result>total_revenue</field_result> * 100",
+    "depend_fields": ["net_profit", "total_revenue"]
+  }
+}
+```
+
+**Judge 类型 SSE 事件序列**
+
+| 步骤 | event | data 字段 | 说明 |
+|------|-------|-----------|------|
+| 1 | `input_values` | `input_values`, `depend_fields` | 依赖字段的提取值 |
+| 2 | `resolved_expression` | `original_expression`, `resolved_expression` | 表达式解析（占位符替换） |
+| 3 | `prompt` | `system_prompt`, `user_prompt` | LLM 提示词 |
+| 4 | `llm_response` | `raw_response` | LLM 原始响应 |
+| 5 | `result` | `result_value`, `reason` | 分析结果 |
+| 6 | `done` | `{}` | 完成 |
+| - | `error` | `message` | 任意步骤失败时触发 |
+
+**Calc 类型 SSE 事件序列（无 prompt / llm_response 步骤）**
+
+| 步骤 | event | data 字段 | 说明 |
+|------|-------|-----------|------|
+| 1 | `input_values` | `input_values`, `depend_fields` | 依赖字段的提取值 |
+| 2 | `resolved_expression` | `original_expression`, `resolved_expression` | 表达式解析 |
+| 3 | `result` | `result_value`, `reason` | 计算结果 |
+| 4 | `done` | `{}` | 完成 |
+| - | `error` | `message` | 任意步骤失败时触发 |
+
+**SSE 事件数据格式示例（judge）**
+
+```
+event: input_values
+data: {"input_values": {"total_revenue": "1500000"}, "depend_fields": ["total_revenue"]}
+
+event: resolved_expression
+data: {"original_expression": "请判断营业总收入 <field_result>total_revenue</field_result> 是否大于 1000000", "resolved_expression": "请判断营业总收入 1500000 是否大于 1000000"}
+
+event: prompt
+data: {"system_prompt": "你是一个专业的财务分析师。", "user_prompt": "请判断营业总收入 1500000 是否大于 1000000\n\n请根据以上内容进行判断，以 JSON 格式返回结果：\n{\"result\": \"true 或 false\", \"reason\": \"判断理由/依据\"}"}
+
+event: llm_response
+data: {"raw_response": "{\"result\": \"true\", \"reason\": \"营业总收入1500000大于1000000\"}"}
+
+event: result
+data: {"result_value": "true", "reason": "营业总收入1500000大于1000000"}
+
+event: done
+data: {}
+```
+
+**SSE 事件数据格式示例（calc）**
+
+```
+event: input_values
+data: {"input_values": {"net_profit": "500000", "total_revenue": "1500000"}, "depend_fields": ["net_profit", "total_revenue"]}
+
+event: resolved_expression
+data: {"original_expression": "<field_result>net_profit</field_result> / <field_result>total_revenue</field_result> * 100", "resolved_expression": "500000 / 1500000 * 100"}
+
+event: result
+data: {"result_value": "33.33", "reason": "计算公式: 500000 / 1500000 * 100 = 33.33"}
+
+event: done
+data: {}
+```
+
+**状态码**
+
+| 状态码 | 说明 |
+|--------|------|
+| 200 | 开始流式调试（SSE 流） |
+| 400 | 未提供 `rule_id` 或 `config` |
+| 404 | 规则配置不存在 |
 
 ---
 
@@ -1477,9 +1669,11 @@ curl "http://localhost:5019/analysis/rules/revenue_check/check"
 | 13 | DELETE | `/extraction/fields/{field_id}` | 删除字段配置 |
 | 14 | GET | `/extraction/fields/{field_id}/check` | 检查字段 ID 是否存在 |
 | 15 | POST | `/extraction/test` | 字段提取调试 |
-| 16 | GET | `/analysis/rules` | 获取分析规则列表 |
-| 17 | POST | `/analysis/rules` | 新增/更新分析规则 |
-| 18 | DELETE | `/analysis/rules/{rule_id}` | 删除分析规则 |
-| 19 | GET | `/analysis/rules/{rule_id}/check` | 检查规则 ID 是否存在 |
-| 20 | POST | `/analysis/test` | 逻辑分析调试 |
-| 21 | POST | `/search` | 向量相似度检索 |
+| 16 | POST | `/extraction/test/stream` | 字段提取流式调试（SSE） |
+| 17 | GET | `/analysis/rules` | 获取分析规则列表 |
+| 18 | POST | `/analysis/rules` | 新增/更新分析规则 |
+| 19 | DELETE | `/analysis/rules/{rule_id}` | 删除分析规则 |
+| 20 | GET | `/analysis/rules/{rule_id}/check` | 检查规则 ID 是否存在 |
+| 21 | POST | `/analysis/test` | 逻辑分析调试 |
+| 22 | POST | `/analysis/test/stream` | 逻辑分析流式调试（SSE） |
+| 23 | POST | `/search` | 向量相似度检索 |

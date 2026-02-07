@@ -2,11 +2,32 @@ openapi: 3.0.3
 info:
   title: 文档解析与逻辑分析系统 API
   description: |
-    文档解析与逻辑分析系统提供完整的文档处理能力，包括：
-    - **文件处理**: 上传、解析、分块、向量化、字段提取、逻辑分析
-    - **字段提取配置**: 配置从文档中提取特定字段的规则
-    - **逻辑分析配置**: 配置基于提取字段进行逻辑判断或计算的规则
-    - **向量检索**: 基于向量相似度的文档内容检索
+    文档解析与逻辑分析系统提供完整的 PDF 文档智能处理能力，包括：
+
+    - **文件处理**: 上传 PDF 文件，自动完成解析、分块、向量化、字段提取和逻辑分析的全流程处理
+    - **字段提取配置**: 灵活配置从文档中提取特定字段的规则，支持表格数据和文本内容两种数据源
+    - **逻辑分析配置**: 配置基于提取字段进行逻辑判断（LLM 推理）或数值计算（numexpr 引擎）的规则
+    - **向量检索**: 基于 Milvus 向量数据库的语义相似度检索，支持自然语言查询
+
+    ## 技术架构
+    - **PDF 解析**: 通过 MinerU 服务进行 PDF 文档解析，提取文本和表格
+    - **文本分块**: 递归字符分割，支持配置分块大小和重叠长度
+    - **向量化**: 阿里云 DashScope text-embedding-v4 模型
+    - **向量存储**: Milvus 2.x 向量数据库
+    - **LLM 推理**: 阿里云 DashScope qwen 系列大模型
+    - **数据存储**: MySQL 8.0 关系数据库
+
+    ## 处理模式
+    所有文件处理接口均支持三种模式：
+    - **sync**: 同步模式，阻塞等待处理完成
+    - **async**: 异步模式，立即返回，后台处理
+    - **stream**: SSE 流式模式，实时推送处理进度
+
+    ## 通用约定
+    - 所有接口返回统一的 `ResponseWrapper` 格式：`{code, message, data}`
+    - code=200 表示成功，其他值表示业务错误
+    - HTTP 异常（404/409 等）使用标准 `{detail}` 格式
+    - 时间字段使用 ISO 8601 格式（`YYYY-MM-DDTHH:mm:ss`）
   version: 0.1.0
   contact:
     name: API Support
@@ -17,28 +38,188 @@ servers:
 
 tags:
   - name: file
-    description: 文件处理相关接口
+    description: |
+      文件处理相关接口，提供 PDF 文件的上传、解析、分块、向量化、字段提取和逻辑分析的完整处理流程。
+      支持同步、异步和 SSE 流式三种处理模式。处理流程依次经过：
+      parsing → chunking → embedding → extracting → analyzing → complete。
+      每个阶段失败后可从该阶段重试，无需重新上传文件。
   - name: extraction
-    description: 字段提取配置相关接口
+    description: |
+      字段提取配置相关接口，用于管理从文档中提取特定字段的规则。
+      支持两种数据源类型：
+      - **table**：从文档中解析出的表格数据中提取，支持精确匹配、模糊匹配、包含匹配和 LLM 匹配四种表格定位方式。
+      - **text**：从文档正文中提取，支持上下文检索（context）、章节检索（section）、规则检索（rule）、分块数据库检索（chunk_db）和向量检索（vector_db）五种检索方式。
+      提取过程通过 LLM 完成，需配置系统提示词和用户提示词。
   - name: analysis
-    description: 逻辑分析配置相关接口
+    description: |
+      逻辑分析配置相关接口，用于管理基于字段提取结果的逻辑判断或数值计算规则。
+      支持两种规则类型：
+      - **judge**：判断类规则，使用 LLM 基于提取的字段值进行逻辑推理和判断，返回 true/false 及推理理由。
+      - **calc**：计算类规则，使用 numexpr 引擎对提取的数值型字段执行数学表达式计算，不经过 LLM，直接返回计算结果。
+      规则通过 `<field_result>field_id</field_result>` 占位符引用字段提取结果。
   - name: search
-    description: 向量检索相关接口
+    description: |
+      向量检索相关接口，基于 Milvus 向量数据库实现语义相似度检索。
+      将用户查询文本通过 Embedding 模型转为向量后，在已处理文件的文本分块中进行相似度搜索，
+      返回最相关的文档片段及其相似度分数。支持按文件 ID 过滤和相似度阈值筛选。
 
 paths:
   # ══════════════════════════════════════════════════════════════
   # 文件处理模块
   # ══════════════════════════════════════════════════════════════
+  /file/list:
+    get:
+      tags:
+        - file
+      summary: 分页查询文件列表
+      description: |
+        分页查询已处理的文件列表，支持按处理状态筛选。返回文件基本信息、处理进度和分页元数据。
+        文件按创建时间倒序排列（最新上传的文件排在前面）。
+
+        **状态筛选**支持以下值：
+        - `parsing` / `parsing_failed`
+        - `chunking` / `chunking_failed`
+        - `embedding` / `embedding_failed`
+        - `extracting` / `extracting_failed`
+        - `analyzing` / `analyzing_failed`
+        - `complete`
+
+        不传 status 参数时返回所有状态的文件。
+      operationId: listFiles
+      parameters:
+        - name: page
+          in: query
+          description: 页码（从 1 开始）
+          required: false
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: page_size
+          in: query
+          description: 每页数量
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: status
+          in: query
+          description: 按处理状态筛选（为空字符串或不传时返回全部）
+          required: false
+          schema:
+            type: string
+            enum:
+              - ""
+              - parsing
+              - parsing_failed
+              - chunking
+              - chunking_failed
+              - embedding
+              - embedding_failed
+              - extracting
+              - extracting_failed
+              - analyzing
+              - analyzing_failed
+              - complete
+            default: ""
+      responses:
+        '200':
+          description: 查询成功，返回分页文件列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/FileListResponse'
+              example:
+                code: 200
+                message: success
+                data:
+                  items:
+                    - file_id: abc123def456
+                      file_name: 年报2024.pdf
+                      file_size: 1048576
+                      progress: complete
+                      error: null
+                      create_time: "2026-02-07T10:30:00"
+                  total: 1
+                  page: 1
+                  page_size: 20
+                  total_pages: 1
+
+  /file/batch:
+    delete:
+      tags:
+        - file
+      summary: 批量删除文件
+      description: |
+        批量删除多个文件及其所有关联数据。对于每个文件 ID，系统会删除以下关联数据：
+        - 文件记录（files 表）
+        - 文件内容（file_content 表）
+        - 文件表格（file_table 表）
+        - 文件分块（file_chunk 表）
+        - 字段提取结果（extraction_result 表）
+        - 逻辑分析结果（analysis_result 表）
+        - Milvus 向量数据
+
+        部分文件删除失败不会影响其他文件的删除操作。响应中会返回实际删除成功的数量和失败的文件 ID 列表。
+      operationId: batchDeleteFiles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchDeleteRequest'
+            example:
+              file_ids:
+                - abc123def456
+                - def789ghi012
+      responses:
+        '200':
+          description: 批量删除完成（部分失败也返回 200）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/BatchDeleteResponse'
+              example:
+                code: 200
+                message: success
+                data:
+                  deleted_count: 1
+                  failed_ids:
+                    - def789ghi012
+
   /file/parse:
     post:
       tags:
         - file
       summary: 提交文件解析
       description: |
-        上传文件并提交解析处理，支持三种处理模式：
-        - `sync`: 同步模式，等待处理完成后返回
-        - `async`: 异步模式，立即返回 file_id，后台处理
-        - `stream`: 流式模式，通过 SSE 实时推送处理进度
+        上传 PDF 文件并提交解析处理，支持三种处理模式：
+        - `sync`: 同步模式，阻塞等待整个处理流程完成后返回结果
+        - `async`: 异步模式，立即返回 file_id，后台异步执行处理流程
+        - `stream`: 流式模式，通过 SSE（Server-Sent Events）实时推送每个处理阶段的进度事件
+
+        **处理流程**：parsing → chunking → embedding → extracting → analyzing → complete
+
+        **文件 ID 生成规则**：基于文件名的 MD5 哈希生成，相同文件名将生成相同的 file_id。
+
+        **重复上传处理逻辑**：
+        - 若文件正在处理中（*ing 状态），返回 409 拒绝重复提交
+        - 若文件已处理完成（complete），返回已完成状态和 file_id
+        - 若文件之前处理失败（*_failed 状态），自动清理失败数据并从失败阶段重试
+
+        **文件大小限制**：由服务端配置 `mineru.max_file_size` 控制，超过限制返回 400。
 
         处理流程：parsing → chunking → embedding → extracting → analyzing → complete
 
@@ -93,7 +274,11 @@ paths:
                   description: 要解析的文件（支持 PDF 等格式）
       responses:
         '200':
-          description: 处理成功re
+          description: |
+            处理成功。根据 mode 参数返回不同格式：
+            - sync 模式：等待处理完成后返回 JSON（包含 file_id）
+            - async 模式：立即返回 JSON（包含 file_id），后台继续处理
+            - stream 模式：返回 SSE 事件流，实时推送各阶段进度
           content:
             application/json:
               schema:
@@ -143,7 +328,18 @@ paths:
       tags:
         - file
       summary: 查询文件处理进度
-      description: 获取指定文件的处理状态和详细信息
+      description: |
+        查询指定文件的当前处理状态和基本信息。可用于异步模式下轮询文件处理进度。
+
+        返回的 progress 字段表示当前所处阶段：
+        - `parsing` / `parsing_failed`: MinerU PDF 解析阶段
+        - `chunking` / `chunking_failed`: 文本递归分块阶段
+        - `embedding` / `embedding_failed`: 向量化（Embedding）阶段
+        - `extracting` / `extracting_failed`: LLM 字段提取阶段
+        - `analyzing` / `analyzing_failed`: 逻辑分析阶段
+        - `complete`: 全部处理完成
+
+        当 progress 为 `*_failed` 状态时，error 字段会包含具体的错误信息。
       operationId: getFileStatus
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
@@ -170,8 +366,19 @@ paths:
     delete:
       tags:
         - file
-      summary: 删除文件
-      description: 删除文件及所有关联数据（包括分块、表格、提取结果、分析结果、向量数据）
+      summary: 删除单个文件
+      description: |
+        删除指定文件及其所有关联数据，包括：
+        - 文件记录（files 表）
+        - 文件内容（file_content 表，存储的 Markdown 全文）
+        - 文件表格（file_table 表，从 PDF 中解析的表格数据）
+        - 文件分块（file_chunk 表，文本分块数据）
+        - 字段提取结果（extraction_result 表）
+        - 逻辑分析结果（analysis_result 表）
+        - Milvus 向量数据库中的向量数据
+
+        删除操作不可逆，如需重新处理同一文件请重新上传。
+        Milvus 向量数据删除失败不会影响 MySQL 数据的删除（仅记录警告日志）。
       operationId: deleteFile
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
@@ -193,12 +400,23 @@ paths:
     post:
       tags:
         - file
-      summary: 从指定阶段重试
+      summary: 从指定阶段重试处理
       description: |
-        从指定的处理阶段重新开始处理文件，支持三种处理模式：
-        - `async`: 异步模式（默认），立即返回，后台执行
-        - `stream`: 流式模式，通过 SSE 实时推送处理进度
-        - `sync`: 同步模式，等待处理完成后返回
+        从指定的处理阶段重新开始处理文件。适用于某个阶段失败后的重试场景，
+        无需重新上传文件，直接从失败阶段或任意后续阶段开始处理。
+
+        支持三种处理模式：
+        - `async`: 异步模式（默认），立即返回，后台执行重试
+        - `stream`: 流式模式，通过 SSE 实时推送处理进度（从指定 stage 开始推送事件）
+        - `sync`: 同步模式，阻塞等待处理完成后返回
+
+        **可选阶段说明**：
+        - `chunking`: 从文本分块开始（需要已有解析内容）
+        - `embedding`: 从向量化开始（需要已有分块数据）
+        - `extracting`: 从字段提取开始（需要已有向量数据）
+        - `analyzing`: 从逻辑分析开始（需要已有提取结果）
+
+        注意：不支持从 `parsing` 阶段重试，如需重新解析请使用 `/file/parse` 接口重新上传。
       operationId: retryFileFromStage
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
@@ -254,12 +472,17 @@ paths:
     post:
       tags:
         - file
-      summary: 重试字段提取
+      summary: 重试字段提取阶段
       description: |
-        重新执行字段提取阶段，支持三种处理模式：
-        - `async`: 异步模式（默认），立即返回，后台执行
-        - `stream`: 流式模式，通过 SSE 实时推送处理进度
-        - `sync`: 同步模式，等待处理完成后返回
+        重新执行字段提取阶段的快捷接口，等价于调用 `POST /file/{file_id}/retry/extracting`。
+        系统会重新加载所有已启用的字段提取配置，对文件重新执行 LLM 字段提取。
+
+        支持三种处理模式：
+        - `async`: 异步模式（默认），立即返回，后台执行提取
+        - `stream`: 流式模式，通过 SSE 实时推送每个字段的提取进度（field_extracted 事件）
+        - `sync`: 同步模式，阻塞等待所有字段提取完成后返回
+
+        **前置条件**：文件必须已完成 embedding 阶段（向量数据已入库）。
       operationId: retryExtracting
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
@@ -296,12 +519,17 @@ paths:
     post:
       tags:
         - file
-      summary: 重试逻辑分析
+      summary: 重试逻辑分析阶段
       description: |
-        重新执行逻辑分析阶段，支持三种处理模式：
-        - `async`: 异步模式（默认），立即返回，后台执行
-        - `stream`: 流式模式，通过 SSE 实时推送处理进度
-        - `sync`: 同步模式，等待处理完成后返回
+        重新执行逻辑分析阶段的快捷接口，等价于调用 `POST /file/{file_id}/retry/analyzing`。
+        系统会重新加载所有已启用的逻辑分析规则，基于当前的字段提取结果重新执行分析。
+
+        支持三种处理模式：
+        - `async`: 异步模式（默认），立即返回，后台执行分析
+        - `stream`: 流式模式，通过 SSE 实时推送每条规则的分析进度（rule_analyzed 事件）
+        - `sync`: 同步模式，阻塞等待所有规则分析完成后返回
+
+        **前置条件**：文件必须已完成 extracting 阶段（字段提取结果已生成）。
       operationId: retryAnalyzing
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
@@ -339,7 +567,12 @@ paths:
       tags:
         - file
       summary: 获取文件表格列表
-      description: 获取从文件中解析出的所有表格
+      description: |
+        获取从 PDF 文件中解析出的所有表格数据，按 table_index 升序排列。
+        表格内容以 Markdown 格式存储，包含表头和数据行。
+        每个表格包含名称（由解析器自动识别或根据上下文生成）和在原文中的位置索引。
+
+        该接口返回空数组时可能表示文件中没有表格，或文件尚未完成 parsing 阶段。
       operationId: getFileTables
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
@@ -363,7 +596,12 @@ paths:
       tags:
         - file
       summary: 获取文件分块列表
-      description: 获取文件的所有文本分块
+      description: |
+        获取文件经过递归字符分割后的所有文本分块，按 chunk_index 升序排列。
+        分块是向量检索和字段提取的基本单元，每个分块有唯一的 chunk_id。
+        分块的大小和重叠长度由服务端 chunking 配置控制。
+
+        该接口返回空数组时可能表示文件尚未完成 chunking 阶段。
       operationId: getFileChunks
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
@@ -387,7 +625,12 @@ paths:
       tags:
         - file
       summary: 获取字段提取结果
-      description: 获取文件的所有字段提取结果
+      description: |
+        获取指定文件的所有字段提取结果。每条记录对应一个字段提取配置的执行结果，
+        包含提取到的字段值（extracted_value）和提取理由（reason）。
+
+        提取结果在 extracting 阶段完成后生成。如果修改了字段提取配置后需要重新提取，
+        可通过 `POST /file/{file_id}/retry/extracting` 触发重新提取。
       operationId: getExtractionResults
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
@@ -411,7 +654,15 @@ paths:
       tags:
         - file
       summary: 获取逻辑分析结果
-      description: 获取文件的所有逻辑分析结果
+      description: |
+        获取指定文件的所有逻辑分析结果。每条记录对应一条分析规则的执行结果，
+        包含分析结果值（result_value）、输入的依赖字段值（input_values）和分析理由（reason）。
+
+        - judge 类型规则的 result_value 通常为 "true" 或 "false"
+        - calc 类型规则的 result_value 为数值计算结果
+
+        分析结果在 analyzing 阶段完成后生成。如果修改了分析规则或依赖的字段提取结果发生变化，
+        可通过 `POST /file/{file_id}/retry/analyzing` 触发重新分析。
       operationId: getAnalysisResults
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
@@ -430,6 +681,46 @@ paths:
                         items:
                           $ref: '#/components/schemas/AnalysisResultItem'
 
+  /file/{file_id}/detail:
+    get:
+      tags:
+        - file
+      summary: 获取文件完整详情
+      description: |
+        获取指定文件的完整详情信息，包括基本信息、处理状态和各阶段的时间戳。
+        与 `/file/{file_id}/status` 相比，此接口额外返回每个处理阶段的开始/结束时间，
+        可用于分析各阶段的处理耗时。
+
+        **时间字段说明**：
+        - `start_parsing_time` / `end_parsing_time`: MinerU PDF 解析的开始和结束时间
+        - `start_chunking_time` / `end_chunking_time`: 文本分块的开始和结束时间
+        - `start_embedding_time` / `end_embedding_time`: 向量化的开始和结束时间
+        - `end_extracting_time`: 字段提取完成时间
+        - `end_analyzing_time`: 逻辑分析完成时间
+
+        时间字段为 null 表示该阶段尚未执行或尚未完成。
+      operationId: getFileDetail
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ResponseWrapper'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/FileDetailResponse'
+        '404':
+          description: 文件不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   # ══════════════════════════════════════════════════════════════
   # 字段提取配置模块
   # ══════════════════════════════════════════════════════════════
@@ -438,7 +729,15 @@ paths:
       tags:
         - extraction
       summary: 获取字段提取配置列表
-      description: 获取所有字段提取配置，按优先级排序
+      description: |
+        获取所有字段提取配置，按 priority 字段升序排列（数值越小优先级越高）。
+        返回的配置列表包含每个字段的完整信息：数据源类型、检索方式、提示词模板等。
+
+        **字段配置类型**：
+        - **table 类型**：包含 table_name_pattern、table_match_type、table_system_prompt、table_extract_prompt
+        - **text 类型**：包含 search_type、search_config、text_system_prompt、text_extract_prompt
+
+        未启用的字段（enabled=0）也会返回，前端可据此进行筛选展示。
       operationId: listExtractionFields
       responses:
         '200':
@@ -506,8 +805,11 @@ paths:
     delete:
       tags:
         - extraction
-      summary: 删除字段配置
-      description: 删除字段提取配置（硬删除，从数据库中移除记录）
+      summary: 删除字段提取配置
+      description: |
+        删除指定的字段提取配置（硬删除，从数据库中永久移除记录）。
+        删除字段配置不会自动删除已有的提取结果（extraction_result 表中的记录仍然保留）。
+        如果需要清除已有结果，可对相关文件重新执行提取操作。
       operationId: deleteExtractionField
       parameters:
         - $ref: '#/components/parameters/FieldIdPath'
@@ -529,8 +831,11 @@ paths:
     get:
       tags:
         - extraction
-      summary: 检查字段ID是否存在
-      description: 检查指定的 field_id 是否已被使用
+      summary: 检查字段 ID 是否已存在
+      description: |
+        检查指定的 field_id 是否已在数据库中存在，返回布尔值 exists。
+        可在创建新字段配置前调用此接口，避免 field_id 冲突。
+        field_id 是字段配置的主键，具有唯一性约束。
       operationId: checkExtractionFieldExists
       parameters:
         - $ref: '#/components/parameters/FieldIdPath'
@@ -555,11 +860,20 @@ paths:
     post:
       tags:
         - extraction
-      summary: 字段提取调试
+      summary: 字段提取调试（同步）
       description: |
-        调试字段提取功能，支持两种模式：
-        - **模式 1**: 提供 field_id + file_id，使用已保存的字段配置
-        - **模式 2**: 提供 config + file_id，使用临时配置进行测试
+        同步调试字段提取功能，一次性返回完整的调试结果。支持两种模式：
+        - **模式 1**: 提供 field_id + file_id，使用数据库中已保存的字段配置进行提取
+        - **模式 2**: 提供 config + file_id，使用请求体中的临时配置进行测试（不会保存到数据库）
+
+        **返回内容**：
+        - `search_results`: 检索阶段的原始结果（表格匹配或文本检索结果）
+        - `llm_input`: 发送给 LLM 的提示词（user message 部分）
+        - `llm_output`: LLM 返回的原始文本
+        - `extracted_value`: 最终提取的字段值
+        - `reason`: 提取理由/依据说明
+
+        如需查看分步骤的详细过程，请使用流式调试接口 `POST /extraction/test/stream`。
       operationId: testExtraction
       requestBody:
         required: true
@@ -598,6 +912,60 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /extraction/test/stream:
+    post:
+      tags:
+        - extraction
+      summary: 字段提取流式调试（SSE）
+      description: |
+        流式调试字段提取功能，通过 SSE 分步返回检索结果、提示词、LLM 响应和提取结果。
+        支持两种模式：
+        - **模式 1**: 提供 field_id + file_id，使用已保存的字段配置
+        - **模式 2**: 提供 config + file_id，使用临时配置进行测试
+
+        **SSE 事件序列**:
+        1. `search_results` — 检索结果（表格匹配或文本检索）
+        2. `prompt` — LLM 提示词（system_prompt + user_prompt）
+        3. `llm_response` — LLM 原始响应
+        4. `result` — 提取结果（extracted_value + reason）
+        5. `done` — 完成
+        - `error` — 任意步骤失败时触发
+      operationId: testExtractionStream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtractionTestRequest'
+      responses:
+        '200':
+          description: SSE 事件流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  SSE 事件流，依次推送以下事件：
+
+                  - `search_results`: 检索结果，包含 source_type、matched_tables（表格）或 results_by_label（文本）
+                  - `prompt`: LLM 提示词，包含 system_prompt 和 user_prompt
+                  - `llm_response`: LLM 原始响应，包含 raw_response
+                  - `result`: 提取结果，包含 extracted_value 和 reason
+                  - `done`: 流式调试完成
+                  - `error`: 错误事件，包含 message
+        '400':
+          description: 必须提供 field_id 或 config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 字段配置不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   # ══════════════════════════════════════════════════════════════
   # 逻辑分析配置模块
   # ══════════════════════════════════════════════════════════════
@@ -606,7 +974,15 @@ paths:
       tags:
         - analysis
       summary: 获取逻辑分析配置列表
-      description: 获取所有逻辑分析规则配置，按优先级排序
+      description: |
+        获取所有逻辑分析规则配置，按 priority 字段升序排列（数值越小优先级越高）。
+        返回的配置列表包含每条规则的完整信息：规则类型、表达式、依赖字段等。
+
+        **规则类型**：
+        - **judge**：判断类规则，通过 LLM 进行逻辑推理，返回 true/false 判断结果和推理理由
+        - **calc**：计算类规则，通过 numexpr 引擎执行数值计算，不经过 LLM
+
+        未启用的规则（enabled=0）也会返回，前端可据此进行筛选展示。
       operationId: listAnalysisRules
       responses:
         '200':
@@ -669,8 +1045,11 @@ paths:
     delete:
       tags:
         - analysis
-      summary: 删除规则配置
-      description: 删除逻辑分析规则配置（硬删除，从数据库中移除记录）
+      summary: 删除逻辑分析规则配置
+      description: |
+        删除指定的逻辑分析规则配置（硬删除，从数据库中永久移除记录）。
+        删除规则配置不会自动删除已有的分析结果（analysis_result 表中的记录仍然保留）。
+        如果需要清除已有结果，可对相关文件重新执行分析操作。
       operationId: deleteAnalysisRule
       parameters:
         - $ref: '#/components/parameters/RuleIdPath'
@@ -692,8 +1071,11 @@ paths:
     get:
       tags:
         - analysis
-      summary: 检查规则ID是否存在
-      description: 检查指定的 rule_id 是否已被使用
+      summary: 检查规则 ID 是否已存在
+      description: |
+        检查指定的 rule_id 是否已在数据库中存在，返回布尔值 exists。
+        可在创建新规则配置前调用此接口，避免 rule_id 冲突。
+        rule_id 是规则配置的主键，具有唯一性约束。
       operationId: checkAnalysisRuleExists
       parameters:
         - $ref: '#/components/parameters/RuleIdPath'
@@ -718,11 +1100,25 @@ paths:
     post:
       tags:
         - analysis
-      summary: 逻辑分析调试
+      summary: 逻辑分析调试（同步）
       description: |
-        调试逻辑分析功能，支持两种模式：
-        - **模式 1**: 提供 rule_id + file_id，使用已保存的规则配置
-        - **模式 2**: 提供 config + file_id，使用临时配置进行测试
+        同步调试逻辑分析功能，一次性返回完整的调试结果。支持两种模式：
+        - **模式 1**: 提供 rule_id + file_id，使用数据库中已保存的规则配置进行分析
+        - **模式 2**: 提供 config + file_id，使用请求体中的临时配置进行测试（不会保存到数据库）
+
+        **调试过程**：
+        1. 从 extraction_result 表加载指定文件的字段提取结果
+        2. 根据 depend_fields 列表获取依赖字段的值
+        3. 将 expression 中的 `<field_result>field_id</field_result>` 占位符替换为实际字段值
+        4. judge 类型：将替换后的表达式发送给 LLM 进行判断；calc 类型：通过 numexpr 引擎计算
+
+        **返回内容**：
+        - `input_values`: 依赖字段的实际值映射（field_id → value）
+        - `expression_resolved`: 占位符替换后的完整表达式
+        - `result_value`: 分析结果值
+        - `reason`: 分析理由/说明
+
+        如需查看分步骤的详细过程，请使用流式调试接口 `POST /analysis/test/stream`。
       operationId: testAnalysis
       requestBody:
         required: true
@@ -761,6 +1157,78 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /analysis/test/stream:
+    post:
+      tags:
+        - analysis
+      summary: 逻辑分析流式调试（SSE）
+      description: |
+        流式调试逻辑分析规则，通过 SSE 分步返回依赖字段值、表达式解析、LLM 提示词/响应和分析结果。
+        支持两种模式：
+        - **模式 1**: 提供 rule_id + file_id，使用已保存的规则配置
+        - **模式 2**: 提供 config + file_id，使用临时配置进行测试
+
+        **Judge 类型 SSE 事件序列**:
+        1. `input_values` — 依赖字段的提取值
+        2. `resolved_expression` — 表达式解析（占位符替换后）
+        3. `prompt` — LLM 提示词（system_prompt + user_prompt）
+        4. `llm_response` — LLM 原始响应
+        5. `result` — 分析结果（result_value + reason）
+        6. `done` — 完成
+
+        **Calc 类型 SSE 事件序列**（跳过 prompt 和 llm_response）:
+        1. `input_values` — 依赖字段的提取值
+        2. `resolved_expression` — 表达式解析
+        3. `result` — 计算结果（result_value + reason）
+        4. `done` — 完成
+
+        任意步骤失败时触发 `error` 事件。
+      operationId: testAnalysisStream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisTestRequest'
+      responses:
+        '200':
+          description: SSE 事件流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  SSE 事件流，依次推送以下事件：
+
+                  **Judge 类型**:
+                  - `input_values`: 依赖字段值，包含 input_values（字段ID→值映射）和 depend_fields（字段ID列表）
+                  - `resolved_expression`: 表达式解析，包含 original_expression 和 resolved_expression
+                  - `prompt`: LLM 提示词，包含 system_prompt 和 user_prompt
+                  - `llm_response`: LLM 原始响应，包含 raw_response
+                  - `result`: 分析结果，包含 result_value 和 reason
+                  - `done`: 流式调试完成
+
+                  **Calc 类型**:
+                  - `input_values`: 同上
+                  - `resolved_expression`: 同上
+                  - `result`: 计算结果，包含 result_value 和 reason
+                  - `done`: 流式调试完成
+
+                  **错误事件**:
+                  - `error`: 包含 message，任意步骤失败时触发
+        '400':
+          description: 必须提供 rule_id 或 config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 规则配置不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   # ══════════════════════════════════════════════════════════════
   # 向量检索模块
   # ══════════════════════════════════════════════════════════════
@@ -768,8 +1236,22 @@ paths:
     post:
       tags:
         - search
-      summary: 向量相似度检索
-      description: 基于向量相似度在文档分块中进行语义检索
+      summary: 向量相似度语义检索
+      description: |
+        基于向量相似度在已处理文件的文本分块中进行语义检索。
+
+        **工作流程**：
+        1. 将查询文本通过 Embedding 模型（阿里云 DashScope text-embedding-v4）转为向量
+        2. 在 Milvus 向量数据库中执行相似度搜索
+        3. 返回相似度最高的 top_k 个文本分块及其相似度分数
+
+        **参数说明**：
+        - `query`: 自然语言查询文本，支持语义理解（如"公司的总收入"可匹配到包含"营业收入"的文档片段）
+        - `file_id`: 可选，限定在指定文件中检索；不传则在所有已处理文件中检索
+        - `top_k`: 返回结果数量，默认 10，最大 100
+        - `score_threshold`: 可选相似度阈值（0-1），低于此分数的结果将被过滤
+
+        **前置条件**：目标文件必须已完成 embedding 阶段（向量数据已入库 Milvus）。
       operationId: vectorSearch
       requestBody:
         required: true
@@ -801,27 +1283,30 @@ components:
       name: file_id
       in: path
       required: true
-      description: 文件唯一标识
+      description: 文件唯一标识，基于文件名的 MD5 哈希生成
       schema:
         type: string
+        example: abc123def456
 
     FieldIdPath:
       name: field_id
       in: path
       required: true
-      description: 字段配置唯一标识
+      description: 字段配置唯一标识，仅允许字母、数字和下划线
       schema:
         type: string
         pattern: '^[a-zA-Z0-9_]+$'
+        example: total_revenue
 
     RuleIdPath:
       name: rule_id
       in: path
       required: true
-      description: 规则配置唯一标识
+      description: 规则配置唯一标识，仅允许字母、数字和下划线
       schema:
         type: string
         pattern: '^[a-zA-Z0-9_]+$'
+        example: profit_check
 
   # ══════════════════════════════════════════════════════════════
   # 数据模型定义
@@ -830,33 +1315,42 @@ components:
     # ── 通用响应 ────────────────────────────────────────────────
     ResponseWrapper:
       type: object
-      description: 通用响应包装
+      description: |
+        通用响应包装器，所有接口返回值均使用此结构包装。
+        - code=200 表示请求成功
+        - code!=200 表示业务逻辑错误（如 400 文件过大、404 资源不存在等）
+        - data 字段根据接口不同返回不同的数据结构
       properties:
         code:
           type: integer
-          description: 响应码，200 表示成功
+          description: 业务响应码，200 表示成功，其他值表示失败
           default: 200
           example: 200
         message:
           type: string
-          description: 响应消息
+          description: 响应消息，成功时为 "success"，失败时为具体错误描述
           default: success
           example: success
         data:
-          description: 响应数据
+          description: 响应数据，具体结构取决于各接口定义；失败时可能为 null
           nullable: true
 
     ErrorResponse:
       type: object
-      description: 错误响应
+      description: |
+        HTTP 异常响应体（由 FastAPI HTTPException 自动生成）。
+        当接口抛出 HTTPException 时返回此格式，HTTP 状态码为非 200 的错误码。
       properties:
         detail:
           type: string
-          description: 错误详情
+          description: 错误详情描述
+          example: 文件不存在
 
     ValidationErrorResponse:
       type: object
-      description: 验证错误响应
+      description: |
+        Pydantic 数据验证错误响应（HTTP 422）。
+        当请求体参数未通过 Pydantic 模型验证时自动返回，包含所有验证失败字段的详细信息。
       properties:
         detail:
           type: array
@@ -897,6 +1391,7 @@ components:
           description: 事件消息
 
     SSEMdContentEvent:
+      description: SSE 事件 - MD 文档内容，在 parsing 阶段完成后推送完整的 Markdown 文档内容
       allOf:
         - $ref: '#/components/schemas/SSEEventBase'
         - type: object
@@ -907,6 +1402,7 @@ components:
               description: 完整的 Markdown 文档内容
 
     SSEFieldExtractedEvent:
+      description: SSE 事件 - 单个字段提取完成，在 extracting 阶段每完成一个字段提取后推送
       allOf:
         - $ref: '#/components/schemas/SSEEventBase'
         - type: object
@@ -935,6 +1431,7 @@ components:
               description: 字段总数
 
     SSERuleAnalyzedEvent:
+      description: SSE 事件 - 单条规则分析完成，在 analyzing 阶段每完成一条规则分析后推送
       allOf:
         - $ref: '#/components/schemas/SSEEventBase'
         - type: object
@@ -973,17 +1470,165 @@ components:
               type: integer
               description: 规则总数
 
+    # ── 字段提取流式调试 SSE 事件 ──────────────────────────────
+    SSEExtractionSearchResultsEvent:
+      type: object
+      description: 字段提取流式调试 - 检索结果事件
+      properties:
+        source_type:
+          type: string
+          description: 数据源类型（table/text）
+          enum:
+            - table
+            - text
+        search_type:
+          type: string
+          description: 检索类型（仅 text 类型）
+          nullable: true
+        matched_tables:
+          type: array
+          description: 匹配到的表格（仅 table 类型）
+          nullable: true
+          items:
+            type: object
+            properties:
+              table_name:
+                type: string
+              table_content:
+                type: string
+        results:
+          type: array
+          description: 检索结果列表（仅 text 类型）
+          nullable: true
+          items:
+            type: object
+            additionalProperties: true
+        results_by_label:
+          type: object
+          description: 按关键词分组的检索结果（仅 text 类型）
+          nullable: true
+          additionalProperties:
+            type: string
+
+    SSEExtractionPromptEvent:
+      type: object
+      description: 字段提取流式调试 - LLM 提示词事件
+      properties:
+        system_prompt:
+          type: string
+          description: 系统提示词
+        user_prompt:
+          type: string
+          description: 用户提示词
+
+    SSEExtractionLlmResponseEvent:
+      type: object
+      description: 字段提取流式调试 - LLM 响应事件
+      properties:
+        raw_response:
+          type: string
+          description: LLM 原始响应文本
+
+    SSEExtractionResultEvent:
+      type: object
+      description: 字段提取流式调试 - 提取结果事件
+      properties:
+        extracted_value:
+          type: string
+          description: 提取的字段值
+        reason:
+          type: string
+          description: 提取理由/说明
+
+    # ── 逻辑分析流式调试 SSE 事件 ──────────────────────────────
+    SSEAnalysisInputValuesEvent:
+      type: object
+      description: 逻辑分析流式调试 - 依赖字段值事件
+      properties:
+        input_values:
+          type: object
+          description: 依赖字段的提取值映射（field_id → value）
+          additionalProperties:
+            type: string
+        depend_fields:
+          type: array
+          description: 依赖的字段 ID 列表
+          items:
+            type: string
+
+    SSEAnalysisResolvedExpressionEvent:
+      type: object
+      description: 逻辑分析流式调试 - 表达式解析事件
+      properties:
+        original_expression:
+          type: string
+          description: 原始表达式（含占位符）
+        resolved_expression:
+          type: string
+          description: 解析后的表达式（占位符已替换为实际值）
+
+    SSEAnalysisPromptEvent:
+      type: object
+      description: 逻辑分析流式调试 - LLM 提示词事件（仅 judge 类型）
+      properties:
+        system_prompt:
+          type: string
+          description: 系统提示词
+        user_prompt:
+          type: string
+          description: 用户提示词（包含解析后表达式 + JSON 指令）
+
+    SSEAnalysisLlmResponseEvent:
+      type: object
+      description: 逻辑分析流式调试 - LLM 响应事件（仅 judge 类型）
+      properties:
+        raw_response:
+          type: string
+          description: LLM 原始响应文本
+
+    SSEAnalysisResultEvent:
+      type: object
+      description: 逻辑分析流式调试 - 分析结果事件
+      properties:
+        result_value:
+          type: string
+          description: 分析结果值（judge 为 true/false，calc 为数值）
+        reason:
+          type: string
+          description: 分析理由/说明
+
+    SSEErrorEvent:
+      type: object
+      description: 流式调试 - 错误事件
+      properties:
+        message:
+          type: string
+          description: 错误消息
+
+    SSEDoneEvent:
+      type: object
+      description: 流式调试 - 完成事件
+      properties: {}
+
     # ── 枚举类型 ────────────────────────────────────────────────
     SourceTypeEnum:
       type: string
-      description: 数据源类型
+      description: |
+        字段提取的数据源类型：
+        - `table`: 从 PDF 文件中解析出的表格数据中提取
+        - `text`: 从 PDF 文件的正文内容中提取
       enum:
         - table
         - text
 
     TableMatchTypeEnum:
       type: string
-      description: 表格匹配类型
+      description: |
+        表格名称匹配方式（source_type=table 时使用）：
+        - `exact`: 精确匹配，表格名称必须与 table_name_pattern 完全一致
+        - `fuzzy`: 模糊匹配，使用模糊字符串匹配算法（如编辑距离）
+        - `contains`: 包含匹配，表格名称包含 table_name_pattern 即可
+        - `llm`: LLM 匹配，使用大语言模型判断表格名称与 pattern 的语义相似度
       enum:
         - exact
         - fuzzy
@@ -992,7 +1637,13 @@ components:
 
     SearchTypeEnum:
       type: string
-      description: 文本检索类型
+      description: |
+        文本检索方式（source_type=text 时使用）：
+        - `context`: 上下文检索，基于关键词在原文中定位并提取上下文片段
+        - `section`: 章节检索，基于文档结构（标题层级）提取指定章节内容
+        - `rule`: 规则检索，使用正则表达式等规则在原文中匹配内容
+        - `chunk_db`: 分块数据库检索，基于关键词在文件分块表（MySQL）中检索
+        - `vector_db`: 向量数据库检索，基于语义相似度在 Milvus 中检索相关分块
       enum:
         - context
         - section
@@ -1002,7 +1653,10 @@ components:
 
     RuleTypeEnum:
       type: string
-      description: 规则类型
+      description: |
+        逻辑分析规则类型：
+        - `judge`: 判断类规则，使用 LLM 对字段提取结果进行逻辑推理判断，返回 true/false 和推理理由
+        - `calc`: 计算类规则，使用 numexpr 引擎对数值型字段进行数学表达式计算，不经过 LLM
       enum:
         - judge
         - calc
@@ -1122,6 +1776,194 @@ components:
           description: 分块内容
           example: 这是文档的第一个分块内容...
 
+    FileListItem:
+      type: object
+      description: 文件列表项，包含文件基本信息和处理状态
+      required:
+        - file_id
+        - file_name
+        - file_size
+        - progress
+      properties:
+        file_id:
+          type: string
+          description: 文件唯一标识（基于文件名的 MD5 哈希）
+          example: abc123def456
+        file_name:
+          type: string
+          description: 上传时的原始文件名
+          example: 年报2024.pdf
+        file_size:
+          type: integer
+          description: 文件大小（字节）
+          example: 1048576
+        progress:
+          type: string
+          description: |
+            当前处理进度状态：
+            - parsing / parsing_failed
+            - chunking / chunking_failed
+            - embedding / embedding_failed
+            - extracting / extracting_failed
+            - analyzing / analyzing_failed
+            - complete
+          example: complete
+        error:
+          type: string
+          description: 错误信息（仅在 *_failed 状态时有值）
+          nullable: true
+        create_time:
+          type: string
+          format: date-time
+          description: 文件上传创建时间
+          nullable: true
+
+    FileListResponse:
+      type: object
+      description: 文件列表分页响应，包含文件列表和分页元数据
+      required:
+        - items
+        - total
+        - page
+        - page_size
+        - total_pages
+      properties:
+        items:
+          type: array
+          description: 当前页的文件列表
+          items:
+            $ref: '#/components/schemas/FileListItem'
+        total:
+          type: integer
+          description: 符合条件的文件总数
+          example: 42
+        page:
+          type: integer
+          description: 当前页码（从 1 开始）
+          example: 1
+        page_size:
+          type: integer
+          description: 每页数量
+          example: 20
+        total_pages:
+          type: integer
+          description: 总页数
+          example: 3
+
+    FileDetailResponse:
+      type: object
+      description: 文件完整详情响应，包含基本信息、处理状态和各阶段时间戳
+      required:
+        - file_id
+        - file_name
+        - file_size
+        - progress
+      properties:
+        file_id:
+          type: string
+          description: 文件唯一标识
+          example: abc123def456
+        file_name:
+          type: string
+          description: 文件名
+          example: 年报2024.pdf
+        file_size:
+          type: integer
+          description: 文件大小（字节）
+          example: 1048576
+        progress:
+          type: string
+          description: 当前处理进度状态
+          example: complete
+        error:
+          type: string
+          description: 错误信息（仅在失败时返回）
+          nullable: true
+        create_time:
+          type: string
+          format: date-time
+          description: 文件上传创建时间
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          description: 最后更新时间
+          nullable: true
+        start_parsing_time:
+          type: string
+          format: date-time
+          description: MinerU 解析开始时间
+          nullable: true
+        end_parsing_time:
+          type: string
+          format: date-time
+          description: MinerU 解析结束时间
+          nullable: true
+        start_chunking_time:
+          type: string
+          format: date-time
+          description: 文本分块开始时间
+          nullable: true
+        end_chunking_time:
+          type: string
+          format: date-time
+          description: 文本分块结束时间
+          nullable: true
+        start_embedding_time:
+          type: string
+          format: date-time
+          description: 向量化开始时间
+          nullable: true
+        end_embedding_time:
+          type: string
+          format: date-time
+          description: 向量化结束时间
+          nullable: true
+        end_extracting_time:
+          type: string
+          format: date-time
+          description: 字段提取完成时间
+          nullable: true
+        end_analyzing_time:
+          type: string
+          format: date-time
+          description: 逻辑分析完成时间
+          nullable: true
+
+    BatchDeleteRequest:
+      type: object
+      description: 批量删除文件请求
+      required:
+        - file_ids
+      properties:
+        file_ids:
+          type: array
+          description: 要删除的文件 ID 列表
+          items:
+            type: string
+          example:
+            - abc123def456
+            - def789ghi012
+
+    BatchDeleteResponse:
+      type: object
+      description: 批量删除文件响应，包含删除结果统计
+      required:
+        - deleted_count
+      properties:
+        deleted_count:
+          type: integer
+          description: 成功删除的文件数量
+          example: 1
+        failed_ids:
+          type: array
+          description: 删除失败的文件 ID 列表（文件不存在或删除过程异常）
+          items:
+            type: string
+          default: []
+          example:
+            - def789ghi012
+
     # ── 字段提取模块 ────────────────────────────────────────────
     ExtractionFieldCreate:
       type: object
@@ -1208,6 +2050,7 @@ components:
           example: 你是一个专业的文档信息提取助手，请严格按照JSON格式返回结果。
 
     ExtractionFieldResponse:
+      description: 字段提取配置响应（继承 ExtractionFieldCreate 的所有字段，额外包含时间戳）
       allOf:
         - $ref: '#/components/schemas/ExtractionFieldCreate'
         - type: object
@@ -1363,6 +2206,7 @@ components:
           default: 0
 
     AnalysisRuleResponse:
+      description: 逻辑分析规则配置响应（继承 AnalysisRuleCreate 的所有字段，额外包含时间戳）
       allOf:
         - $ref: '#/components/schemas/AnalysisRuleCreate'
         - type: object
