@@ -353,8 +353,11 @@ async def search_chunk_db(
     keyword_filter = config.get("keyword_filter")
     keywords = config.get("keywords", [])
     if keyword_filter:
-        # 如果是单个字符串，转为列表
-        keywords = [keyword_filter] if isinstance(keyword_filter, str) else keyword_filter
+        if isinstance(keyword_filter, str):
+            # 按中英文逗号拆分为多个关键词
+            keywords = [k.strip() for k in re.split(r"[,，]", keyword_filter) if k.strip()]
+        else:
+            keywords = keyword_filter
     # 兼容两种字段名：max_results（设计文档）和 top_k
     max_results = config.get("max_results") or config.get("top_k", 10)
     sort_order = config.get("sort_order", "asc")
@@ -363,28 +366,37 @@ async def search_chunk_db(
     result = await session.execute(stmt)
     chunks = result.scalars().all()
 
-    # 按关键词过滤
-    if keywords:
-        filtered_chunks = []
-        for chunk in chunks:
-            # 检查是否包含任一关键词
-            if any(kw.lower() in chunk.chunk_content.lower() for kw in keywords):
-                filtered_chunks.append(chunk)
-        chunks = filtered_chunks
-
     # 按 chunk_index 排序（设计文档要求）
     chunks.sort(key=lambda x: x.chunk_index, reverse=(sort_order == "desc"))
 
-    # 限制返回条数
+    # 按关键词分别过滤并标记，每个关键词独立限制条数
     results = []
-    for chunk in chunks[:max_results]:
-        results.append({
-            "chunk_id": chunk.chunk_id,
-            "chunk_index": chunk.chunk_index,
-            "chunk_content": chunk.chunk_content,
-            "start_pos": chunk.start_pos,
-            "end_pos": chunk.end_pos,
-        })
+    if keywords:
+        for kw in keywords:
+            count = 0
+            for chunk in chunks:
+                if kw.lower() in chunk.chunk_content.lower():
+                    results.append({
+                        "keyword": kw,
+                        "chunk_id": chunk.chunk_id,
+                        "chunk_index": chunk.chunk_index,
+                        "chunk_content": chunk.chunk_content,
+                        "start_pos": chunk.start_pos,
+                        "end_pos": chunk.end_pos,
+                    })
+                    count += 1
+                    if count >= max_results:
+                        break
+    else:
+        # 无关键词时返回所有分块
+        for chunk in chunks[:max_results]:
+            results.append({
+                "chunk_id": chunk.chunk_id,
+                "chunk_index": chunk.chunk_index,
+                "chunk_content": chunk.chunk_content,
+                "start_pos": chunk.start_pos,
+                "end_pos": chunk.end_pos,
+            })
 
     return results
 
