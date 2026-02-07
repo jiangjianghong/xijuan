@@ -125,7 +125,7 @@ PRIMARY KEY (file_id, chunk_id)
 
 // chunk_db（关系数据库检索）
 {
-  "keyword_filter": "投资",
+  "keywords": ["投资"],
   "max_results": 10,
   "sort_order": "asc"
 }
@@ -481,7 +481,7 @@ chunk_id = hashlib.sha256((file_id + str(chunk_index)).encode('utf-8')).hexdiges
 
 **chunk_db（关系数据库检索）：**
 1. 从 file_chunk 表查询 file_id 对应的所有分块
-2. 如果配置了 keyword_filter，过滤 chunk_content 包含该关键词的分块
+2. 如果配置了 keywords，按关键词过滤 chunk_content 包含关键词的分块
 3. 按 chunk_index 排序（sort_order），取前 max_results 条
 
 **vector_db（向量数据库检索）：**
