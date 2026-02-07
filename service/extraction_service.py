@@ -39,9 +39,15 @@ def parse_llm_json_response(response: str) -> Tuple[str, str]:
     # 尝试解析 JSON
     try:
         data = json.loads(response)
-        value = str(data.get("value", "")).strip()
-        reason = str(data.get("reason", "")).strip()
-        return value, reason
+        if isinstance(data, dict):
+            raw_value = data.get("value", "")
+            # value 可能是 list/dict（用户自定义格式），转为 JSON 字符串存储
+            if isinstance(raw_value, (list, dict)):
+                value = json.dumps(raw_value, ensure_ascii=False)
+            else:
+                value = str(raw_value).strip()
+            reason = str(data.get("reason", "")).strip()
+            return value, reason
     except json.JSONDecodeError:
         pass
 
@@ -50,7 +56,11 @@ def parse_llm_json_response(response: str) -> Tuple[str, str]:
     if json_obj_match:
         try:
             data = json.loads(json_obj_match.group())
-            value = str(data.get("value", "")).strip()
+            raw_value = data.get("value", "")
+            if isinstance(raw_value, (list, dict)):
+                value = json.dumps(raw_value, ensure_ascii=False)
+            else:
+                value = str(raw_value).strip()
             reason = str(data.get("reason", "")).strip()
             return value, reason
         except json.JSONDecodeError:
@@ -429,7 +439,8 @@ async def search_vector_db(
 JSON_OUTPUT_INSTRUCTION = """
 
 请以 JSON 格式返回结果，包含 value（提取的值）和 reason（提取理由/依据）两个字段：
-{"value": "提取的值", "reason": "说明从哪里提取、为什么这样提取"}"""
+{"value": "提取的值", "reason": "说明从哪里提取、为什么这样提取"}
+注意：value 的格式请严格遵循 system_prompt 中的要求（如有），可以是字符串、JSON数组或JSON对象。"""
 
 
 async def extract_table_field(
