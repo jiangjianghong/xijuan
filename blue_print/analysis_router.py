@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Any, Dict
+
+import json
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +21,7 @@ from model.schemas import (
     ResponseWrapper,
 )
 from model.tables import AnalysisRule, ExtractionResult
-from service.analysis_service import execute_calc, execute_judge, resolve_expression
+from service.analysis_service import execute_calc, execute_judge, resolve_expression, test_rule_analysis_stream
 from utils.config import get_config
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -187,4 +190,56 @@ async def test_analysis(
             result_value=result_value,
             reason=reason,
         ).model_dump()
+    )
+
+
+def _sse_event(event: str, data: Dict[str, Any]) -> str:
+    """格式化 SSE 事件。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/test/stream")
+async def test_analysis_stream(
+    req: AnalysisTestRequest, db: AsyncSession = Depends(get_db)
+):
+    """逻辑分析调试流式接口，分步返回依赖字段值、表达式解析、LLM 提示词/响应和分析结果。
+
+    模式 1: rule_id + file_id - 使用已保存的规则配置
+    模式 2: config + file_id - 使用临时配置
+    """
+    file_id = req.file_id
+
+    if req.rule_id:
+        stmt = select(AnalysisRule).where(AnalysisRule.rule_id == req.rule_id)
+        result = await db.execute(stmt)
+        rule = result.scalar_one_or_none()
+        if not rule:
+            raise HTTPException(status_code=404, detail="规则配置不存在")
+        rule_type = rule.rule_type
+        expression = rule.expression
+        system_prompt = rule.system_prompt or ""
+        depend_fields = rule.depend_fields or []
+    elif req.config:
+        config = req.config
+        rule_type = config.get("rule_type", "judge")
+        expression = config.get("expression", "")
+        system_prompt = config.get("system_prompt", "")
+        depend_fields = config.get("depend_fields", [])
+    else:
+        raise HTTPException(status_code=400, detail="必须提供 rule_id 或 config")
+
+    async def event_generator():
+        async for item in test_rule_analysis_stream(
+            file_id, rule_type, expression, depend_fields, system_prompt, db
+        ):
+            yield _sse_event(item["event"], item["data"])
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )

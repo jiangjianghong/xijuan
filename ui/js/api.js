@@ -365,4 +365,62 @@ const API = {
             }).catch(reject);
         });
     },
+
+    /**
+     * 流式测试规则分析（SSE）
+     */
+    testRuleStream(payload, onEvent) {
+        return new Promise((resolve, reject) => {
+            fetch(`${this.baseUrl}/analysis/test/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            }).then(response => {
+                if (!response.ok) {
+                    response.json().then(data => {
+                        reject(new Error(data.detail || `测试失败: ${response.status}`));
+                    }).catch(() => {
+                        reject(new Error(`测试失败: ${response.status}`));
+                    });
+                    return;
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let currentEvent = null;
+
+                function read() {
+                    reader.read().then(({ done, value }) => {
+                        if (done) {
+                            resolve();
+                            return;
+                        }
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        for (const line of lines) {
+                            if (line.startsWith('event: ')) {
+                                currentEvent = line.slice(7).trim();
+                            } else if (line.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(line.slice(6));
+                                    onEvent({ event: currentEvent || 'message', data });
+                                } catch (e) {
+                                    console.warn('SSE parse error:', e);
+                                }
+                                currentEvent = null;
+                            }
+                        }
+
+                        read();
+                    }).catch(reject);
+                }
+
+                read();
+            }).catch(reject);
+        });
+    },
 };

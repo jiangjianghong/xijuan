@@ -555,7 +555,7 @@ const RuleConfig = {
 
         this.els.modalTitle.textContent = isEdit ? '编辑规则配置' : '新增规则配置';
         this.els.modalBody.innerHTML = this.buildRuleForm(rule || {});
-        if (this.els.debugBtn) this.els.debugBtn.style.display = 'none';
+        if (this.els.debugBtn) this.els.debugBtn.style.display = '';
         this.showModal();
 
         this.onRuleTypeChange((rule && rule.rule_type) || 'judge');
@@ -964,7 +964,7 @@ const RuleConfig = {
         this.els.modalBody.innerHTML = `
             <div class="debug-split">
                 <div class="debug-left">${formHtml}</div>
-                <div class="debug-right">${this.buildDebugPanel()}</div>
+                <div class="debug-right">${this.state.modalType === 'rule' ? this.buildRuleDebugPanel() : this.buildDebugPanel()}</div>
             </div>
         `;
 
@@ -990,6 +990,12 @@ const RuleConfig = {
                 const searchType = document.getElementById('fm-search-type');
                 if (searchType) this.onSearchTypeChange(searchType.value);
             }
+        }
+
+        // 恢复规则类型动态区域
+        const ruleType = document.getElementById('fm-rule-type');
+        if (ruleType) {
+            this.onRuleTypeChange(ruleType.value);
         }
 
         // 加载已完成文件列表
@@ -1035,6 +1041,12 @@ const RuleConfig = {
                 const searchType = document.getElementById('fm-search-type');
                 if (searchType) this.onSearchTypeChange(searchType.value);
             }
+        }
+
+        // 恢复规则类型动态区域
+        const ruleType = document.getElementById('fm-rule-type');
+        if (ruleType) {
+            this.onRuleTypeChange(ruleType.value);
         }
     },
 
@@ -1401,5 +1413,239 @@ const RuleConfig = {
     _hideDebugLoading() {
         const area = document.getElementById('debug-loading-area');
         if (area) area.innerHTML = '';
+    },
+
+    // ─────────────────────────────────────────────────────────
+    // 规则调试模式
+    // ─────────────────────────────────────────────────────────
+
+    buildRuleDebugPanel() {
+        return `
+            <div class="debug-panel">
+                <div class="debug-controls">
+                    <select id="debug-file-select">
+                        <option value="">-- 选择测试文件 --</option>
+                    </select>
+                    <button class="debug-test-btn" id="debug-test-btn" onclick="RuleConfig.runRuleTest()" disabled>测试</button>
+                </div>
+
+                <div class="debug-section" id="debug-sec-config" style="display:none;">
+                    <div class="debug-section-header">规则配置</div>
+                    <div class="debug-section-body">
+                        <div class="debug-code-block" id="debug-config-preview"></div>
+                    </div>
+                </div>
+
+                <div class="debug-section" id="debug-sec-input-values" style="display:none;">
+                    <div class="debug-section-header">依赖字段值</div>
+                    <div class="debug-section-body" id="debug-input-values-content"></div>
+                </div>
+
+                <div class="debug-section" id="debug-sec-resolved" style="display:none;">
+                    <div class="debug-section-header">表达式解析</div>
+                    <div class="debug-section-body" id="debug-resolved-content"></div>
+                </div>
+
+                <div class="debug-section" id="debug-sec-prompt" style="display:none;">
+                    <div class="debug-section-header">LLM 提示词</div>
+                    <div class="debug-section-body" id="debug-prompt-content"></div>
+                </div>
+
+                <div class="debug-section" id="debug-sec-llm" style="display:none;">
+                    <div class="debug-section-header">LLM 原始响应</div>
+                    <div class="debug-section-body">
+                        <div class="debug-code-block" id="debug-llm-response"></div>
+                    </div>
+                </div>
+
+                <div class="debug-section" id="debug-sec-result" style="display:none;">
+                    <div class="debug-section-header">分析结果</div>
+                    <div class="debug-section-body" id="debug-result-content"></div>
+                </div>
+
+                <div id="debug-error-area"></div>
+                <div id="debug-loading-area"></div>
+            </div>
+        `;
+    },
+
+    async runRuleTest() {
+        const fileSelect = document.getElementById('debug-file-select');
+        const fileId = fileSelect ? fileSelect.value : '';
+        if (!fileId) {
+            Toast.error('请先选择测试文件');
+            return;
+        }
+
+        if (this.state.debugTestRunning) return;
+        this.state.debugTestRunning = true;
+
+        // 收集当前表单数据
+        const formData = this.collectRuleFormData();
+
+        // 显示规则配置预览
+        this.showRuleDebugConfigPreview(formData);
+
+        // 重置结果区域
+        this.resetRuleDebugResults();
+
+        // 显示 loading
+        this._showDebugLoading('正在获取依赖字段值...');
+
+        // 禁用测试按钮
+        const testBtn = document.getElementById('debug-test-btn');
+        if (testBtn) {
+            testBtn.disabled = true;
+            testBtn.textContent = '测试中...';
+        }
+
+        const payload = {
+            file_id: fileId,
+            config: formData,
+        };
+
+        try {
+            await API.testRuleStream(payload, (evt) => {
+                this.handleRuleDebugEvent(evt);
+            });
+        } catch (error) {
+            this.showDebugError(error.message);
+        } finally {
+            this.state.debugTestRunning = false;
+            this._hideDebugLoading();
+            if (testBtn) {
+                testBtn.disabled = !fileSelect.value;
+                testBtn.textContent = '测试';
+            }
+        }
+    },
+
+    showRuleDebugConfigPreview(config) {
+        const section = document.getElementById('debug-sec-config');
+        const preview = document.getElementById('debug-config-preview');
+        if (!section || !preview) return;
+
+        const displayConfig = {
+            rule_type: config.rule_type,
+            depend_fields: config.depend_fields,
+            expression: config.expression,
+        };
+
+        preview.textContent = JSON.stringify(displayConfig, null, 2);
+        section.style.display = '';
+    },
+
+    handleRuleDebugEvent(evt) {
+        const { event, data } = evt;
+        switch (event) {
+            case 'input_values':
+                this._hideDebugLoading();
+                this._showDebugLoading('正在解析表达式...');
+                this.renderRuleInputValues(data);
+                break;
+            case 'resolved_expression':
+                this._hideDebugLoading();
+                this._showDebugLoading('正在执行分析...');
+                this.renderRuleResolvedExpression(data);
+                break;
+            case 'prompt':
+                this._hideDebugLoading();
+                this._showDebugLoading('正在调用 LLM...');
+                this.renderDebugPrompt(data);
+                break;
+            case 'llm_response':
+                this._hideDebugLoading();
+                this._showDebugLoading('正在解析结果...');
+                this.renderDebugLlmResponse(data);
+                break;
+            case 'result':
+                this._hideDebugLoading();
+                this.renderRuleDebugResult(data);
+                break;
+            case 'error':
+                this._hideDebugLoading();
+                this.showDebugError(data.message);
+                break;
+            case 'done':
+                this._hideDebugLoading();
+                break;
+        }
+    },
+
+    renderRuleInputValues(data) {
+        const section = document.getElementById('debug-sec-input-values');
+        const container = document.getElementById('debug-input-values-content');
+        if (!section || !container) return;
+
+        const inputValues = data.input_values || {};
+        const dependFields = data.depend_fields || [];
+
+        let html = '';
+        if (dependFields.length === 0) {
+            html = '<div style="color: var(--text-secondary); font-size: 13px;">无依赖字段</div>';
+        } else {
+            html += '<div class="debug-result-card">';
+            dependFields.forEach(fid => {
+                const val = inputValues[fid] || '';
+                const isEmpty = !val || !val.trim();
+                html += `
+                    <div class="debug-result-row">
+                        <span class="label">${Utils.escapeHtml(fid)}:</span>
+                        <span class="${isEmpty ? 'value' : 'value'}" style="${isEmpty ? 'color: var(--color-danger);' : ''}">${Utils.escapeHtml(val || '(空)')}</span>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+
+        container.innerHTML = html;
+        section.style.display = '';
+    },
+
+    renderRuleResolvedExpression(data) {
+        const section = document.getElementById('debug-sec-resolved');
+        const container = document.getElementById('debug-resolved-content');
+        if (!section || !container) return;
+
+        container.innerHTML = `
+            <div class="debug-prompt-block">
+                <div class="debug-prompt-label">原始表达式</div>
+                <div class="debug-code-block">${Utils.escapeHtml(data.original_expression || '')}</div>
+            </div>
+            <div class="debug-prompt-block">
+                <div class="debug-prompt-label">解析后表达式</div>
+                <div class="debug-code-block">${Utils.escapeHtml(data.resolved_expression || '')}</div>
+            </div>
+        `;
+        section.style.display = '';
+    },
+
+    renderRuleDebugResult(data) {
+        const section = document.getElementById('debug-sec-result');
+        const container = document.getElementById('debug-result-content');
+        if (!section || !container) return;
+
+        container.innerHTML = `
+            <div class="debug-result-card">
+                <div class="debug-result-row">
+                    <span class="label">分析结果:</span>
+                    <span class="value">${Utils.escapeHtml(data.result_value || '(空)')}</span>
+                </div>
+                <div class="debug-result-row">
+                    <span class="label">理由:</span>
+                    <span class="reason">${Utils.escapeHtml(data.reason || '(无)')}</span>
+                </div>
+            </div>
+        `;
+        section.style.display = '';
+    },
+
+    resetRuleDebugResults() {
+        ['debug-sec-input-values', 'debug-sec-resolved', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+        const errorArea = document.getElementById('debug-error-area');
+        if (errorArea) errorArea.innerHTML = '';
     },
 };

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import numexpr
 from loguru import logger
@@ -635,3 +635,215 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
     await session.commit()
 
     logger.info("流式逻辑分析完成: {}", file_id)
+
+
+async def test_rule_analysis_stream(
+    file_id: str,
+    rule_type: str,
+    expression: str,
+    depend_fields: List[str],
+    system_prompt: str,
+    session: AsyncSession,
+) -> AsyncIterator[Dict[str, Any]]:
+    """单条规则调试流式接口，分步 yield 各阶段结果。
+
+    Judge 类型事件序列：input_values → resolved_expression → prompt → llm_response → result → done
+    Calc 类型事件序列：input_values → resolved_expression → result → done
+
+    Args:
+        file_id: 文件 ID。
+        rule_type: 规则类型 (judge/calc)。
+        expression: 规则表达式（含占位符）。
+        depend_fields: 依赖的字段 ID 列表。
+        system_prompt: 系统提示词（仅 judge 使用）。
+        session: 数据库会话。
+
+    Yields:
+        Dict: {"event": str, "data": dict}
+    """
+    logger.info("开始规则调试流: file_id={}, rule_type={}", file_id, rule_type)
+
+    cfg = get_config().analysis
+
+    # ── Step 1: 获取依赖字段值 ──
+    try:
+        stmt = select(ExtractionResult).where(ExtractionResult.file_id == file_id)
+        result = await session.execute(stmt)
+        extraction_results = result.scalars().all()
+
+        field_values: Dict[str, str] = {
+            er.field_id: er.extracted_value for er in extraction_results
+        }
+
+        input_values: Dict[str, str] = {}
+        for fid in depend_fields:
+            input_values[fid] = field_values.get(fid, "")
+
+        yield {
+            "event": "input_values",
+            "data": {"input_values": input_values, "depend_fields": depend_fields},
+        }
+
+        # 校验依赖字段值
+        is_valid, validate_reason = validate_field_values(
+            rule_type, depend_fields, field_values
+        )
+        if not is_valid:
+            yield {
+                "event": "error",
+                "data": {"message": f"字段校验失败: {validate_reason}"},
+            }
+            return
+    except Exception as e:
+        logger.error("规则调试 - 获取字段值失败: {}", e)
+        yield {"event": "error", "data": {"message": f"获取字段值失败: {e}"}}
+        return
+
+    # ── Step 2: 解析表达式 ──
+    try:
+        resolved = resolve_expression(expression, field_values)
+        yield {
+            "event": "resolved_expression",
+            "data": {
+                "original_expression": expression,
+                "resolved_expression": resolved,
+            },
+        }
+    except Exception as e:
+        logger.error("规则调试 - 表达式解析失败: {}", e)
+        yield {"event": "error", "data": {"message": f"表达式解析失败: {e}"}}
+        return
+
+    # ── Judge 类型：LLM 调用 ──
+    if rule_type == "judge":
+        # Step 3: 组装 prompt
+        try:
+            user_prompt = f"""{resolved}
+
+请根据以上内容进行判断，以 JSON 格式返回结果：
+{{"result": "true 或 false", "reason": "判断理由/依据"}}"""
+
+            sys_prompt = (system_prompt or "").strip()
+            yield {
+                "event": "prompt",
+                "data": {
+                    "system_prompt": sys_prompt,
+                    "user_prompt": user_prompt,
+                },
+            }
+        except Exception as e:
+            logger.error("规则调试 - 组装 prompt 失败: {}", e)
+            yield {"event": "error", "data": {"message": f"组装 prompt 失败: {e}"}}
+            return
+
+        # Step 4: 调用 LLM
+        try:
+            if sys_prompt:
+                messages = [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+                raw_response = await chat_completion("", messages=messages)
+            else:
+                raw_response = await chat_completion(user_prompt)
+            raw_response = raw_response.strip()
+
+            yield {
+                "event": "llm_response",
+                "data": {"raw_response": raw_response},
+            }
+        except Exception as e:
+            logger.error("规则调试 - LLM 调用失败: {}", e)
+            yield {"event": "error", "data": {"message": f"LLM 调用失败: {e}"}}
+            return
+
+        # Step 5: 解析 LLM 结果
+        try:
+            # 复用 execute_judge 的 JSON 解析逻辑
+            response = raw_response
+            json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response, re.DOTALL)
+            if json_match:
+                response = json_match.group(1)
+
+            result_value = ""
+            reason = ""
+            parsed = False
+
+            try:
+                data = json.loads(response)
+                result_raw = str(data.get("result", "")).lower().strip()
+                reason = str(data.get("reason", "")).strip()
+                if "true" in result_raw or "是" in result_raw:
+                    result_value = "true"
+                elif "false" in result_raw or "否" in result_raw:
+                    result_value = "false"
+                else:
+                    result_value = result_raw
+                parsed = True
+            except json.JSONDecodeError:
+                pass
+
+            if not parsed:
+                json_obj_match = re.search(
+                    r"\{[^{}]*\"result\"[^{}]*\}", response, re.DOTALL
+                )
+                if json_obj_match:
+                    try:
+                        data = json.loads(json_obj_match.group())
+                        result_raw = str(data.get("result", "")).lower().strip()
+                        reason = str(data.get("reason", "")).strip()
+                        if "true" in result_raw or "是" in result_raw:
+                            result_value = "true"
+                        elif "false" in result_raw or "否" in result_raw:
+                            result_value = "false"
+                        else:
+                            result_value = result_raw
+                        parsed = True
+                    except json.JSONDecodeError:
+                        pass
+
+            if not parsed:
+                response_lower = raw_response.lower()
+                if "true" in response_lower:
+                    result_value = "true"
+                elif "false" in response_lower:
+                    result_value = "false"
+                elif "是" in response_lower:
+                    result_value = "true"
+                elif "否" in response_lower:
+                    result_value = "false"
+                else:
+                    result_value = response_lower
+
+            yield {
+                "event": "result",
+                "data": {"result_value": result_value, "reason": reason},
+            }
+        except Exception as e:
+            logger.error("规则调试 - 结果解析失败: {}", e)
+            yield {"event": "error", "data": {"message": f"结果解析失败: {e}"}}
+            return
+
+    # ── Calc 类型：直接计算 ──
+    elif rule_type == "calc":
+        # Step 3: 计算
+        try:
+            result_value, reason = await execute_calc(resolved, cfg.calc_precision)
+            yield {
+                "event": "result",
+                "data": {"result_value": result_value, "reason": reason},
+            }
+        except Exception as e:
+            logger.error("规则调试 - 计算失败: {}", e)
+            yield {"event": "error", "data": {"message": f"计算失败: {e}"}}
+            return
+
+    else:
+        yield {
+            "event": "error",
+            "data": {"message": f"未知规则类型: {rule_type}"},
+        }
+        return
+
+    # ── Done ──
+    yield {"event": "done", "data": {}}
