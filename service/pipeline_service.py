@@ -23,6 +23,7 @@ from service.chunk_service import chunk_content, save_chunks
 from service.embedding_service import embed_chunks, submit_to_milvus
 from service.extraction_service import run_extraction, run_extraction_stream
 from service.parse_service import parse_file, parse_tables, save_file_content, save_tables
+from utils.callback import notify_callback
 from utils.milvus_client import MilvusClient
 
 
@@ -346,7 +347,13 @@ async def run_pipeline_stream(
         })
 
 
-async def run_pipeline(file_id: str, file_path: str, file_content_bytes: bytes, session: AsyncSession) -> None:
+async def run_pipeline(
+    file_id: str,
+    file_path: str,
+    file_content_bytes: bytes,
+    session: AsyncSession,
+    callback_url: str | None = None,
+) -> None:
     """完整文件处理管线。
 
     按顺序执行：
@@ -361,11 +368,13 @@ async def run_pipeline(file_id: str, file_path: str, file_content_bytes: bytes, 
         file_path: 文件路径/文件名。
         file_content_bytes: 文件二进制内容。
         session: 数据库会话。
+        callback_url: 可选回调地址，每个阶段完成后 POST 状态通知。
     """
     logger.info("开始处理管线: {}", file_id)
 
     try:
         # ── 阶段 1: 解析 ──────────────────────────────────────────
+        await notify_callback(callback_url, file_id, "parsing")
         content = await parse_file(file_path, file_content_bytes, file_id, session)
         await save_file_content(file_id, content, session)
 
@@ -382,6 +391,7 @@ async def run_pipeline(file_id: str, file_path: str, file_content_bytes: bytes, 
         await session.execute(stmt)
         await session.commit()
 
+        await notify_callback(callback_url, file_id, "chunking")
         try:
             chunks = await chunk_content(file_id, content, tables, session)
             await save_chunks(chunks, session)
@@ -412,6 +422,7 @@ async def run_pipeline(file_id: str, file_path: str, file_content_bytes: bytes, 
         await session.execute(stmt)
         await session.commit()
 
+        await notify_callback(callback_url, file_id, "embedding")
         try:
             embeddings = await embed_chunks(chunks)
             await submit_to_milvus(chunks, embeddings)
@@ -442,6 +453,7 @@ async def run_pipeline(file_id: str, file_path: str, file_content_bytes: bytes, 
         await session.execute(stmt)
         await session.commit()
 
+        await notify_callback(callback_url, file_id, "extracting")
         try:
             await run_extraction(file_id, session)
 
@@ -471,6 +483,7 @@ async def run_pipeline(file_id: str, file_path: str, file_content_bytes: bytes, 
         await session.execute(stmt)
         await session.commit()
 
+        await notify_callback(callback_url, file_id, "analyzing")
         try:
             await run_analysis(file_id, session)
 
@@ -491,6 +504,7 @@ async def run_pipeline(file_id: str, file_path: str, file_content_bytes: bytes, 
             await session.commit()
             raise
 
+        await notify_callback(callback_url, file_id, "complete")
         logger.info("处理管线完成: {}", file_id)
 
     except Exception as e:
@@ -885,7 +899,7 @@ async def run_from_stage_stream(
 
 
 async def run_from_stage(
-    file_id: str, stage: str, session: AsyncSession
+    file_id: str, stage: str, session: AsyncSession, callback_url: str | None = None,
 ) -> None:
     """从指定阶段重新开始处理。
 
@@ -893,6 +907,7 @@ async def run_from_stage(
         file_id: 文件 ID。
         stage: 起始阶段 (parsing/chunking/embedding/extracting/analyzing)。
         session: 数据库会话。
+        callback_url: 可选回调地址，每个阶段完成后 POST 状态通知。
     """
     logger.info("从 {} 阶段重新开始: {}", stage, file_id)
 
@@ -988,6 +1003,7 @@ async def run_from_stage(
         await session.execute(stmt)
         await session.commit()
 
+        await notify_callback(callback_url, file_id, "chunking")
         try:
             chunks = await chunk_content(file_id, content, tables, session)
             await save_chunks(chunks, session)
@@ -1038,6 +1054,7 @@ async def run_from_stage(
         await session.execute(stmt)
         await session.commit()
 
+        await notify_callback(callback_url, file_id, "embedding")
         try:
             embeddings = await embed_chunks(chunks)
             await submit_to_milvus(chunks, embeddings)
@@ -1070,6 +1087,7 @@ async def run_from_stage(
         await session.execute(stmt)
         await session.commit()
 
+        await notify_callback(callback_url, file_id, "extracting")
         try:
             await run_extraction(file_id, session)
 
@@ -1101,6 +1119,7 @@ async def run_from_stage(
         await session.execute(stmt)
         await session.commit()
 
+        await notify_callback(callback_url, file_id, "analyzing")
         try:
             await run_analysis(file_id, session)
 
@@ -1121,4 +1140,5 @@ async def run_from_stage(
             await session.commit()
             raise
 
+    await notify_callback(callback_url, file_id, "complete")
     logger.info("从 {} 阶段重新开始完成: {}", stage, file_id)

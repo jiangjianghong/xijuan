@@ -212,6 +212,14 @@ paths:
 
         **处理流程**：parsing → chunking → embedding → extracting → analyzing → complete
 
+        **回调通知（callback_url）**：
+        当使用 async 或 sync 模式时，可传入可选参数 `callback_url`。管线每完成一个阶段，会向该地址 POST 一条 JSON 通知：
+        ```json
+        {"file_id": "...", "status": "parsing"}
+        ```
+        status 依次为：`parsing` → `chunking` → `embedding` → `extracting` → `analyzing` → `complete`。
+        回调失败不会影响主处理流程（仅记录警告日志）。
+
         **文件 ID 生成规则**：基于文件名的 MD5 哈希生成，相同文件名将生成相同的 file_id。
 
         **重复上传处理逻辑**：
@@ -259,6 +267,17 @@ paths:
               - async
               - stream
             default: async
+        - name: callback_url
+          in: query
+          description: |
+            可选回调地址。传入后，管线每完成一个阶段会向该地址 POST JSON 通知：
+            `{"file_id": "...", "status": "parsing/chunking/embedding/extracting/analyzing/complete"}`。
+            回调失败不影响主处理流程。
+          required: false
+          schema:
+            type: string
+            format: uri
+            example: http://your-server.com/webhook
       requestBody:
         required: true
         content:
@@ -417,6 +436,9 @@ paths:
         - `analyzing`: 从逻辑分析开始（需要已有提取结果）
 
         注意：不支持从 `parsing` 阶段重试，如需重新解析请使用 `/file/parse` 接口重新上传。
+
+        **回调通知（callback_url）**：
+        与 `/file/parse` 一致，可传入 `callback_url`，管线每完成一个阶段会 POST `{"file_id": "...", "status": "..."}` 通知。
       operationId: retryFileFromStage
       parameters:
         - $ref: '#/components/parameters/FileIdPath'
@@ -442,6 +464,14 @@ paths:
               - stream
               - sync
             default: async
+        - name: callback_url
+          in: query
+          description: |
+            可选回调地址，每个阶段完成后 POST `{"file_id": "...", "status": "..."}` 通知。
+          required: false
+          schema:
+            type: string
+            format: uri
       responses:
         '200':
           description: 重试已开始或处理完成
@@ -497,6 +527,13 @@ paths:
               - stream
               - sync
             default: async
+        - name: callback_url
+          in: query
+          description: 可选回调地址，每个阶段完成后 POST 状态通知。
+          required: false
+          schema:
+            type: string
+            format: uri
       responses:
         '200':
           description: 重试已开始或处理完成
@@ -544,6 +581,13 @@ paths:
               - stream
               - sync
             default: async
+        - name: callback_url
+          in: query
+          description: 可选回调地址，每个阶段完成后 POST 状态通知。
+          required: false
+          schema:
+            type: string
+            format: uri
       responses:
         '200':
           description: 重试已开始或处理完成

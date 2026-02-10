@@ -66,11 +66,17 @@
 |------|------|------|------|--------|------|
 | `file` | form-data | `File` | 是 | - | 上传的文件（最大 100MB） |
 | `mode` | query | `string` | 否 | `"async"` | 处理模式：`sync` / `async` / `stream` |
+| `callback_url` | query | `string` | 否 | - | 回调地址，每个阶段完成后 POST `{"file_id":"...","status":"..."}` |
 
 **请求示例**
 
 ```bash
+# 异步模式（默认）
 curl -X POST "http://localhost:5019/file/parse?mode=async" \
+  -F "file=@/path/to/document.pdf"
+
+# 异步模式 + 回调通知
+curl -X POST "http://localhost:5019/file/parse?mode=async&callback_url=http://your-server.com/webhook" \
   -F "file=@/path/to/document.pdf"
 ```
 
@@ -156,6 +162,18 @@ data: {"file_id": "abc123", "stage": "complete", "message": "文件处理完成"
 | 正在处理中（`parsing`/`chunking`/`embedding`/`extracting`/`analyzing`） | 返回 409，拒绝重复提交 |
 | 已完成（`complete`） | 直接返回已完成状态 |
 | 失败状态（`*_failed`） | 自动清理并从对应阶段重试 |
+
+**回调通知（callback_url）**
+
+当传入 `callback_url` 参数时，管线每完成一个阶段会向该地址 POST 一条 JSON 通知：
+
+```json
+{"file_id": "a1b2c3d4e5f6", "status": "parsing"}
+```
+
+回调状态依次为：`parsing` → `chunking` → `embedding` → `extracting` → `analyzing` → `complete`。
+
+> 回调失败**不会**影响主处理流程（仅记录 warning 日志）。
 
 **状态码**
 
@@ -265,12 +283,16 @@ curl -X DELETE "http://localhost:5019/file/a1b2c3d4e5f6"
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `mode` | `string` | 否 | `"async"` | 处理模式：`async` / `stream` / `sync` |
+| `callback_url` | `string` | 否 | - | 回调地址，每个阶段完成后 POST 状态通知 |
 
 **请求示例**
 
 ```bash
 # async 模式（默认）
 curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding?mode=async"
+
+# async 模式 + 回调
+curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding?mode=async&callback_url=http://your-server.com/webhook"
 
 # stream 模式
 curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding?mode=stream"
@@ -330,12 +352,16 @@ curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding?mode=sync"
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `mode` | `string` | 否 | `"async"` | 处理模式：`async` / `stream` / `sync` |
+| `callback_url` | `string` | 否 | - | 回调地址，每个阶段完成后 POST 状态通知 |
 
 **请求示例**
 
 ```bash
 # async 模式（默认）
 curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting"
+
+# async 模式 + 回调
+curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting?callback_url=http://your-server.com/webhook"
 
 # stream 模式
 curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting?mode=stream"
@@ -394,12 +420,16 @@ curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting?mode=sync
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `mode` | `string` | 否 | `"async"` | 处理模式：`async` / `stream` / `sync` |
+| `callback_url` | `string` | 否 | - | 回调地址，每个阶段完成后 POST 状态通知 |
 
 **请求示例**
 
 ```bash
 # async 模式（默认）
 curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/analyzing"
+
+# async 模式 + 回调
+curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/analyzing?callback_url=http://your-server.com/webhook"
 
 # stream 模式
 curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/analyzing?mode=stream"
