@@ -272,7 +272,18 @@ async def chunk_content(
             table_chunk = f"{table_name}\n{table_content}"
         else:
             table_chunk = table_content
-        all_chunks.append((table_chunk, start, end))
+
+        # 超长表格需要分块，避免超出 embedding 模型输入长度限制
+        max_embedding_len = 8192
+        if len(table_chunk) > max_embedding_len:
+            table_sub_chunks = split_text_with_positions(
+                table_chunk, chunk_size, chunk_overlap,
+                ["</tr>", "</td>", "\n"],
+                base_offset=start
+            )
+            all_chunks.extend(table_sub_chunks)
+        else:
+            all_chunks.append((table_chunk, start, end))
 
         last_end = end
 

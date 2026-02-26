@@ -97,11 +97,14 @@ async def get_embeddings(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    MAX_INPUT_LENGTH = 8192
+
     all_embeddings: List[List[float]] = []
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
+            batch = [t[:MAX_INPUT_LENGTH] if len(t) > MAX_INPUT_LENGTH else t for t in batch]
             payload: Dict[str, Any] = {
                 "model": model,
                 "input": batch,
