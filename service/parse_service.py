@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import re
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
 from sqlalchemy import select, update
@@ -13,26 +15,184 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from model.tables import File, FileContent, FileTable
 from service.mineru_client import parse_pdf
 from utils.config import get_config
+from utils.llm_client import chat_completion
 from utils.page_mapping import build_page_mapping, lookup_page_num
+
+
+_UNKNOWN_TABLE_NAME_VALUES = {
+    "未知",
+    "unknown",
+    "none",
+    "null",
+    "n/a",
+    "na",
+    "无",
+}
+_UNKNOWN_TABLE_NAME_HINTS = (
+    "未找到",
+    "无法提取",
+    "无法确定",
+    "无法识别",
+    "不明确",
+    "不确定",
+    "not found",
+)
+
+
+def _clean_text_line(line: str) -> str:
+    """清洗单行文本，去掉 markdown 标记与多余空白。"""
+    line = re.sub(r"^#+\s*", "", line.strip())
+    line = re.sub(r"\s+", " ", line)
+    return line.strip()
+
+
+def _extract_json_obj(text: str) -> Dict:
+    """从 LLM 文本中提取 JSON 对象。"""
+    text = (text or "").strip()
+    if not text:
+        return {}
+
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1)
+
+    try:
+        data = json.loads(text)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        pass
+
+    inline = re.search(r"\{.*\}", text, re.DOTALL)
+    if inline:
+        try:
+            data = json.loads(inline.group(0))
+            return data if isinstance(data, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
+    return {}
+
+
+def _extract_last_line(preceding_text: str) -> str:
+    """提取表格前最后一行（模型失败时唯一回退）。"""
+    text = preceding_text.rstrip()
+    if not text:
+        return ""
+
+    lines = text.splitlines()
+    if not lines:
+        return ""
+
+    return _clean_text_line(lines[-1])
+
+
+def _build_llm_context_text(preceding_text: str, max_lines: int = 3) -> str:
+    """构造 LLM 上下文。
+
+    规则：
+    1. 默认只取当前表格前最多 3 行。
+    2. 若这 3 行内包含上一个 </table>，改为取该 </table> 到当前表格开始之间的文本。
+    """
+    text = preceding_text.rstrip()
+    if not text:
+        return ""
+
+    lines_with_breaks = text.splitlines(keepends=True)
+    recent_text = "".join(lines_with_breaks[-max_lines:])
+    recent_start = len(text) - len(recent_text)
+
+    prev_table_end = text.lower().rfind("</table>")
+    if prev_table_end != -1 and prev_table_end >= recent_start:
+        segment = text[prev_table_end + len("</table>"):]
+        return segment.strip()
+
+    return recent_text.strip()
+
+
+def _extract_table_name(preceding_text: str) -> str:
+    """规则回退：只取表格前最后一行。"""
+    return _extract_last_line(preceding_text) or "未知"
+
+
+def _is_unknown_table_name(name: str) -> bool:
+    """判断模型是否返回了“无法识别/未知”类占位结果。"""
+    cleaned = _clean_text_line(name).strip("`\"'[](){}（）【】")
+    if not cleaned:
+        return True
+
+    lowered = cleaned.lower()
+    if lowered in _UNKNOWN_TABLE_NAME_VALUES:
+        return True
+
+    for hint in _UNKNOWN_TABLE_NAME_HINTS:
+        if hint in cleaned or hint in lowered:
+            return True
+
+    return False
+
+
+async def _extract_table_name_with_llm(
+    preceding_text: str,
+    table_index: int,
+    fallback_name: str,
+) -> str:
+    """调用 LLM 提取表名，失败时回退到最后一行。"""
+    app_cfg = get_config()
+    extraction_cfg = app_cfg.extraction
+    table_name_cfg = app_cfg.table_name_validation
+
+    max_lines = max(1, table_name_cfg.max_context_lines or 3)
+    max_context_length = table_name_cfg.max_context_length or extraction_cfg.max_context_length
+    context_text = _build_llm_context_text(preceding_text, max_lines=max_lines) or "(无)"
+    if max_context_length and len(context_text) > max_context_length:
+        context_text = context_text[-max_context_length:]
+
+    base_url = table_name_cfg.llm_base_url or extraction_cfg.llm_base_url
+    model = table_name_cfg.llm_model or extraction_cfg.llm_model
+    api_key = table_name_cfg.llm_api_key or extraction_cfg.llm_api_key
+    timeout = table_name_cfg.llm_timeout or extraction_cfg.llm_timeout
+    retry_count = table_name_cfg.llm_retry_count or extraction_cfg.llm_retry_count
+
+    prompt = (
+        "你是文档表格标题抽取助手。\n"
+        "请根据给定上文，提取当前表格最可能的标题。\n"
+        "若无法确定标题，table_name 必须输出固定值\"未知\"。\n"
+        "不要输出\"无法提取\"、\"未找到明确标题\"等其他失败文案。\n"
+        "仅输出 JSON：{\"table_name\":\"...\", \"reason\":\"...\"}\n\n"
+        f"表格序号: {table_index}\n"
+        f"上文片段:\n{context_text}"
+    )
+
+    try:
+        response = await chat_completion(
+            prompt,
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            timeout=timeout,
+            max_retries=retry_count,
+        )
+        data = _extract_json_obj(response)
+        llm_name = _clean_text_line(str(data.get("table_name", "")))
+        if not llm_name or _is_unknown_table_name(llm_name):
+            return fallback_name
+        return llm_name[:500]
+    except Exception as e:
+        logger.warning(
+            "LLM 表名抽取失败，回退最后一行: table_index={}, type={}, repr={}",
+            table_index,
+            type(e).__name__,
+            repr(e),
+        )
+        return fallback_name
 
 
 async def parse_file(
     file_path: str, file_content_bytes: bytes, file_id: str, session: AsyncSession
 ) -> Tuple[str, str]:
-    """调用 MinerU 解析文件，返回 Markdown 内容和 middle_json。
-
-    Args:
-        file_path: 文件路径/文件名。
-        file_content_bytes: 文件二进制内容。
-        file_id: 文件 ID。
-        session: 数据库会话。
-
-    Returns:
-        (md_content, middle_json_str) 元组。
-    """
+    """调用 MinerU 解析文件，返回 Markdown 内容和 middle_json。"""
     logger.info("开始解析文件: {}", file_id)
 
-    # 更新状态为 parsing，记录开始时间
     stmt = (
         update(File)
         .where(File.file_id == file_id)
@@ -42,7 +202,6 @@ async def parse_file(
     await session.commit()
 
     try:
-        # 调用 MinerU 解析
         cfg = get_config().mineru
         result = await parse_pdf(
             file_name=file_path,
@@ -54,7 +213,6 @@ async def parse_file(
         content = result["md_content"]
         middle_json_str = result["middle_json"]
 
-        # 更新解析完成时间
         stmt = (
             update(File)
             .where(File.file_id == file_id)
@@ -67,7 +225,6 @@ async def parse_file(
         return content, middle_json_str
 
     except Exception as e:
-        # 更新状态为 parsing_failed
         stmt = (
             update(File)
             .where(File.file_id == file_id)
@@ -86,16 +243,7 @@ async def save_file_content(
     middle_json: Optional[str] = None,
     page_mapping: Optional[List] = None,
 ) -> None:
-    """将解析结果存入 file_content 表。
-
-    Args:
-        file_id: 文件 ID。
-        content: Markdown 内容。
-        session: 数据库会话。
-        middle_json: MinerU 返回的 middle_json 原始字符串。
-        page_mapping: 计算后的页码映射列表。
-    """
-    # 检查是否已存在
+    """将解析结果存入 file_content 表。"""
     stmt = select(FileContent).where(FileContent.file_id == file_id)
     result = await session.execute(stmt)
     existing = result.scalar_one_or_none()
@@ -117,67 +265,50 @@ async def save_file_content(
     logger.info("文件内容已保存: {}", file_id)
 
 
-def parse_tables(content: str, file_id: str, page_mapping: Optional[List] = None) -> List[Dict]:
-    """解析 Markdown 中的 HTML 表格。
-
-    Args:
-        content: Markdown 全文。
-        file_id: 文件 ID。
-        page_mapping: 页码映射列表（可选）。
-
-    Returns:
-        表格信息列表，每项包含 file_id, table_index, total_table, table_name, table_content, page_num。
-    """
-    tables = []
+async def parse_tables(content: str, file_id: str, page_mapping: Optional[List] = None) -> List[Dict]:
+    """解析 Markdown 中的 HTML 表格。"""
     table_pattern = re.compile(r"<table>.*?</table>", re.DOTALL | re.IGNORECASE)
     matches = list(table_pattern.finditer(content))
     total_table = len(matches)
+    max_concurrency = max(1, get_config().table_name_validation.max_concurrency or 1)
+    semaphore = asyncio.Semaphore(max_concurrency)
 
-    for table_index, match in enumerate(matches, 1):
+    async def _process_single_table(table_index: int, match: re.Match[str]) -> Dict:
         table_content = match.group(0)
         start_pos = match.start()
         preceding_text = content[:start_pos].rstrip()
 
-        last_double_newline = preceding_text.rfind("\n\n")
-        if last_double_newline != -1:
-            after_double_newline = preceding_text[last_double_newline:].strip()
-            lines = after_double_newline.split("\n")
-            table_name = lines[-1].strip() if lines else ""
-        else:
-            lines = preceding_text.strip().split("\n")
-            table_name = lines[-1].strip() if lines else ""
+        fallback_name = _extract_table_name(preceding_text)
+        async with semaphore:
+            table_name = await _extract_table_name_with_llm(
+                preceding_text=preceding_text,
+                table_index=table_index,
+                fallback_name=fallback_name,
+            )
 
-        table_name = re.sub(r"^#+\s*", "", table_name)
+        return {
+            "file_id": file_id,
+            "table_index": table_index,
+            "total_table": total_table,
+            "table_name": table_name,
+            "table_content": table_content,
+            "start_pos": match.start(),
+            "end_pos": match.end(),
+            "page_num": lookup_page_num(page_mapping or [], match.start(), match.end()),
+        }
 
-        if "<table>" in table_name.lower() or "</table>" in table_name.lower():
-            table_name = ""
-
-        if not table_name or len(table_name) > 200:
-            table_name = f"表{table_index}"
-
-        tables.append(
-            {
-                "file_id": file_id,
-                "table_index": table_index,
-                "total_table": total_table,
-                "table_name": table_name[:500],
-                "table_content": table_content,
-                "start_pos": match.start(),
-                "end_pos": match.end(),
-                "page_num": lookup_page_num(page_mapping or [], match.start(), match.end()),
-            }
-        )
+    tasks = [
+        asyncio.create_task(_process_single_table(table_index, match))
+        for table_index, match in enumerate(matches, 1)
+    ]
+    tables: List[Dict] = await asyncio.gather(*tasks)
+    tables.sort(key=lambda x: x["table_index"])
 
     return tables
 
 
 async def save_tables(tables: List[Dict], session: AsyncSession) -> None:
-    """将表格信息批量存入 file_table 表。
-
-    Args:
-        tables: parse_tables 返回的表格列表。
-        session: 数据库会话。
-    """
+    """将表格信息批量存入 file_table 表。"""
     if not tables:
         return
 

@@ -19,6 +19,7 @@ async def chat_completion(
     api_key: Optional[str] = None,
     timeout: Optional[int] = None,
     messages: Optional[List[Dict[str, str]]] = None,
+    max_retries: Optional[int] = None,
 ) -> str:
     """调用 OpenAI 兼容 chat/completions 接口。
 
@@ -29,6 +30,7 @@ async def chat_completion(
         api_key: API Key，默认从配置读取。
         timeout: 超时秒数，默认从配置读取。
         messages: 自定义 messages 列表，优先于 prompt。
+        max_retries: 最大重试次数，默认从配置读取。
 
     Returns:
         LLM 返回的文本内容。
@@ -38,6 +40,7 @@ async def chat_completion(
     model = model or cfg.llm_model
     api_key = api_key or cfg.llm_api_key or "EMPTY"
     timeout = timeout or cfg.llm_timeout
+    retry_count = max_retries or cfg.llm_retry_count or 1
 
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
@@ -54,10 +57,44 @@ async def chat_completion(
     url = f"{base_url.rstrip('/')}/chat/completions"
 
     async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(url, json=payload, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        for attempt in range(retry_count):
+            try:
+                resp = await client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                return data["choices"][0]["message"]["content"]
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code if e.response else None
+                # 4xx（除 429）通常是参数/权限/模型错误，直接抛出不重试
+                if status_code is not None and 400 <= status_code < 500 and status_code != 429:
+                    raise
+
+                if attempt + 1 == retry_count:
+                    raise
+
+                wait_time = 2 ** attempt
+                logger.warning(
+                    "chat_completion 请求失败(HTTP)，尝试 {}/{}，status={}，等待 {}s 后重试",
+                    attempt + 1,
+                    retry_count,
+                    status_code,
+                    wait_time,
+                )
+                await asyncio.sleep(wait_time)
+            except httpx.RequestError as e:
+                if attempt + 1 == retry_count:
+                    raise
+
+                wait_time = 2 ** attempt
+                logger.warning(
+                    "chat_completion 请求失败(Request)，尝试 {}/{}，type={}，repr={}，等待 {}s 后重试",
+                    attempt + 1,
+                    retry_count,
+                    type(e).__name__,
+                    repr(e),
+                    wait_time,
+                )
+                await asyncio.sleep(wait_time)
 
 
 async def get_embeddings(

@@ -99,7 +99,7 @@ async def run_pipeline_stream(
         })
 
         # 表格提取
-        tables = parse_tables(content, file_id, page_mapping=page_mapping)
+        tables = await parse_tables(content, file_id, page_mapping=page_mapping)
         await save_tables(tables, session)
         yield _sse_event("tables_extracted", {
             "file_id": file_id,
@@ -390,7 +390,7 @@ async def run_pipeline(
         await save_file_content(file_id, content, session, middle_json=middle_json_str, page_mapping=page_mapping)
 
         # 表格提取
-        tables = parse_tables(content, file_id, page_mapping=page_mapping)
+        tables = await parse_tables(content, file_id, page_mapping=page_mapping)
         await save_tables(tables, session)
 
         # ── 阶段 2: 分块 ──────────────────────────────────────────

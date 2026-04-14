@@ -77,6 +77,17 @@ class ExtractionConfig(BaseModel):
     max_context_length: int = 4096
 
 
+class TableNameValidationConfig(BaseModel):
+    llm_base_url: str | None = None
+    llm_model: str | None = None
+    llm_api_key: str | None = None
+    llm_timeout: int | None = None
+    llm_retry_count: int | None = None
+    max_context_length: int | None = None
+    max_context_lines: int | None = None
+    max_concurrency: int | None = None
+
+
 class AnalysisConfig(BaseModel):
     calc_precision: int = 2
     judge_timeout: int = 30
@@ -94,6 +105,7 @@ class AppConfig(BaseSettings):
     milvus: MilvusConfig = MilvusConfig()
     mysql: MySQLConfig = MySQLConfig()
     extraction: ExtractionConfig = ExtractionConfig()
+    table_name_validation: TableNameValidationConfig = TableNameValidationConfig()
     analysis: AnalysisConfig = AnalysisConfig()
 
 
