@@ -20,7 +20,7 @@ async def notify_callback(
     Args:
         callback_url: 回调地址，为 None 时静默跳过。
         file_id: 文件 ID。
-        status: 当前阶段状态（parsing / chunking / embedding / extracting / analyzing / complete）。
+        status: 当前阶段状态（parsing / tableing / chunking / embedding / extracting / analyzing / complete）。
         timeout: HTTP 请求超时（秒）。
     """
     if not callback_url:

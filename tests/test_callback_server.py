@@ -37,6 +37,7 @@ app = FastAPI(title="Callback Test Server")
 # 阶段对应的中文名
 STAGE_LABELS = {
     "parsing": "解析中",
+    "tableing": "AI校验表格名中",
     "chunking": "分块中",
     "embedding": "向量化中",
     "extracting": "字段提取中",

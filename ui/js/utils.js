@@ -50,12 +50,15 @@ const Utils = {
     getStatusText(progress) {
         const map = {
             parsing: '解析中',
+            table_name_validating: 'AI校验表格名中',
+            tableing: 'AI校验表格名中',
             chunking: '分块中',
             embedding: '向量化中',
             extracting: '提取中',
             analyzing: '分析中',
             complete: '已完成',
             parsing_failed: '解析失败',
+            tableing_failed: 'AI校验表格名失败',
             chunking_failed: '分块失败',
             embedding_failed: '向量化失败',
             extracting_failed: '提取失败',
@@ -78,11 +81,13 @@ const Utils = {
      */
     getStageProgress(stage) {
         const map = {
-            parsing: 20,
-            chunking: 40,
-            embedding: 60,
-            extracting: 80,
-            analyzing: 90,
+            parsing: 15,
+            table_name_validating: 30,
+            tableing: 30,
+            chunking: 50,
+            embedding: 70,
+            extracting: 85,
+            analyzing: 95,
             complete: 100,
         };
         // 处理失败状态
@@ -96,6 +101,8 @@ const Utils = {
     getStageText(stage) {
         const map = {
             parsing: '解析',
+            table_name_validating: 'AI校验表格名',
+            tableing: 'AI校验表格名',
             chunking: '分块',
             embedding: '向量化',
             extracting: '提取',
@@ -108,7 +115,7 @@ const Utils = {
      * 判断是否为处理中状态
      */
     isProcessing(progress) {
-        return ['parsing', 'chunking', 'embedding', 'extracting', 'analyzing'].includes(progress);
+        return ['parsing', 'table_name_validating', 'tableing', 'chunking', 'embedding', 'extracting', 'analyzing'].includes(progress);
     },
 
     /**
@@ -124,6 +131,7 @@ const Utils = {
     getRetryStage(progress) {
         const map = {
             parsing_failed: 'parsing',
+            tableing_failed: 'tableing',
             chunking_failed: 'chunking',
             embedding_failed: 'embedding',
             extracting_failed: 'extracting',

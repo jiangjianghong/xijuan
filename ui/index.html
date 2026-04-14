@@ -117,12 +117,14 @@
                     <select id="status-filter" class="status-filter">
                         <option value="">全部状态</option>
                         <option value="parsing">解析中</option>
+                        <option value="tableing">AI校验表格名中</option>
                         <option value="chunking">分块中</option>
                         <option value="embedding">向量化中</option>
                         <option value="extracting">提取中</option>
                         <option value="analyzing">分析中</option>
                         <option value="complete">已完成</option>
                         <option value="parsing_failed">解析失败</option>
+                        <option value="tableing_failed">AI校验表格名失败</option>
                         <option value="chunking_failed">分块失败</option>
                         <option value="embedding_failed">向量化失败</option>
                         <option value="extracting_failed">提取失败</option>
@@ -285,6 +287,21 @@
                                 <div class="content-preview-text"></div>
                                 <div class="content-preview-fade"></div>
                             </div>
+                        </div>
+                    </div>
+                    <div class="pipeline-stage" data-stage="tableing">
+                        <div class="stage-indicator">
+                            <div class="stage-dot"></div>
+                            <div class="stage-line"></div>
+                        </div>
+                        <div class="stage-content">
+                            <div class="stage-header">
+                                <span class="stage-name">AI校验表格名</span>
+                                <span class="stage-duration"></span>
+                                <span class="stage-status"></span>
+                            </div>
+                            <div class="stage-detail"></div>
+                            <div class="stage-progress-bar"><div class="stage-progress-fill"></div></div>
                         </div>
                     </div>
                     <div class="pipeline-stage" data-stage="chunking">

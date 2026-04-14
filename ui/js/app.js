@@ -124,7 +124,7 @@ const App = {
 
             if (fileId) {
                 // 添加到队列，由轮询驱动后续进度
-                this.addToQueue(fileId, file.name, 'parsing', 20);
+                this.addToQueue(fileId, file.name, 'parsing', Utils.getStageProgress('parsing'));
                 Toast.info(`${file.name} 已提交处理`);
             } else {
                 // 可能是已完成的文件
@@ -382,7 +382,10 @@ const App = {
 
     async retryFile(fileId, progress) {
         const stage = Utils.getRetryStage(progress);
-        if (!stage) return;
+        if (!stage) {
+            Toast.error(`当前状态不支持重试: ${progress || 'unknown'}`);
+            return;
+        }
 
         const row = this.els.fileListBody.querySelector(`tr[data-id="${fileId}"]`);
         const fileName = row ? row.querySelector('.file-name-cell').textContent : 'unknown';
@@ -445,29 +448,38 @@ const App = {
     renderTimeline(detail) {
         const stages = [
             { key: 'parsing', label: '解析', start: 'start_parsing_time', end: 'end_parsing_time' },
+            { key: 'tableing', label: 'AI校验表格名', start: null, end: null },
             { key: 'chunking', label: '分块', start: 'start_chunking_time', end: 'end_chunking_time' },
             { key: 'embedding', label: '向量化', start: 'start_embedding_time', end: 'end_embedding_time' },
             { key: 'extracting', label: '提取', start: null, end: 'end_extracting_time' },
             { key: 'analyzing', label: '分析', start: null, end: 'end_analyzing_time' },
         ];
 
-        const currentStage = detail.progress.replace('_failed', '');
+        let currentStage = (detail.progress || '').replace('_failed', '');
+        if (currentStage === 'table_name_validating') {
+            currentStage = 'tableing';
+        }
         const isFailed = Utils.isFailed(detail.progress);
+        const currentStageIndex = stages.findIndex(s => s.key === currentStage);
         let prevEndTime = detail.start_parsing_time;
         let html = '';
 
-        stages.forEach(stage => {
+        stages.forEach((stage, index) => {
             let status = 'pending';
             let duration = null;
             const startTime = stage.start ? detail[stage.start] : prevEndTime;
-            const endTime = detail[stage.end];
+            const endTime = stage.end ? detail[stage.end] : null;
 
             if (endTime) {
                 status = 'completed';
                 duration = Utils.calcDuration(startTime, endTime);
                 prevEndTime = endTime;
-            } else if (currentStage === stage.key) {
+            } else if (isFailed && currentStage === stage.key) {
                 status = isFailed ? 'failed' : 'processing';
+            } else if (!isFailed && currentStage === stage.key) {
+                status = 'processing';
+            } else if (currentStageIndex !== -1 && index < currentStageIndex) {
+                status = 'completed';
             }
 
             html += `

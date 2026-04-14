@@ -58,13 +58,30 @@ async def recover_abnormal_status(session: AsyncSession) -> None:
     """将所有处理中（*ing）状态恢复为对应的失败状态。
 
     - parsing → parsing_failed
+    - tableing → tableing_failed
     - chunking → chunking_failed
     - embedding → embedding_failed
     - extracting → extracting_failed
     - analyzing → analyzing_failed
     """
+    # 先归一化历史状态名，确保后续统一按 tableing/tableing_failed 处理
+    legacy_status_mapping = {
+        "table_name_validating": "tableing",
+        "table_name_validating_failed": "tableing_failed",
+    }
+    for old_status, new_status in legacy_status_mapping.items():
+        stmt = (
+            update(File)
+            .where(File.progress == old_status)
+            .values(progress=new_status)
+        )
+        result = await session.execute(stmt)
+        if result.rowcount > 0:
+            logger.info("归一化历史状态 {} -> {}: {} 条记录", old_status, new_status, result.rowcount)
+
     status_mapping = {
         "parsing": "parsing_failed",
+        "tableing": "tableing_failed",
         "chunking": "chunking_failed",
         "embedding": "embedding_failed",
         "extracting": "extracting_failed",
@@ -89,6 +106,7 @@ async def cleanup_garbage_data(session: AsyncSession) -> None:
     """根据失败状态执行对应的垃圾数据清理。
 
     - parsing_failed → 清理 file_content, file_table, file_chunk, Milvus
+    - tableing_failed → 清理 file_table, file_chunk, extraction_result, analysis_result, Milvus
     - chunking_failed → 清理 file_chunk, Milvus
     - embedding_failed → 清理 Milvus 中 file_id 对应记录
     - extracting_failed → 清理 extraction_result 中 file_id 对应记录
@@ -111,6 +129,22 @@ async def cleanup_garbage_data(session: AsyncSession) -> None:
             logger.warning("Milvus 删除 file_id={} 失败: {}", file_id, e)
     if parsing_failed_ids:
         logger.info("清理 parsing_failed 数据: {} 个文件", len(parsing_failed_ids))
+
+    # tableing_failed: 清理 file_table, file_chunk, extraction_result, analysis_result, Milvus
+    stmt = select(File.file_id).where(File.progress == "tableing_failed")
+    result = await session.execute(stmt)
+    tableing_failed_ids = [row[0] for row in result.fetchall()]
+    for file_id in tableing_failed_ids:
+        await session.execute(delete(FileTable).where(FileTable.file_id == file_id))
+        await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
+        await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
+        await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+        try:
+            milvus_client.delete_by_file_id(file_id)
+        except Exception as e:
+            logger.warning("Milvus 删除 file_id={} 失败: {}", file_id, e)
+    if tableing_failed_ids:
+        logger.info("清理 tableing_failed 数据: {} 个文件", len(tableing_failed_ids))
 
     # chunking_failed: 清理 file_chunk, Milvus
     stmt = select(File.file_id).where(File.progress == "chunking_failed")

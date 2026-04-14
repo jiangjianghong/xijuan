@@ -50,7 +50,8 @@ async def run_pipeline_stream(
     - parsing: MinerU 解析完成
     - content_saved: MD 存储完成
     - md_content: MD 文档内容（包含完整 MD 文本）
-    - tables_extracted: 表格提取完成
+    - tableing_start: AI 校验表格名称开始
+    - tableing: AI 校验表格名称完成
     - chunking: 分块完成
     - chunks_saved: 分块存储完成
     - embedding: 向量化完成
@@ -98,17 +99,41 @@ async def run_pipeline_stream(
             "content": content,
         })
 
-        # 表格提取
-        tables = await parse_tables(content, file_id, page_mapping=page_mapping)
-        await save_tables(tables, session)
-        yield _sse_event("tables_extracted", {
+        # ── 阶段 2: AI 校验表格名称 ───────────────────────────────
+        yield _sse_event("tableing_start", {
             "file_id": file_id,
-            "stage": "tables_extracted",
-            "message": "表格提取完成",
-            "table_count": len(tables),
+            "stage": "tableing_start",
+            "message": "开始 AI 校验表格名称",
         })
 
-        # ── 阶段 2: 分块 ──────────────────────────────────────────
+        stmt = (
+            update(File)
+            .where(File.file_id == file_id)
+            .values(progress="tableing", error=None)
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+        try:
+            tables = await parse_tables(content, file_id, page_mapping=page_mapping)
+            await save_tables(tables, session)
+            yield _sse_event("tableing", {
+                "file_id": file_id,
+                "stage": "tableing",
+                "message": "AI 校验表格名称完成",
+                "table_count": len(tables),
+            })
+        except Exception as e:
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(progress="tableing_failed", error=_format_exception(e))
+            )
+            await session.execute(stmt)
+            await session.commit()
+            raise
+
+        # ── 阶段 3: 分块 ──────────────────────────────────────────
         yield _sse_event("chunking_start", {
             "file_id": file_id,
             "stage": "chunking_start",
@@ -367,11 +392,12 @@ async def run_pipeline(
     """完整文件处理管线。
 
     按顺序执行：
-    1. MinerU 解析 + 存 md + 表格提取
-    2. 分块 + 存数据库
-    3. 向量化 + 提交 Milvus
-    4. 字段提取
-    5. 逻辑分析
+    1. MinerU 解析 + 存 md
+    2. AI 校验表格名称
+    3. 分块 + 存数据库
+    4. 向量化 + 提交 Milvus
+    5. 字段提取
+    6. 逻辑分析
 
     Args:
         file_id: 文件 ID。
@@ -389,11 +415,30 @@ async def run_pipeline(
         page_mapping = build_page_mapping(content, middle_json_str) if middle_json_str else []
         await save_file_content(file_id, content, session, middle_json=middle_json_str, page_mapping=page_mapping)
 
-        # 表格提取
-        tables = await parse_tables(content, file_id, page_mapping=page_mapping)
-        await save_tables(tables, session)
+        # ── 阶段 2: AI 校验表格名称 ───────────────────────────────
+        stmt = (
+            update(File)
+            .where(File.file_id == file_id)
+            .values(progress="tableing", error=None)
+        )
+        await session.execute(stmt)
+        await session.commit()
 
-        # ── 阶段 2: 分块 ──────────────────────────────────────────
+        await notify_callback(callback_url, file_id, "tableing")
+        try:
+            tables = await parse_tables(content, file_id, page_mapping=page_mapping)
+            await save_tables(tables, session)
+        except Exception as e:
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(progress="tableing_failed", error=_format_exception(e))
+            )
+            await session.execute(stmt)
+            await session.commit()
+            raise
+
+        # ── 阶段 3: 分块 ──────────────────────────────────────────
         stmt = (
             update(File)
             .where(File.file_id == file_id)
@@ -530,7 +575,7 @@ async def run_from_stage_stream(
 
     Args:
         file_id: 文件 ID。
-        stage: 起始阶段 (chunking/embedding/extracting/analyzing)。
+        stage: 起始阶段 (tableing/chunking/embedding/extracting/analyzing)。
         session: 数据库会话。
 
     Yields:
@@ -538,10 +583,14 @@ async def run_from_stage_stream(
     """
     logger.info("从 {} 阶段流式重新开始: {}", stage, file_id)
 
+    if stage == "table_name_validating":
+        stage = "tableing"
+
     # 阶段顺序和名称映射
-    stage_order = ["parsing", "chunking", "embedding", "extracting", "analyzing"]
+    stage_order = ["parsing", "tableing", "chunking", "embedding", "extracting", "analyzing"]
     stage_names = {
         "parsing": "MinerU 解析",
+        "tableing": "AI 校验表格名称",
         "chunking": "分块",
         "embedding": "向量化",
         "extracting": "字段提取",
@@ -577,7 +626,18 @@ async def run_from_stage_stream(
 
     try:
         # 根据阶段清理数据
-        if stage == "chunking":
+        if stage == "tableing":
+            await session.execute(delete(FileTable).where(FileTable.file_id == file_id))
+            await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
+            await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
+            await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+            try:
+                milvus_client.delete_by_file_id(file_id)
+            except Exception as e:
+                logger.warning("Milvus 删除失败: {}", e)
+            await session.commit()
+
+        elif stage == "chunking":
             await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
             await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
             await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
@@ -631,6 +691,48 @@ async def run_from_stage_stream(
         ]
 
         current_stage = stage
+
+        # ── 阶段: AI 校验表格名称 ───────────────────────────────
+        if current_stage == "tableing":
+            if not file_content:
+                raise ValueError("缺少文件内容，无法从 tableing 阶段开始")
+
+            content = file_content.file_content
+
+            yield _sse_event("tableing_start", {
+                "file_id": file_id,
+                "stage": "tableing_start",
+                "message": "开始 AI 校验表格名称",
+            })
+
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(progress="tableing", error=None)
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+            try:
+                tables = await parse_tables(content, file_id, page_mapping=page_mapping)
+                await save_tables(tables, session)
+                yield _sse_event("tableing", {
+                    "file_id": file_id,
+                    "stage": "tableing",
+                    "message": "AI 校验表格名称完成",
+                    "table_count": len(tables),
+                })
+            except Exception as e:
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="tableing_failed", error=_format_exception(e))
+                )
+                await session.execute(stmt)
+                await session.commit()
+                raise
+
+            current_stage = "chunking"
 
         # ── 阶段: 分块 ──────────────────────────────────────────
         if current_stage == "chunking":
@@ -918,11 +1020,14 @@ async def run_from_stage(
 
     Args:
         file_id: 文件 ID。
-        stage: 起始阶段 (parsing/chunking/embedding/extracting/analyzing)。
+        stage: 起始阶段 (parsing/tableing/chunking/embedding/extracting/analyzing)。
         session: 数据库会话。
         callback_url: 可选回调地址，每个阶段完成后 POST 状态通知。
     """
     logger.info("从 {} 阶段重新开始: {}", stage, file_id)
+
+    if stage == "table_name_validating":
+        stage = "tableing"
 
     milvus_client = MilvusClient()
     milvus_client.connect()
@@ -931,6 +1036,18 @@ async def run_from_stage(
     if stage == "parsing":
         # 清理所有数据
         await session.execute(delete(FileContent).where(FileContent.file_id == file_id))
+        await session.execute(delete(FileTable).where(FileTable.file_id == file_id))
+        await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
+        await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
+        await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+        try:
+            milvus_client.delete_by_file_id(file_id)
+        except Exception as e:
+            logger.warning("Milvus 删除失败: {}", e)
+        await session.commit()
+
+    elif stage == "tableing":
+        # 清理表格及后续数据
         await session.execute(delete(FileTable).where(FileTable.file_id == file_id))
         await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
         await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
@@ -1002,6 +1119,36 @@ async def run_from_stage(
     if stage == "parsing":
         # 需要原始文件内容，这里无法重新解析，抛出错误
         raise ValueError("parsing 阶段需要原始文件内容，请使用 /file/parse 重新提交文件")
+
+    if stage in ("tableing",):
+        if not file_content:
+            raise ValueError("缺少文件内容，无法从 tableing 阶段开始")
+
+        content = file_content.file_content
+
+        stmt = (
+            update(File)
+            .where(File.file_id == file_id)
+            .values(progress="tableing", error=None)
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+        await notify_callback(callback_url, file_id, "tableing")
+        try:
+            tables = await parse_tables(content, file_id, page_mapping=page_mapping)
+            await save_tables(tables, session)
+        except Exception as e:
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(progress="tableing_failed", error=_format_exception(e))
+            )
+            await session.execute(stmt)
+            await session.commit()
+            raise
+
+        stage = "chunking"
 
     if stage in ("chunking",):
         if not file_content:

@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from loguru import logger
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.database import get_db
@@ -181,7 +181,7 @@ async def parse_file(
     """提交文件解析（支持 sync/async/stream）。
 
     当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：
-    {"file_id": "...", "status": "parsing/chunking/embedding/extracting/analyzing/complete"}
+    {"file_id": "...", "status": "parsing/tableing/chunking/embedding/extracting/analyzing/complete"}
     """
     cfg = get_config().mineru
 
@@ -204,8 +204,23 @@ async def parse_file(
     if existing_file:
         progress = existing_file.progress
 
+        # 归一化历史状态名，统一使用 tableing / tableing_failed
+        progress_aliases = {
+            "table_name_validating": "tableing",
+            "table_name_validating_failed": "tableing_failed",
+        }
+        normalized_progress = progress_aliases.get(progress)
+        if normalized_progress:
+            await db.execute(
+                update(FileModel)
+                .where(FileModel.file_id == file_id)
+                .values(progress=normalized_progress)
+            )
+            await db.commit()
+            progress = normalized_progress
+
         # *ing 状态 → 拒绝重复提交
-        if progress in ("parsing", "chunking", "embedding", "extracting", "analyzing"):
+        if progress in ("parsing", "tableing", "chunking", "embedding", "extracting", "analyzing"):
             raise HTTPException(
                 status_code=409,
                 detail=f"文件正在处理中，当前状态: {progress}",
@@ -221,6 +236,7 @@ async def parse_file(
         # *_failed → 清理并从对应阶段重试
         stage_mapping = {
             "parsing_failed": "parsing",
+            "tableing_failed": "tableing",
             "chunking_failed": "chunking",
             "embedding_failed": "embedding",
             "extracting_failed": "extracting",
@@ -433,7 +449,7 @@ async def retry_file(
     """从指定阶段重试（支持 async/stream/sync）。
 
     当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：
-    {"file_id": "...", "status": "parsing/chunking/embedding/extracting/analyzing/complete"}
+    {"file_id": "...", "status": "parsing/tableing/chunking/embedding/extracting/analyzing/complete"}
     """
     # 检查文件是否存在
     stmt = select(FileModel).where(FileModel.file_id == file_id)
@@ -443,7 +459,12 @@ async def retry_file(
     if not file_record:
         raise HTTPException(status_code=404, detail="文件不存在")
 
-    valid_stages = ("chunking", "embedding", "extracting", "analyzing")
+    stage_aliases = {
+        "table_name_validating": "tableing",
+    }
+    stage = stage_aliases.get(stage, stage)
+
+    valid_stages = ("tableing", "chunking", "embedding", "extracting", "analyzing")
     if stage not in valid_stages:
         raise HTTPException(
             status_code=400,

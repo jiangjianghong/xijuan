@@ -15,7 +15,8 @@ const StreamDemo = {
         parsing: 'parsing',
         content_saved: 'parsing',
         md_content: 'parsing',
-        tables_extracted: 'parsing',
+        tableing_start: 'tableing',
+        tableing: 'tableing',
         chunking_start: 'chunking',
         chunking: 'chunking',
         chunks_saving: 'chunking',
@@ -36,7 +37,7 @@ const StreamDemo = {
 
     // Stages that mark completion of a pipeline stage
     stageCompletionEvents: {
-        tables_extracted: 'parsing',
+        tableing: 'tableing',
         chunks_saved: 'chunking',
         milvus_submitted: 'embedding',
         extraction: 'extracting',
@@ -46,6 +47,7 @@ const StreamDemo = {
     // Stages that mark beginning of a pipeline stage
     stageStartEvents: {
         parsing_start: 'parsing',
+        tableing_start: 'tableing',
         chunking_start: 'chunking',
         embedding_start: 'embedding',
         extraction_start: 'extracting',
@@ -53,7 +55,7 @@ const StreamDemo = {
     },
 
     // Ordered stages for progress calculation
-    stageOrder: ['parsing', 'chunking', 'embedding', 'extracting', 'analyzing'],
+    stageOrder: ['parsing', 'tableing', 'chunking', 'embedding', 'extracting', 'analyzing'],
 
     // ── Init ──
     init() {
