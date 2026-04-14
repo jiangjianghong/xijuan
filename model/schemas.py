@@ -36,6 +36,7 @@ class FileTableItem(BaseModel):
     total_table: int
     table_name: str
     table_content: str
+    page_num: Optional[str] = None
 
 
 class FileChunkItem(BaseModel):
@@ -44,6 +45,7 @@ class FileChunkItem(BaseModel):
     chunk_index: int
     total_chunks: int
     chunk_content: str
+    page_num: Optional[str] = None
 
 
 # ── 字段提取配置 ────────────────────────────────────────────
@@ -200,6 +202,7 @@ class SearchResultItem(BaseModel):
     chunk_index: int
     chunk_content: str
     score: float
+    page_num: Optional[str] = None
 
 
 # ── 文件列表与详情 ────────────────────────────────────────────

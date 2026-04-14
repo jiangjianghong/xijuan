@@ -157,7 +157,7 @@ async def _run_pipeline_background(file_id: str, file_name: str, file_content_by
         try:
             await run_pipeline(file_id, file_name, file_content_bytes, session, callback_url=callback_url)
         except Exception as e:
-            logger.error("Pipeline 后台执行失败: {}", e)
+            logger.exception("Pipeline 后台执行失败: type={}, repr={}", type(e).__name__, repr(e))
 
 
 async def _stream_pipeline_generator(file_id: str, file_name: str, file_content_bytes: bytes):
@@ -292,7 +292,12 @@ async def parse_file(
                         try:
                             await run_from_stage(file_id, retry_stage, session, callback_url=callback_url)
                         except Exception as e:
-                            logger.error("从 {} 阶段重试失败: {}", retry_stage, e)
+                            logger.exception(
+                                "从 {} 阶段重试失败: type={}, repr={}",
+                                retry_stage,
+                                type(e).__name__,
+                                repr(e),
+                            )
 
                 async def _retry_from_stage_stream_generator():
                     """流式重试生成器，内部管理数据库会话。"""
@@ -476,7 +481,12 @@ async def retry_file(
                 try:
                     await run_from_stage(file_id, stage, session, callback_url=callback_url)
                 except Exception as e:
-                    logger.error("从 {} 阶段重试失败: {}", stage, e)
+                    logger.exception(
+                        "从 {} 阶段重试失败: type={}, repr={}",
+                        stage,
+                        type(e).__name__,
+                        repr(e),
+                    )
 
         background_tasks.add_task(_run_from_stage_background)
         return ResponseWrapper(message=f"已从 {stage} 阶段开始重试")
@@ -521,6 +531,7 @@ async def get_file_tables(file_id: str, db: AsyncSession = Depends(get_db)):
                 total_table=t.total_table,
                 table_name=t.table_name,
                 table_content=t.table_content,
+                page_num=t.page_num or "",
             ).model_dump()
             for t in tables
         ]
@@ -542,6 +553,7 @@ async def get_file_chunks(file_id: str, db: AsyncSession = Depends(get_db)):
                 chunk_index=c.chunk_index,
                 total_chunks=c.total_chunks,
                 chunk_content=c.chunk_content,
+                page_num=c.page_num or "",
             ).model_dump()
             for c in chunks
         ]

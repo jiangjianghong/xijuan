@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 
 from loguru import logger
 from sqlalchemy import select, update
@@ -13,10 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from model.tables import File, FileContent, FileTable
 from service.mineru_client import parse_pdf
 from utils.config import get_config
+from utils.page_mapping import build_page_mapping, lookup_page_num
 
 
-async def parse_file(file_path: str, file_content_bytes: bytes, file_id: str, session: AsyncSession) -> str:
-    """调用 MinerU 解析文件，返回 Markdown 内容。
+async def parse_file(
+    file_path: str, file_content_bytes: bytes, file_id: str, session: AsyncSession
+) -> Tuple[str, str]:
+    """调用 MinerU 解析文件，返回 Markdown 内容和 middle_json。
 
     Args:
         file_path: 文件路径/文件名。
@@ -25,7 +28,7 @@ async def parse_file(file_path: str, file_content_bytes: bytes, file_id: str, se
         session: 数据库会话。
 
     Returns:
-        解析后的 Markdown 文本。
+        (md_content, middle_json_str) 元组。
     """
     logger.info("开始解析文件: {}", file_id)
 
@@ -41,13 +44,15 @@ async def parse_file(file_path: str, file_content_bytes: bytes, file_id: str, se
     try:
         # 调用 MinerU 解析
         cfg = get_config().mineru
-        content = await parse_pdf(
+        result = await parse_pdf(
             file_name=file_path,
             file_content=file_content_bytes,
             file_id=file_id,
             base_url=cfg.base_url,
             timeout=cfg.parse_timeout,
         )
+        content = result["md_content"]
+        middle_json_str = result["middle_json"]
 
         # 更新解析完成时间
         stmt = (
@@ -59,7 +64,7 @@ async def parse_file(file_path: str, file_content_bytes: bytes, file_id: str, se
         await session.commit()
 
         logger.info("文件解析完成: {}, 内容长度: {}", file_id, len(content))
-        return content
+        return content, middle_json_str
 
     except Exception as e:
         # 更新状态为 parsing_failed
@@ -74,13 +79,21 @@ async def parse_file(file_path: str, file_content_bytes: bytes, file_id: str, se
         raise
 
 
-async def save_file_content(file_id: str, content: str, session: AsyncSession) -> None:
+async def save_file_content(
+    file_id: str,
+    content: str,
+    session: AsyncSession,
+    middle_json: Optional[str] = None,
+    page_mapping: Optional[List] = None,
+) -> None:
     """将解析结果存入 file_content 表。
 
     Args:
         file_id: 文件 ID。
         content: Markdown 内容。
         session: 数据库会话。
+        middle_json: MinerU 返回的 middle_json 原始字符串。
+        page_mapping: 计算后的页码映射列表。
     """
     # 检查是否已存在
     stmt = select(FileContent).where(FileContent.file_id == file_id)
@@ -89,23 +102,31 @@ async def save_file_content(file_id: str, content: str, session: AsyncSession) -
 
     if existing:
         existing.file_content = content
+        existing.middle_json = middle_json
+        existing.page_mapping = page_mapping
     else:
-        file_content = FileContent(file_id=file_id, file_content=content)
+        file_content = FileContent(
+            file_id=file_id,
+            file_content=content,
+            middle_json=middle_json,
+            page_mapping=page_mapping,
+        )
         session.add(file_content)
 
     await session.commit()
     logger.info("文件内容已保存: {}", file_id)
 
 
-def parse_tables(content: str, file_id: str) -> List[Dict]:
+def parse_tables(content: str, file_id: str, page_mapping: Optional[List] = None) -> List[Dict]:
     """解析 Markdown 中的 HTML 表格。
 
     Args:
         content: Markdown 全文。
         file_id: 文件 ID。
+        page_mapping: 页码映射列表（可选）。
 
     Returns:
-        表格信息列表，每项包含 file_id, table_index, total_table, table_name, table_content。
+        表格信息列表，每项包含 file_id, table_index, total_table, table_name, table_content, page_num。
     """
     tables = []
     table_pattern = re.compile(r"<table>.*?</table>", re.DOTALL | re.IGNORECASE)
@@ -143,6 +164,7 @@ def parse_tables(content: str, file_id: str) -> List[Dict]:
                 "table_content": table_content,
                 "start_pos": match.start(),
                 "end_pos": match.end(),
+                "page_num": lookup_page_num(page_mapping or [], match.start(), match.end()),
             }
         )
 
@@ -168,6 +190,7 @@ async def save_tables(tables: List[Dict], session: AsyncSession) -> None:
             table_content=table_data["table_content"],
             start_pos=table_data.get("start_pos", 0),
             end_pos=table_data.get("end_pos", 0),
+            page_num=table_data.get("page_num", ""),
         )
         session.add(file_table)
 

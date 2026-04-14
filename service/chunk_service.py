@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from model.tables import FileChunk
 from utils.config import get_config
 from utils.file_utils import generate_chunk_id
+from utils.page_mapping import lookup_page_num
+
+
+def _normalize_chunk_overlap(chunk_size: int, chunk_overlap: int) -> int:
+    """归一化 overlap，避免 start 指针不前进导致死循环。"""
+    if chunk_size <= 0:
+        raise ValueError("chunk_size 必须大于 0")
+
+    if chunk_overlap <= 0:
+        return 0
+
+    # overlap 不能大于等于 chunk_size，否则窗口可能不前进
+    return min(chunk_overlap, chunk_size - 1)
 
 
 def split_text(
@@ -30,6 +43,8 @@ def split_text(
     Returns:
         分块后的文本列表。
     """
+    safe_overlap = _normalize_chunk_overlap(chunk_size, chunk_overlap)
+
     if not text:
         return []
 
@@ -62,12 +77,12 @@ def split_text(
                 chunks.append(current_chunk)
 
             # 添加重叠
-            if chunk_overlap > 0 and len(chunks) > 1:
+            if safe_overlap > 0 and len(chunks) > 1:
                 overlapped_chunks = []
                 for j, chunk in enumerate(chunks):
                     if j > 0:
                         prev_chunk = chunks[j - 1]
-                        overlap_text = prev_chunk[-chunk_overlap:] if len(prev_chunk) > chunk_overlap else prev_chunk
+                        overlap_text = prev_chunk[-safe_overlap:] if len(prev_chunk) > safe_overlap else prev_chunk
                         chunk = overlap_text + sep + chunk
                     overlapped_chunks.append(chunk)
                 return overlapped_chunks
@@ -80,7 +95,17 @@ def split_text(
     while start < len(text):
         end = min(start + chunk_size, len(text))
         chunks.append(text[start:end])
-        start = end - chunk_overlap if chunk_overlap > 0 else end
+
+        # 到达尾部后立即结束，避免 end 固定在 len(text) 时死循环
+        if end >= len(text):
+            break
+
+        if safe_overlap > 0:
+            next_start = end - safe_overlap
+            # 理论兜底：确保游标单调前进
+            start = next_start if next_start > start else end
+        else:
+            start = end
 
     return chunks
 
@@ -105,6 +130,8 @@ def split_text_with_positions(
         列表，每项为 (chunk_text, start_pos, end_pos)。
         位置是相对于原始完整文档的绝对位置。
     """
+    safe_overlap = _normalize_chunk_overlap(chunk_size, chunk_overlap)
+
     if not text:
         return []
 
@@ -165,12 +192,12 @@ def split_text_with_positions(
                 ))
 
             # 处理 overlap
-            if chunk_overlap > 0 and len(chunks_with_pos) > 1:
+            if safe_overlap > 0 and len(chunks_with_pos) > 1:
                 overlapped: List[Tuple[str, int, int]] = []
                 for j, (chunk_text, start, end) in enumerate(chunks_with_pos):
                     if j > 0:
                         prev_chunk, prev_start, prev_end = chunks_with_pos[j - 1]
-                        overlap_len = min(chunk_overlap, len(prev_chunk))
+                        overlap_len = min(safe_overlap, len(prev_chunk))
                         overlap_text = prev_chunk[-overlap_len:]
                         new_chunk = overlap_text + sep + chunk_text
                         new_start = prev_end - overlap_len
@@ -192,7 +219,17 @@ def split_text_with_positions(
             base_offset + start,
             base_offset + end
         ))
-        start = end - chunk_overlap if chunk_overlap > 0 else end
+
+        # 到达尾部后立即结束，避免 end 固定在 len(text) 时死循环
+        if end >= len(text):
+            break
+
+        if safe_overlap > 0:
+            next_start = end - safe_overlap
+            # 理论兜底：确保游标单调前进
+            start = next_start if next_start > start else end
+        else:
+            start = end
 
     return chunks_with_pos
 
@@ -215,6 +252,7 @@ async def chunk_content(
     content: str,
     tables: List[Dict],
     session: AsyncSession,
+    page_mapping: Optional[List] = None,
 ) -> List[Dict]:
     """将文档内容分块并存入数据库。
 
@@ -229,6 +267,7 @@ async def chunk_content(
         content: 文档 Markdown 全文。
         tables: 表格信息列表（含 table_name）。
         session: 数据库会话。
+        page_mapping: 页码映射列表（可选）。
 
     Returns:
         分块列表，每项包含 file_id, chunk_id, chunk_index, total_chunks, chunk_content, start_pos, end_pos。
@@ -322,6 +361,7 @@ async def chunk_content(
             "chunk_content": chunk_text,
             "start_pos": start_pos,
             "end_pos": end_pos,
+            "page_num": lookup_page_num(page_mapping or [], start_pos, end_pos),
         })
 
     logger.info("分块完成: {}, 共 {} 个分块", file_id, total_chunks)
@@ -347,6 +387,7 @@ async def save_chunks(chunks: List[Dict], session: AsyncSession) -> None:
             chunk_content=chunk_data["chunk_content"],
             start_pos=chunk_data.get("start_pos", 0),
             end_pos=chunk_data.get("end_pos", 0),
+            page_num=chunk_data.get("page_num", ""),
         )
         session.add(file_chunk)
 

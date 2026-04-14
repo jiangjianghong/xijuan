@@ -29,7 +29,8 @@ def get_engine() -> AsyncEngine:
         _engine = create_async_engine(
             _build_database_url(),
             pool_size=get_config().mysql.pool_size,
-            pool_recycle=3600,
+            pool_recycle=300,
+            pool_pre_ping=True,
             echo=False,
         )
     return _engine

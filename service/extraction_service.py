@@ -16,6 +16,7 @@ from model.tables import ExtractionField, ExtractionResult, FileChunk, FileConte
 from utils.config import get_config
 from utils.llm_client import chat_completion, get_embeddings
 from utils.milvus_client import MilvusClient
+from utils.page_mapping import lookup_page_num
 
 
 # ── JSON 解析辅助 ────────────────────────────────────────────
@@ -380,6 +381,7 @@ async def search_chunk_db(
                         "chunk_content": chunk.chunk_content,
                         "start_pos": chunk.start_pos,
                         "end_pos": chunk.end_pos,
+                        "page_num": chunk.page_num or "",
                     })
                     count += 1
                     if count >= max_results:
@@ -393,6 +395,7 @@ async def search_chunk_db(
                 "chunk_content": chunk.chunk_content,
                 "start_pos": chunk.start_pos,
                 "end_pos": chunk.end_pos,
+                "page_num": chunk.page_num or "",
             })
 
     return results
@@ -513,6 +516,7 @@ async def extract_table_field(
             "table_name": table.table_name,
             "start_pos": table.start_pos,
             "end_pos": table.end_pos,
+            "page_num": table.page_num or "",
         })
     source_refs["_tables"] = table_refs
 
@@ -575,6 +579,7 @@ async def extract_text_field(
         return "", "", None
 
     content = file_content.file_content
+    page_mapping = file_content.page_mapping or []
     search_type = field.search_type or "context"
     search_config = field.search_config or {}
 
@@ -610,6 +615,12 @@ async def extract_text_field(
         if "chunk_id" in r:
             ref["chunk_id"] = r["chunk_id"]
             ref["chunk_index"] = r["chunk_index"]
+
+        # 页码：chunk_db/vector_db 结果自带 page_num，其他类型通过 page_mapping 查找
+        if "page_num" in r:
+            ref["page_num"] = r["page_num"]
+        elif r.get("start_pos") is not None and r.get("end_pos") is not None:
+            ref["page_num"] = lookup_page_num(page_mapping, r["start_pos"], r["end_pos"])
 
         if keyword not in source_refs:
             source_refs[keyword] = []
@@ -909,6 +920,7 @@ async def test_field_extraction_stream(
                             "table_index": table.table_index,
                             "table_name": table.table_name,
                             "table_content": table.table_content[:500] + "..." if len(table.table_content) > 500 else table.table_content,
+                            "page_num": table.page_num or "",
                         })
                         table_name = table.table_name or f"表格{table.table_index}"
                         content = f"表格名称: {table_name}\n{table.table_content}"

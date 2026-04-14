@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Optional
+import json
+from typing import Dict, Optional
 
 import httpx
 from loguru import logger
@@ -17,7 +18,7 @@ async def parse_pdf(
     file_id: Optional[str] = None,
     base_url: Optional[str] = None,
     timeout: Optional[int] = None,
-) -> str:
+) -> Dict[str, str]:
     """调用 MinerU 服务解析 PDF 文件。
 
     请求方式: POST {base_url}/file_parse
@@ -31,7 +32,7 @@ async def parse_pdf(
         timeout: 超时秒数，默认从配置读取。
 
     Returns:
-        解析后的 Markdown 文本。
+        包含 md_content 和 middle_json 的字典。
     """
     cfg = get_config().mineru
     base_url = base_url or cfg.base_url
@@ -41,7 +42,7 @@ async def parse_pdf(
 
     files = {"files": (file_name, file_content, "application/pdf")}
     data = {
-        "return_middle_json": "false",
+        "return_middle_json": "true",
         "return_model_output": "false",
         "return_md": "true",
         "return_images": "false",
@@ -60,11 +61,17 @@ async def parse_pdf(
         resp.raise_for_status()
         result = resp.json()
 
-        # 从 results 中提取 md_content
-        # 响应格式: {"results": {"文件名(无后缀)": {"md_content": "..."}}}
+        # 从 results 中提取 md_content 和 middle_json
+        # 响应格式: {"results": {"文件名(无后缀)": {"md_content": "...", "middle_json": "..."}}}
         results = result.get("results", {})
         if results:
-            # 获取第一个结果的 md_content
             first_result = next(iter(results.values()), {})
-            return first_result.get("md_content", "")
-        return ""
+            md_content = first_result.get("md_content", "")
+            middle_json_raw = first_result.get("middle_json")
+            # middle_json 可能是 dict 或 str，统一转为 str 存储
+            if middle_json_raw and not isinstance(middle_json_raw, str):
+                middle_json_str = json.dumps(middle_json_raw, ensure_ascii=False)
+            else:
+                middle_json_str = middle_json_raw or ""
+            return {"md_content": md_content, "middle_json": middle_json_str}
+        return {"md_content": "", "middle_json": ""}

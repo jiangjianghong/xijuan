@@ -33,4 +33,11 @@ async def notify_callback(
             logger.debug("回调通知已发送: url={}, payload={}, status_code={}", callback_url, payload, resp.status_code)
     except Exception as e:
         # 回调失败不应影响主流程
-        logger.warning("回调通知失败: url={}, payload={}, error={}", callback_url, payload, e)
+        logger.warning(
+            "回调通知失败: url={}, payload={}, type={}, repr={}, error={}",
+            callback_url,
+            payload,
+            type(e).__name__,
+            repr(e),
+            e,
+        )

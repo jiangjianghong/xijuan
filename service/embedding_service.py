@@ -66,6 +66,7 @@ async def submit_to_milvus(chunks: List[Dict], embeddings: List[List[float]]) ->
             "chunk_content": chunk["chunk_content"],
             "start_pos": chunk.get("start_pos", 0),
             "end_pos": chunk.get("end_pos", 0),
+            "page_num": chunk.get("page_num", ""),
             "embedding": embedding,
         })
 

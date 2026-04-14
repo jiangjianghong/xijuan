@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict
+from typing import Any, AsyncGenerator, Dict, List
 
 from loguru import logger
 from sqlalchemy import delete, select, update
@@ -25,11 +25,20 @@ from service.extraction_service import run_extraction, run_extraction_stream
 from service.parse_service import parse_file, parse_tables, save_file_content, save_tables
 from utils.callback import notify_callback
 from utils.milvus_client import MilvusClient
+from utils.page_mapping import build_page_mapping
 
 
 def _sse_event(event: str, data: Dict[str, Any]) -> str:
     """格式化 SSE 事件。"""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _format_exception(exc: BaseException) -> str:
+    """统一异常文案，避免 str(exc) 为空导致丢失关键信息。"""
+    msg = str(exc).strip()
+    if msg:
+        return f"{type(exc).__name__}: {msg}"
+    return f"{type(exc).__name__}: {repr(exc)}"
 
 
 async def run_pipeline_stream(
@@ -64,7 +73,8 @@ async def run_pipeline_stream(
             "message": "开始 MinerU 解析",
         })
 
-        content = await parse_file(file_path, file_content_bytes, file_id, session)
+        content, middle_json_str = await parse_file(file_path, file_content_bytes, file_id, session)
+        page_mapping = build_page_mapping(content, middle_json_str) if middle_json_str else []
         yield _sse_event("parsing", {
             "file_id": file_id,
             "stage": "parsing",
@@ -73,7 +83,7 @@ async def run_pipeline_stream(
         })
 
         # 存储 MD 到数据库
-        await save_file_content(file_id, content, session)
+        await save_file_content(file_id, content, session, middle_json=middle_json_str, page_mapping=page_mapping)
         yield _sse_event("content_saved", {
             "file_id": file_id,
             "stage": "content_saved",
@@ -89,7 +99,7 @@ async def run_pipeline_stream(
         })
 
         # 表格提取
-        tables = parse_tables(content, file_id)
+        tables = parse_tables(content, file_id, page_mapping=page_mapping)
         await save_tables(tables, session)
         yield _sse_event("tables_extracted", {
             "file_id": file_id,
@@ -114,7 +124,7 @@ async def run_pipeline_stream(
         await session.commit()
 
         try:
-            chunks = await chunk_content(file_id, content, tables, session)
+            chunks = await chunk_content(file_id, content, tables, session, page_mapping=page_mapping)
             yield _sse_event("chunking", {
                 "file_id": file_id,
                 "stage": "chunking",
@@ -146,7 +156,7 @@ async def run_pipeline_stream(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="chunking_failed", error=str(e))
+                .values(progress="chunking_failed", error=_format_exception(e))
             )
             await session.execute(stmt)
             await session.commit()
@@ -339,11 +349,11 @@ async def run_pipeline_stream(
         logger.info("流式处理管线完成: {}", file_id)
 
     except Exception as e:
-        logger.error("流式处理管线失败: {}, error={}", file_id, e)
+        logger.error("流式处理管线失败: {}, error={}", file_id, _format_exception(e))
         yield _sse_event("error", {
             "file_id": file_id,
             "stage": "error",
-            "message": str(e),
+            "message": _format_exception(e),
         })
 
 
@@ -375,11 +385,12 @@ async def run_pipeline(
     try:
         # ── 阶段 1: 解析 ──────────────────────────────────────────
         await notify_callback(callback_url, file_id, "parsing")
-        content = await parse_file(file_path, file_content_bytes, file_id, session)
-        await save_file_content(file_id, content, session)
+        content, middle_json_str = await parse_file(file_path, file_content_bytes, file_id, session)
+        page_mapping = build_page_mapping(content, middle_json_str) if middle_json_str else []
+        await save_file_content(file_id, content, session, middle_json=middle_json_str, page_mapping=page_mapping)
 
         # 表格提取
-        tables = parse_tables(content, file_id)
+        tables = parse_tables(content, file_id, page_mapping=page_mapping)
         await save_tables(tables, session)
 
         # ── 阶段 2: 分块 ──────────────────────────────────────────
@@ -393,7 +404,7 @@ async def run_pipeline(
 
         await notify_callback(callback_url, file_id, "chunking")
         try:
-            chunks = await chunk_content(file_id, content, tables, session)
+            chunks = await chunk_content(file_id, content, tables, session, page_mapping=page_mapping)
             await save_chunks(chunks, session)
 
             stmt = (
@@ -407,7 +418,7 @@ async def run_pipeline(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="chunking_failed", error=str(e))
+                .values(progress="chunking_failed", error=_format_exception(e))
             )
             await session.execute(stmt)
             await session.commit()
@@ -601,6 +612,7 @@ async def run_from_stage_stream(
         stmt = select(FileContent).where(FileContent.file_id == file_id)
         result = await session.execute(stmt)
         file_content = result.scalar_one_or_none()
+        page_mapping = file_content.page_mapping if file_content else []
 
         # 获取表格信息
         stmt = select(FileTable).where(FileTable.file_id == file_id)
@@ -613,6 +625,7 @@ async def run_from_stage_stream(
                 "total_table": t.total_table,
                 "table_name": t.table_name,
                 "table_content": t.table_content,
+                "page_num": t.page_num or "",
             }
             for t in tables_orm
         ]
@@ -641,7 +654,7 @@ async def run_from_stage_stream(
             await session.commit()
 
             try:
-                chunks = await chunk_content(file_id, content, tables, session)
+                chunks = await chunk_content(file_id, content, tables, session, page_mapping=page_mapping)
                 yield _sse_event("chunking", {
                     "file_id": file_id,
                     "stage": "chunking",
@@ -673,7 +686,7 @@ async def run_from_stage_stream(
                 stmt = (
                     update(File)
                     .where(File.file_id == file_id)
-                    .values(progress="chunking_failed", error=str(e))
+                    .values(progress="chunking_failed", error=_format_exception(e))
                 )
                 await session.execute(stmt)
                 await session.commit()
@@ -890,11 +903,11 @@ async def run_from_stage_stream(
         logger.info("从 {} 阶段流式重新开始完成: {}", stage, file_id)
 
     except Exception as e:
-        logger.error("从 {} 阶段流式重新开始失败: {}, error={}", stage, file_id, e)
+        logger.error("从 {} 阶段流式重新开始失败: {}, error={}", stage, file_id, _format_exception(e))
         yield _sse_event("error", {
             "file_id": file_id,
             "stage": "error",
-            "message": str(e),
+            "message": _format_exception(e),
         })
 
 
@@ -967,6 +980,7 @@ async def run_from_stage(
     stmt = select(FileContent).where(FileContent.file_id == file_id)
     result = await session.execute(stmt)
     file_content = result.scalar_one_or_none()
+    page_mapping = file_content.page_mapping if file_content else []
 
     # 获取表格信息
     stmt = select(FileTable).where(FileTable.file_id == file_id)
@@ -979,6 +993,7 @@ async def run_from_stage(
             "total_table": t.total_table,
             "table_name": t.table_name,
             "table_content": t.table_content,
+            "page_num": t.page_num or "",
         }
         for t in tables_orm
     ]
@@ -1005,7 +1020,7 @@ async def run_from_stage(
 
         await notify_callback(callback_url, file_id, "chunking")
         try:
-            chunks = await chunk_content(file_id, content, tables, session)
+            chunks = await chunk_content(file_id, content, tables, session, page_mapping=page_mapping)
             await save_chunks(chunks, session)
 
             stmt = (
@@ -1019,7 +1034,7 @@ async def run_from_stage(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="chunking_failed", error=str(e))
+                .values(progress="chunking_failed", error=_format_exception(e))
             )
             await session.execute(stmt)
             await session.commit()

@@ -1,9 +1,26 @@
 """日志配置模块：使用 loguru 配置控制台 + 文件日志输出。"""
 
+import logging
 import sys
 from pathlib import Path
 
 from loguru import logger
+
+
+# ---------------------------------------------------------------------------
+# 屏蔽前端高频轮询接口的 uvicorn access log，避免日志刷屏
+# ---------------------------------------------------------------------------
+class _PollingFilter(logging.Filter):
+    """过滤掉前端轮询产生的 access log。"""
+
+    _QUIET_PATHS = ("/file/list", "/status")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(p in msg for p in self._QUIET_PATHS)
+
+
+logging.getLogger("uvicorn.access").addFilter(_PollingFilter())
 
 _LOGS_DIR = Path(__file__).resolve().parent
 

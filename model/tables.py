@@ -53,6 +53,8 @@ class FileContent(Base):
 
     file_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     file_content: Mapped[str] = mapped_column(LONGTEXT, nullable=False)
+    middle_json: Mapped[str | None] = mapped_column(LONGTEXT, nullable=True)
+    page_mapping: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
 # ── 3. file_table 表 ────────────────────────────────────────
@@ -67,6 +69,7 @@ class FileTable(Base):
     table_content: Mapped[str] = mapped_column(LONGTEXT, nullable=False)
     start_pos: Mapped[int] = mapped_column(Integer, default=0)  # 原文起始位置
     end_pos: Mapped[int] = mapped_column(Integer, default=0)    # 原文结束位置
+    page_num: Mapped[str | None] = mapped_column(String(20), nullable=True, default="")
 
     __table_args__ = (
         Index("ix_file_table_file_id", "file_id"),
@@ -85,6 +88,7 @@ class FileChunk(Base):
     chunk_content: Mapped[str] = mapped_column(Text, nullable=False)
     start_pos: Mapped[int] = mapped_column(Integer, default=0)  # 原文起始位置
     end_pos: Mapped[int] = mapped_column(Integer, default=0)    # 原文结束位置
+    page_num: Mapped[str | None] = mapped_column(String(20), nullable=True, default="")
 
     __table_args__ = (
         Index("ix_file_chunk_file_id", "file_id"),
