@@ -457,45 +457,46 @@
         </div>
     </div>
 
-    <!-- Detail Drawer -->
-    <div id="drawer-overlay" class="drawer-overlay"></div>
-    <aside id="detail-drawer" class="detail-drawer">
-        <div class="drawer-header">
-            <div class="drawer-title">
-                <h3 id="drawer-filename">文件详情</h3>
-                <span id="drawer-filesize" class="drawer-filesize"></span>
-            </div>
-            <button id="drawer-close" class="drawer-close">&times;</button>
-        </div>
-        <div class="drawer-content">
-            <!-- Timeline -->
-            <div class="timeline-section">
-                <h4 class="drawer-section-title">处理时间线</h4>
-                <div id="timeline" class="timeline">
-                    <!-- Timeline items will be inserted here -->
+    <!-- Detail Modal -->
+    <div id="drawer-overlay" class="detail-modal-overlay">
+        <div id="detail-drawer" class="detail-modal">
+            <div class="drawer-header">
+                <div class="drawer-title">
+                    <h3 id="drawer-filename">文件详情</h3>
+                    <span id="drawer-filesize" class="drawer-filesize"></span>
                 </div>
+                <button id="drawer-close" class="drawer-close">&times;</button>
             </div>
+            <div class="drawer-content">
+                <!-- Timeline -->
+                <div class="timeline-section">
+                    <h4 class="drawer-section-title">处理时间线</h4>
+                    <div id="timeline" class="timeline">
+                        <!-- Timeline items will be inserted here -->
+                    </div>
+                </div>
 
-            <!-- Error display -->
-            <div id="error-section" class="error-section" style="display: none;">
-                <h4 class="drawer-section-title">错误信息</h4>
-                <div id="error-message" class="error-message"></div>
-                <button id="retry-btn" class="btn btn-primary">重试</button>
-            </div>
-
-            <!-- Data tabs -->
-            <div class="data-tabs-section">
-                <div class="tabs-header">
-                    <button class="tab-btn active" data-tab="tables">表格</button>
-                    <button class="tab-btn" data-tab="extraction">提取结果</button>
-                    <button class="tab-btn" data-tab="analysis">分析结果</button>
+                <!-- Error display -->
+                <div id="error-section" class="error-section" style="display: none;">
+                    <h4 class="drawer-section-title">错误信息</h4>
+                    <div id="error-message" class="error-message"></div>
+                    <button id="retry-btn" class="btn btn-primary">重试</button>
                 </div>
-                <div id="tab-content" class="tab-content">
-                    <!-- Tab content will be inserted here -->
+
+                <!-- Data tabs -->
+                <div class="data-tabs-section">
+                    <div class="tabs-header">
+                        <button class="tab-btn active" data-tab="tables">表格</button>
+                        <button class="tab-btn" data-tab="extraction">提取结果</button>
+                        <button class="tab-btn" data-tab="analysis">分析结果</button>
+                    </div>
+                    <div id="tab-content" class="tab-content">
+                        <!-- Tab content will be inserted here -->
+                    </div>
                 </div>
             </div>
         </div>
-    </aside>
+    </div>
 
     <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>

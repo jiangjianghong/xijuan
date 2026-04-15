@@ -85,9 +85,11 @@ const App = {
         // 批量删除
         this.els.batchDeleteBtn.addEventListener('click', () => this.batchDelete());
 
-        // 抽屉关闭
+        // 弹框关闭
         this.els.drawerClose.addEventListener('click', () => this.closeDrawer());
-        this.els.drawerOverlay.addEventListener('click', () => this.closeDrawer());
+        this.els.drawerOverlay.addEventListener('click', (e) => {
+            if (e.target === this.els.drawerOverlay) this.closeDrawer();
+        });
 
         // 重试按钮
         this.els.retryBtn.addEventListener('click', () => this.retryCurrentFile());
@@ -422,13 +424,11 @@ const App = {
     async openDrawer(fileId) {
         this.state.currentFileId = fileId;
         this.els.drawerOverlay.classList.add('active');
-        this.els.detailDrawer.classList.add('open');
         await this.loadDrawerContent(fileId);
     },
 
     closeDrawer() {
         this.els.drawerOverlay.classList.remove('active');
-        this.els.detailDrawer.classList.remove('open');
         this.state.currentFileId = null;
     },
 
@@ -448,7 +448,7 @@ const App = {
     renderTimeline(detail) {
         const stages = [
             { key: 'parsing', label: '解析', start: 'start_parsing_time', end: 'end_parsing_time' },
-            { key: 'tableing', label: 'AI校验表格名', start: null, end: null },
+            { key: 'tableing', label: 'AI校验表格名', start: 'start_tableing_time', end: 'end_tableing_time' },
             { key: 'chunking', label: '分块', start: 'start_chunking_time', end: 'end_chunking_time' },
             { key: 'embedding', label: '向量化', start: 'start_embedding_time', end: 'end_embedding_time' },
             { key: 'extracting', label: '提取', start: null, end: 'end_extracting_time' },
@@ -523,14 +523,25 @@ const App = {
                     if (data.length === 0) {
                         html = '<div class="tab-content-empty">暂无表格数据</div>';
                     } else {
-                        data.forEach(item => {
-                            html += `
-                                <div class="data-card">
-                                    <div class="data-card-title">${item.table_name || `表格 ${item.table_index + 1}`}</div>
-                                    <div class="data-card-content table-rendered">${Utils.sanitizeTableHtml(item.table_content)}</div>
-                                </div>
-                            `;
+                        let sidebar = '';
+                        data.forEach((item, idx) => {
+                            const name = item.table_name || `表格 ${item.table_index}`;
+                            sidebar += `<div class="table-split-name${idx === 0 ? ' active' : ''}" data-tidx="${idx}" title="${this.escapeHtml(name)}">${this.escapeHtml(name)}</div>`;
                         });
+                        const firstTable = Utils.sanitizeTableHtml(data[0].table_content);
+                        html = `
+                            <div class="table-split">
+                                <div class="table-split-sidebar">${sidebar}</div>
+                                <div class="table-split-content">
+                                    <div class="data-card">
+                                        <div class="data-card-title">${this.escapeHtml(data[0].table_name || `表格 ${data[0].table_index}`)}</div>
+                                        <div class="data-card-content table-rendered">${firstTable}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        // Store table data for click switching
+                        this._tablesData = data;
                     }
                     break;
 
@@ -592,6 +603,26 @@ const App = {
             }
 
             this.els.tabContent.innerHTML = html;
+
+            // Bind table sidebar click events
+            if (tab === 'tables' && this._tablesData && this._tablesData.length > 0) {
+                this.els.tabContent.querySelectorAll('.table-split-name').forEach(el => {
+                    el.addEventListener('click', () => {
+                        const idx = parseInt(el.dataset.tidx);
+                        const item = this._tablesData[idx];
+                        if (!item) return;
+                        this.els.tabContent.querySelectorAll('.table-split-name').forEach(n => n.classList.remove('active'));
+                        el.classList.add('active');
+                        const contentArea = this.els.tabContent.querySelector('.table-split-content');
+                        contentArea.innerHTML = `
+                            <div class="data-card">
+                                <div class="data-card-title">${this.escapeHtml(item.table_name || `表格 ${item.table_index}`)}</div>
+                                <div class="data-card-content table-rendered">${Utils.sanitizeTableHtml(item.table_content)}</div>
+                            </div>
+                        `;
+                    });
+                });
+            }
         } catch (error) {
             this.els.tabContent.innerHTML = '<div class="tab-content-empty">加载失败</div>';
         }
