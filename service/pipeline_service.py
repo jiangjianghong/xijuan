@@ -109,7 +109,7 @@ async def run_pipeline_stream(
         stmt = (
             update(File)
             .where(File.file_id == file_id)
-            .values(progress="tableing", error=None)
+            .values(progress="tableing", start_tableing_time=datetime.now(), error=None)
         )
         await session.execute(stmt)
         await session.commit()
@@ -117,6 +117,15 @@ async def run_pipeline_stream(
         try:
             tables = await parse_tables(content, file_id, page_mapping=page_mapping)
             await save_tables(tables, session)
+
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(end_tableing_time=datetime.now())
+            )
+            await session.execute(stmt)
+            await session.commit()
+
             yield _sse_event("tableing", {
                 "file_id": file_id,
                 "stage": "tableing",
@@ -187,7 +196,7 @@ async def run_pipeline_stream(
             await session.commit()
             raise
 
-        # ── 阶段 3: 向量化 ────────────────────────────────────────
+        # ── 阶段 4: 向量化 ────────────────────────────────────────
         yield _sse_event("embedding_start", {
             "file_id": file_id,
             "stage": "embedding_start",
@@ -235,13 +244,13 @@ async def run_pipeline_stream(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="embedding_failed", error=str(e))
+                .values(progress="embedding_failed", error=_format_exception(e))
             )
             await session.execute(stmt)
             await session.commit()
             raise
 
-        # ── 阶段 4: 字段提取 ──────────────────────────────────────
+        # ── 阶段 5: 字段提取 ──────────────────────────────────────
         yield _sse_event("tasks_loading", {
             "file_id": file_id,
             "stage": "tasks_loading",
@@ -302,13 +311,13 @@ async def run_pipeline_stream(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="extracting_failed", error=str(e))
+                .values(progress="extracting_failed", error=_format_exception(e))
             )
             await session.execute(stmt)
             await session.commit()
             raise
 
-        # ── 阶段 5: 逻辑分析 ──────────────────────────────────────
+        # ── 阶段 6: 逻辑分析 ──────────────────────────────────────
         yield _sse_event("analysis_start", {
             "file_id": file_id,
             "stage": "analysis_start",
@@ -419,7 +428,7 @@ async def run_pipeline(
         stmt = (
             update(File)
             .where(File.file_id == file_id)
-            .values(progress="tableing", error=None)
+            .values(progress="tableing", start_tableing_time=datetime.now(), error=None)
         )
         await session.execute(stmt)
         await session.commit()
@@ -428,6 +437,14 @@ async def run_pipeline(
         try:
             tables = await parse_tables(content, file_id, page_mapping=page_mapping)
             await save_tables(tables, session)
+
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(end_tableing_time=datetime.now())
+            )
+            await session.execute(stmt)
+            await session.commit()
         except Exception as e:
             stmt = (
                 update(File)
@@ -469,7 +486,7 @@ async def run_pipeline(
             await session.commit()
             raise
 
-        # ── 阶段 3: 向量化 ────────────────────────────────────────
+        # ── 阶段 4: 向量化 ────────────────────────────────────────
         stmt = (
             update(File)
             .where(File.file_id == file_id)
@@ -494,13 +511,13 @@ async def run_pipeline(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="embedding_failed", error=str(e))
+                .values(progress="embedding_failed", error=_format_exception(e))
             )
             await session.execute(stmt)
             await session.commit()
             raise
 
-        # ── 阶段 4: 字段提取 ──────────────────────────────────────
+        # ── 阶段 5: 字段提取 ──────────────────────────────────────
         stmt = (
             update(File)
             .where(File.file_id == file_id)
@@ -524,13 +541,13 @@ async def run_pipeline(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="extracting_failed", error=str(e))
+                .values(progress="extracting_failed", error=_format_exception(e))
             )
             await session.execute(stmt)
             await session.commit()
             raise
 
-        # ── 阶段 5: 逻辑分析 ──────────────────────────────────────
+        # ── 阶段 6: 逻辑分析 ──────────────────────────────────────
         stmt = (
             update(File)
             .where(File.file_id == file_id)
@@ -708,7 +725,7 @@ async def run_from_stage_stream(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="tableing", error=None)
+                .values(progress="tableing", start_tableing_time=datetime.now(), error=None)
             )
             await session.execute(stmt)
             await session.commit()
@@ -716,6 +733,15 @@ async def run_from_stage_stream(
             try:
                 tables = await parse_tables(content, file_id, page_mapping=page_mapping)
                 await save_tables(tables, session)
+
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(end_tableing_time=datetime.now())
+                )
+                await session.execute(stmt)
+                await session.commit()
+
                 yield _sse_event("tableing", {
                     "file_id": file_id,
                     "stage": "tableing",
@@ -863,7 +889,7 @@ async def run_from_stage_stream(
                 stmt = (
                     update(File)
                     .where(File.file_id == file_id)
-                    .values(progress="embedding_failed", error=str(e))
+                    .values(progress="embedding_failed", error=_format_exception(e))
                 )
                 await session.execute(stmt)
                 await session.commit()
@@ -931,7 +957,7 @@ async def run_from_stage_stream(
                 stmt = (
                     update(File)
                     .where(File.file_id == file_id)
-                    .values(progress="extracting_failed", error=str(e))
+                    .values(progress="extracting_failed", error=_format_exception(e))
                 )
                 await session.execute(stmt)
                 await session.commit()
@@ -1032,21 +1058,12 @@ async def run_from_stage(
     milvus_client = MilvusClient()
     milvus_client.connect()
 
-    # 根据阶段清理数据
+    # parsing 阶段需要原始文件，无法在此重试
     if stage == "parsing":
-        # 清理所有数据
-        await session.execute(delete(FileContent).where(FileContent.file_id == file_id))
-        await session.execute(delete(FileTable).where(FileTable.file_id == file_id))
-        await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
-        await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
-        await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
-        try:
-            milvus_client.delete_by_file_id(file_id)
-        except Exception as e:
-            logger.warning("Milvus 删除失败: {}", e)
-        await session.commit()
+        raise ValueError("parsing 阶段需要原始文件内容，请使用 /file/parse 重新提交文件")
 
-    elif stage == "tableing":
+    # 根据阶段清理数据
+    if stage == "tableing":
         # 清理表格及后续数据
         await session.execute(delete(FileTable).where(FileTable.file_id == file_id))
         await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
@@ -1116,10 +1133,6 @@ async def run_from_stage(
     ]
 
     # 从指定阶段开始执行
-    if stage == "parsing":
-        # 需要原始文件内容，这里无法重新解析，抛出错误
-        raise ValueError("parsing 阶段需要原始文件内容，请使用 /file/parse 重新提交文件")
-
     if stage in ("tableing",):
         if not file_content:
             raise ValueError("缺少文件内容，无法从 tableing 阶段开始")
@@ -1129,7 +1142,7 @@ async def run_from_stage(
         stmt = (
             update(File)
             .where(File.file_id == file_id)
-            .values(progress="tableing", error=None)
+            .values(progress="tableing", start_tableing_time=datetime.now(), error=None)
         )
         await session.execute(stmt)
         await session.commit()
@@ -1138,6 +1151,14 @@ async def run_from_stage(
         try:
             tables = await parse_tables(content, file_id, page_mapping=page_mapping)
             await save_tables(tables, session)
+
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(end_tableing_time=datetime.now())
+            )
+            await session.execute(stmt)
+            await session.commit()
         except Exception as e:
             stmt = (
                 update(File)
@@ -1232,7 +1253,7 @@ async def run_from_stage(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="embedding_failed", error=str(e))
+                .values(progress="embedding_failed", error=_format_exception(e))
             )
             await session.execute(stmt)
             await session.commit()
@@ -1264,7 +1285,7 @@ async def run_from_stage(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="extracting_failed", error=str(e))
+                .values(progress="extracting_failed", error=_format_exception(e))
             )
             await session.execute(stmt)
             await session.commit()

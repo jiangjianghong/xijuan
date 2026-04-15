@@ -33,6 +33,8 @@ class File(Base):
     create_time: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     start_parsing_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     end_parsing_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    start_tableing_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    end_tableing_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     start_chunking_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     end_chunking_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     start_embedding_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

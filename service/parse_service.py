@@ -111,7 +111,8 @@ def _build_llm_context_text(preceding_text: str, max_lines: int = 3) -> str:
 
 def _extract_table_name(preceding_text: str) -> str:
     """规则回退：只取表格前最后一行。"""
-    return _extract_last_line(preceding_text) or "未知"
+    name = _extract_last_line(preceding_text) or "未知"
+    return name[:30]
 
 
 def _is_unknown_table_name(name: str) -> bool:
@@ -176,7 +177,7 @@ async def _extract_table_name_with_llm(
         llm_name = _clean_text_line(str(data.get("table_name", "")))
         if not llm_name or _is_unknown_table_name(llm_name):
             return fallback_name
-        return llm_name[:500]
+        return llm_name[:30]
     except Exception as e:
         logger.warning(
             "LLM 表名抽取失败，回退最后一行: table_index={}, type={}, repr={}",
@@ -270,6 +271,11 @@ async def parse_tables(content: str, file_id: str, page_mapping: Optional[List] 
     table_pattern = re.compile(r"<table>.*?</table>", re.DOTALL | re.IGNORECASE)
     matches = list(table_pattern.finditer(content))
     total_table = len(matches)
+    logger.info("开始 AI 校验表格名称: file_id={}, 共 {} 个表格", file_id, total_table)
+
+    if total_table == 0:
+        return []
+
     max_concurrency = max(1, get_config().table_name_validation.max_concurrency or 1)
     semaphore = asyncio.Semaphore(max_concurrency)
 
@@ -285,6 +291,8 @@ async def parse_tables(content: str, file_id: str, page_mapping: Optional[List] 
                 table_index=table_index,
                 fallback_name=fallback_name,
             )
+
+        logger.info("表格名称校验完成: file_id={}, {}/{}, name={}", file_id, table_index, total_table, table_name)
 
         return {
             "file_id": file_id,
@@ -304,6 +312,7 @@ async def parse_tables(content: str, file_id: str, page_mapping: Optional[List] 
     tables: List[Dict] = await asyncio.gather(*tasks)
     tables.sort(key=lambda x: x["table_index"])
 
+    logger.info("AI 校验表格名称完成: file_id={}, 共 {} 个表格", file_id, total_table)
     return tables
 
 

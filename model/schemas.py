@@ -234,6 +234,8 @@ class FileDetailResponse(BaseModel):
     updated_at: Optional[datetime] = None
     start_parsing_time: Optional[datetime] = None
     end_parsing_time: Optional[datetime] = None
+    start_tableing_time: Optional[datetime] = None
+    end_tableing_time: Optional[datetime] = None
     start_chunking_time: Optional[datetime] = None
     end_chunking_time: Optional[datetime] = None
     start_embedding_time: Optional[datetime] = None
