@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-PDF document intelligent processing system built with FastAPI + MinerU + LLM. Processes PDF files through a 5-stage pipeline: **parsing** (MinerU) -> **chunking** (recursive text splitting) -> **embedding** (vector storage in Milvus) -> **extraction** (LLM-driven field extraction) -> **analysis** (LLM judge / numexpr calc).
+PDF document intelligent processing system built with FastAPI + MinerU + LLM. Processes PDF files through a 6-stage pipeline: **parsing** (MinerU) -> **tableing** (AI table name validation via LLM) -> **chunking** (recursive text splitting) -> **embedding** (vector storage in Milvus) -> **extraction** (LLM-driven field extraction) -> **analysis** (LLM judge / numexpr calc).
 
 The system is written in Chinese (comments, logs, API responses, database fields). All documentation and code comments are in Chinese.
 
@@ -45,20 +45,24 @@ uv sync
 - **`service/`** - Business logic. Each service module corresponds to a pipeline stage.
 - **`model/`** - SQLAlchemy async ORM (`tables.py`), Pydantic response schemas (`schemas.py`), database session management (`database.py`).
 - **`utils/`** - Shared clients: `llm_client.py` (OpenAI-compatible chat/embeddings), `milvus_client.py` (Milvus vector DB), `config.py`, `file_utils.py`, `callback.py`, `page_mapping.py`.
-- **`ui/`** - Static HTML/JS/CSS frontend, served at `/ui`.
+- **`ui/`** - Static HTML/JS/CSS frontend, served at `/ui`. File detail view uses a centered modal with timeline, error display, and tabbed data views. Tables tab has a left sidebar (table names with page numbers) + right content (table preview) split layout.
 
 ### Pipeline Flow (`service/pipeline_service.py`)
-The core orchestrator. Three execution modes:
+The core orchestrator. Six stages: parsing → tableing → chunking → embedding → extracting → analyzing. Three execution modes:
 - **async** - `run_pipeline()` in background task, optional `callback_url` for stage notifications
 - **sync** - `run_pipeline()` awaited directly
 - **stream** - `run_pipeline_stream()` yields SSE events per stage
 
 Both `run_pipeline` and `run_from_stage` (retry from any stage) exist in sync/stream variants. Failed stages are retried by cleaning downstream data and re-running from that point.
 
+### Table Name Validation (`service/parse_service.py`)
+The **tableing** stage runs after parsing. `parse_tables()` extracts all `<table>` HTML blocks from the Markdown content, then concurrently calls LLM (`_extract_table_name_with_llm`) to identify each table's name from preceding context. Falls back to the last line before the table if LLM fails. Table names are truncated to 30 characters. Concurrency controlled by `table_name_validation.max_concurrency` config. Results stored in `file_table` with position and page info.
+
 ### Database (MySQL + async SQLAlchemy)
 - `database.py` uses `aiomysql` async driver. `get_db()` is the FastAPI dependency for sessions.
 - Key tables in `model/tables.py`: `files` (progress tracking with stage timestamps), `file_content` (raw MD + middle_json + page_mapping), `file_table` (extracted HTML tables), `file_chunk` (text chunks with positions), `extraction_field` (configurable field definitions), `analysis_rule` (judge/calc rule definitions), `extraction_result`, `analysis_result`.
-- File progress states: `parsing` -> `chunking` -> `embedding` -> `extracting` -> `analyzing` -> `complete`. Each can fail to `*_failed`.
+- File progress states: `parsing` -> `tableing` -> `chunking` -> `embedding` -> `extracting` -> `analyzing` -> `complete`. Each can fail to `*_failed`.
+- `files` table tracks timestamps per stage: `start_parsing_time`/`end_parsing_time`, `start_tableing_time`/`end_tableing_time`, `start_chunking_time`/`end_chunking_time`, `start_embedding_time`/`end_embedding_time`, `end_extracting_time`, `end_analyzing_time`.
 
 ### Extraction System (`service/extraction_service.py`)
 Two source types:
@@ -80,7 +84,7 @@ Two rule types:
 
 - All services are async. Database operations use `AsyncSession` throughout.
 - Pipeline tracks progress in `files.progress` column with timestamps per stage. On failure, progress is set to `*_failed` with error message.
-- `init_service.py` handles crash recovery on startup - any `*ing` state is reset to `*_failed` and orphan data cleaned.
+- `init_service.py` handles crash recovery on startup - any `*ing` state is reset to `*_failed` and orphan data cleaned. Also normalizes legacy status names (`table_name_validating` → `tableing`).
 - Prompt templates use XML-style placeholders: `<search_result>label</search_result>` for extraction, `<field_result>field_id</field_result>` for analysis.
 - LLM responses are parsed as JSON with fallback to regex extraction (`parse_llm_json_response`).
 - `file_id` is deterministically generated from filename (via `utils/file_utils.py`), so re-uploading the same file hits the existing record.
@@ -93,4 +97,4 @@ Two rule types:
 
 ## Configuration
 
-Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `analysis`. Each maps to a Pydantic model in `utils/config.py`.
+Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`. Each maps to a Pydantic model in `utils/config.py`.

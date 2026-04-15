@@ -778,10 +778,32 @@ h1, h2, h3, h4, h5, h6,
     cursor: pointer;
     color: var(--text-secondary);
     transition: var(--transition);
-    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     border-left: 3px solid transparent;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.table-split-page {
+    font-size: 11px;
+    color: var(--bio-light);
+    background: var(--bio-pale);
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.data-card-page {
+    font-size: 12px;
+    color: var(--bio-light);
+    background: var(--bio-pale);
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-left: 8px;
+    font-weight: 400;
 }
 
 .table-split-name:hover {

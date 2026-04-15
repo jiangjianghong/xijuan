@@ -526,16 +526,18 @@ const App = {
                         let sidebar = '';
                         data.forEach((item, idx) => {
                             const name = item.table_name || `表格 ${item.table_index}`;
-                            sidebar += `<div class="table-split-name${idx === 0 ? ' active' : ''}" data-tidx="${idx}" title="${this.escapeHtml(name)}">${this.escapeHtml(name)}</div>`;
+                            const page = item.page_num ? `<span class="table-split-page">P${item.page_num}</span>` : '';
+                            sidebar += `<div class="table-split-name${idx === 0 ? ' active' : ''}" data-tidx="${idx}" title="${this.escapeHtml(name)}">${this.escapeHtml(name)}${page}</div>`;
                         });
-                        const firstTable = Utils.sanitizeTableHtml(data[0].table_content);
+                        const first = data[0];
+                        const firstPage = first.page_num ? `<span class="data-card-page">第 ${first.page_num} 页</span>` : '';
                         html = `
                             <div class="table-split">
                                 <div class="table-split-sidebar">${sidebar}</div>
                                 <div class="table-split-content">
                                     <div class="data-card">
-                                        <div class="data-card-title">${this.escapeHtml(data[0].table_name || `表格 ${data[0].table_index}`)}</div>
-                                        <div class="data-card-content table-rendered">${firstTable}</div>
+                                        <div class="data-card-title">${this.escapeHtml(first.table_name || `表格 ${first.table_index}`)}${firstPage}</div>
+                                        <div class="data-card-content table-rendered">${Utils.sanitizeTableHtml(first.table_content)}</div>
                                     </div>
                                 </div>
                             </div>
@@ -614,9 +616,10 @@ const App = {
                         this.els.tabContent.querySelectorAll('.table-split-name').forEach(n => n.classList.remove('active'));
                         el.classList.add('active');
                         const contentArea = this.els.tabContent.querySelector('.table-split-content');
+                        const pageTag = item.page_num ? `<span class="data-card-page">第 ${item.page_num} 页</span>` : '';
                         contentArea.innerHTML = `
                             <div class="data-card">
-                                <div class="data-card-title">${this.escapeHtml(item.table_name || `表格 ${item.table_index}`)}</div>
+                                <div class="data-card-title">${this.escapeHtml(item.table_name || `表格 ${item.table_index}`)}${pageTag}</div>
                                 <div class="data-card-content table-rendered">${Utils.sanitizeTableHtml(item.table_content)}</div>
                             </div>
                         `;

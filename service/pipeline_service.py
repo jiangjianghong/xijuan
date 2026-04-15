@@ -22,7 +22,8 @@ from service.analysis_service import run_analysis, run_analysis_stream
 from service.chunk_service import chunk_content, save_chunks
 from service.embedding_service import embed_chunks, submit_to_milvus
 from service.extraction_service import run_extraction, run_extraction_stream
-from service.parse_service import parse_file, parse_tables, save_file_content, save_tables
+from service.parse_service import parse_file, save_file_content
+from service.table_service import parse_tables, save_tables
 from utils.callback import notify_callback
 from utils.milvus_client import MilvusClient
 from utils.page_mapping import build_page_mapping

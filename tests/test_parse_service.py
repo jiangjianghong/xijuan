@@ -1,10 +1,10 @@
-"""parse_service 表格标题提取测试。"""
+"""table_service 表格标题提取测试。"""
 
 from __future__ import annotations
 
 import pytest
 
-import service.parse_service as parse_service
+import service.table_service as parse_service
 
 
 @pytest.mark.anyio

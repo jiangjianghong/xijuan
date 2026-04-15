@@ -34,7 +34,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import service.parse_service as parse_service
+import service.table_service as parse_service
 from model.database import get_session_factory
 from model.tables import FileContent, FileTable
 from utils.page_mapping import lookup_page_num
