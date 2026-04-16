@@ -1,12 +1,13 @@
 # PDF 文档智能处理系统
 
-基于 MinerU + LLM 的 PDF 文档处理 Pipeline，支持解析、向量化、字段提取和逻辑分析。
+基于 MinerU + LLM 的 PDF 文档处理 Pipeline，支持解析、AI 表格名称校验、向量化、字段提取和逻辑分析。
 
-**核心能力**：PDF 解析 → 文本分块 → 向量化存储 → 字段提取 → 逻辑分析
+**核心能力**：PDF 解析 → AI 表格名称校验 → 文本分块 → 向量化存储 → 字段提取 → 逻辑分析
 
 ## 功能特性
 
 - **PDF 解析**：基于 MinerU，支持复杂表格和图文混排
+- **AI 表格名称校验**：LLM 自动识别表格标题，支持并发处理，名称截断 30 字
 - **智能分块**：递归字符分割，表格保持完整性
 - **向量检索**：Milvus 存储，支持 5 种文本检索 + 4 种表格匹配
 - **字段提取**：LLM 驱动，可配置提取规则
@@ -17,19 +18,20 @@
 ## 处理流程
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                            完整处理流程                                   │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│   PDF上传 ──► 解析 ──► 分块 ──► 向量化 ──► 提取 ──► 分析 ──► 完成      │
-│              (MinerU)  (递归分割) (Embedding)  (LLM)   (LLM/计算)        │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│                                   完整处理流程                                        │
+├──────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                      │
+│   PDF上传 ──► 解析 ──► 表格校验 ──► 分块 ──► 向量化 ──► 提取 ──► 分析 ──► 完成      │
+│              (MinerU)   (LLM)    (递归分割) (Embedding)  (LLM)   (LLM/计算)          │
+│                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 | 阶段 | 输入 | 输出 | 核心技术 |
 |------|------|------|----------|
 | 解析 | PDF 文件 | Markdown + 表格 | MinerU API |
+| 表格校验 | Markdown 中的 HTML 表格 | 带名称的表格列表 | LLM 并发提取表名 |
 | 分块 | Markdown 文本 | 文本块列表 | 递归字符分割 |
 | 向量化 | 文本块 | 向量数据 | Embedding API + Milvus |
 | 提取 | 向量/文本检索结果 | 字段值 | LLM + 5种检索方式 |
@@ -88,6 +90,8 @@ curl "http://localhost:5019/file/{file_id}/extraction"
 | `chunking.chunk_size` | 分块大小（字符） | 512 |
 | `embedding.model_name` | Embedding 模型 | text-embedding-v4 |
 | `extraction.llm_model` | 提取用 LLM 模型 | qwen-max |
+| `table_name_validation.llm_model` | 表格名称校验 LLM 模型 | qwen3.5-35b-a3b |
+| `table_name_validation.max_concurrency` | 表格校验并发数 | 20 |
 
 完整配置参考 [docs/design.md](docs/design.md#配置参数configyaml)
 
@@ -97,8 +101,10 @@ curl "http://localhost:5019/file/{file_id}/extraction"
 |------|------|------|
 | POST | `/file/parse` | 上传并处理 PDF（支持 sync/async/stream） |
 | GET | `/file/{file_id}/status` | 查询处理状态 |
+| GET | `/file/{file_id}/tables` | 获取表格列表（含名称和页码） |
 | GET | `/file/{file_id}/extraction` | 获取字段提取结果 |
 | GET | `/file/{file_id}/analysis` | 获取逻辑分析结果 |
+| POST | `/file/{file_id}/retry/{stage}` | 从指定阶段重试（支持 sync/async/stream） |
 | POST | `/extraction/test` | 字段提取调试 |
 | POST | `/analysis/test` | 逻辑分析调试 |
 
@@ -116,15 +122,22 @@ wanz_prase2_001/
 │   ├── extraction_router.py # 字段提取接口
 │   └── analysis_router.py  # 逻辑分析接口
 ├── service/                # 业务逻辑
-│   ├── parse_service.py    # PDF 解析
+│   ├── pipeline_service.py # 管线编排（串联所有阶段）
+│   ├── parse_service.py    # PDF 解析（MinerU）
+│   ├── table_service.py    # AI 表格名称校验（LLM）
 │   ├── chunk_service.py    # 文本分块
 │   ├── embedding_service.py # 向量化
 │   ├── extraction_service.py # 字段提取
 │   └── analysis_service.py # 逻辑分析
-├── models/                 # 数据模型
+├── model/                  # 数据模型
+│   ├── tables.py           # SQLAlchemy ORM 模型
+│   ├── schemas.py          # Pydantic 请求/响应模型
+│   └── database.py         # 数据库连接管理
+├── ui/                     # 前端界面
 └── utils/                  # 工具类
     ├── llm_client.py       # LLM 调用
-    └── milvus_client.py    # Milvus 客户端
+    ├── milvus_client.py    # Milvus 客户端
+    └── config.py           # 配置加载
 ```
 
 ## 文档

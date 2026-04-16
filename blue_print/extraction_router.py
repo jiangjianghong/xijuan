@@ -51,6 +51,7 @@ async def list_fields(db: AsyncSession = Depends(get_db)):
                 priority=f.priority,
                 table_name_pattern=f.table_name_pattern,
                 table_match_type=f.table_match_type,
+                table_match_keywords=f.table_match_keywords,
                 table_system_prompt=f.table_system_prompt,
                 table_extract_prompt=f.table_extract_prompt,
                 search_type=f.search_type,
@@ -82,6 +83,7 @@ async def upsert_field(
         existing.priority = field.priority
         existing.table_name_pattern = field.table_name_pattern
         existing.table_match_type = field.table_match_type
+        existing.table_match_keywords = field.table_match_keywords
         existing.table_system_prompt = field.table_system_prompt
         existing.table_extract_prompt = field.table_extract_prompt
         existing.search_type = field.search_type
@@ -100,6 +102,7 @@ async def upsert_field(
             priority=field.priority,
             table_name_pattern=field.table_name_pattern,
             table_match_type=field.table_match_type,
+            table_match_keywords=field.table_match_keywords,
             table_system_prompt=field.table_system_prompt,
             table_extract_prompt=field.table_extract_prompt,
             search_type=field.search_type,
@@ -171,6 +174,7 @@ async def test_extraction(
             source_type=config.get("source_type", "text"),
             table_name_pattern=config.get("table_name_pattern"),
             table_match_type=config.get("table_match_type"),
+            table_match_keywords=config.get("table_match_keywords"),
             table_system_prompt=config.get("table_system_prompt"),
             table_extract_prompt=config.get("table_extract_prompt"),
             search_type=config.get("search_type"),
@@ -269,6 +273,7 @@ async def test_extraction_stream(
             source_type=config.get("source_type", "text"),
             table_name_pattern=config.get("table_name_pattern"),
             table_match_type=config.get("table_match_type"),
+            table_match_keywords=config.get("table_match_keywords"),
             table_system_prompt=config.get("table_system_prompt"),
             table_extract_prompt=config.get("table_extract_prompt"),
             search_type=config.get("search_type"),

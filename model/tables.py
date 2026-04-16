@@ -119,6 +119,7 @@ class ExtractionField(Base):
         Enum("exact", "fuzzy", "contains", "llm", name="table_match_type_enum"),
         nullable=True,
     )
+    table_match_keywords: Mapped[list | None] = mapped_column(JSON, nullable=True)
     table_system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     table_extract_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 文本类专用

@@ -402,18 +402,21 @@ const RuleConfig = {
                 <div class="form-section-title">表格配置</div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label class="form-label">表名匹配模式</label>
-                        <input class="form-input" id="fm-table-name-pattern" value="${Utils.escapeHtml(field.table_name_pattern || '')}" placeholder="正则表达式">
+                        <label class="form-label">表名</label>
+                        <input class="form-input" id="fm-table-name-pattern" value="${Utils.escapeHtml(field.table_name_pattern || '')}" placeholder="用于提示词占位符的标签名">
+                        <div class="form-hint">作为 &lt;search_result&gt; 占位符的标签，所有匹配到的表格内容会填充到此标签中</div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">匹配方式</label>
                         <select class="form-select" id="fm-table-match-type">
-                            <option value="regex" ${(field.table_match_type || 'regex') === 'regex' ? 'selected' : ''}>正则匹配</option>
+                            <option value="contains" ${(field.table_match_type || 'contains') === 'contains' ? 'selected' : ''}>包含匹配</option>
                             <option value="exact" ${field.table_match_type === 'exact' ? 'selected' : ''}>精确匹配</option>
-                            <option value="contains" ${field.table_match_type === 'contains' ? 'selected' : ''}>包含匹配</option>
+                            <option value="fuzzy" ${field.table_match_type === 'fuzzy' ? 'selected' : ''}>模糊匹配</option>
+                            <option value="llm" ${field.table_match_type === 'llm' ? 'selected' : ''}>LLM 匹配</option>
                         </select>
                     </div>
                 </div>
+                ${this.buildKeywordTagsHtml('fm-table-match-keywords', '表格匹配词', field.table_match_keywords || [], '输入匹配词后按回车或点击添加，支持多个匹配词检索表格')}
                 <div class="form-group">
                     <label class="form-label">系统提示词</label>
                     <textarea class="form-textarea" id="fm-table-system-prompt" rows="3" placeholder="可选，设置 LLM 的角色和行为约束">${Utils.escapeHtml(field.table_system_prompt || '')}</textarea>
@@ -754,6 +757,7 @@ const RuleConfig = {
             priority: parseInt(document.getElementById('fm-priority').value) || 0,
             table_name_pattern: null,
             table_match_type: null,
+            table_match_keywords: null,
             table_system_prompt: null,
             table_extract_prompt: null,
             search_type: null,
@@ -765,6 +769,7 @@ const RuleConfig = {
         if (sourceType === 'table') {
             data.table_name_pattern = document.getElementById('fm-table-name-pattern').value.trim() || null;
             data.table_match_type = document.getElementById('fm-table-match-type').value;
+            data.table_match_keywords = this.getKeywordTags('fm-table-match-keywords');
             data.table_system_prompt = document.getElementById('fm-table-system-prompt').value.trim() || null;
             data.table_extract_prompt = document.getElementById('fm-table-extract-prompt').value.trim() || null;
         } else {

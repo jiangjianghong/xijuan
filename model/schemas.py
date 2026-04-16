@@ -79,6 +79,7 @@ class ExtractionFieldCreate(BaseModel):
     # 表格类
     table_name_pattern: Optional[str] = None
     table_match_type: Optional[TableMatchTypeEnum] = None
+    table_match_keywords: Optional[List[str]] = None
     table_system_prompt: Optional[str] = None
     table_extract_prompt: Optional[str] = None
     # 文本类

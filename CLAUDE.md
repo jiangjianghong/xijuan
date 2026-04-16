@@ -55,7 +55,7 @@ The core orchestrator. Six stages: parsing → tableing → chunking → embeddi
 
 Both `run_pipeline` and `run_from_stage` (retry from any stage) exist in sync/stream variants. Failed stages are retried by cleaning downstream data and re-running from that point.
 
-### Table Name Validation (`service/parse_service.py`)
+### Table Name Validation (`service/table_service.py`)
 The **tableing** stage runs after parsing. `parse_tables()` extracts all `<table>` HTML blocks from the Markdown content, then concurrently calls LLM (`_extract_table_name_with_llm`) to identify each table's name from preceding context. Falls back to the last line before the table if LLM fails. Table names are truncated to 30 characters. Concurrency controlled by `table_name_validation.max_concurrency` config. Results stored in `file_table` with position and page info.
 
 ### Database (MySQL + async SQLAlchemy)

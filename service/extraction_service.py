@@ -476,29 +476,35 @@ async def extract_table_field(
     if not tables:
         return "", "", None
 
-    # 4 种表格匹配方式
+    # 4 种表格匹配方式，使用 table_match_keywords 做匹配
     match_type = field.table_match_type or "contains"
-    pattern = field.table_name_pattern or ""
+    keywords = field.table_match_keywords or []
+    # 兼容：如果没有 keywords 则回退到 table_name_pattern
+    if not keywords and field.table_name_pattern:
+        keywords = [field.table_name_pattern]
 
     matched_tables = []
     for table in tables:
         matched = False
 
-        if match_type == "exact":
-            matched = table.table_name == pattern
-        elif match_type == "fuzzy":
-            ratio = SequenceMatcher(None, table.table_name, pattern).ratio()
-            matched = ratio >= 0.8
-        elif match_type == "contains":
-            matched = pattern.lower() in table.table_name.lower()
-        elif match_type == "llm":
-            prompt = f"判断以下表格名称是否与查询匹配。\n\n查询: {pattern}\n表格名称: {table.table_name}\n\n只回答'是'或'否'。"
-            try:
-                response = await chat_completion(prompt)
-                matched = "是" in response
-            except Exception as e:
-                logger.warning("LLM 表格匹配失败: {}", e)
-                matched = False
+        for kw in keywords:
+            if match_type == "exact":
+                matched = table.table_name == kw
+            elif match_type == "fuzzy":
+                ratio = SequenceMatcher(None, table.table_name, kw).ratio()
+                matched = ratio >= 0.8
+            elif match_type == "contains":
+                matched = kw.lower() in table.table_name.lower()
+            elif match_type == "llm":
+                prompt = f"判断以下表格名称是否与查询匹配。\n\n查询: {kw}\n表格名称: {table.table_name}\n\n只回答'是'或'否'。"
+                try:
+                    response = await chat_completion(prompt)
+                    matched = "是" in response
+                except Exception as e:
+                    logger.warning("LLM 表格匹配失败: {}", e)
+                    matched = False
+            if matched:
+                break
 
         if matched:
             matched_tables.append(table)
@@ -520,15 +526,16 @@ async def extract_table_field(
         })
     source_refs["_tables"] = table_refs
 
-    # 构建按表名分组的结果
+    # 使用用户指定的表名作为统一 label
+    label = field.table_name_pattern or "表格"
     results_text_by_label: Dict[str, str] = {}
+    parts = []
     for table in matched_tables:
         table_name = table.table_name or f"表格{table.table_index}"
         content = f"表格名称: {table_name}\n{table.table_content}"
-        if table_name in results_text_by_label:
-            results_text_by_label[table_name] += "\n---\n" + content
-        else:
-            results_text_by_label[table_name] = content
+        parts.append(content)
+    if parts:
+        results_text_by_label[label] = "\n---\n".join(parts)
 
     # 构建 LLM 输入
     prompt_template = field.table_extract_prompt or ""
@@ -896,24 +903,29 @@ async def test_field_extraction_stream(
                 tables = result.scalars().all()
 
                 match_type = field.table_match_type or "contains"
-                pattern = field.table_name_pattern or ""
+                keywords = field.table_match_keywords or []
+                if not keywords and field.table_name_pattern:
+                    keywords = [field.table_name_pattern]
 
                 for table in tables:
                     matched = False
-                    if match_type == "exact":
-                        matched = table.table_name == pattern
-                    elif match_type == "fuzzy":
-                        ratio = SequenceMatcher(None, table.table_name, pattern).ratio()
-                        matched = ratio >= 0.8
-                    elif match_type == "contains":
-                        matched = pattern.lower() in table.table_name.lower()
-                    elif match_type == "llm":
-                        prompt = f"判断以下表格名称是否与查询匹配。\n\n查询: {pattern}\n表格名称: {table.table_name}\n\n只回答'是'或'否'。"
-                        try:
-                            resp = await chat_completion(prompt)
-                            matched = "是" in resp
-                        except Exception:
-                            matched = False
+                    for kw in keywords:
+                        if match_type == "exact":
+                            matched = table.table_name == kw
+                        elif match_type == "fuzzy":
+                            ratio = SequenceMatcher(None, table.table_name, kw).ratio()
+                            matched = ratio >= 0.8
+                        elif match_type == "contains":
+                            matched = kw.lower() in table.table_name.lower()
+                        elif match_type == "llm":
+                            prompt = f"判断以下表格名称是否与查询匹配。\n\n查询: {kw}\n表格名称: {table.table_name}\n\n只回答'是'或'否'。"
+                            try:
+                                resp = await chat_completion(prompt)
+                                matched = "是" in resp
+                            except Exception:
+                                matched = False
+                        if matched:
+                            break
 
                     if matched:
                         matched_tables.append({
@@ -922,12 +934,19 @@ async def test_field_extraction_stream(
                             "table_content": table.table_content[:500] + "..." if len(table.table_content) > 500 else table.table_content,
                             "page_num": table.page_num or "",
                         })
-                        table_name = table.table_name or f"表格{table.table_index}"
-                        content = f"表格名称: {table_name}\n{table.table_content}"
-                        if table_name in results_by_label:
-                            results_by_label[table_name] += "\n---\n" + content
-                        else:
-                            results_by_label[table_name] = content
+
+                # 使用用户指定的表名作为统一 label
+                label = field.table_name_pattern or "表格"
+                parts = []
+                for t in matched_tables:
+                    table_name = t["table_name"] or f"表格{t['table_index']}"
+                    # 调试用截断内容
+                    full_table = next((tb for tb in tables if tb.table_index == t["table_index"]), None)
+                    content_text = full_table.table_content if full_table else t["table_content"]
+                    content = f"表格名称: {table_name}\n{content_text}"
+                    parts.append(content)
+                if parts:
+                    results_by_label[label] = "\n---\n".join(parts)
 
                 yield {
                     "event": "search_results",
