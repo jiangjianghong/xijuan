@@ -484,30 +484,49 @@ async def extract_table_field(
         keywords = [field.table_name_pattern]
 
     matched_tables = []
-    for table in tables:
-        matched = False
 
-        for kw in keywords:
-            if match_type == "exact":
-                matched = table.table_name == kw
-            elif match_type == "fuzzy":
-                ratio = SequenceMatcher(None, table.table_name, kw).ratio()
-                matched = ratio >= 0.8
-            elif match_type == "contains":
-                matched = kw.lower() in table.table_name.lower()
-            elif match_type == "llm":
-                prompt = f"判断以下表格名称是否与查询匹配。\n\n查询: {kw}\n表格名称: {table.table_name}\n\n只回答'是'或'否'。"
-                try:
-                    response = await chat_completion(prompt)
-                    matched = "是" in response
-                except Exception as e:
-                    logger.warning("LLM 表格匹配失败: {}", e)
-                    matched = False
+    # LLM 匹配：一次性给出所有表格名列表，让模型返回匹配的序号
+    if match_type == "llm" and keywords:
+        query_desc = "、".join(keywords)
+        table_list = "\n".join(
+            f"{i + 1}. {table.table_name or f'表格{table.table_index}'}"
+            for i, table in enumerate(tables)
+        )
+        prompt = (
+            f"以下是文档中所有表格的名称和序号列表：\n\n"
+            f"{table_list}\n\n"
+            f"请找出与查询「{query_desc}」最相关的表格，"
+            f"返回其序号（多个用逗号分隔）。\n\n"
+            f"只返回序号，不要输出其他内容。例如：2 或 1,3"
+        )
+        try:
+            response = await chat_completion(prompt)
+            # 解析序号：提取所有整数
+            indices = [int(x) for x in re.findall(r"\d+", response)]
+            # 序号从1开始，转为列表索引
+            matched_tables = [
+                tables[idx - 1] for idx in indices
+                if 1 <= idx <= len(tables)
+            ]
+        except Exception as e:
+            logger.warning("LLM 表格匹配失败: {}", e)
+            matched_tables = []
+    elif match_type != "llm":
+        # 非 LLM 匹配：逐关键词逐表格匹配
+        for table in tables:
+            matched = False
+            for kw in keywords:
+                if match_type == "exact":
+                    matched = table.table_name == kw
+                elif match_type == "fuzzy":
+                    ratio = SequenceMatcher(None, table.table_name, kw).ratio()
+                    matched = ratio >= 0.8
+                elif match_type == "contains":
+                    matched = kw.lower() in table.table_name.lower()
+                if matched:
+                    break
             if matched:
-                break
-
-        if matched:
-            matched_tables.append(table)
+                matched_tables.append(table)
 
     if not matched_tables:
         return "", "", None
@@ -907,33 +926,58 @@ async def test_field_extraction_stream(
                 if not keywords and field.table_name_pattern:
                     keywords = [field.table_name_pattern]
 
-                for table in tables:
-                    matched = False
-                    for kw in keywords:
-                        if match_type == "exact":
-                            matched = table.table_name == kw
-                        elif match_type == "fuzzy":
-                            ratio = SequenceMatcher(None, table.table_name, kw).ratio()
-                            matched = ratio >= 0.8
-                        elif match_type == "contains":
-                            matched = kw.lower() in table.table_name.lower()
-                        elif match_type == "llm":
-                            prompt = f"判断以下表格名称是否与查询匹配。\n\n查询: {kw}\n表格名称: {table.table_name}\n\n只回答'是'或'否'。"
-                            try:
-                                resp = await chat_completion(prompt)
-                                matched = "是" in resp
-                            except Exception:
-                                matched = False
-                        if matched:
-                            break
+                # LLM 匹配：一次性给出所有表格名列表，让模型返回匹配的序号
+                if match_type == "llm" and keywords:
+                    query_desc = "、".join(keywords)
+                    table_list = "\n".join(
+                        f"{i + 1}. {table.table_name or f'表格{table.table_index}'}"
+                        for i, table in enumerate(tables)
+                    )
+                    llm_match_prompt = (
+                        f"以下是文档中所有表格的名称和序号列表：\n\n"
+                        f"{table_list}\n\n"
+                        f"请找出与查询「{query_desc}」最相关的表格，"
+                        f"返回其序号（多个用逗号分隔）。\n\n"
+                        f"只返回序号，不要输出其他内容。例如：2 或 1,3"
+                    )
+                    try:
+                        resp = await chat_completion(llm_match_prompt)
+                        indices = [int(x) for x in re.findall(r"\d+", resp)]
+                        matched_tables = [
+                            {
+                                "table_index": tables[idx - 1].table_index,
+                                "table_name": tables[idx - 1].table_name,
+                                "table_content": tables[idx - 1].table_content[:500] + "..." if len(tables[idx - 1].table_content) > 500 else tables[idx - 1].table_content,
+                                "page_num": tables[idx - 1].page_num or "",
+                            }
+                            for idx in indices
+                            if 1 <= idx <= len(tables)
+                        ]
+                    except Exception as e:
+                        logger.warning("LLM 表格匹配失败: {}", e)
+                        matched_tables = []
+                elif match_type != "llm":
+                    # 非 LLM 匹配：逐关键词逐表格匹配
+                    for table in tables:
+                        matched = False
+                        for kw in keywords:
+                            if match_type == "exact":
+                                matched = table.table_name == kw
+                            elif match_type == "fuzzy":
+                                ratio = SequenceMatcher(None, table.table_name, kw).ratio()
+                                matched = ratio >= 0.8
+                            elif match_type == "contains":
+                                matched = kw.lower() in table.table_name.lower()
+                            if matched:
+                                break
 
-                    if matched:
-                        matched_tables.append({
-                            "table_index": table.table_index,
-                            "table_name": table.table_name,
-                            "table_content": table.table_content[:500] + "..." if len(table.table_content) > 500 else table.table_content,
-                            "page_num": table.page_num or "",
-                        })
+                        if matched:
+                            matched_tables.append({
+                                "table_index": table.table_index,
+                                "table_name": table.table_name,
+                                "table_content": table.table_content[:500] + "..." if len(table.table_content) > 500 else table.table_content,
+                                "page_num": table.page_num or "",
+                            })
 
                 # 使用用户指定的表名作为统一 label
                 label = field.table_name_pattern or "表格"
