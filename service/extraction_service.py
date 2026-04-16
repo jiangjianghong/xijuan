@@ -220,35 +220,59 @@ async def search_section(
     sections = parse_sections(content)
     results = []
 
-    for section in sections:
-        matched = False
+    # LLM 匹配：一次性给出所有章节标题列表，让模型返回匹配的序号
+    if match_type == "llm" and section_pattern:
+        section_list = "\n".join(
+            f"{i + 1}. {section.number} {section.title}"
+            for i, section in enumerate(sections)
+        )
+        prompt = (
+            f"以下是文档中所有章节的序号和标题列表：\n\n"
+            f"{section_list}\n\n"
+            f"请找出与查询「{section_pattern}」最相关的章节，"
+            f"返回其序号（多个用逗号分隔）。\n\n"
+            f"只返回序号，不要输出其他内容。例如：2 或 1,3"
+        )
+        try:
+            response = await chat_completion(prompt)
+            indices = [int(x) for x in re.findall(r"\d+", response)]
+            for idx in indices:
+                if 1 <= idx <= len(sections):
+                    section = sections[idx - 1]
+                    section_content = content[section.start_pos:section.end_pos]
+                    results.append({
+                        "section_number": section.number,
+                        "section_title": section.title,
+                        "section_index": section.index,
+                        "content": section_content,
+                        "start_pos": section.start_pos,
+                        "end_pos": section.end_pos,
+                    })
+        except Exception as e:
+            logger.warning("LLM 章节匹配失败: {}", e)
+    elif match_type != "llm":
+        # 非 LLM 匹配：逐章节匹配
+        for section in sections:
+            matched = False
 
-        if match_type == "exact":
-            matched = section.title == section_pattern
-        elif match_type == "fuzzy":
-            ratio = SequenceMatcher(None, section.title, section_pattern).ratio()
-            matched = ratio >= threshold
-        elif match_type == "contains":
-            matched = section_pattern.lower() in section.title.lower()
-        elif match_type == "llm":
-            prompt = f"判断以下章节标题是否与查询匹配。\n\n查询: {section_pattern}\n章节标题: {section.title}\n\n只回答'是'或'否'。"
-            try:
-                response = await chat_completion(prompt)
-                matched = "是" in response
-            except Exception as e:
-                logger.warning("LLM 章节匹配失败: {}", e)
-                matched = False
+            if match_type == "exact":
+                matched = section.title == section_pattern
+            elif match_type == "fuzzy":
+                ratio = SequenceMatcher(None, section.title, section_pattern).ratio()
+                matched = ratio >= threshold
+            elif match_type == "contains":
+                matched = section_pattern.lower() in section.title.lower()
 
-        if matched:
-            section_content = content[section.start_pos:section.end_pos]
-            results.append({
-                "section_number": section.number,
-                "section_title": section.title,
-                "section_index": section.index,
-                "content": section_content,
-                "start_pos": section.start_pos,
-                "end_pos": section.end_pos,
-            })
+            if matched:
+                section_content = content[section.start_pos:section.end_pos]
+                results.append({
+                    "section_number": section.number,
+                    "section_title": section.title,
+                    "section_index": section.index,
+                    "content": section_content,
+                    "start_pos": section.start_pos,
+                    "end_pos": section.end_pos,
+                })
 
     # 按章节索引排序
     results.sort(key=lambda x: x["section_index"], reverse=(sort_order == "desc"))
