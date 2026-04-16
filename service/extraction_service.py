@@ -516,11 +516,15 @@ async def extract_table_field(
             f"{i + 1}. {table.table_name or f'表格{table.table_index}'}"
             for i, table in enumerate(tables)
         )
+        max_results = field.table_match_max_results or 0
+        if max_results > 0:
+            quantity_hint = f"最多返回 {max_results} 个表格的序号，按相关性从高到低排序。"
+        else:
+            quantity_hint = "返回所有匹配表格的序号。"
         prompt = (
             f"以下是文档中所有表格的名称和序号列表：\n\n"
             f"{table_list}\n\n"
-            f"请找出与查询「{query_desc}」最相关的表格，"
-            f"返回其序号（多个用逗号分隔）。\n\n"
+            f"请找出与查询「{query_desc}」最相关的表格，{quantity_hint}\n\n"
             f"只返回序号，不要输出其他内容。例如：2 或 1,3"
         )
         try:
@@ -551,6 +555,11 @@ async def extract_table_field(
                     break
             if matched:
                 matched_tables.append(table)
+
+    # 限制返回数量
+    max_results = field.table_match_max_results or 0
+    if max_results > 0 and len(matched_tables) > max_results:
+        matched_tables = matched_tables[:max_results]
 
     if not matched_tables:
         return "", "", None
@@ -957,16 +966,35 @@ async def test_field_extraction_stream(
                         f"{i + 1}. {table.table_name or f'表格{table.table_index}'}"
                         for i, table in enumerate(tables)
                     )
+                    max_results = field.table_match_max_results or 0
+                    if max_results > 0:
+                        quantity_hint = f"最多返回 {max_results} 个表格的序号，按相关性从高到低排序。"
+                    else:
+                        quantity_hint = "返回所有匹配表格的序号。"
                     llm_match_prompt = (
                         f"以下是文档中所有表格的名称和序号列表：\n\n"
                         f"{table_list}\n\n"
-                        f"请找出与查询「{query_desc}」最相关的表格，"
-                        f"返回其序号（多个用逗号分隔）。\n\n"
+                        f"请找出与查询「{query_desc}」最相关的表格，{quantity_hint}\n\n"
                         f"只返回序号，不要输出其他内容。例如：2 或 1,3"
                     )
+                    yield {
+                        "event": "match_llm",
+                        "data": {
+                            "step": "prompt",
+                            "prompt": llm_match_prompt,
+                        },
+                    }
                     try:
                         resp = await chat_completion(llm_match_prompt)
                         indices = [int(x) for x in re.findall(r"\d+", resp)]
+                        yield {
+                            "event": "match_llm",
+                            "data": {
+                                "step": "response",
+                                "llm_response": resp,
+                                "matched_indices": indices,
+                            },
+                        }
                         matched_tables = [
                             {
                                 "table_index": tables[idx - 1].table_index,
@@ -979,6 +1007,13 @@ async def test_field_extraction_stream(
                         ]
                     except Exception as e:
                         logger.warning("LLM 表格匹配失败: {}", e)
+                        yield {
+                            "event": "match_llm",
+                            "data": {
+                                "step": "error",
+                                "error": str(e),
+                            },
+                        }
                         matched_tables = []
                 elif match_type != "llm":
                     # 非 LLM 匹配：逐关键词逐表格匹配
@@ -1003,6 +1038,11 @@ async def test_field_extraction_stream(
                                 "page_num": table.page_num or "",
                             })
 
+                # 限制返回数量
+                max_results = field.table_match_max_results or 0
+                if max_results > 0 and len(matched_tables) > max_results:
+                    matched_tables = matched_tables[:max_results]
+
                 # 使用用户指定的表名作为统一 label
                 label = field.table_name_pattern or "表格"
                 parts = []
@@ -1020,7 +1060,7 @@ async def test_field_extraction_stream(
                     "event": "search_results",
                     "data": {
                         "source_type": "table",
-                        "search_type": None,
+                        "search_type": match_type,
                         "results": [],
                         "matched_tables": matched_tables,
                         "results_by_label": {k: v[:500] for k, v in results_by_label.items()},

@@ -51,6 +51,24 @@ async def init_database() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # 自动补充新列（仅当列不存在时添加）
+        migrations = [
+            ("extraction_field", "table_match_keywords", "JSON"),
+            ("extraction_field", "table_match_max_results", "INT"),
+        ]
+        for table_name, column_name, column_type in migrations:
+            result = await conn.execute(
+                text(f"SELECT COUNT(*) FROM information_schema.COLUMNS "
+                     f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table_name}' "
+                     f"AND COLUMN_NAME = '{column_name}'")
+            )
+            if result.scalar() == 0:
+                await conn.execute(
+                    text(f"ALTER TABLE `{table_name}` ADD COLUMN `{column_name}` {column_type} NULL")
+                )
+                logger.info("已为 {} 表添加 {} 列", table_name, column_name)
+
     logger.info("数据库表检查完成")
 
 

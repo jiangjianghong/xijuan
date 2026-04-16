@@ -418,6 +418,11 @@ const RuleConfig = {
                 </div>
                 ${this.buildKeywordTagsHtml('fm-table-match-keywords', '表格匹配词', field.table_match_keywords || [], '输入匹配词后按回车或点击添加，支持多个匹配词检索表格')}
                 <div class="form-group">
+                    <label class="form-label">最大返回数量</label>
+                    <input class="form-input" type="number" id="fm-table-match-max-results" min="0" placeholder="0 表示不限制" value="${field.table_match_max_results || ''}">
+                    <div class="form-hint">匹配后最多返回的表格数量，0 或空表示不限制</div>
+                </div>
+                <div class="form-group">
                     <label class="form-label">系统提示词</label>
                     <textarea class="form-textarea" id="fm-table-system-prompt" rows="3" placeholder="可选，设置 LLM 的角色和行为约束">${Utils.escapeHtml(field.table_system_prompt || '')}</textarea>
                     <div class="form-hint">作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束</div>
@@ -758,6 +763,7 @@ const RuleConfig = {
             table_name_pattern: null,
             table_match_type: null,
             table_match_keywords: null,
+            table_match_max_results: null,
             table_system_prompt: null,
             table_extract_prompt: null,
             search_type: null,
@@ -770,6 +776,7 @@ const RuleConfig = {
             data.table_name_pattern = document.getElementById('fm-table-name-pattern').value.trim() || null;
             data.table_match_type = document.getElementById('fm-table-match-type').value;
             data.table_match_keywords = this.getKeywordTags('fm-table-match-keywords');
+            data.table_match_max_results = parseInt(document.getElementById('fm-table-match-max-results').value) || null;
             data.table_system_prompt = document.getElementById('fm-table-system-prompt').value.trim() || null;
             data.table_extract_prompt = document.getElementById('fm-table-extract-prompt').value.trim() || null;
         } else {
@@ -1236,6 +1243,11 @@ const RuleConfig = {
                     </div>
                 </div>
 
+                <div class="debug-section" id="debug-sec-match-llm" style="display:none;">
+                    <div class="debug-section-header">LLM 表格匹配</div>
+                    <div class="debug-section-body" id="debug-match-llm-content"></div>
+                </div>
+
                 <div class="debug-section" id="debug-sec-search" style="display:none;">
                     <div class="debug-section-header">检索结果</div>
                     <div class="debug-section-body" id="debug-search-results"></div>
@@ -1370,6 +1382,9 @@ const RuleConfig = {
                 this._showDebugLoading('正在构建提示词...');
                 this.renderDebugSearchResults(data);
                 break;
+            case 'match_llm':
+                this.renderMatchLlm(data);
+                break;
             case 'prompt':
                 this._hideDebugLoading();
                 this._showDebugLoading('正在调用 LLM...');
@@ -1391,6 +1406,37 @@ const RuleConfig = {
             case 'done':
                 this._hideDebugLoading();
                 break;
+        }
+    },
+
+    renderMatchLlm(data) {
+        const section = document.getElementById('debug-sec-match-llm');
+        const container = document.getElementById('debug-match-llm-content');
+        if (!section || !container) return;
+
+        section.style.display = '';
+        const step = data.step;
+
+        if (step === 'prompt') {
+            this._showDebugLoading('正在执行 LLM 表格匹配...');
+            container.innerHTML = `
+                <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">匹配 Prompt：</div>
+                <div class="debug-code-block">${Utils.escapeHtml(data.prompt)}</div>
+            `;
+        } else if (step === 'response') {
+            this._hideDebugLoading();
+            const indices = data.matched_indices || [];
+            // 在已有内容后追加 LLM 返回和解析结果
+            container.innerHTML += `
+                <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; margin-top: 8px;">LLM 返回：</div>
+                <div class="debug-code-block">${Utils.escapeHtml(data.llm_response || '(无)')}</div>
+                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">解析序号: ${indices.length > 0 ? indices.join(', ') : '(无)'}</div>
+            `;
+        } else if (step === 'error') {
+            this._hideDebugLoading();
+            container.innerHTML += `
+                <div style="color: #e74c3c; font-size: 12px; margin-top: 8px;">匹配失败: ${Utils.escapeHtml(data.error)}</div>
+            `;
         }
     },
 
@@ -1504,7 +1550,7 @@ const RuleConfig = {
 
     resetDebugResults() {
         // 隐藏所有结果区块
-        ['debug-sec-search', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
+        ['debug-sec-match-llm', 'debug-sec-search', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
         });
