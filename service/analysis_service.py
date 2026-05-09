@@ -256,10 +256,14 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
 
     cfg = get_config().analysis
 
+    # 读取文件归属类型
+    file_row = (await session.execute(select(File).where(File.file_id == file_id))).scalar_one_or_none()
+    type_id = (file_row.type_id if file_row else None) or "default"
+
     # 获取所有启用的规则，按 priority 排序
     stmt = (
         select(AnalysisRule)
-        .where(AnalysisRule.enabled == 1)
+        .where(AnalysisRule.enabled == 1, AnalysisRule.type_id == type_id)
         .order_by(AnalysisRule.priority)
     )
     result = await session.execute(stmt)
@@ -435,10 +439,14 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
 
     cfg = get_config().analysis
 
+    # 读取文件归属类型
+    file_row = (await session.execute(select(File).where(File.file_id == file_id))).scalar_one_or_none()
+    type_id = (file_row.type_id if file_row else None) or "default"
+
     # 获取所有启用的规则，按 priority 排序
     stmt = (
         select(AnalysisRule)
-        .where(AnalysisRule.enabled == 1)
+        .where(AnalysisRule.enabled == 1, AnalysisRule.type_id == type_id)
         .order_by(AnalysisRule.priority)
     )
     result = await session.execute(stmt)

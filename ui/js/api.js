@@ -6,6 +6,17 @@ const API = {
     baseUrl: '',
 
     /**
+     * 当前选中的文档类型 ID（持久化在 localStorage）
+     */
+    getCurrentTypeId() {
+        return localStorage.getItem('currentTypeId') || 'default';
+    },
+
+    setCurrentTypeId(typeId) {
+        localStorage.setItem('currentTypeId', typeId || 'default');
+    },
+
+    /**
      * 通用请求方法
      */
     async request(url, options = {}) {
@@ -28,12 +39,13 @@ const API = {
     /**
      * 上传文件 (流式)
      */
-    uploadFileStream(file, onEvent) {
+    uploadFileStream(file, onEvent, typeId) {
         return new Promise((resolve, reject) => {
             const formData = new FormData();
             formData.append('file', file);
 
-            fetch(`${this.baseUrl}/file/parse?mode=stream`, {
+            const tid = encodeURIComponent(typeId || this.getCurrentTypeId());
+            fetch(`${this.baseUrl}/file/parse?mode=stream&type_id=${tid}`, {
                 method: 'POST',
                 body: formData,
             }).then(response => {
@@ -84,11 +96,12 @@ const API = {
     /**
      * 上传文件 (异步)
      */
-    async uploadFileAsync(file) {
+    async uploadFileAsync(file, typeId) {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${this.baseUrl}/file/parse?mode=async`, {
+        const tid = encodeURIComponent(typeId || this.getCurrentTypeId());
+        const response = await fetch(`${this.baseUrl}/file/parse?mode=async&type_id=${tid}`, {
             method: 'POST',
             body: formData,
         });
@@ -104,9 +117,11 @@ const API = {
     /**
      * 获取文件列表
      */
-    async getFileList(page = 1, pageSize = 20, status = '') {
+    async getFileList(page = 1, pageSize = 20, status = '', typeId) {
         const params = new URLSearchParams({ page, page_size: pageSize });
         if (status) params.append('status', status);
+        const tid = typeId !== undefined ? typeId : this.getCurrentTypeId();
+        if (tid) params.append('type_id', tid);
         const result = await this.request(`/file/list?${params}`);
         return result.data;
     },
@@ -233,18 +248,21 @@ const API = {
     /**
      * 获取字段提取配置列表
      */
-    async getExtractionFields() {
-        const result = await this.request('/extraction/fields');
+    async getExtractionFields(typeId) {
+        const tid = typeId !== undefined ? typeId : this.getCurrentTypeId();
+        const params = tid ? `?type_id=${encodeURIComponent(tid)}` : '';
+        const result = await this.request(`/extraction/fields${params}`);
         return result.data;
     },
 
     /**
-     * 新增/更新字段提取配置
+     * 新增/更新字段提取配置（自动注入当前 type_id）
      */
     async saveExtractionField(data) {
+        const payload = { type_id: this.getCurrentTypeId(), ...data };
         return this.request('/extraction/fields', {
             method: 'POST',
-            body: JSON.stringify(data),
+            body: JSON.stringify(payload),
         });
     },
 
@@ -268,18 +286,21 @@ const API = {
     /**
      * 获取逻辑分析配置列表
      */
-    async getAnalysisRules() {
-        const result = await this.request('/analysis/rules');
+    async getAnalysisRules(typeId) {
+        const tid = typeId !== undefined ? typeId : this.getCurrentTypeId();
+        const params = tid ? `?type_id=${encodeURIComponent(tid)}` : '';
+        const result = await this.request(`/analysis/rules${params}`);
         return result.data;
     },
 
     /**
-     * 新增/更新逻辑分析配置
+     * 新增/更新逻辑分析配置（自动注入当前 type_id）
      */
     async saveAnalysisRule(data) {
+        const payload = { type_id: this.getCurrentTypeId(), ...data };
         return this.request('/analysis/rules', {
             method: 'POST',
-            body: JSON.stringify(data),
+            body: JSON.stringify(payload),
         });
     },
 
@@ -304,7 +325,73 @@ const API = {
      * 获取已完成文件列表（用于调试面板文件选择器）
      */
     async getCompletedFiles() {
-        const result = await this.request('/file/list?page=1&page_size=100&status=complete');
+        const tid = this.getCurrentTypeId();
+        const tidParam = tid ? `&type_id=${encodeURIComponent(tid)}` : '';
+        const result = await this.request(`/file/list?page=1&page_size=100&status=complete${tidParam}`);
+        return result.data;
+    },
+
+    // ─── 文档类型 ───
+
+    /**
+     * 获取文档类型列表
+     */
+    async getDocTypes() {
+        const result = await this.request('/doctype/list');
+        return result.data;
+    },
+
+    /**
+     * 新增/更新文档类型
+     */
+    async saveDocType(data) {
+        return this.request('/doctype', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    },
+
+    /**
+     * 删除文档类型
+     */
+    async deleteDocType(typeId, force = false) {
+        const url = `/doctype/${encodeURIComponent(typeId)}${force ? '?force=true' : ''}`;
+        return this.request(url, { method: 'DELETE' });
+    },
+
+    /**
+     * 从源类型复制字段/规则到目标类型
+     */
+    async copyConfigs(targetTypeId, payload) {
+        const result = await this.request(`/doctype/${encodeURIComponent(targetTypeId)}/copy_from`, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+        return result.data;
+    },
+
+    /**
+     * 导出某类型的字段+规则为 JSON 载荷
+     */
+    async exportDocType(typeId) {
+        const result = await this.request(`/doctype/${encodeURIComponent(typeId)}/export`);
+        return result.data;
+    },
+
+    /**
+     * 从 JSON 载荷导入字段+规则
+     */
+    async importDocType(payload, options = {}) {
+        const body = {
+            payload,
+            target_type_id: options.targetTypeId || null,
+            create_type_if_missing: options.createTypeIfMissing !== false,
+            on_conflict: options.onConflict || 'rename',
+        };
+        const result = await this.request('/doctype/import', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
         return result.data;
     },
 

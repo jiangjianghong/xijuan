@@ -50,9 +50,10 @@ async def list_files(
     page: int = 1,
     page_size: int = 20,
     status: str = "",
+    type_id: str = "",
     db: AsyncSession = Depends(get_db),
 ):
-    """分页查询文件列表。"""
+    """分页查询文件列表。可选按 type_id 过滤。"""
     # 构建基础查询
     base_query = select(FileModel)
     count_query = select(func.count(FileModel.file_id))
@@ -61,6 +62,11 @@ async def list_files(
     if status:
         base_query = base_query.where(FileModel.progress == status)
         count_query = count_query.where(FileModel.progress == status)
+
+    # 类型筛选
+    if type_id:
+        base_query = base_query.where(FileModel.type_id == type_id)
+        count_query = count_query.where(FileModel.type_id == type_id)
 
     # 查询总数
     total_result = await db.execute(count_query)
@@ -82,6 +88,7 @@ async def list_files(
                     file_name=f.file_name,
                     file_size=f.file_size,
                     progress=f.progress,
+                    type_id=f.type_id or "default",
                     error=f.error,
                     create_time=f.create_time,
                 )
@@ -175,13 +182,15 @@ async def parse_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     mode: str = "async",
+    type_id: str = "default",
     callback_url: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """提交文件解析（支持 sync/async/stream）。
 
-    当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：
-    {"file_id": "...", "status": "parsing/tableing/chunking/embedding/extracting/analyzing/complete"}
+    - type_id：归属的文档类型（默认 'default'，通过 query 参数传入）
+    - 当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：
+      {"file_id": "...", "status": "parsing/tableing/chunking/embedding/extracting/analyzing/complete"}
     """
     cfg = get_config().mineru
 
@@ -194,7 +203,8 @@ async def parse_file(
         )
 
     file_name = file.filename or "unknown.pdf"
-    file_id = generate_file_id(file_name)
+    type_id = (type_id or "default").strip() or "default"
+    file_id = generate_file_id(type_id, file_name)
 
     # 检查文件是否已存在
     stmt = select(FileModel).where(FileModel.file_id == file_id)
@@ -202,6 +212,15 @@ async def parse_file(
     existing_file = result.scalar_one_or_none()
 
     if existing_file:
+        # type_id 不一致（理论上不会发生，因为 file_id 已经包含 type_id 哈希；保险起见仍校验）
+        if (existing_file.type_id or "default") != type_id:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"文件 ID 冲突：已存在记录归属 type_id={existing_file.type_id}，"
+                    f"与请求 type_id={type_id} 不一致"
+                ),
+            )
         progress = existing_file.progress
 
         # 归一化历史状态名，统一使用 tableing / tableing_failed
@@ -267,6 +286,7 @@ async def parse_file(
                 # 重新创建文件记录
                 new_file = FileModel(
                     file_id=file_id,
+                    type_id=type_id,
                     file_name=file_name,
                     file_size=len(file_content_bytes),
                     progress="parsing",
@@ -350,6 +370,7 @@ async def parse_file(
         # 创建新文件记录
         new_file = FileModel(
             file_id=file_id,
+            type_id=type_id,
             file_name=file_name,
             file_size=len(file_content_bytes),
             progress="parsing",
@@ -399,6 +420,7 @@ async def get_file_status(file_id: str, db: AsyncSession = Depends(get_db)):
             file_name=file_record.file_name,
             file_size=file_record.file_size,
             progress=file_record.progress,
+            type_id=file_record.type_id or "default",
             error=file_record.error,
             create_time=file_record.create_time,
             updated_at=file_record.updated_at,
@@ -638,6 +660,7 @@ async def get_file_detail(file_id: str, db: AsyncSession = Depends(get_db)):
             file_name=file_record.file_name,
             file_size=file_record.file_size,
             progress=file_record.progress,
+            type_id=file_record.type_id or "default",
             error=file_record.error,
             create_time=file_record.create_time,
             updated_at=file_record.updated_at,

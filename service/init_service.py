@@ -11,6 +11,7 @@ from utils.config import get_config
 from model.tables import (
     AnalysisResult,
     Base,
+    DocType,
     ExtractionResult,
     File,
     FileChunk,
@@ -56,6 +57,9 @@ async def init_database() -> None:
         migrations = [
             ("extraction_field", "table_match_keywords", "JSON"),
             ("extraction_field", "table_match_max_results", "INT"),
+            ("files", "type_id", "VARCHAR(64) NOT NULL DEFAULT 'default'"),
+            ("extraction_field", "type_id", "VARCHAR(64) NOT NULL DEFAULT 'default'"),
+            ("analysis_rule", "type_id", "VARCHAR(64) NOT NULL DEFAULT 'default'"),
         ]
         for table_name, column_name, column_type in migrations:
             result = await conn.execute(
@@ -65,9 +69,44 @@ async def init_database() -> None:
             )
             if result.scalar() == 0:
                 await conn.execute(
-                    text(f"ALTER TABLE `{table_name}` ADD COLUMN `{column_name}` {column_type} NULL")
+                    text(f"ALTER TABLE `{table_name}` ADD COLUMN `{column_name}` {column_type}")
                 )
                 logger.info("已为 {} 表添加 {} 列", table_name, column_name)
+
+        # 索引补充：type_id 索引（IF NOT EXISTS 兼容方式）
+        index_migrations = [
+            ("files", "ix_files_type_id", "type_id"),
+            ("extraction_field", "ix_extraction_field_type_id", "type_id"),
+            ("analysis_rule", "ix_analysis_rule_type_id", "type_id"),
+        ]
+        for table_name, index_name, columns in index_migrations:
+            result = await conn.execute(
+                text(f"SELECT COUNT(*) FROM information_schema.STATISTICS "
+                     f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table_name}' "
+                     f"AND INDEX_NAME = '{index_name}'")
+            )
+            if result.scalar() == 0:
+                await conn.execute(
+                    text(f"CREATE INDEX `{index_name}` ON `{table_name}` ({columns})")
+                )
+                logger.info("已为 {} 表添加索引 {}", table_name, index_name)
+
+        # 回填 default 类型（兼容老数据：旧列可能仍为 NULL/空串）
+        await conn.execute(
+            text("UPDATE files SET type_id = 'default' WHERE type_id IS NULL OR type_id = ''")
+        )
+        await conn.execute(
+            text("UPDATE extraction_field SET type_id = 'default' WHERE type_id IS NULL OR type_id = ''")
+        )
+        await conn.execute(
+            text("UPDATE analysis_rule SET type_id = 'default' WHERE type_id IS NULL OR type_id = ''")
+        )
+
+        # 确保默认类型记录存在
+        await conn.execute(
+            text("INSERT IGNORE INTO doc_type (type_id, type_name, description, is_default, enabled) "
+                 "VALUES ('default', '默认类型', '系统默认文档类型，不可删除', 1, 1)")
+        )
 
     logger.info("数据库表检查完成")
 

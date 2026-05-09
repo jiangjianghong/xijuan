@@ -12,7 +12,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from model.tables import ExtractionField, ExtractionResult, FileChunk, FileContent, FileTable
+from model.tables import ExtractionField, ExtractionResult, File, FileChunk, FileContent, FileTable
 from utils.config import get_config
 from utils.llm_client import chat_completion, get_embeddings
 from utils.milvus_client import MilvusClient
@@ -747,10 +747,14 @@ async def run_extraction(file_id: str, session: AsyncSession) -> None:
     """
     logger.info("开始字段提取: {}", file_id)
 
+    # 读取文件归属类型
+    file_row = (await session.execute(select(File).where(File.file_id == file_id))).scalar_one_or_none()
+    type_id = (file_row.type_id if file_row else None) or "default"
+
     # 获取所有启用的字段配置，按 priority 排序
     stmt = (
         select(ExtractionField)
-        .where(ExtractionField.enabled == 1)
+        .where(ExtractionField.enabled == 1, ExtractionField.type_id == type_id)
         .order_by(ExtractionField.priority)
     )
     result = await session.execute(stmt)
@@ -832,10 +836,14 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     """
     logger.info("开始流式字段提取: {}", file_id)
 
+    # 读取文件归属类型
+    file_row = (await session.execute(select(File).where(File.file_id == file_id))).scalar_one_or_none()
+    type_id = (file_row.type_id if file_row else None) or "default"
+
     # 获取所有启用的字段配置，按 priority 排序
     stmt = (
         select(ExtractionField)
-        .where(ExtractionField.enabled == 1)
+        .where(ExtractionField.enabled == 1, ExtractionField.type_id == type_id)
         .order_by(ExtractionField.priority)
     )
     result = await session.execute(stmt)

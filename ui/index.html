@@ -80,6 +80,12 @@
                 流式演示
             </button>
         </nav>
+        <div class="doctype-bar" style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+            <i data-lucide="folder" class="w-4 h-4 text-bio-med"></i>
+            <label style="font-size:13px; color:#4F775D;">文档类型</label>
+            <select id="doctype-selector" class="status-filter" style="min-width:140px;"></select>
+            <button class="btn btn-secondary" style="padding:4px 10px; font-size:12px;" onclick="DocTypeManager.openManageDialog()">管理</button>
+        </div>
     </header>
 
     <!-- Page: File Processing -->
@@ -170,7 +176,10 @@
         <section id="section-fields" class="rule-section active glass-card" style="padding: 20px;">
             <div class="rule-section-header">
                 <h2 class="section-title">字段提取配置</h2>
-                <button class="btn btn-primary" onclick="RuleConfig.openFieldForm()">新增字段</button>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn btn-secondary" onclick="DocTypeManager.openCopyDialog()">从其他类型复制</button>
+                    <button class="btn btn-primary" onclick="RuleConfig.openFieldForm()">新增字段</button>
+                </div>
             </div>
             <div class="table-wrapper">
                 <table class="rule-table">
@@ -195,7 +204,10 @@
         <section id="section-rules" class="rule-section glass-card" style="padding: 20px;">
             <div class="rule-section-header">
                 <h2 class="section-title">逻辑分析配置</h2>
-                <button class="btn btn-primary" onclick="RuleConfig.openRuleForm()">新增规则</button>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn btn-secondary" onclick="DocTypeManager.openCopyDialog()">从其他类型复制</button>
+                    <button class="btn btn-primary" onclick="RuleConfig.openRuleForm()">新增规则</button>
+                </div>
             </div>
             <div class="table-wrapper">
                 <table class="rule-table">
@@ -501,12 +513,97 @@
     <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>
 
+    <!-- Doc Type Manage Modal -->
+    <div id="doctype-modal-overlay" class="rule-modal-overlay">
+        <div class="rule-modal" style="max-width:680px;">
+            <div class="rule-modal-header">
+                <h3>文档类型管理</h3>
+                <button class="rule-modal-close" onclick="DocTypeManager.closeManageDialog()">&times;</button>
+            </div>
+            <div class="rule-modal-body">
+                <div style="display:flex; gap:8px; align-items:flex-end; margin-bottom:16px;">
+                    <div style="flex:1;">
+                        <label style="font-size:12px; color:#4F775D;">类型 ID（英文/数字/_/-）</label>
+                        <input id="doctype-new-id" type="text" placeholder="如：contract" class="form-input" style="width:100%;">
+                    </div>
+                    <div style="flex:1;">
+                        <label style="font-size:12px; color:#4F775D;">类型名称</label>
+                        <input id="doctype-new-name" type="text" placeholder="如：采购合同" class="form-input" style="width:100%;">
+                    </div>
+                    <button class="btn btn-primary" onclick="DocTypeManager.createTypeFromForm()">新增</button>
+                    <button class="btn btn-secondary" onclick="DocTypeManager.triggerImport()">从文件导入</button>
+                </div>
+                <table class="rule-table">
+                    <thead>
+                        <tr>
+                            <th>类型 ID</th>
+                            <th>名称</th>
+                            <th>文件</th>
+                            <th>字段</th>
+                            <th>规则</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="doctype-table-body"></tbody>
+                </table>
+            </div>
+            <div class="rule-modal-footer">
+                <button class="btn btn-ghost" onclick="DocTypeManager.closeManageDialog()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Copy Configs Modal -->
+    <div id="copy-modal-overlay" class="rule-modal-overlay">
+        <div class="rule-modal" style="max-width:680px;">
+            <div class="rule-modal-header">
+                <h3>从其他类型复制配置</h3>
+                <button class="rule-modal-close" onclick="DocTypeManager.closeCopyDialog()">&times;</button>
+            </div>
+            <div class="rule-modal-body">
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:12px; color:#4F775D;">复制到当前类型</label>
+                    <input id="copy-target-display" type="text" disabled class="form-input" style="width:100%;">
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:12px; color:#4F775D;">来源类型</label>
+                    <select id="copy-source-select" class="form-input" style="width:100%;" onchange="DocTypeManager.onSourceTypeChange()"></select>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:12px; color:#4F775D;">复制内容</label>
+                    <div style="display:flex; gap:16px; padding:8px 0;">
+                        <label><input type="checkbox" id="copy-fields-flag" checked> 全部字段</label>
+                        <label><input type="checkbox" id="copy-rules-flag" checked> 全部规则</label>
+                    </div>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:12px; color:#4F775D;">同名冲突处理</label>
+                    <select id="copy-conflict" class="form-input" style="width:100%;">
+                        <option value="rename">自动改名（追加" (副本)"）</option>
+                        <option value="skip">跳过同名</option>
+                    </select>
+                </div>
+                <div id="copy-source-summary" style="font-size:12px; color:#4F775D; margin-top:8px;"></div>
+            </div>
+            <div class="rule-modal-footer">
+                <button class="btn btn-ghost" onclick="DocTypeManager.closeCopyDialog()">取消</button>
+                <button class="btn btn-primary" onclick="DocTypeManager.executeCopy()">开始复制</button>
+            </div>
+        </div>
+    </div>
+
     <script src="js/utils.js"></script>
     <script src="js/api.js"></script>
+    <script src="js/doctype.js"></script>
     <script src="js/ruleConfig.js"></script>
     <script src="js/app.js"></script>
     <script src="js/stream-demo.js"></script>
     <!-- Initialize Lucide icons -->
-    <script>document.addEventListener('DOMContentLoaded', () => lucide.createIcons());</script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            DocTypeManager.init();
+        });
+    </script>
 </body>
 </html>

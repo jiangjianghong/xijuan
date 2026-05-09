@@ -22,12 +22,29 @@ class Base(DeclarativeBase):
     pass
 
 
+# ── 0. doc_type 表 ──────────────────────────────────────────
+
+class DocType(Base):
+    __tablename__ = "doc_type"
+
+    type_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    type_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_default: Mapped[int] = mapped_column(TINYINT, default=0)
+    enabled: Mapped[int] = mapped_column(TINYINT, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
 # ── 1. files 表 ─────────────────────────────────────────────
 
 class File(Base):
     __tablename__ = "files"
 
     file_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    type_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     file_name: Mapped[str] = mapped_column(String(512), nullable=False)
     file_size: Mapped[int] = mapped_column(BigInteger, default=0)
     create_time: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -45,6 +62,10 @@ class File(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_files_type_id", "type_id"),
     )
 
 
@@ -103,6 +124,7 @@ class ExtractionField(Base):
     __tablename__ = "extraction_field"
 
     field_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    type_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     field_name: Mapped[str] = mapped_column(String(200), nullable=False)
     source_type: Mapped[str] = mapped_column(
         Enum("table", "text", name="source_type_enum"), nullable=False
@@ -132,6 +154,10 @@ class ExtractionField(Base):
     text_system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     text_extract_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    __table_args__ = (
+        Index("ix_extraction_field_type_id", "type_id"),
+    )
+
 
 # ── 6. analysis_rule 表 ─────────────────────────────────────
 
@@ -139,6 +165,7 @@ class AnalysisRule(Base):
     __tablename__ = "analysis_rule"
 
     rule_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    type_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     rule_name: Mapped[str] = mapped_column(String(200), nullable=False)
     rule_type: Mapped[str] = mapped_column(
         Enum("judge", "calc", name="rule_type_enum"), nullable=False
@@ -151,6 +178,10 @@ class AnalysisRule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_analysis_rule_type_id", "type_id"),
     )
 
 

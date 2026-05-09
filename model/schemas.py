@@ -18,6 +18,108 @@ class ResponseWrapper(BaseModel):
     data: Any = None
 
 
+# ── 文档类型 ────────────────────────────────────────────────
+
+class DocTypeCreate(BaseModel):
+    type_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$", max_length=64)
+    type_name: str = Field(..., max_length=200)
+    description: Optional[str] = None
+    enabled: int = 1
+
+
+class DocTypeResponse(BaseModel):
+    type_id: str
+    type_name: str
+    description: Optional[str] = None
+    is_default: int = 0
+    enabled: int = 1
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class CopyConfigsRequest(BaseModel):
+    """从源类型复制配置到目标类型。
+
+    field_ids / rule_ids 留空表示全部复制；
+    on_conflict 决定目标类型已有同名字段/规则时的行为。
+    """
+    source_type_id: str
+    field_ids: Optional[List[str]] = None
+    rule_ids: Optional[List[str]] = None
+    on_conflict: str = Field("rename", pattern=r"^(skip|rename)$")
+
+
+class CopyConfigsResponse(BaseModel):
+    copied_fields: int = 0
+    skipped_fields: int = 0
+    copied_rules: int = 0
+    skipped_rules: int = 0
+    missing_dependencies: List[str] = []
+
+
+class ExportFieldItem(BaseModel):
+    """导出格式的字段项（不含 type_id / field_id / 时间戳）。"""
+    field_id: str
+    field_name: str
+    source_type: str
+    enabled: int = 1
+    priority: int = 0
+    table_name_pattern: Optional[str] = None
+    table_match_type: Optional[str] = None
+    table_match_keywords: Optional[List[str]] = None
+    table_match_max_results: Optional[int] = None
+    table_system_prompt: Optional[str] = None
+    table_extract_prompt: Optional[str] = None
+    search_type: Optional[str] = None
+    search_config: Optional[Dict[str, Any]] = None
+    text_system_prompt: Optional[str] = None
+    text_extract_prompt: Optional[str] = None
+
+
+class ExportRuleItem(BaseModel):
+    """导出格式的规则项。depend_fields 用 field_name 列表，便于跨环境恢复。"""
+    rule_id: str
+    rule_name: str
+    rule_type: str
+    expression: str
+    system_prompt: Optional[str] = None
+    depend_field_names: List[str] = []
+    enabled: int = 1
+    priority: int = 0
+
+
+class ExportPayload(BaseModel):
+    """导出/导入的整体载荷。"""
+    type_id: str
+    type_name: str
+    description: Optional[str] = None
+    version: int = 1
+    fields: List[ExportFieldItem] = []
+    rules: List[ExportRuleItem] = []
+
+
+class ImportConfigsRequest(BaseModel):
+    """从 JSON 载荷导入到目标类型。
+
+    target_type_id 为空则使用 payload.type_id；
+    create_type_if_missing=true 时若目标类型不存在则自动创建。
+    """
+    payload: ExportPayload
+    target_type_id: Optional[str] = None
+    create_type_if_missing: bool = True
+    on_conflict: str = Field("rename", pattern=r"^(skip|rename)$")
+
+
+class ImportConfigsResponse(BaseModel):
+    target_type_id: str
+    created_type: bool = False
+    copied_fields: int = 0
+    skipped_fields: int = 0
+    copied_rules: int = 0
+    skipped_rules: int = 0
+    missing_dependencies: List[str] = []
+
+
 # ── 文件相关 ────────────────────────────────────────────────
 
 class FileStatusResponse(BaseModel):
@@ -25,6 +127,7 @@ class FileStatusResponse(BaseModel):
     file_name: str
     file_size: int
     progress: str
+    type_id: str = "default"
     error: Optional[str] = None
     create_time: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -72,6 +175,7 @@ class SearchTypeEnum(str, Enum):
 
 class ExtractionFieldCreate(BaseModel):
     field_id: str = Field(..., pattern=r"^[a-zA-Z0-9_]+$", max_length=100)
+    type_id: str = Field("default", pattern=r"^[a-zA-Z0-9_-]+$", max_length=64)
     field_name: str = Field(..., max_length=200)
     source_type: SourceTypeEnum
     enabled: int = 1
@@ -120,6 +224,7 @@ class RuleTypeEnum(str, Enum):
 
 class AnalysisRuleCreate(BaseModel):
     rule_id: str = Field(..., pattern=r"^[a-zA-Z0-9_]+$", max_length=100)
+    type_id: str = Field("default", pattern=r"^[a-zA-Z0-9_-]+$", max_length=64)
     rule_name: str = Field(..., max_length=200)
     rule_type: RuleTypeEnum
     expression: str
@@ -214,6 +319,7 @@ class FileListItem(BaseModel):
     file_name: str
     file_size: int
     progress: str
+    type_id: str = "default"
     error: Optional[str] = None
     create_time: Optional[datetime] = None
 
@@ -231,6 +337,7 @@ class FileDetailResponse(BaseModel):
     file_name: str
     file_size: int
     progress: str
+    type_id: str = "default"
     error: Optional[str] = None
     create_time: Optional[datetime] = None
     updated_at: Optional[datetime] = None

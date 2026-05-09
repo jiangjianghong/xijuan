@@ -41,11 +41,11 @@ uv sync
 - Logging configured in `logs/__init__.py` using loguru. Filters out polling endpoints from uvicorn access log.
 
 ### Layer Structure
-- **`blue_print/`** - FastAPI routers (registered in `__init__.py:register_routers`). Prefix: `/file`, `/extraction`, `/analysis`, `/search`.
+- **`blue_print/`** - FastAPI routers (registered in `__init__.py:register_routers`). Prefix: `/file`, `/extraction`, `/analysis`, `/search`, `/doctype`.
 - **`service/`** - Business logic. Each service module corresponds to a pipeline stage.
 - **`model/`** - SQLAlchemy async ORM (`tables.py`), Pydantic response schemas (`schemas.py`), database session management (`database.py`).
 - **`utils/`** - Shared clients: `llm_client.py` (OpenAI-compatible chat/embeddings), `milvus_client.py` (Milvus vector DB), `config.py`, `file_utils.py`, `callback.py`, `page_mapping.py`.
-- **`ui/`** - Static HTML/JS/CSS frontend, served at `/ui`. File detail view uses a centered modal with timeline, error display, and tabbed data views. Tables tab has a left sidebar (table names with page numbers) + right content (table preview) split layout.
+- **`ui/`** - Static HTML/JS/CSS frontend, served at `/ui`. File detail view uses a centered modal with timeline, error display, and tabbed data views. Tables tab has a left sidebar (table names with page numbers) + right content (table preview) split layout. Header has a doctype selector that scopes file list / field config / rule config to the current type.
 
 ### Pipeline Flow (`service/pipeline_service.py`)
 The core orchestrator. Six stages: parsing → tableing → chunking → embedding → extracting → analyzing. Three execution modes:
@@ -60,9 +60,15 @@ The **tableing** stage runs after parsing. `parse_tables()` extracts all `<table
 
 ### Database (MySQL + async SQLAlchemy)
 - `database.py` uses `aiomysql` async driver. `get_db()` is the FastAPI dependency for sessions.
-- Key tables in `model/tables.py`: `files` (progress tracking with stage timestamps), `file_content` (raw MD + middle_json + page_mapping), `file_table` (extracted HTML tables), `file_chunk` (text chunks with positions), `extraction_field` (configurable field definitions), `analysis_rule` (judge/calc rule definitions), `extraction_result`, `analysis_result`.
+- Key tables in `model/tables.py`: `doc_type` (file type definitions), `files` (progress tracking with stage timestamps; has `type_id`), `file_content` (raw MD + middle_json + page_mapping), `file_table` (extracted HTML tables), `file_chunk` (text chunks with positions), `extraction_field` (configurable field definitions; has `type_id`), `analysis_rule` (judge/calc rule definitions; has `type_id`), `extraction_result`, `analysis_result`.
 - File progress states: `parsing` -> `tableing` -> `chunking` -> `embedding` -> `extracting` -> `analyzing` -> `complete`. Each can fail to `*_failed`.
 - `files` table tracks timestamps per stage: `start_parsing_time`/`end_parsing_time`, `start_tableing_time`/`end_tableing_time`, `start_chunking_time`/`end_chunking_time`, `start_embedding_time`/`end_embedding_time`, `end_extracting_time`, `end_analyzing_time`.
+
+### Document Type Isolation (`blue_print/doctype_router.py`)
+Multi-type configuration support: each file is bound to one `type_id` (default `'default'`). Extraction fields and analysis rules are isolated per type — `extraction_service` / `analysis_service` look up `file.type_id` and filter `extraction_field` / `analysis_rule` by it. Configurations are NOT shared across types; sharing is done via explicit copy:
+- `POST /doctype/{type_id}/copy_from` clones fields/rules from a source type into the target type. New `field_id`/`rule_id` are UUIDs; `depend_fields` are remapped by `field_name` to the new IDs in the target type. Missing dependencies are returned to the caller (not silently dropped).
+- After copy, the two copies are fully independent — editing one does not affect the other.
+- Default type (`is_default=1`) cannot be deleted. Deleting a non-default type with files/configs requires `force=true` (cascades file content + Milvus + configs).
 
 ### Extraction System (`service/extraction_service.py`)
 Two source types:
@@ -76,24 +82,26 @@ Two rule types:
 
 ### External Dependencies
 - **MinerU** (`service/mineru_client.py`) - External PDF parsing service. Polled async via httpx.
-- **LLM** (`utils/llm_client.py`) - OpenAI-compatible API (default: Qwen via DashScope).
-- **Embedding** - OpenAI-compatible embedding API (default: text-embedding-v4 via DashScope).
-- **Milvus** (`utils/milvus_client.py`) - Vector database for semantic search. Collection auto-created on startup.
+- **LLM** (`utils/llm_client.py`) - OpenAI-compatible API (default: Qwen via DashScope). Retry with exponential backoff; skips 4xx errors except 429.
+- **Embedding** - OpenAI-compatible embedding API (default: text-embedding-v4 via DashScope). Batches requests, truncates to 8192 chars.
+- **Milvus** (`utils/milvus_client.py`) - Vector database for semantic search. Collection auto-created on startup with IVF_FLAT index.
 
 ## Key Patterns
 
 - All services are async. Database operations use `AsyncSession` throughout.
 - Pipeline tracks progress in `files.progress` column with timestamps per stage. On failure, progress is set to `*_failed` with error message.
-- `init_service.py` handles crash recovery on startup - any `*ing` state is reset to `*_failed` and orphan data cleaned. Also normalizes legacy status names (`table_name_validating` → `tableing`).
+- `init_service.py` handles crash recovery on startup - any `*ing` state is reset to `*_failed` and orphan data cleaned. Orphan cleanup scope varies by failure stage (e.g., `parsing_failed` cleans file_content + file_table + file_chunk + Milvus; `extracting_failed` cleans only extraction_result). Also normalizes legacy status names (`table_name_validating` -> `tableing`).
 - Prompt templates use XML-style placeholders: `<search_result>label</search_result>` for extraction, `<field_result>field_id</field_result>` for analysis.
 - LLM responses are parsed as JSON with fallback to regex extraction (`parse_llm_json_response`).
-- `file_id` is deterministically generated from filename (via `utils/file_utils.py`), so re-uploading the same file hits the existing record.
+- `file_id` is deterministically generated from `(type_id, file_name)` via SHA256[:32] (`utils/file_utils.py`). Same filename in different doc types → different `file_id` (independent records). Same filename in same type → hits existing record. Re-uploads auto-detect state: returns "already complete", rejects "in progress", or auto-retries from failed stage.
+- Tables from parsing are preserved as independent chunks (not split). Table names are prepended as context. Super-long tables (>8192 chars) are split on `</tr>`, `</td>`, or `\n` boundaries.
 
 ## Testing
 
 - Tests in `tests/` use pytest-asyncio with `asyncio_mode = "auto"`.
 - Test client fixture in `conftest.py` uses httpx `AsyncClient` with `ASGITransport`.
 - Test database connectivity is required (no mocking of DB by default).
+- Tests for extraction/analysis services use `monkeypatch` to mock LLM responses.
 
 ## Configuration
 

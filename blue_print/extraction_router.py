@@ -35,9 +35,11 @@ router = APIRouter(prefix="/extraction", tags=["extraction"])
 
 
 @router.get("/fields", response_model=ResponseWrapper)
-async def list_fields(db: AsyncSession = Depends(get_db)):
-    """获取字段提取配置列表。"""
+async def list_fields(type_id: str = "", db: AsyncSession = Depends(get_db)):
+    """获取字段提取配置列表。可选按 type_id 过滤。"""
     stmt = select(ExtractionField).order_by(ExtractionField.priority)
+    if type_id:
+        stmt = stmt.where(ExtractionField.type_id == type_id)
     result = await db.execute(stmt)
     fields = result.scalars().all()
 
@@ -45,6 +47,7 @@ async def list_fields(db: AsyncSession = Depends(get_db)):
         data=[
             ExtractionFieldResponse(
                 field_id=f.field_id,
+                type_id=f.type_id or "default",
                 field_name=f.field_name,
                 source_type=f.source_type,
                 enabled=f.enabled,
@@ -70,13 +73,27 @@ async def list_fields(db: AsyncSession = Depends(get_db)):
 async def upsert_field(
     field: ExtractionFieldCreate, db: AsyncSession = Depends(get_db)
 ):
-    """新增/更新字段提取配置（根据 field_id 判断 upsert）。"""
+    """新增/更新字段提取配置（根据 field_id 判断 upsert）。
+
+    field_id 全局唯一；若已存在记录归属于其他 type_id，返回 409。
+    """
     stmt = select(ExtractionField).where(ExtractionField.field_id == field.field_id)
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
 
+    target_type_id = field.type_id or "default"
+
     if existing:
+        if (existing.type_id or "default") != target_type_id:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"field_id={field.field_id} 已被 type_id={existing.type_id} 占用，"
+                    "请换一个 field_id 或先删除原记录"
+                ),
+            )
         # 更新
+        existing.type_id = target_type_id
         existing.field_name = field.field_name
         existing.source_type = field.source_type
         existing.enabled = field.enabled
@@ -96,6 +113,7 @@ async def upsert_field(
         # 新增
         new_field = ExtractionField(
             field_id=field.field_id,
+            type_id=target_type_id,
             field_name=field.field_name,
             source_type=field.source_type,
             enabled=field.enabled,

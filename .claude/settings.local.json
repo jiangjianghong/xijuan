@@ -9,7 +9,8 @@
       "mcp__sequential-thinking__sequentialthinking",
       "Bash(curl -v --max-time 15 \"https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions\")",
       "Bash(nslookup:*)",
-      "Bash(curl -s --max-time 30 -X POST \"https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions\" -H \"Content-Type: application/json\" -H \"Authorization: Bearer sk-c515937fecce4719823fcbfa364e09b8\" -d '{\"model\":\"qwen-max\",\"messages\":[{\"role\":\"user\",\"content\":\"说你好\"}]}')"
+      "Bash(curl -s --max-time 30 -X POST \"https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions\" -H \"Content-Type: application/json\" -H \"Authorization: Bearer sk-c515937fecce4719823fcbfa364e09b8\" -d '{\"model\":\"qwen-max\",\"messages\":[{\"role\":\"user\",\"content\":\"说你好\"}]}')",
+      "Bash(git *)"
     ]
   }
 }

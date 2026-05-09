@@ -28,9 +28,11 @@ router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 
 @router.get("/rules", response_model=ResponseWrapper)
-async def list_rules(db: AsyncSession = Depends(get_db)):
-    """获取逻辑分析配置列表。"""
+async def list_rules(type_id: str = "", db: AsyncSession = Depends(get_db)):
+    """获取逻辑分析配置列表。可选按 type_id 过滤。"""
     stmt = select(AnalysisRule).order_by(AnalysisRule.priority)
+    if type_id:
+        stmt = stmt.where(AnalysisRule.type_id == type_id)
     result = await db.execute(stmt)
     rules = result.scalars().all()
 
@@ -38,6 +40,7 @@ async def list_rules(db: AsyncSession = Depends(get_db)):
         data=[
             AnalysisRuleResponse(
                 rule_id=r.rule_id,
+                type_id=r.type_id or "default",
                 rule_name=r.rule_name,
                 rule_type=r.rule_type,
                 expression=r.expression,
@@ -57,13 +60,27 @@ async def list_rules(db: AsyncSession = Depends(get_db)):
 async def upsert_rule(
     rule: AnalysisRuleCreate, db: AsyncSession = Depends(get_db)
 ):
-    """新增/更新逻辑分析配置（根据 rule_id 判断 upsert）。"""
+    """新增/更新逻辑分析配置（根据 rule_id 判断 upsert）。
+
+    rule_id 全局唯一；若已存在记录归属于其他 type_id，返回 409。
+    """
     stmt = select(AnalysisRule).where(AnalysisRule.rule_id == rule.rule_id)
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
 
+    target_type_id = rule.type_id or "default"
+
     if existing:
+        if (existing.type_id or "default") != target_type_id:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"rule_id={rule.rule_id} 已被 type_id={existing.type_id} 占用，"
+                    "请换一个 rule_id 或先删除原记录"
+                ),
+            )
         # 更新
+        existing.type_id = target_type_id
         existing.rule_name = rule.rule_name
         existing.rule_type = rule.rule_type
         existing.expression = rule.expression
@@ -77,6 +94,7 @@ async def upsert_rule(
         # 新增
         new_rule = AnalysisRule(
             rule_id=rule.rule_id,
+            type_id=target_type_id,
             rule_name=rule.rule_name,
             rule_type=rule.rule_type,
             expression=rule.expression,
