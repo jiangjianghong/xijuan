@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.tables import ExtractionField, ExtractionResult, File, FileChunk, FileContent, FileTable
+from utils.callback import notify_callback
 from utils.config import get_config
 from utils.llm_client import chat_completion, get_embeddings
 from utils.milvus_client import MilvusClient
@@ -733,7 +734,11 @@ async def extract_text_field(
         return "", "", None
 
 
-async def run_extraction(file_id: str, session: AsyncSession) -> None:
+async def run_extraction(
+    file_id: str,
+    session: AsyncSession,
+    callback_url: Optional[str] = None,
+) -> None:
     """执行文件的完整字段提取流程。
 
     1. 获取所有 enabled=1 的 extraction_field，按 priority 排序
@@ -744,6 +749,7 @@ async def run_extraction(file_id: str, session: AsyncSession) -> None:
     Args:
         file_id: 文件 ID。
         session: 数据库会话。
+        callback_url: 可选回调地址。每完成一个字段会推 field_done；阶段终态推 stage_done。
     """
     logger.info("开始字段提取: {}", file_id)
 
@@ -760,7 +766,12 @@ async def run_extraction(file_id: str, session: AsyncSession) -> None:
     result = await session.execute(stmt)
     fields = result.scalars().all()
 
-    for field in fields:
+    total = len(fields)
+    succeeded = 0
+    failed = 0
+    aggregated: List[Dict[str, Any]] = []
+
+    for idx, field in enumerate(fields):
         try:
             if field.source_type == "table":
                 extracted_value, reason, source_refs = await extract_table_field(file_id, field, session)
@@ -791,6 +802,20 @@ async def run_extraction(file_id: str, session: AsyncSession) -> None:
             await session.commit()
             logger.info("字段提取成功: field_id={}, value={}", field.field_id, extracted_value[:100] if extracted_value else "")
 
+            succeeded += 1
+            item = {
+                "field_id": field.field_id,
+                "field_name": field.field_name,
+                "value": extracted_value,
+                "reason": reason,
+                "source_refs": source_refs,
+                "success": True,
+                "index": idx + 1,
+                "total": total,
+            }
+            aggregated.append(item)
+            await notify_callback(callback_url, file_id, "extracting", event="field_done", data=item)
+
         except Exception as e:
             logger.error("字段提取失败: field_id={}, error={}", field.field_id, e)
             # 保存空值
@@ -815,6 +840,33 @@ async def run_extraction(file_id: str, session: AsyncSession) -> None:
                 session.add(extraction_result)
 
             await session.commit()
+
+            failed += 1
+            item = {
+                "field_id": field.field_id,
+                "field_name": field.field_name,
+                "value": "",
+                "reason": str(e),
+                "source_refs": None,
+                "success": False,
+                "index": idx + 1,
+                "total": total,
+            }
+            aggregated.append(item)
+            await notify_callback(callback_url, file_id, "extracting", event="field_done", data=item)
+
+    await notify_callback(
+        callback_url,
+        file_id,
+        "extracting",
+        event="stage_done",
+        data={
+            "total": total,
+            "succeeded": succeeded,
+            "failed": failed,
+            "results": aggregated,
+        },
+    )
 
     logger.info("字段提取完成: {}", file_id)
 

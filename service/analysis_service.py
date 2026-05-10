@@ -12,6 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.tables import AnalysisResult, AnalysisRule, ExtractionResult, File
+from utils.callback import notify_callback
 from utils.config import get_config
 from utils.llm_client import chat_completion
 
@@ -239,7 +240,11 @@ async def execute_calc(resolved_expression: str, precision: int = 2) -> Tuple[st
         raise ValueError(f"计算失败: {e}")
 
 
-async def run_analysis(file_id: str, session: AsyncSession) -> None:
+async def run_analysis(
+    file_id: str,
+    session: AsyncSession,
+    callback_url: Optional[str] = None,
+) -> None:
     """执行文件的完整逻辑分析流程。
 
     1. 获取所有 enabled=1 的 analysis_rule，按 priority 排序
@@ -251,6 +256,7 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
     Args:
         file_id: 文件 ID。
         session: 数据库会话。
+        callback_url: 可选回调地址。每完成一条规则会推 rule_done；阶段终态推 stage_done。
     """
     logger.info("开始逻辑分析: {}", file_id)
 
@@ -284,7 +290,12 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
         er.field_id: er.source_refs for er in extraction_results if er.source_refs
     }
 
-    for rule in rules:
+    total = len(rules)
+    succeeded = 0
+    failed = 0
+    aggregated: List[Dict[str, Any]] = []
+
+    for idx, rule in enumerate(rules):
         try:
             # 获取依赖字段值
             depend_fields = rule.depend_fields or []
@@ -334,6 +345,22 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
                     session.add(analysis_result)
 
                 await session.commit()
+
+                failed += 1
+                item = {
+                    "rule_id": rule.rule_id,
+                    "rule_name": rule.rule_name,
+                    "rule_type": rule.rule_type,
+                    "result": result_value,
+                    "reason": reason,
+                    "input_values": input_values,
+                    "source_refs": source_refs if source_refs else None,
+                    "success": False,
+                    "index": idx + 1,
+                    "total": total,
+                }
+                aggregated.append(item)
+                await notify_callback(callback_url, file_id, "analyzing", event="rule_done", data=item)
                 continue
 
             # 解析表达式
@@ -375,6 +402,22 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
             await session.commit()
             logger.info("规则分析成功: rule_id={}, result={}", rule.rule_id, result_value)
 
+            succeeded += 1
+            item = {
+                "rule_id": rule.rule_id,
+                "rule_name": rule.rule_name,
+                "rule_type": rule.rule_type,
+                "result": result_value,
+                "reason": reason,
+                "input_values": input_values,
+                "source_refs": source_refs if source_refs else None,
+                "success": True,
+                "index": idx + 1,
+                "total": total,
+            }
+            aggregated.append(item)
+            await notify_callback(callback_url, file_id, "analyzing", event="rule_done", data=item)
+
         except Exception as e:
             logger.error("规则分析失败: rule_id={}, error={}", rule.rule_id, e)
             # 保存空值
@@ -406,6 +449,22 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
 
             await session.commit()
 
+            failed += 1
+            item = {
+                "rule_id": rule.rule_id,
+                "rule_name": rule.rule_name,
+                "rule_type": rule.rule_type,
+                "result": "",
+                "reason": str(e),
+                "input_values": input_values,
+                "source_refs": None,
+                "success": False,
+                "index": idx + 1,
+                "total": total,
+            }
+            aggregated.append(item)
+            await notify_callback(callback_url, file_id, "analyzing", event="rule_done", data=item)
+
     # 更新文件状态为 complete
     stmt = (
         update(File)
@@ -414,6 +473,19 @@ async def run_analysis(file_id: str, session: AsyncSession) -> None:
     )
     await session.execute(stmt)
     await session.commit()
+
+    await notify_callback(
+        callback_url,
+        file_id,
+        "analyzing",
+        event="stage_done",
+        data={
+            "total": total,
+            "succeeded": succeeded,
+            "failed": failed,
+            "results": aggregated,
+        },
+    )
 
     logger.info("逻辑分析完成: {}", file_id)
 

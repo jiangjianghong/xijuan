@@ -55,6 +55,51 @@ The core orchestrator. Six stages: parsing → tableing → chunking → embeddi
 
 Both `run_pipeline` and `run_from_stage` (retry from any stage) exist in sync/stream variants. Failed stages are retried by cleaning downstream data and re-running from that point.
 
+### Async Callback Contract (`utils/callback.py`)
+When `callback_url` is supplied to `run_pipeline` / `run_from_stage`, the orchestrator and the per-item services (`run_extraction`, `run_analysis`) POST status updates to that URL. Timeout is **2.5s** per call; failures are logged and swallowed (never affect the main flow).
+
+**Payload shape:**
+```json
+// 阶段入口（每个阶段开始时各 1 次）
+{"file_id": "...", "status": "extracting"}
+
+// 单字段 / 单规则完成（仅 extracting 与 analyzing 阶段产生）
+{"file_id": "...", "status": "extracting", "event": "field_done",
+ "data": {"field_id", "field_name", "value", "reason", "source_refs",
+          "success": true, "index": 5, "total": 12}}
+
+{"file_id": "...", "status": "analyzing", "event": "rule_done",
+ "data": {"rule_id", "rule_name", "rule_type", "result", "reason",
+          "input_values", "source_refs", "success": true, "index": 3, "total": 8}}
+
+// 阶段完整数据（每个阶段结束时各 1 次）
+{"file_id": "...", "status": "<stage>", "event": "stage_done", "data": {...}}
+```
+
+**`stage_done.data` per stage:**
+
+| stage | data |
+|---|---|
+| parsing | `{content, middle_json, page_mapping}` — 完整 markdown 等价于 `/file/{id}/content` |
+| tableing | `{total, tables: [{file_id, table_index, total_table, table_name, table_content, start_pos, end_pos, page_num}]}` |
+| chunking | `{total, chunks: [{file_id, chunk_id, chunk_index, total_chunks, chunk_content, start_pos, end_pos, page_num}]}` |
+| embedding | **不携带 data**（仅作完成信号；向量数据量过大不下发，需要请走 Milvus 查询） |
+| extracting | `{total, succeeded, failed, results: [field_done.data ...]}` |
+| analyzing | `{total, succeeded, failed, results: [rule_done.data ...]}` |
+
+**事件序列示例（一次完整管线）：**
+```
+parsing                    → parsing + stage_done（完整 md）
+tableing                   → tableing + stage_done（完整 tables）
+chunking                   → chunking + stage_done（完整 chunks）
+embedding                  → embedding + stage_done（无 data）
+extracting + field_done×N  → extracting + stage_done（完整 results）
+analyzing  + rule_done×N   → analyzing  + stage_done（完整 results）
+complete
+```
+
+**实现位置：** stage_done 事件由 `pipeline_service.run_pipeline` / `run_from_stage` 在每阶段 commit 之后触发；`extracting` / `analyzing` 的 stage_done 与 per-item 事件由 `run_extraction` / `run_analysis` 内部触发，pipeline 层只透传 `callback_url`。老消费者只读 `status` 不受影响（新事件靠 `event` 字段区分）。
+
 ### Table Name Validation (`service/table_service.py`)
 The **tableing** stage runs after parsing. `parse_tables()` extracts all `<table>` HTML blocks from the Markdown content, then concurrently calls LLM (`_extract_table_name_with_llm`) to identify each table's name from preceding context. Falls back to the last line before the table if LLM fails. Table names are truncated to 30 characters. Concurrency controlled by `table_name_validation.max_concurrency` config. Results stored in `file_table` with position and page info.
 

@@ -425,6 +425,18 @@ async def run_pipeline(
         page_mapping = build_page_mapping(content, middle_json_str) if middle_json_str else []
         await save_file_content(file_id, content, session, middle_json=middle_json_str, page_mapping=page_mapping)
 
+        await notify_callback(
+            callback_url,
+            file_id,
+            "parsing",
+            event="stage_done",
+            data={
+                "content": content,
+                "middle_json": middle_json_str,
+                "page_mapping": page_mapping,
+            },
+        )
+
         # ── 阶段 2: AI 校验表格名称 ───────────────────────────────
         stmt = (
             update(File)
@@ -455,6 +467,14 @@ async def run_pipeline(
             await session.execute(stmt)
             await session.commit()
             raise
+
+        await notify_callback(
+            callback_url,
+            file_id,
+            "tableing",
+            event="stage_done",
+            data={"total": len(tables), "tables": tables},
+        )
 
         # ── 阶段 3: 分块 ──────────────────────────────────────────
         stmt = (
@@ -487,6 +507,14 @@ async def run_pipeline(
             await session.commit()
             raise
 
+        await notify_callback(
+            callback_url,
+            file_id,
+            "chunking",
+            event="stage_done",
+            data={"total": len(chunks), "chunks": chunks},
+        )
+
         # ── 阶段 4: 向量化 ────────────────────────────────────────
         stmt = (
             update(File)
@@ -518,6 +546,9 @@ async def run_pipeline(
             await session.commit()
             raise
 
+        # embedding stage_done 不携带数据，仅作完成信号
+        await notify_callback(callback_url, file_id, "embedding", event="stage_done")
+
         # ── 阶段 5: 字段提取 ──────────────────────────────────────
         stmt = (
             update(File)
@@ -529,7 +560,7 @@ async def run_pipeline(
 
         await notify_callback(callback_url, file_id, "extracting")
         try:
-            await run_extraction(file_id, session)
+            await run_extraction(file_id, session, callback_url=callback_url)
 
             stmt = (
                 update(File)
@@ -559,7 +590,7 @@ async def run_pipeline(
 
         await notify_callback(callback_url, file_id, "analyzing")
         try:
-            await run_analysis(file_id, session)
+            await run_analysis(file_id, session, callback_url=callback_url)
 
             stmt = (
                 update(File)
@@ -1170,6 +1201,14 @@ async def run_from_stage(
             await session.commit()
             raise
 
+        await notify_callback(
+            callback_url,
+            file_id,
+            "tableing",
+            event="stage_done",
+            data={"total": len(tables), "tables": tables},
+        )
+
         stage = "chunking"
 
     if stage in ("chunking",):
@@ -1208,6 +1247,14 @@ async def run_from_stage(
             await session.execute(stmt)
             await session.commit()
             raise
+
+        await notify_callback(
+            callback_url,
+            file_id,
+            "chunking",
+            event="stage_done",
+            data={"total": len(chunks), "chunks": chunks},
+        )
 
         stage = "embedding"
 
@@ -1260,6 +1307,9 @@ async def run_from_stage(
             await session.commit()
             raise
 
+        # embedding stage_done 不携带数据，仅作完成信号
+        await notify_callback(callback_url, file_id, "embedding", event="stage_done")
+
         stage = "extracting"
 
     if stage in ("extracting",):
@@ -1273,7 +1323,7 @@ async def run_from_stage(
 
         await notify_callback(callback_url, file_id, "extracting")
         try:
-            await run_extraction(file_id, session)
+            await run_extraction(file_id, session, callback_url=callback_url)
 
             stmt = (
                 update(File)
@@ -1305,7 +1355,7 @@ async def run_from_stage(
 
         await notify_callback(callback_url, file_id, "analyzing")
         try:
-            await run_analysis(file_id, session)
+            await run_analysis(file_id, session, callback_url=callback_url)
 
             stmt = (
                 update(File)
