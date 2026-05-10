@@ -127,7 +127,7 @@ class ExtractionField(Base):
     type_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     field_name: Mapped[str] = mapped_column(String(200), nullable=False)
     source_type: Mapped[str] = mapped_column(
-        Enum("table", "text", name="source_type_enum"), nullable=False
+        Enum("table", "text", "vl", name="source_type_enum"), nullable=False
     )
     enabled: Mapped[int] = mapped_column(TINYINT, default=1)
     priority: Mapped[int] = mapped_column(Integer, default=0)
@@ -153,6 +153,14 @@ class ExtractionField(Base):
     search_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     text_system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     text_extract_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # VL 类专用
+    vl_method: Mapped[str | None] = mapped_column(
+        Enum("vl_model", "vl_progressive", "vl_locate", name="vl_method_enum"),
+        nullable=True,
+    )
+    vl_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    vl_system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vl_extract_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_extraction_field_type_id", "type_id"),
