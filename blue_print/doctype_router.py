@@ -183,6 +183,17 @@ async def delete_doctype(
             except Exception as e:
                 logger.warning("Milvus 连接失败: {}", e)
 
+            # 级联清理 PDF 持久化文件
+            try:
+                from utils import vl_client as _vl_client_for_storage
+                for fid in file_ids:
+                    try:
+                        _vl_client_for_storage.pdf_path(fid).unlink(missing_ok=True)
+                    except Exception as e:
+                        logger.warning("doctype 级联清理 PDF 失败 file_id={}: {}", fid, e)
+            except Exception as e:
+                logger.warning("vl_client 导入失败，跳过 PDF 清理: {}", e)
+
         # 删除字段/规则
         await db.execute(delete(ExtractionField).where(ExtractionField.type_id == type_id))
         await db.execute(delete(AnalysisRule).where(AnalysisRule.type_id == type_id))

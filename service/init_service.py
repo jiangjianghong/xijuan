@@ -272,6 +272,31 @@ async def cleanup_garbage_data(session: AsyncSession) -> None:
     logger.info("垃圾数据清理完成")
 
 
+async def cleanup_orphan_pdfs(session: AsyncSession) -> None:
+    """清理 uploads/ 下不在 files 表中的孤儿 PDF。"""
+    from utils import vl_client
+
+    storage_dir = vl_client._get_pdf_storage_dir()
+    if not storage_dir.exists():
+        return
+
+    stmt = select(File.file_id)
+    result = await session.execute(stmt)
+    valid_ids = {row[0] for row in result.fetchall()}
+
+    removed = 0
+    for pdf_file in storage_dir.glob("*.pdf"):
+        file_id = pdf_file.stem
+        if file_id not in valid_ids:
+            try:
+                pdf_file.unlink()
+                removed += 1
+            except OSError as e:
+                logger.warning("删除孤儿 PDF 失败 {}: {}", pdf_file, e)
+    if removed > 0:
+        logger.info("清理孤儿 PDF: {} 个", removed)
+
+
 async def run_init() -> None:
     """启动时执行完整初始化流程。"""
     await init_database()
@@ -290,5 +315,6 @@ async def run_init() -> None:
     async with session_factory() as session:
         await recover_abnormal_status(session)
         await cleanup_garbage_data(session)
+        await cleanup_orphan_pdfs(session)
 
     logger.info("服务初始化完成")
