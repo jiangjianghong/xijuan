@@ -93,6 +93,19 @@ class AnalysisConfig(BaseModel):
     judge_timeout: int = 30
 
 
+class VLModelConfig(BaseModel):
+    base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key: str = ""
+    model: str = "qwen-vl-max"
+    temperature: float = 0.1
+    max_tokens: int = 4096
+    timeout: int = 180
+    enable_thinking: bool = False
+    global_max_concurrency: int = 8
+    default_max_pixels: int = 4_000_000
+    pdf_storage_dir: str = "uploads"
+
+
 # ── 顶层配置 ────────────────────────────────────────────────
 
 class AppConfig(BaseSettings):
@@ -107,6 +120,7 @@ class AppConfig(BaseSettings):
     extraction: ExtractionConfig = ExtractionConfig()
     table_name_validation: TableNameValidationConfig = TableNameValidationConfig()
     analysis: AnalysisConfig = AnalysisConfig()
+    vl_model: VLModelConfig = VLModelConfig()
 
 
 def _load_yaml(path: Path) -> dict:
