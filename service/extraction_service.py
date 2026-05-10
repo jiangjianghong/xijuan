@@ -800,6 +800,127 @@ async def extract_vl_field(
     return value, reason, {"_vl": refs}
 
 
+async def _vl_field_extraction_stream(
+    file_id: str, field: ExtractionField
+) -> AsyncIterator[Dict[str, Any]]:
+    """VL 字段调试流式生成器：暴露 vl_service 内部进度事件 + 4 步骤事件。
+
+    事件序列：
+      pdf_loaded → progressive_batch×N | locate_locate×M + locate_extract
+      → prompt → result → done
+    或失败时 → error → return
+    """
+    import asyncio as _asyncio
+
+    import fitz as _fitz
+
+    pdf_file = vl_client.pdf_path(file_id)
+    if not pdf_file.exists():
+        yield {"event": "error", "data": {"step": "pdf_load", "message": "PDF 原始文件不存在"}}
+        return
+
+    try:
+        file_bytes = pdf_file.read_bytes()
+    except OSError as e:
+        yield {"event": "error", "data": {"step": "pdf_load", "message": f"PDF 读取失败: {e}"}}
+        return
+
+    doc = _fitz.open(stream=file_bytes, filetype="pdf")
+    total_pages = len(doc)
+    doc.close()
+
+    yield {
+        "event": "pdf_loaded",
+        "data": {"total_pages": total_pages, "vl_method": field.vl_method},
+    }
+
+    cfg = field.vl_config or {}
+    default_max_pixels = get_config().vl_model.default_max_pixels
+    method = field.vl_method
+
+    progress_queue: _asyncio.Queue = _asyncio.Queue()
+    SENTINEL = object()
+
+    async def progress_cb(evt: dict):
+        if "phase" in evt:
+            await progress_queue.put({"event": f"locate_{evt['phase']}", "data": evt})
+        else:
+            await progress_queue.put({"event": "progressive_batch", "data": evt})
+
+    async def run_vl():
+        try:
+            if method == "vl_model":
+                return await vl_service.vl_model_extract(
+                    file_bytes,
+                    field.vl_extract_prompt or "",
+                    field.vl_system_prompt,
+                    page_range=cfg.get("page_range", "all"),
+                    max_pixels=cfg.get("max_pixels", default_max_pixels),
+                )
+            elif method == "vl_progressive":
+                return await vl_service.vl_progressive_extract(
+                    file_bytes,
+                    field.vl_extract_prompt or "",
+                    field.vl_system_prompt,
+                    field_hints=cfg.get("field_hints", ""),
+                    batch_size=cfg.get("batch_size", 2),
+                    max_pixels=cfg.get("max_pixels", default_max_pixels),
+                    batch_prompt_template=cfg.get("batch_prompt_template"),
+                    progress_cb=progress_cb,
+                )
+            elif method == "vl_locate":
+                return await vl_service.vl_locate_extract(
+                    file_bytes,
+                    field.vl_extract_prompt or "",
+                    field.vl_system_prompt,
+                    field_hints=cfg.get("field_hints", ""),
+                    grid_pages=cfg.get("grid_pages", 6),
+                    grid_cols=cfg.get("grid_cols", 3),
+                    max_concurrent=cfg.get("max_concurrent", 20),
+                    thumb_scale=cfg.get("thumb_scale", 0.75),
+                    key_pages_limit=cfg.get("key_pages_limit", 6),
+                    fallback_pages=cfg.get("fallback_pages", 3),
+                    max_pixels=cfg.get("max_pixels", default_max_pixels),
+                    locate_prompt_template=cfg.get("locate_prompt_template"),
+                    progress_cb=progress_cb,
+                )
+            else:
+                raise ValueError(f"未知 vl_method={method}")
+        finally:
+            await progress_queue.put(SENTINEL)
+
+    vl_task = _asyncio.create_task(run_vl())
+
+    while True:
+        evt = await progress_queue.get()
+        if evt is SENTINEL:
+            break
+        yield evt
+
+    try:
+        value, reason, refs = await vl_task
+    except Exception as e:
+        yield {"event": "error", "data": {"step": "vl_extract", "message": str(e)}}
+        return
+
+    yield {
+        "event": "prompt",
+        "data": {
+            "system_prompt": field.vl_system_prompt or "",
+            "user_prompt": field.vl_extract_prompt or "",
+        },
+    }
+    yield {
+        "event": "result",
+        "data": {
+            "extracted_value": value,
+            "reason": reason,
+            "source_refs": {"_vl": refs},
+        },
+    }
+    yield {"event": "done", "data": {}}
+
+
 async def run_extraction(
     file_id: str,
     session: AsyncSession,
@@ -1071,6 +1192,12 @@ async def test_field_extraction_stream(
     """
     try:
         source_type = field.source_type or "text"
+
+        # ── VL 模式：单独走通 4 步骤，结束后直接 return ───────
+        if source_type == "vl":
+            async for evt in _vl_field_extraction_stream(file_id, field):
+                yield evt
+            return
 
         # ── Step 1: 检索 ──────────────────────────────────────
         search_results: List[Dict[str, Any]] = []
