@@ -37,3 +37,6 @@ data/*
 .DS_Store
 Thumbs.db
 
+# VL：原始 PDF 字节持久化目录
+uploads/
+
