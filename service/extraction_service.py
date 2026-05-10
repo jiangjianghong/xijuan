@@ -13,6 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.tables import ExtractionField, ExtractionResult, File, FileChunk, FileContent, FileTable
+from service import vl_service
+from utils import vl_client
 from utils.callback import notify_callback
 from utils.config import get_config
 from utils.llm_client import chat_completion, get_embeddings
@@ -734,6 +736,70 @@ async def extract_text_field(
         return "", "", None
 
 
+async def extract_vl_field(
+    file_id: str, field: ExtractionField, session: AsyncSession
+) -> Tuple[str, str, Optional[Dict]]:
+    """VL 类字段提取：基于 PDF 视觉模型直接产出 {value, reason}。
+
+    Returns:
+        (extracted_value, reason, source_refs) 元组。source_refs 形如 {"_vl": {...}}。
+    """
+    pdf_file = vl_client.pdf_path(file_id)
+    if not pdf_file.exists():
+        return "", "PDF 原始文件不存在，无法 VL 抽取", None
+
+    try:
+        file_bytes = pdf_file.read_bytes()
+    except OSError as e:
+        return "", f"PDF 文件读取失败: {e}", None
+
+    cfg = field.vl_config or {}
+    method = field.vl_method
+    default_max_pixels = get_config().vl_model.default_max_pixels
+
+    try:
+        if method == "vl_model":
+            value, reason, refs = await vl_service.vl_model_extract(
+                file_bytes,
+                field.vl_extract_prompt or "",
+                field.vl_system_prompt,
+                page_range=cfg.get("page_range", "all"),
+                max_pixels=cfg.get("max_pixels", default_max_pixels),
+            )
+        elif method == "vl_progressive":
+            value, reason, refs = await vl_service.vl_progressive_extract(
+                file_bytes,
+                field.vl_extract_prompt or "",
+                field.vl_system_prompt,
+                field_hints=cfg.get("field_hints", ""),
+                batch_size=cfg.get("batch_size", 2),
+                max_pixels=cfg.get("max_pixels", default_max_pixels),
+                batch_prompt_template=cfg.get("batch_prompt_template"),
+            )
+        elif method == "vl_locate":
+            value, reason, refs = await vl_service.vl_locate_extract(
+                file_bytes,
+                field.vl_extract_prompt or "",
+                field.vl_system_prompt,
+                field_hints=cfg.get("field_hints", ""),
+                grid_pages=cfg.get("grid_pages", 6),
+                grid_cols=cfg.get("grid_cols", 3),
+                max_concurrent=cfg.get("max_concurrent", 20),
+                thumb_scale=cfg.get("thumb_scale", 0.75),
+                key_pages_limit=cfg.get("key_pages_limit", 6),
+                fallback_pages=cfg.get("fallback_pages", 3),
+                max_pixels=cfg.get("max_pixels", default_max_pixels),
+                locate_prompt_template=cfg.get("locate_prompt_template"),
+            )
+        else:
+            return "", f"未知 vl_method={method}", None
+    except Exception as e:
+        logger.error("VL 抽取失败 file_id={} method={} error={}", file_id, method, e)
+        return "", f"VL 抽取失败: {e}", None
+
+    return value, reason, {"_vl": refs}
+
+
 async def run_extraction(
     file_id: str,
     session: AsyncSession,
@@ -775,6 +841,8 @@ async def run_extraction(
         try:
             if field.source_type == "table":
                 extracted_value, reason, source_refs = await extract_table_field(file_id, field, session)
+            elif field.source_type == "vl":
+                extracted_value, reason, source_refs = await extract_vl_field(file_id, field, session)
             else:
                 extracted_value, reason, source_refs = await extract_text_field(file_id, field, session)
 
@@ -907,6 +975,8 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
         try:
             if field.source_type == "table":
                 extracted_value, reason, source_refs = await extract_table_field(file_id, field, session)
+            elif field.source_type == "vl":
+                extracted_value, reason, source_refs = await extract_vl_field(file_id, field, session)
             else:
                 extracted_value, reason, source_refs = await extract_text_field(file_id, field, session)
 
