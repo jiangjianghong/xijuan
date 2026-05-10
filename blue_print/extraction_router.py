@@ -23,6 +23,7 @@ from model.tables import ExtractionField, ExtractionResult, FileContent, FileTab
 from service.extraction_service import (
     extract_table_field,
     extract_text_field,
+    extract_vl_field,
     search_chunk_db,
     search_context,
     search_rule,
@@ -61,6 +62,10 @@ async def list_fields(type_id: str = "", db: AsyncSession = Depends(get_db)):
                 search_config=f.search_config,
                 text_system_prompt=f.text_system_prompt,
                 text_extract_prompt=f.text_extract_prompt,
+                vl_method=f.vl_method,
+                vl_config=f.vl_config,
+                vl_system_prompt=f.vl_system_prompt,
+                vl_extract_prompt=f.vl_extract_prompt,
                 created_at=f.created_at,
                 updated_at=f.updated_at,
             ).model_dump()
@@ -107,6 +112,10 @@ async def upsert_field(
         existing.search_config = field.search_config
         existing.text_system_prompt = field.text_system_prompt
         existing.text_extract_prompt = field.text_extract_prompt
+        existing.vl_method = field.vl_method
+        existing.vl_config = field.vl_config
+        existing.vl_system_prompt = field.vl_system_prompt
+        existing.vl_extract_prompt = field.vl_extract_prompt
         await db.commit()
         return ResponseWrapper(message="字段配置已更新", data={"field_id": field.field_id})
     else:
@@ -127,6 +136,10 @@ async def upsert_field(
             search_config=field.search_config,
             text_system_prompt=field.text_system_prompt,
             text_extract_prompt=field.text_extract_prompt,
+            vl_method=field.vl_method,
+            vl_config=field.vl_config,
+            vl_system_prompt=field.vl_system_prompt,
+            vl_extract_prompt=field.vl_extract_prompt,
         )
         db.add(new_field)
         await db.commit()
@@ -200,6 +213,10 @@ async def test_extraction(
             search_config=config.get("search_config"),
             text_system_prompt=config.get("text_system_prompt"),
             text_extract_prompt=config.get("text_extract_prompt"),
+            vl_method=config.get("vl_method"),
+            vl_config=config.get("vl_config"),
+            vl_system_prompt=config.get("vl_system_prompt"),
+            vl_extract_prompt=config.get("vl_extract_prompt"),
         )
     else:
         raise HTTPException(status_code=400, detail="必须提供 field_id 或 config")
@@ -216,8 +233,27 @@ async def test_extraction(
                 for t in tables
             ]
 
-            extracted_value, reason = await extract_table_field(file_id, field, db)
+            extracted_value, reason, _ = await extract_table_field(file_id, field, db)
             llm_input = field.table_extract_prompt or ""
+            llm_output = extracted_value
+
+        elif field.source_type == "vl":
+            # VL 类提取：直接调用 extract_vl_field，附带元信息
+            extracted_value, reason, refs = await extract_vl_field(file_id, field, db)
+            search_results = (
+                [
+                    {
+                        "type": "vl_meta",
+                        "method": refs["_vl"]["method"],
+                        "key_pages": refs["_vl"].get("key_pages"),
+                        "vl_total_tokens": refs["_vl"].get("vl_total_tokens", 0),
+                        "batches_with_info": refs["_vl"].get("batches_with_info"),
+                    }
+                ]
+                if refs
+                else []
+            )
+            llm_input = field.vl_extract_prompt or ""
             llm_output = extracted_value
 
         else:
@@ -246,7 +282,7 @@ async def test_extraction(
                 search_results = await search_vector_db(file_id, search_config)
 
             # 执行提取
-            extracted_value, reason = await extract_text_field(file_id, field, db)
+            extracted_value, reason, _ = await extract_text_field(file_id, field, db)
             llm_input = field.text_extract_prompt or ""
             llm_output = extracted_value
 
@@ -300,6 +336,10 @@ async def test_extraction_stream(
             search_config=config.get("search_config"),
             text_system_prompt=config.get("text_system_prompt"),
             text_extract_prompt=config.get("text_extract_prompt"),
+            vl_method=config.get("vl_method"),
+            vl_config=config.get("vl_config"),
+            vl_system_prompt=config.get("vl_system_prompt"),
+            vl_extract_prompt=config.get("vl_extract_prompt"),
         )
     else:
         raise HTTPException(status_code=400, detail="必须提供 field_id 或 config")
