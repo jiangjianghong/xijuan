@@ -135,6 +135,13 @@ async def batch_delete_files(request: BatchDeleteRequest, db: AsyncSession = Dep
             except Exception as e:
                 logger.warning("Milvus 删除失败 (file_id={}): {}", file_id, e)
 
+            # 删除持久化的 PDF
+            try:
+                from utils import vl_client as _vl_client_for_storage
+                _vl_client_for_storage.pdf_path(file_id).unlink(missing_ok=True)
+            except Exception as e:
+                logger.warning("清理 PDF 失败 file_id={}: {}", file_id, e)
+
             deleted_count += 1
         except Exception as e:
             logger.error("删除文件失败 (file_id={}): {}", file_id, e)
@@ -205,6 +212,15 @@ async def parse_file(
     file_name = file.filename or "unknown.pdf"
     type_id = (type_id or "default").strip() or "default"
     file_id = generate_file_id(type_id, file_name)
+
+    # 持久化原始 PDF 字节，VL 抽取依赖（写盘失败不阻断主流程）
+    try:
+        from utils import vl_client as _vl_client_for_storage
+        pdf_target = _vl_client_for_storage.pdf_path(file_id)
+        pdf_target.parent.mkdir(parents=True, exist_ok=True)
+        pdf_target.write_bytes(file_content_bytes)
+    except Exception as e:
+        logger.warning("写盘 PDF 失败（不阻断 pipeline）: file_id={} error={}", file_id, e)
 
     # 检查文件是否已存在
     stmt = select(FileModel).where(FileModel.file_id == file_id)
@@ -455,6 +471,13 @@ async def delete_file(file_id: str, db: AsyncSession = Depends(get_db)):
         milvus_client.delete_by_file_id(file_id)
     except Exception as e:
         logger.warning("Milvus 删除失败: {}", e)
+
+    # 删除持久化的 PDF
+    try:
+        from utils import vl_client as _vl_client_for_storage
+        _vl_client_for_storage.pdf_path(file_id).unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning("清理 PDF 失败 file_id={}: {}", file_id, e)
 
     return ResponseWrapper(message="文件已删除")
 
