@@ -60,6 +60,10 @@ async def init_database() -> None:
             ("files", "type_id", "VARCHAR(64) NOT NULL DEFAULT 'default'"),
             ("extraction_field", "type_id", "VARCHAR(64) NOT NULL DEFAULT 'default'"),
             ("analysis_rule", "type_id", "VARCHAR(64) NOT NULL DEFAULT 'default'"),
+            ("extraction_field", "vl_method", "VARCHAR(32) NULL"),
+            ("extraction_field", "vl_config", "JSON NULL"),
+            ("extraction_field", "vl_system_prompt", "TEXT NULL"),
+            ("extraction_field", "vl_extract_prompt", "TEXT NULL"),
         ]
         for table_name, column_name, column_type in migrations:
             result = await conn.execute(
@@ -72,6 +76,24 @@ async def init_database() -> None:
                     text(f"ALTER TABLE `{table_name}` ADD COLUMN `{column_name}` {column_type}")
                 )
                 logger.info("已为 {} 表添加 {} 列", table_name, column_name)
+
+        # source_type enum 扩展：旧值 ('table','text') → 新值 ('table','text','vl')
+        result = await conn.execute(
+            text(
+                "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'extraction_field' "
+                "AND COLUMN_NAME = 'source_type'"
+            )
+        )
+        col_type = (result.scalar() or "").lower()
+        if col_type and "'vl'" not in col_type:
+            await conn.execute(
+                text(
+                    "ALTER TABLE `extraction_field` "
+                    "MODIFY COLUMN `source_type` ENUM('table','text','vl') NOT NULL"
+                )
+            )
+            logger.info("已扩展 extraction_field.source_type 枚举：加入 'vl'")
 
         # 索引补充：type_id 索引（IF NOT EXISTS 兼容方式）
         index_migrations = [
