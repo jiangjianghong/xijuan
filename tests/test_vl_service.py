@@ -260,3 +260,123 @@ async def test_vl_progressive_extract_custom_batch_template(monkeypatch):
     # 第一条 prompt 应该是渲染后的 custom（不含历史）
     assert captured_prompts[0].startswith("CUSTOM hints=X label=第1页 total=1 hist=")
 
+
+# ── vl_locate_extract 测试 ─────────────────────────────────────
+
+
+def _is_locate_call(messages: list) -> bool:
+    """判断当前调用是否为 locate 第一轮（消息含 '缩略图网格'）。"""
+    if not messages or not isinstance(messages[-1]["content"], list):
+        return False
+    for c in messages[-1]["content"]:
+        if c.get("type") == "text" and "缩略图网格" in c.get("text", ""):
+            return True
+    return False
+
+
+async def test_vl_locate_extract_filters_hallucinated_pages(monkeypatch):
+    """LLM 返回了不在网格范围里的幻觉页码 → 必须被过滤。"""
+    from service.vl_service import locate as vl_locate_module
+
+    pdf = _make_pdf_bytes(6)
+
+    async def fake_vl_chat(messages, *, max_tokens=None, extra_body=None, max_retries=3):
+        if _is_locate_call(messages):
+            # 故意返回一个超界页码 99
+            return {
+                "choices": [{"message": {"content": '{"found_pages": [2, 99], "reason": "x"}'}}],
+                "usage": {"total_tokens": 10},
+            }
+        return {
+            "choices": [{"message": {"content": '{"value": "FOUND", "reason": "page 2"}'}}],
+            "usage": {"total_tokens": 20},
+        }
+
+    monkeypatch.setattr("service.vl_service.locate.vl_chat", fake_vl_chat)
+
+    value, reason, refs = await vl_locate_module.vl_locate_extract(
+        pdf,
+        vl_extract_prompt="基于关键页提取，返回 {value, reason}",
+        vl_system_prompt=None,
+        field_hints="关键信息",
+        grid_pages=6,
+    )
+
+    assert value == "FOUND"
+    assert refs["method"] == "vl_locate"
+    assert refs["total_pages"] == 6
+    # 99 被过滤，只剩 2
+    assert refs["key_pages"] == [2]
+
+
+async def test_vl_locate_extract_fallback_when_no_hits(monkeypatch):
+    """第一轮一页未命中 → 回退前 fallback_pages 页。"""
+    from service.vl_service import locate as vl_locate_module
+
+    pdf = _make_pdf_bytes(5)
+
+    async def fake_vl_chat(messages, **kw):
+        if _is_locate_call(messages):
+            return {
+                "choices": [{"message": {"content": '{"found_pages": [], "reason": "无"}'}}],
+                "usage": {"total_tokens": 5},
+            }
+        return {
+            "choices": [{"message": {"content": '{"value": "fallback", "reason": "前 N 页"}'}}],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setattr("service.vl_service.locate.vl_chat", fake_vl_chat)
+
+    _, _, refs = await vl_locate_module.vl_locate_extract(
+        pdf,
+        vl_extract_prompt="x",
+        vl_system_prompt=None,
+        field_hints="x",
+        grid_pages=6,
+        fallback_pages=3,
+    )
+    assert refs["key_pages"] == [1, 2, 3]
+
+
+async def test_vl_locate_extract_truncates_to_limit(monkeypatch):
+    """命中超 key_pages_limit 截断，未达阈值全保留。"""
+    from service.vl_service import locate as vl_locate_module
+
+    pdf = _make_pdf_bytes(12)
+
+    async def fake_vl_chat(messages, **kw):
+        if _is_locate_call(messages):
+            text = ""
+            for c in messages[-1]["content"]:
+                if c.get("type") == "text":
+                    text = c["text"]
+                    break
+            # 第一个网格页码 1-6；第二个 7-12
+            if "第 1, 2, 3, 4, 5, 6" in text:
+                return {
+                    "choices": [{"message": {"content": '{"found_pages": [1,2,3,4]}'}}],
+                    "usage": {"total_tokens": 5},
+                }
+            return {
+                "choices": [{"message": {"content": '{"found_pages": [7,8,9,10]}'}}],
+                "usage": {"total_tokens": 5},
+            }
+        return {
+            "choices": [{"message": {"content": '{"value": "ok", "reason": "ok"}'}}],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setattr("service.vl_service.locate.vl_chat", fake_vl_chat)
+
+    _, _, refs = await vl_locate_module.vl_locate_extract(
+        pdf,
+        vl_extract_prompt="x",
+        vl_system_prompt=None,
+        field_hints="x",
+        grid_pages=6,
+        key_pages_limit=5,
+    )
+    # 8 命中 → 排序去重后取前 5
+    assert refs["key_pages"] == [1, 2, 3, 4, 7]
+
