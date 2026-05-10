@@ -2,17 +2,113 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 from pathlib import Path
+from typing import Any, Optional
 
 import fitz
+import httpx
+from loguru import logger
 from PIL import Image
 
 from utils.config import get_config
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+class VLAPIError(RuntimeError):
+    """VL API 调用最终失败（重试耗尽 / 4xx 非 429）。"""
+
+
+_global_sem: asyncio.Semaphore | None = None
+
+
+def _get_global_sem() -> asyncio.Semaphore:
+    global _global_sem
+    if _global_sem is None:
+        cfg = get_config().vl_model
+        _global_sem = asyncio.Semaphore(cfg.global_max_concurrency)
+    return _global_sem
+
+
+async def vl_chat(
+    messages: list[dict[str, Any]],
+    *,
+    max_tokens: Optional[int] = None,
+    extra_body: Optional[dict[str, Any]] = None,
+    max_retries: int = 3,
+) -> dict[str, Any]:
+    """调用 VL 模型的 OpenAI 兼容 chat/completions 接口。
+
+    返回原始 JSON dict，调用方自己解 choices/usage。
+
+    重试：max_retries 次指数退避（1s/2s/4s）；4xx（除 429）直接抛 VLAPIError。
+    全局并发限：vl_model.global_max_concurrency。
+    """
+    cfg = get_config().vl_model
+
+    payload: dict[str, Any] = {
+        "model": cfg.model,
+        "messages": messages,
+        "temperature": cfg.temperature,
+        "max_tokens": max_tokens or cfg.max_tokens,
+    }
+    body_extras: dict[str, Any] = {
+        "chat_template_kwargs": {"enable_thinking": cfg.enable_thinking}
+    }
+    if extra_body:
+        body_extras.update(extra_body)
+    payload.update(body_extras)
+
+    headers = {"Content-Type": "application/json"}
+    if cfg.api_key:
+        headers["Authorization"] = f"Bearer {cfg.api_key}"
+    url = f"{cfg.base_url.rstrip('/')}/chat/completions"
+
+    sem = _get_global_sem()
+    last_exc: Exception | None = None
+
+    for attempt in range(max_retries):
+        try:
+            async with sem:
+                async with httpx.AsyncClient(timeout=cfg.timeout) as client:
+                    resp = await client.post(url, json=payload, headers=headers)
+                    resp.raise_for_status()
+                    return resp.json()
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if e.response else None
+            if status is not None and 400 <= status < 500 and status != 429:
+                raise VLAPIError(f"VL API {status}: {e}") from e
+            last_exc = e
+            if attempt + 1 == max_retries:
+                raise VLAPIError(f"VL API 重试 {max_retries} 次仍失败: {e}") from e
+            wait = 2 ** attempt
+            logger.warning(
+                "vl_chat HTTP {} 第 {}/{} 次重试，{}s 后",
+                status,
+                attempt + 1,
+                max_retries,
+                wait,
+            )
+            await asyncio.sleep(wait)
+        except httpx.RequestError as e:
+            last_exc = e
+            if attempt + 1 == max_retries:
+                raise VLAPIError(f"VL API 网络错误重试 {max_retries} 次: {e}") from e
+            wait = 2 ** attempt
+            logger.warning(
+                "vl_chat RequestError 第 {}/{} 次重试，{}s 后: {}",
+                attempt + 1,
+                max_retries,
+                wait,
+                e,
+            )
+            await asyncio.sleep(wait)
+
+    raise VLAPIError(f"vl_chat 重试耗尽: {last_exc}")
 
 
 def _get_pdf_storage_dir() -> Path:

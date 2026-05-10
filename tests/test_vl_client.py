@@ -103,3 +103,96 @@ def test_make_grid_image_multi_pages_layout():
     grid = Image.open(io.BytesIO(raw))
     # 3 列宽度 = 3*50；2 行高度 = 2*(60+10)
     assert grid.size == (150, 140)
+
+
+# ── vl_chat 测试 ──────────────────────────────────────────────
+
+
+class _MockResponse:
+    def __init__(self, status_code: int, json_data: dict | None = None):
+        self.status_code = status_code
+        self._json = json_data or {}
+        self.text = ""
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import httpx
+            req = httpx.Request("POST", "http://x")
+            raise httpx.HTTPStatusError(
+                "err", request=req, response=httpx.Response(self.status_code)
+            )
+
+    def json(self):
+        return self._json
+
+
+@pytest.fixture
+def reset_vl_semaphore(monkeypatch):
+    """每个测试前重置 vl_client 全局信号量。"""
+    monkeypatch.setattr(vl_client, "_global_sem", None)
+    yield
+
+
+async def test_vl_chat_success(monkeypatch, reset_vl_semaphore):
+    captured = {}
+
+    async def fake_post(self, url, json, headers):
+        captured["url"] = url
+        captured["json"] = json
+        captured["headers"] = headers
+        return _MockResponse(
+            200,
+            {
+                "choices": [{"message": {"content": "hello"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            },
+        )
+
+    import httpx
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    messages = [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+    resp = await vl_client.vl_chat(messages)
+    assert resp["choices"][0]["message"]["content"] == "hello"
+    assert resp["usage"]["total_tokens"] == 15
+    assert captured["url"].endswith("/chat/completions")
+
+
+async def test_vl_chat_4xx_raises_immediately(monkeypatch, reset_vl_semaphore):
+    call_count = 0
+
+    async def fake_post(self, url, json, headers):
+        nonlocal call_count
+        call_count += 1
+        return _MockResponse(403)
+
+    import httpx
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    with pytest.raises(vl_client.VLAPIError):
+        await vl_client.vl_chat([{"role": "user", "content": "x"}])
+    # 4xx 不应该重试
+    assert call_count == 1
+
+
+async def test_vl_chat_5xx_retries_then_fails(monkeypatch, reset_vl_semaphore):
+    import asyncio as _asyncio
+
+    call_count = 0
+
+    async def fake_post(self, url, json, headers):
+        nonlocal call_count
+        call_count += 1
+        return _MockResponse(500)
+
+    import httpx
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    async def fake_sleep(*a, **kw):
+        return None
+
+    monkeypatch.setattr(_asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(vl_client.VLAPIError):
+        await vl_client.vl_chat([{"role": "user", "content": "x"}], max_retries=3)
+    assert call_count == 3
