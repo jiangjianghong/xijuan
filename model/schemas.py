@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ── 通用响应包装 ────────────────────────────────────────────
@@ -156,6 +156,7 @@ class FileChunkItem(BaseModel):
 class SourceTypeEnum(str, Enum):
     table = "table"
     text = "text"
+    vl = "vl"
 
 
 class TableMatchTypeEnum(str, Enum):
@@ -171,6 +172,12 @@ class SearchTypeEnum(str, Enum):
     rule = "rule"
     chunk_db = "chunk_db"
     vector_db = "vector_db"
+
+
+class VLMethodEnum(str, Enum):
+    vl_model = "vl_model"
+    vl_progressive = "vl_progressive"
+    vl_locate = "vl_locate"
 
 
 class ExtractionFieldCreate(BaseModel):
@@ -192,6 +199,11 @@ class ExtractionFieldCreate(BaseModel):
     search_config: Optional[Dict[str, Any]] = None
     text_system_prompt: Optional[str] = None
     text_extract_prompt: Optional[str] = None
+    # VL 类
+    vl_method: Optional[VLMethodEnum] = None
+    vl_config: Optional[Dict[str, Any]] = None
+    vl_system_prompt: Optional[str] = None
+    vl_extract_prompt: Optional[str] = None
 
     @field_validator("text_extract_prompt")
     @classmethod
@@ -208,6 +220,68 @@ class ExtractionFieldCreate(BaseModel):
             if not re.search(r"<search_result>.+?</search_result>", v):
                 raise ValueError("table_extract_prompt 必须包含至少一个 <search_result>标签</search_result> 占位符")
         return v
+
+    @field_validator("vl_method")
+    @classmethod
+    def validate_vl_method_required(cls, v, info):
+        if info.data.get("source_type") == SourceTypeEnum.vl and not v:
+            raise ValueError("source_type='vl' 时 vl_method 必填")
+        return v
+
+    @field_validator("vl_extract_prompt")
+    @classmethod
+    def validate_vl_extract_prompt(cls, v, info):
+        if info.data.get("source_type") == SourceTypeEnum.vl:
+            if not v:
+                raise ValueError("source_type='vl' 时 vl_extract_prompt 必填")
+            lower = v.lower()
+            if "value" not in lower or "reason" not in lower:
+                raise ValueError(
+                    "vl_extract_prompt 必须包含 'value' 与 'reason' 关键字（大小写不敏感），"
+                    "因为最终要求 VL 输出 {value, reason} JSON"
+                )
+        return v
+
+    @field_validator("vl_config")
+    @classmethod
+    def validate_vl_config_templates(cls, v, info):
+        if v is None:
+            return v
+        method = info.data.get("vl_method")
+        if method == VLMethodEnum.vl_progressive:
+            tpl = v.get("batch_prompt_template")
+            if tpl:
+                required = ["{field_hints}", "{page_label}", "{total_pages}", "{history}"]
+                missing = [r for r in required if r not in tpl]
+                if missing:
+                    raise ValueError(f"batch_prompt_template 缺少占位符 {missing}")
+        elif method == VLMethodEnum.vl_locate:
+            tpl = v.get("locate_prompt_template")
+            if tpl:
+                required = [
+                    "{field_hints}",
+                    "{page_labels}",
+                    "{position_map}",
+                    "{grid_rows}",
+                    "{grid_cols}",
+                ]
+                missing = [r for r in required if r not in tpl]
+                if missing:
+                    raise ValueError(f"locate_prompt_template 缺少占位符 {missing}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_vl_required_when_source_is_vl(self):
+        """source_type='vl' 时强校验 vl_method / vl_extract_prompt 存在。
+
+        field_validator 默认不在字段未提供时触发，所以补一道 model 层校验。
+        """
+        if self.source_type == SourceTypeEnum.vl:
+            if not self.vl_method:
+                raise ValueError("source_type='vl' 时 vl_method 必填")
+            if not self.vl_extract_prompt:
+                raise ValueError("source_type='vl' 时 vl_extract_prompt 必填")
+        return self
 
 
 class ExtractionFieldResponse(ExtractionFieldCreate):
