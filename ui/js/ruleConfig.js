@@ -388,6 +388,7 @@ const RuleConfig = {
                     <select class="form-select" id="fm-source-type" onchange="RuleConfig.onSourceTypeChange(this.value)">
                         <option value="table" ${sourceType === 'table' ? 'selected' : ''}>表格</option>
                         <option value="text" ${sourceType === 'text' ? 'selected' : ''}>文本</option>
+                        <option value="vl" ${sourceType === 'vl' ? 'selected' : ''}>VL（PDF 视觉模型）</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -470,6 +471,32 @@ const RuleConfig = {
                     </div>
                     <textarea class="form-textarea" id="fm-text-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.text_extract_prompt || '')}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
+                </div>
+            </div>
+
+            <!-- VL 配置区 -->
+            <div id="fm-vl-section">
+                <div class="form-section-divider"></div>
+                <div class="form-section-title">VL 配置</div>
+                <div class="form-group">
+                    <label class="form-label">VL 方法</label>
+                    <select class="form-select" id="fm-vl-method" onchange="RuleConfig.onVLMethodChange(this.value)">
+                        <option value="vl_model" ${(field.vl_method || 'vl_locate') === 'vl_model' ? 'selected' : ''}>vl_model（全量）</option>
+                        <option value="vl_progressive" ${field.vl_method === 'vl_progressive' ? 'selected' : ''}>vl_progressive（逐批扫描）</option>
+                        <option value="vl_locate" ${(field.vl_method || 'vl_locate') === 'vl_locate' ? 'selected' : ''}>vl_locate（定位+提取）</option>
+                    </select>
+                </div>
+                <div id="fm-vl-config-area">
+                    ${this.buildVLConfigFields(field.vl_method || 'vl_locate', field.vl_config || {})}
+                </div>
+                <div class="form-group">
+                    <label class="form-label">系统提示词（可选）</label>
+                    <textarea class="form-textarea" id="fm-vl-system-prompt" rows="3" placeholder="可选，VL 调用的系统提示">${Utils.escapeHtml(field.vl_system_prompt || '')}</textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">最终提取提示词</label>
+                    <textarea class="form-textarea" id="fm-vl-extract-prompt" rows="6" placeholder='必须含 value/reason 关键字，要求 VL 直接输出 {"value":..., "reason":...} JSON'>${Utils.escapeHtml(field.vl_extract_prompt || '')}</textarea>
+                    <div class="form-hint">VL 直接产出 JSON，不再走第二次文本 LLM。提示词中需明确要求 value/reason 两个键。</div>
                 </div>
             </div>
         `;
@@ -628,10 +655,14 @@ const RuleConfig = {
     onSourceTypeChange(type) {
         const tableSection = document.getElementById('fm-table-section');
         const textSection = document.getElementById('fm-text-section');
+        const vlSection = document.getElementById('fm-vl-section');
         if (!tableSection || !textSection) return;
 
         tableSection.style.display = type === 'table' ? 'block' : 'none';
         textSection.style.display = type === 'text' ? 'block' : 'none';
+        if (vlSection) {
+            vlSection.style.display = type === 'vl' ? 'block' : 'none';
+        }
     },
 
     onSearchTypeChange(type) {
