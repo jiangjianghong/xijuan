@@ -652,6 +652,146 @@ const RuleConfig = {
         return html;
     },
 
+    buildVLConfigFields(method, vlConfig) {
+        vlConfig = vlConfig || {};
+        let html = '';
+
+        switch (method) {
+            case 'vl_model':
+                html = `
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">页面范围</label>
+                            <input class="form-input" id="fm-vl-page-range" value="${Utils.escapeHtml(vlConfig.page_range || 'all')}" placeholder="all 或 1-3,5">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">最大像素数</label>
+                            <input class="form-input" id="fm-vl-max-pixels" type="number" value="${vlConfig.max_pixels ?? 4000000}" min="100000">
+                        </div>
+                    </div>
+                `;
+                break;
+
+            case 'vl_progressive':
+                html = `
+                    <div class="form-group">
+                        <label class="form-label">字段提示（提示要找的字段）</label>
+                        <input class="form-input" id="fm-vl-field-hints" value="${Utils.escapeHtml(vlConfig.field_hints || '')}" placeholder="例：投资金额、签署日期、股东姓名">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">批大小</label>
+                            <input class="form-input" id="fm-vl-batch-size" type="number" value="${vlConfig.batch_size ?? 2}" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">最大像素数</label>
+                            <input class="form-input" id="fm-vl-max-pixels" type="number" value="${vlConfig.max_pixels ?? 4000000}" min="100000">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">自定义批量 prompt 模板（留空用默认）</label>
+                        <textarea class="form-textarea" id="fm-vl-batch-prompt-template" rows="6" placeholder="必须含占位符 {field_hints} {page_label} {total_pages} {history}">${Utils.escapeHtml(vlConfig.batch_prompt_template || '')}</textarea>
+                    </div>
+                `;
+                break;
+
+            case 'vl_locate':
+                html = `
+                    <div class="form-group">
+                        <label class="form-label">字段提示</label>
+                        <input class="form-input" id="fm-vl-field-hints" value="${Utils.escapeHtml(vlConfig.field_hints || '')}" placeholder="例：资产总额、负债总额、净利润">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">网格页数</label>
+                            <input class="form-input" id="fm-vl-grid-pages" type="number" value="${vlConfig.grid_pages ?? 6}" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">网格列数</label>
+                            <input class="form-input" id="fm-vl-grid-cols" type="number" value="${vlConfig.grid_cols ?? 3}" min="1">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">最大并发数</label>
+                            <input class="form-input" id="fm-vl-max-concurrent" type="number" value="${vlConfig.max_concurrent ?? 20}" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">缩略图缩放</label>
+                            <input class="form-input" id="fm-vl-thumb-scale" type="number" step="0.05" value="${vlConfig.thumb_scale ?? 0.75}" min="0.1" max="2.0">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">关键页上限</label>
+                            <input class="form-input" id="fm-vl-key-pages-limit" type="number" value="${vlConfig.key_pages_limit ?? 6}" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">兜底页数</label>
+                            <input class="form-input" id="fm-vl-fallback-pages" type="number" value="${vlConfig.fallback_pages ?? 3}" min="0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">最大像素数</label>
+                        <input class="form-input" id="fm-vl-max-pixels" type="number" value="${vlConfig.max_pixels ?? 4000000}" min="100000">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">自定义定位 prompt 模板（留空用默认）</label>
+                        <textarea class="form-textarea" id="fm-vl-locate-prompt-template" rows="8" placeholder="必须含占位符 {field_hints} {page_labels} {position_map} {grid_rows} {grid_cols}">${Utils.escapeHtml(vlConfig.locate_prompt_template || '')}</textarea>
+                    </div>
+                `;
+                break;
+        }
+        return html;
+    },
+
+    onVLMethodChange(method) {
+        const area = document.getElementById('fm-vl-config-area');
+        if (!area) return;
+        const config = (this.state.editingField && this.state.editingField.vl_method === method)
+            ? (this.state.editingField.vl_config || {})
+            : {};
+        area.innerHTML = this.buildVLConfigFields(method, config);
+    },
+
+    collectVLConfig(method) {
+        const config = {};
+        const getVal = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+        const getInt = (id, def) => { const el = document.getElementById(id); return el ? (parseInt(el.value) || def) : def; };
+        const getFloat = (id, def) => { const el = document.getElementById(id); return el ? (parseFloat(el.value) || def) : def; };
+
+        switch (method) {
+            case 'vl_model':
+                config.page_range = getVal('fm-vl-page-range') || 'all';
+                config.max_pixels = getInt('fm-vl-max-pixels', 4000000);
+                break;
+            case 'vl_progressive':
+                config.field_hints = getVal('fm-vl-field-hints');
+                config.batch_size = getInt('fm-vl-batch-size', 2);
+                config.max_pixels = getInt('fm-vl-max-pixels', 4000000);
+                {
+                    const tpl = getVal('fm-vl-batch-prompt-template');
+                    if (tpl) config.batch_prompt_template = tpl;
+                }
+                break;
+            case 'vl_locate':
+                config.field_hints = getVal('fm-vl-field-hints');
+                config.grid_pages = getInt('fm-vl-grid-pages', 6);
+                config.grid_cols = getInt('fm-vl-grid-cols', 3);
+                config.max_concurrent = getInt('fm-vl-max-concurrent', 20);
+                config.thumb_scale = getFloat('fm-vl-thumb-scale', 0.75);
+                config.key_pages_limit = getInt('fm-vl-key-pages-limit', 6);
+                config.fallback_pages = getInt('fm-vl-fallback-pages', 3);
+                config.max_pixels = getInt('fm-vl-max-pixels', 4000000);
+                {
+                    const tpl = getVal('fm-vl-locate-prompt-template');
+                    if (tpl) config.locate_prompt_template = tpl;
+                }
+                break;
+        }
+        return config;
+    },
+
     onSourceTypeChange(type) {
         const tableSection = document.getElementById('fm-table-section');
         const textSection = document.getElementById('fm-text-section');
@@ -801,6 +941,10 @@ const RuleConfig = {
             search_config: null,
             text_system_prompt: null,
             text_extract_prompt: null,
+            vl_method: null,
+            vl_config: null,
+            vl_system_prompt: null,
+            vl_extract_prompt: null,
         };
 
         if (sourceType === 'table') {
@@ -810,6 +954,11 @@ const RuleConfig = {
             data.table_match_max_results = parseInt(document.getElementById('fm-table-match-max-results').value) || null;
             data.table_system_prompt = document.getElementById('fm-table-system-prompt').value.trim() || null;
             data.table_extract_prompt = document.getElementById('fm-table-extract-prompt').value.trim() || null;
+        } else if (sourceType === 'vl') {
+            data.vl_method = document.getElementById('fm-vl-method').value;
+            data.vl_config = this.collectVLConfig(data.vl_method);
+            data.vl_system_prompt = document.getElementById('fm-vl-system-prompt').value.trim() || null;
+            data.vl_extract_prompt = document.getElementById('fm-vl-extract-prompt').value.trim() || null;
         } else {
             const searchType = document.getElementById('fm-search-type').value;
             data.search_type = searchType;
