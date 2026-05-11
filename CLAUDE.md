@@ -116,9 +116,16 @@ Multi-type configuration support: each file is bound to one `type_id` (default `
 - Default type (`is_default=1`) cannot be deleted. Deleting a non-default type with files/configs requires `force=true` (cascades file content + Milvus + configs).
 
 ### Extraction System (`service/extraction_service.py`)
-Two source types:
+Three source types:
 - **table** - Matches tables by name (exact/fuzzy/contains/llm), extracts via LLM with `<search_result>label</search_result>` placeholder system in prompts.
 - **text** - 5 search methods: `context` (keyword+surrounding text), `section` (chapter matching), `rule` (keyword+stopword boundary), `chunk_db` (MySQL chunk search), `vector_db` (Milvus semantic search). Results injected into prompt via same placeholder system.
+- **vl** - 三种基于 VL 视觉模型的端到端 PDF 抽取。直接读 `uploads/{file_id}.pdf`，跳过 MinerU 解析的 Markdown：
+  - `vl_model`：指定页全部塞 VL 一次出 JSON。配置 `page_range`。
+  - `vl_progressive`：分批扫描 + 伪历史累积 + 最后文本聚合。配置 `field_hints`、`batch_size`，可自定义 `batch_prompt_template`。
+  - `vl_locate`：缩略图网格并行定位 + 关键页高清提取。配置 `field_hints`、`grid_pages`、`max_concurrent`，可自定义 `locate_prompt_template`。
+  - VL 直接产出 `{value, reason}` JSON，**不**走文本 LLM 二次抽取；`source_refs` 存为 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, ...}}`。
+  - 全局并发 `vl_model.global_max_concurrency`（默认 8）通过 `utils/vl_client.py` 的 asyncio.Semaphore 治理。
+  - PDF 字节由 `blue_print/file_router.py` 在上传时持久化到 `uploads/{file_id}.pdf`，由 DELETE / 批量删除 / 文档类型级联删除联动清理；启动时 `cleanup_orphan_pdfs` 兜底。
 
 ### Analysis System (`service/analysis_service.py`)
 Two rule types:
@@ -150,4 +157,4 @@ Two rule types:
 
 ## Configuration
 
-Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`. Each maps to a Pydantic model in `utils/config.py`.
+Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`, `vl_model`. Each maps to a Pydantic model in `utils/config.py`.
