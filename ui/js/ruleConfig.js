@@ -94,14 +94,17 @@ const RuleConfig = {
         }
         this.els.fieldEmpty.style.display = 'none';
 
-        const sourceTypeText = { table: '表格', text: '文本' };
+        const sourceTypeText = { table: '表格', text: '文本', vl: 'VL' };
         let html = '';
         fields.forEach(f => {
+            const sourceTypeCell = f.source_type === 'vl'
+                ? `VL · ${Utils.escapeHtml(f.vl_method || '')}`
+                : (sourceTypeText[f.source_type] || f.source_type);
             html += `
                 <tr class="${f.enabled ? '' : 'row-disabled'}">
                     <td>${Utils.escapeHtml(f.field_id)}</td>
                     <td>${Utils.escapeHtml(f.field_name)}</td>
-                    <td>${sourceTypeText[f.source_type] || f.source_type}</td>
+                    <td>${sourceTypeCell}</td>
                     <td>${f.priority}</td>
                     <td>
                         <label class="toggle-switch" onclick="event.stopPropagation()">
@@ -1089,6 +1092,20 @@ const RuleConfig = {
                 Toast.error('表格提取 Prompt 须包含 <search_result>...</search_result> 占位符');
                 return false;
             }
+        } else if (data.source_type === 'vl') {
+            if (!data.vl_method) {
+                Toast.error('请选择 VL 方法');
+                return false;
+            }
+            if (!data.vl_extract_prompt) {
+                Toast.error('最终提取 Prompt 不能为空');
+                return false;
+            }
+            const lower = data.vl_extract_prompt.toLowerCase();
+            if (!lower.includes('value') || !lower.includes('reason')) {
+                Toast.error('最终提取 Prompt 必须包含 value 与 reason 关键字');
+                return false;
+            }
         } else {
             if (data.text_extract_prompt && !data.text_extract_prompt.includes('<search_result>')) {
                 Toast.error('文本提取 Prompt 须包含 <search_result>...</search_result> 占位符');
@@ -1545,6 +1562,9 @@ const RuleConfig = {
         if (config.source_type === 'table') {
             displayConfig.table_name_pattern = config.table_name_pattern;
             displayConfig.table_match_type = config.table_match_type;
+        } else if (config.source_type === 'vl') {
+            displayConfig.vl_method = config.vl_method;
+            displayConfig.vl_config = config.vl_config;
         } else {
             displayConfig.search_type = config.search_type;
             displayConfig.search_config = config.search_config;
@@ -1564,6 +1584,12 @@ const RuleConfig = {
                 break;
             case 'match_llm':
                 this.renderMatchLlm(data);
+                break;
+            case 'pdf_loaded':
+            case 'progressive_batch':
+            case 'locate_locate':
+            case 'locate_extract':
+                this.renderVLProgress(event, data);
                 break;
             case 'prompt':
                 this._hideDebugLoading();
@@ -1587,6 +1613,50 @@ const RuleConfig = {
                 this._hideDebugLoading();
                 break;
         }
+    },
+
+    renderVLProgress(event, data) {
+        const section = document.getElementById('debug-sec-search');
+        const container = document.getElementById('debug-search-results');
+        if (!section || !container) return;
+        section.style.display = '';
+
+        let row = '';
+        if (event === 'pdf_loaded') {
+            // 首次：清空旧内容并加 header
+            container.innerHTML = `<div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">VL 方法: ${Utils.escapeHtml(data.vl_method || '')} · 共 ${data.total_pages} 页</div>`;
+            this._showDebugLoading('VL 抽取中...');
+            return;
+        }
+        if (event === 'progressive_batch') {
+            const icon = data.has_info ? '✓' : '✗';
+            const color = data.has_info ? '#5b8d6a' : '#999';
+            const preview = data.has_info ? Utils.escapeHtml(data.summary_preview || '') : '无相关';
+            const idx = (data.batch_index ?? 0) + 1;
+            const total = data.total_batches ?? '?';
+            row = `
+                <div class="debug-result-group">
+                    <div class="debug-result-group-header" style="color: ${color};">[${idx}/${total}] ${Utils.escapeHtml(data.page_label || '')} ${icon}</div>
+                    <div class="debug-result-item-content" style="font-size: 12px;">${preview}</div>
+                </div>
+            `;
+        } else if (event === 'locate_locate') {
+            const found = (data.found_pages || []).join(', ');
+            row = `
+                <div class="debug-result-group">
+                    <div class="debug-result-group-header">网格 ${data.grid_idx}/${data.total_grids} · 页码 ${Utils.escapeHtml(data.page_labels || '')}</div>
+                    <div class="debug-result-item-content" style="font-size: 12px;">命中: [${Utils.escapeHtml(found)}]</div>
+                </div>
+            `;
+        } else if (event === 'locate_extract') {
+            row = `
+                <div class="debug-result-group">
+                    <div class="debug-result-group-header" style="color: #5b8d6a;">关键页确定：[${(data.key_pages || []).join(', ')}]</div>
+                    <div class="debug-result-item-content" style="font-size: 12px;">开始第二轮高清提取...</div>
+                </div>
+            `;
+        }
+        container.innerHTML += row;
     },
 
     renderMatchLlm(data) {
