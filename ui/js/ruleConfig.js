@@ -17,6 +17,14 @@ const RuleConfig = {
 
     els: {},
 
+    // VL 默认提示词（与后端 service/vl_service/_defaults.py 严格保持一致）。
+    // 注：locate 模板里字面 { } 必须写成 {{ }}，因为后端会 .format() 这个模板。
+    VL_DEFAULTS: {
+        EXTRACT_PROMPT: '请基于以上图片提取相关信息。\n请只返回 JSON 格式：{"value": "提取到的内容（多个用逗号分隔）", "reason": "简要说明依据，例如在哪一页或哪个位置看到"}\n如果未找到，返回：{"value": "", "reason": "未找到"}',
+        BATCH_PROMPT_TEMPLATE: '{history}你正在逐页阅读一份文档，需要关注以下信息：{field_hints}\n\n当前是{page_label}（共{total_pages}页）。\n如果当前页包含上述相关信息，请输出精简摘要（保留关键数字、名称、金额等）。\n如果当前页无相关信息（如封面、目录、说明性文字），请仅输出"无相关信息"。',
+        LOCATE_PROMPT_TEMPLATE: '这张图片是一份文档的缩略图网格（{grid_rows}行×{grid_cols}列），包含第 {page_labels} 页。\n位置对应关系：{position_map}\n\n请判断哪些页面包含以下信息：{field_hints}\n\n选择标准——选择以下类型的页面：\n1. 封面/首页（包含企业名称的标题页）\n2. 正式报表页（资产负债表、利润表、现金流量表等，以完整表格形式呈现）\n3. 协议/合同的关键条款页（金额、签署方等核心条款）\n4. 包含汇总数据的表格页（如有明显的数字表格且与所需信息直接相关）\n\n不要选择：纯文字附注段落、审计意见页、目录页、空白页。\n\n注意：只能从 [{page_labels}] 中选择，不要返回其他页码。\n请只返回JSON格式：{{"found_pages": [页码数字列表], "reason": "简要说明"}}\n如果这几页都不包含相关信息，返回：{{"found_pages": [], "reason": "无相关内容"}}',
+    },
+
     init() {
         this.cacheElements();
     },
@@ -498,7 +506,7 @@ const RuleConfig = {
                 </div>
                 <div class="form-group">
                     <label class="form-label">最终提取提示词</label>
-                    <textarea class="form-textarea" id="fm-vl-extract-prompt" rows="6" placeholder='必须含 value/reason 关键字，要求 VL 直接输出 {"value":..., "reason":...} JSON'>${Utils.escapeHtml(field.vl_extract_prompt || '')}</textarea>
+                    <textarea class="form-textarea" id="fm-vl-extract-prompt" rows="6" placeholder='必须含 value/reason 关键字，要求 VL 直接输出 {"value":..., "reason":...} JSON'>${Utils.escapeHtml(field.vl_extract_prompt || this.VL_DEFAULTS.EXTRACT_PROMPT)}</textarea>
                     <div class="form-hint">VL 直接产出 JSON，不再走第二次文本 LLM。提示词中需明确要求 value/reason 两个键。</div>
                 </div>
             </div>
@@ -660,20 +668,37 @@ const RuleConfig = {
         let html = '';
 
         switch (method) {
-            case 'vl_model':
+            case 'vl_model': {
+                // 把 page_range 字符串解析回 from/to 显式数字
+                const pageRange = vlConfig.page_range || 'all';
+                let pageFrom = '', pageTo = '';
+                if (pageRange !== 'all') {
+                    const m = pageRange.match(/^(\d+)-(\d+)$/);
+                    if (m) { pageFrom = m[1]; pageTo = m[2]; }
+                    else {
+                        const n = pageRange.match(/^(\d+)$/);
+                        if (n) { pageFrom = n[1]; pageTo = n[1]; }
+                    }
+                }
                 html = `
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">页面范围</label>
-                            <input class="form-input" id="fm-vl-page-range" value="${Utils.escapeHtml(vlConfig.page_range || 'all')}" placeholder="all 或 1-3,5">
+                    <div class="form-group">
+                        <label class="form-label">页面范围</label>
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                            <span style="white-space: nowrap;">从第</span>
+                            <input class="form-input" id="fm-vl-page-from" type="number" min="1" value="${pageFrom}" placeholder="1" style="width: 90px;">
+                            <span style="white-space: nowrap;">页 到第</span>
+                            <input class="form-input" id="fm-vl-page-to" type="number" min="1" value="${pageTo}" placeholder="末页" style="width: 90px;">
+                            <span style="white-space: nowrap;">页</span>
                         </div>
-                        <div class="form-group">
-                            <label class="form-label">最大像素数</label>
-                            <input class="form-input" id="fm-vl-max-pixels" type="number" value="${vlConfig.max_pixels ?? 4000000}" min="100000">
-                        </div>
+                        <div class="form-hint">两个都留空 = 全部页面；只填"从"不填"到" = 从该页到末页</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">最大像素数</label>
+                        <input class="form-input" id="fm-vl-max-pixels" type="number" value="${vlConfig.max_pixels ?? 4000000}" min="100000">
                     </div>
                 `;
                 break;
+            }
 
             case 'vl_progressive':
                 html = `
@@ -692,8 +717,9 @@ const RuleConfig = {
                         </div>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">自定义批量 prompt 模板（留空用默认）</label>
-                        <textarea class="form-textarea" id="fm-vl-batch-prompt-template" rows="6" placeholder="必须含占位符 {field_hints} {page_label} {total_pages} {history}">${Utils.escapeHtml(vlConfig.batch_prompt_template || '')}</textarea>
+                        <label class="form-label">批量 prompt 模板</label>
+                        <textarea class="form-textarea" id="fm-vl-batch-prompt-template" rows="8" placeholder="必须含占位符 {field_hints} {page_label} {total_pages} {history}">${Utils.escapeHtml(vlConfig.batch_prompt_template || this.VL_DEFAULTS.BATCH_PROMPT_TEMPLATE)}</textarea>
+                        <div class="form-hint">已填默认模板，如需调整请直接编辑；与默认完全一致则不会落库。</div>
                     </div>
                 `;
                 break;
@@ -739,8 +765,9 @@ const RuleConfig = {
                         <input class="form-input" id="fm-vl-max-pixels" type="number" value="${vlConfig.max_pixels ?? 4000000}" min="100000">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">自定义定位 prompt 模板（留空用默认）</label>
-                        <textarea class="form-textarea" id="fm-vl-locate-prompt-template" rows="8" placeholder="必须含占位符 {field_hints} {page_labels} {position_map} {grid_rows} {grid_cols}">${Utils.escapeHtml(vlConfig.locate_prompt_template || '')}</textarea>
+                        <label class="form-label">定位 prompt 模板</label>
+                        <textarea class="form-textarea" id="fm-vl-locate-prompt-template" rows="10" placeholder="必须含占位符 {field_hints} {page_labels} {position_map} {grid_rows} {grid_cols}">${Utils.escapeHtml(vlConfig.locate_prompt_template || this.VL_DEFAULTS.LOCATE_PROMPT_TEMPLATE)}</textarea>
+                        <div class="form-hint">已填默认模板，如需调整请直接编辑；与默认完全一致则不会落库。</div>
                     </div>
                 `;
                 break;
@@ -764,17 +791,28 @@ const RuleConfig = {
         const getFloat = (id, def) => { const el = document.getElementById(id); return el ? (parseFloat(el.value) || def) : def; };
 
         switch (method) {
-            case 'vl_model':
-                config.page_range = getVal('fm-vl-page-range') || 'all';
+            case 'vl_model': {
+                const fromV = getVal('fm-vl-page-from');
+                const toV = getVal('fm-vl-page-to');
+                if (!fromV && !toV) {
+                    config.page_range = 'all';
+                } else {
+                    const from = parseInt(fromV) || 1;
+                    const to = toV ? (parseInt(toV) || from) : 9999;
+                    config.page_range = `${from}-${to}`;
+                }
                 config.max_pixels = getInt('fm-vl-max-pixels', 4000000);
                 break;
+            }
             case 'vl_progressive':
                 config.field_hints = getVal('fm-vl-field-hints');
                 config.batch_size = getInt('fm-vl-batch-size', 2);
                 config.max_pixels = getInt('fm-vl-max-pixels', 4000000);
                 {
                     const tpl = getVal('fm-vl-batch-prompt-template');
-                    if (tpl) config.batch_prompt_template = tpl;
+                    if (tpl && tpl !== this.VL_DEFAULTS.BATCH_PROMPT_TEMPLATE) {
+                        config.batch_prompt_template = tpl;
+                    }
                 }
                 break;
             case 'vl_locate':
@@ -788,7 +826,9 @@ const RuleConfig = {
                 config.max_pixels = getInt('fm-vl-max-pixels', 4000000);
                 {
                     const tpl = getVal('fm-vl-locate-prompt-template');
-                    if (tpl) config.locate_prompt_template = tpl;
+                    if (tpl && tpl !== this.VL_DEFAULTS.LOCATE_PROMPT_TEMPLATE) {
+                        config.locate_prompt_template = tpl;
+                    }
                 }
                 break;
         }
