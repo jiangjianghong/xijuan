@@ -5,7 +5,7 @@ import asyncio
 
 import pytest
 
-from service.startup_check import CheckResult, _run_one
+from service.startup_check import CheckResult, _format_table, _run_one
 
 
 def test_check_result_defaults():
@@ -56,3 +56,21 @@ async def test_run_one_respects_timeout(monkeypatch):
     r = await _run_one("slow", slow)
     assert r.ok is False
     assert "Timeout" in r.error
+
+
+def test_format_table_renders_all_rows():
+    results = [
+        CheckResult(name="mysql", ok=True, elapsed_ms=12, detail="db=foo, tables=3"),
+        CheckResult(name="mineru", ok=False, elapsed_ms=10000, detail="", error="TimeoutError"),
+    ]
+    out = _format_table(results)
+    assert "mysql" in out
+    assert "mineru" in out
+    assert "✓" in out
+    assert "✗" in out
+    assert "TimeoutError" in out
+
+
+def test_format_table_handles_empty_list():
+    out = _format_table([])
+    assert isinstance(out, str)

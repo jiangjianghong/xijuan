@@ -50,3 +50,42 @@ async def _run_one(
             detail="",
             error=f"{type(e).__name__}: {e}",
         )
+
+
+def _format_table(results: list[CheckResult]) -> str:
+    """渲染 CheckResult 列表为对齐 ASCII 表格 + 汇总行。"""
+    headers = ("Check", "OK", "ms", "Detail")
+    if not results:
+        return "(no checks ran)"
+
+    rows = []
+    for r in results:
+        symbol = "✓" if r.ok else "✗"
+        detail = r.detail if r.ok else (r.error or r.detail or "")
+        rows.append((r.name, symbol, str(r.elapsed_ms), detail))
+
+    col_widths = [
+        max(len(headers[i]), max((len(row[i]) for row in rows), default=0))
+        for i in range(4)
+    ]
+
+    def fmt_row(cells: tuple[str, ...]) -> str:
+        return "│ " + " │ ".join(
+            cells[i].ljust(col_widths[i]) if i != 1 else cells[i].center(col_widths[i])
+            for i in range(4)
+        ) + " │"
+
+    sep_top = "┌" + "┬".join("─" * (w + 2) for w in col_widths) + "┐"
+    sep_mid = "├" + "┼".join("─" * (w + 2) for w in col_widths) + "┤"
+    sep_bot = "└" + "┴".join("─" * (w + 2) for w in col_widths) + "┘"
+
+    lines = [sep_top, fmt_row(headers), sep_mid]
+    lines.extend(fmt_row(row) for row in rows)
+    lines.append(sep_bot)
+
+    ok_count = sum(1 for r in results if r.ok)
+    total_ms = sum(r.elapsed_ms for r in results)
+    lines.append(
+        f"启动检查完成: {ok_count}/{len(results)} 通过, 总耗时 ~{total_ms / 1000:.1f}s"
+    )
+    return "\n".join(lines)
