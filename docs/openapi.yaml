@@ -1517,11 +1517,11 @@ components:
     # ── 字段提取流式调试 SSE 事件 ──────────────────────────────
     SSEExtractionSearchResultsEvent:
       type: object
-      description: 字段提取流式调试 - 检索结果事件
+      description: 字段提取流式调试 - 检索结果事件（table / text 字段）
       properties:
         source_type:
           type: string
-          description: 数据源类型（table/text）
+          description: 数据源类型（table/text；vl 字段走单独事件）
           enum:
             - table
             - text
@@ -1583,6 +1583,81 @@ components:
         reason:
           type: string
           description: 提取理由/说明
+        source_refs:
+          description: |
+            来源引用。形状随 source_type 不同：
+            - table / text：数组，元素描述检索/匹配命中
+            - vl：dict `{"_vl": {method, total_pages, key_pages, vl_total_tokens, batches_with_info?}}`
+            - 失败：null
+          nullable: true
+
+    # ── VL 抽取专用 SSE 事件（仅 source_type=vl 的调试流推送） ──
+    SSEVLPdfLoadedEvent:
+      type: object
+      description: VL 抽取 - PDF 加载完成事件
+      properties:
+        total_pages:
+          type: integer
+          description: PDF 总页数
+        vl_method:
+          $ref: '#/components/schemas/VLMethodEnum'
+
+    SSEVLProgressiveBatchEvent:
+      type: object
+      description: VL 抽取（vl_progressive） - 单批扫描结果
+      properties:
+        page_label:
+          type: string
+          description: 本批页码标签，如 "第3-4页"
+        has_info:
+          type: boolean
+          description: 本批是否包含相关信息
+        summary_preview:
+          type: string
+          description: 本批摘要前 100 字预览（has_info=false 时为空字符串）
+        batch_index:
+          type: integer
+          description: 当前批次序号（0-indexed）
+        total_batches:
+          type: integer
+          description: 总批次数
+
+    SSEVLLocateLocateEvent:
+      type: object
+      description: VL 抽取（vl_locate） - 第一轮缩略图网格定位结果
+      properties:
+        phase:
+          type: string
+          enum:
+            - locate
+        grid_idx:
+          type: integer
+          description: 当前网格序号（1-indexed）
+        total_grids:
+          type: integer
+          description: 总网格数
+        page_labels:
+          type: string
+          description: 本网格包含的页码列表（如 "1, 2, 3, 4, 5, 6"）
+        found_pages:
+          type: array
+          description: 本网格命中的关键页（1-indexed，已过滤幻觉页码）
+          items:
+            type: integer
+
+    SSEVLLocateExtractEvent:
+      type: object
+      description: VL 抽取（vl_locate） - 第一轮完成，准备第二轮高清提取
+      properties:
+        phase:
+          type: string
+          enum:
+            - extract
+        key_pages:
+          type: array
+          description: 最终确定的关键页（1-indexed，去重排序，已截断到 key_pages_limit；一页未命中时取前 fallback_pages 页）
+          items:
+            type: integer
 
     # ── 逻辑分析流式调试 SSE 事件 ──────────────────────────────
     SSEAnalysisInputValuesEvent:
@@ -1661,9 +1736,24 @@ components:
         字段提取的数据源类型：
         - `table`: 从 PDF 文件中解析出的表格数据中提取
         - `text`: 从 PDF 文件的正文内容中提取
+        - `vl`: 基于 PDF 视觉模型端到端抽取，直接读取 `uploads/{file_id}.pdf`，
+          由 VL 模型直出 `{value, reason}` JSON，**不**走文本 LLM 二次抽取
       enum:
         - table
         - text
+        - vl
+
+    VLMethodEnum:
+      type: string
+      description: |
+        VL 抽取方法（source_type=vl 时必填）：
+        - `vl_model`: 全量模式，把 `page_range` 指定页一次性塞 VL，1 次调用产 JSON
+        - `vl_progressive`: 逐批扫描，按 `batch_size` 分批，最后一次文本聚合
+        - `vl_locate`: 两轮——先缩略图网格并行定位关键页，再高清重渲染关键页提取
+      enum:
+        - vl_model
+        - vl_progressive
+        - vl_locate
 
     TableMatchTypeEnum:
       type: string
@@ -2092,6 +2182,42 @@ components:
             作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束
           nullable: true
           example: 你是一个专业的文档信息提取助手，请严格按照JSON格式返回结果。
+        vl_method:
+          $ref: '#/components/schemas/VLMethodEnum'
+        vl_config:
+          type: object
+          description: |
+            VL 方法的参数（source_type=vl 时使用），结构按 vl_method 不同：
+            - vl_model: `{page_range, max_pixels}`
+            - vl_progressive: `{field_hints, batch_size, max_pixels, batch_prompt_template?}`
+            - vl_locate: `{field_hints, grid_pages, grid_cols, max_concurrent, thumb_scale, key_pages_limit, fallback_pages, max_pixels, locate_prompt_template?}`
+
+            自定义 `batch_prompt_template` 必须含占位符 `{field_hints} {page_label} {total_pages} {history}`；
+            自定义 `locate_prompt_template` 必须含 `{field_hints} {page_labels} {position_map} {grid_rows} {grid_cols}`；
+            模板字面 `{ }` 需写成 `{{ }}` 转义（后端 str.format 渲染）。
+          nullable: true
+          additionalProperties: true
+          example:
+            field_hints: 资产总额、负债总额
+            grid_pages: 6
+            grid_cols: 3
+            max_concurrent: 20
+            key_pages_limit: 6
+        vl_system_prompt:
+          type: string
+          description: VL 调用的系统提示词（source_type=vl 时可选）
+          nullable: true
+        vl_extract_prompt:
+          type: string
+          description: |
+            VL 最终提取提示词（source_type=vl 时必填）。
+            必须包含 `value` 与 `reason` 关键字（大小写不敏感），
+            因为 VL 模型会直接输出 `{value, reason}` JSON，不再走文本 LLM 二次抽取。
+          nullable: true
+          example: |
+            请基于以上图片提取「资产总额」。
+            请只返回 JSON：{"value": "金额（含单位）", "reason": "看到的页码与位置"}
+            未找到返回：{"value": "", "reason": "未找到"}
 
     ExtractionFieldResponse:
       description: 字段提取配置响应（继承 ExtractionFieldCreate 的所有字段，额外包含时间戳）
@@ -2147,18 +2273,22 @@ components:
       properties:
         search_results:
           type: array
-          description: 检索结果
+          description: |
+            检索结果。形状随 source_type 不同：
+            - table：匹配到的表格列表（含 `table_name` `table_content`）
+            - text：检索到的文本块列表（含 `label` `content`）
+            - vl：单元素数组 `[{type: "vl_meta", method, key_pages, vl_total_tokens, batches_with_info?}]`
           items:
             type: object
             additionalProperties: true
           default: []
         llm_input:
           type: string
-          description: LLM 输入（Prompt）
+          description: LLM 输入（Prompt）。vl 字段时为 `vl_extract_prompt` 原文
           default: ""
         llm_output:
           type: string
-          description: LLM 原始输出
+          description: LLM 原始输出。vl 字段时与 `extracted_value` 一致（VL 直出 JSON）
           default: ""
         extracted_value:
           type: string

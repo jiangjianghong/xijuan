@@ -387,6 +387,127 @@ analysis_result (分析结果)
 
 ---
 
+### 2.3 VL 类字段
+
+**用途**: 直接基于 PDF 视觉模型端到端抽取，**不**依赖 file_content / file_chunk / file_table，**不**走文本 LLM 二次抽取。由 VL 模型直接输出 `{value, reason}` JSON。
+
+**适用场景**:
+- 关键字段藏在扫描图、复杂版式或表格嵌套里，文本检索/表格匹配捞不全
+- 跨页/分散信息，需要视觉模型按上下文综合判断
+- PDF 已上传时，原始字节自动持久化在 `uploads/{file_id}.pdf`，VL 直接读取
+
+**前置条件**:
+- `configs/config.yaml` 的 `vl_model:` 节配置好 `base_url` / `api_key` / `model`（默认 dashscope qwen-vl-max）
+- `vl_model.pdf_storage_dir`（默认 `uploads`）目录可写
+
+**3 种方法对比：**
+
+| vl_method | 思路 | VL 调用次数 | 是否并发 | 适用 |
+|---|---|---|---|---|
+| `vl_model` | 一把梭：指定页全部塞 VL | 1 次 | — | 短文档、相关页固定 |
+| `vl_progressive` | 逐批 + 伪历史累积，模型自判相关性 | 页数 / batch_size + 1 次聚合 | 串行 | 长文档、相关页分散 |
+| `vl_locate` | 两轮：缩略图网格并行定位 → 关键页高清提取 | (页数 / grid_pages) + 1 次提取 | 第一轮并行 | 长文档、要快速定位关键页 |
+
+**共通字段**:
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `source_type` | string | 是 | - | 固定为 `"vl"` |
+| `vl_method` | string | 是 | - | `vl_model` / `vl_progressive` / `vl_locate` |
+| `vl_config` | object | 否 | `{}` | 方法的可调参数（见下方各子节） |
+| `vl_system_prompt` | string | 否 | `null` | 系统提示词，留空即不发 |
+| `vl_extract_prompt` | string | 是 | - | 最终提取提示词，**必须包含 `value` 与 `reason` 关键字**（大小写不敏感）。VL 直接输出 JSON，不再有第二段文本 LLM 渲染 |
+
+> 后端 `service/vl_service/_defaults.py` 提供 `vl_extract_prompt` / `batch_prompt_template` / `locate_prompt_template` 的默认值；前端 UI 也已预填，用户保持默认即可跑通。
+
+#### 2.3.1 vl_model（全量）
+
+**vl_config 参数：**
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `page_range` | string | 否 | `"all"` | 渲染的页范围。`"all"` 或 `"1-3"` / `"1-3,5"`；前端 UI 用「从第 X 页到第 Y 页」两数字框收集 |
+| `max_pixels` | int | 否 | `4000000` | 单图像素上限，超出按比例缩 |
+
+**配置示例（首页提取企业名称）：**
+```json
+{
+  "field_id": "company_name_vl",
+  "field_name": "企业名称",
+  "source_type": "vl",
+  "vl_method": "vl_model",
+  "vl_config": {
+    "page_range": "1-1",
+    "max_pixels": 4000000
+  },
+  "vl_extract_prompt": "请基于以上图片提取企业全称。\n请只返回 JSON：{\"value\": \"企业全称\", \"reason\": \"在哪一页/位置看到\"}\n未找到返回：{\"value\": \"\", \"reason\": \"未找到\"}"
+}
+```
+
+#### 2.3.2 vl_progressive（逐批扫描）
+
+**vl_config 参数：**
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `field_hints` | string | 是 | - | 人类语言提示要找的字段（如 `"投资金额、签署日期、股东姓名"`） |
+| `batch_size` | int | 否 | `2` | 每批塞 VL 的页数 |
+| `max_pixels` | int | 否 | `4000000` | 单图像素上限 |
+| `batch_prompt_template` | string | 否 | 见 `_defaults.py:DEFAULT_BATCH_PROMPT` | 自定义批次 prompt，必须含占位符 `{field_hints}` `{page_label}` `{total_pages}` `{history}` |
+
+**配置示例（合同关键信息扫描）：**
+```json
+{
+  "field_id": "contract_summary",
+  "field_name": "合同关键信息",
+  "source_type": "vl",
+  "vl_method": "vl_progressive",
+  "vl_config": {
+    "field_hints": "签署日期、签约方、合同金额、有效期",
+    "batch_size": 2
+  },
+  "vl_extract_prompt": "基于以上累积摘要，请综合整理合同关键信息。\n请只返回 JSON：{\"value\": \"日期/签约方/金额/有效期，多项用分号分隔\", \"reason\": \"分别在哪些页看到\"}"
+}
+```
+
+#### 2.3.3 vl_locate（缩略图定位 + 高清提取）
+
+**vl_config 参数：**
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `field_hints` | string | 是 | - | 人类语言提示要找的字段 |
+| `grid_pages` | int | 否 | `6` | 每张网格图包含的页数 |
+| `grid_cols` | int | 否 | `3` | 网格列数（行数 = ceil(grid_pages/grid_cols)） |
+| `max_concurrent` | int | 否 | `20` | 第一轮多网格并行上限（与全局 `vl_model.global_max_concurrency` 取小） |
+| `thumb_scale` | float | 否 | `0.75` | 缩略图缩放系数 |
+| `key_pages_limit` | int | 否 | `6` | 第一轮命中的关键页上限（去重排序后截断） |
+| `fallback_pages` | int | 否 | `3` | 第一轮一页未命中时回退取前 N 页 |
+| `max_pixels` | int | 否 | `4000000` | 第二轮高清重渲染像素上限 |
+| `locate_prompt_template` | string | 否 | 见 `_defaults.py:DEFAULT_LOCATE_PROMPT` | 自定义定位 prompt，必须含占位符 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}` |
+
+> VL 模板里字面 `{ }` 必须写成 `{{ }}` 转义（后端 `str.format()` 渲染）。
+
+**配置示例（财报多页定位资产负债）：**
+```json
+{
+  "field_id": "total_assets_vl",
+  "field_name": "资产总额",
+  "source_type": "vl",
+  "vl_method": "vl_locate",
+  "vl_config": {
+    "field_hints": "资产总额、负债总额、净利润",
+    "grid_pages": 6,
+    "grid_cols": 3,
+    "max_concurrent": 20,
+    "key_pages_limit": 6
+  },
+  "vl_extract_prompt": "请从以上高清财报页中提取「资产总额」金额。\n请只返回 JSON：{\"value\": \"金额（含单位）\", \"reason\": \"看到的页码与位置\"}\n未找到返回：{\"value\": \"\", \"reason\": \"未找到\"}"
+}
+```
+
+---
+
 ## 3. 逻辑分析配置
 
 逻辑分析基于字段提取的结果进行二次计算或判断，分为 **判断类** 和 **计算类**。
@@ -570,6 +691,9 @@ analysis_result (分析结果)
 |----------|------|----------|
 | 表格类字段 | `table_extract_prompt` | 必须包含至少一个 `<search_result>标签</search_result>` |
 | 文本类字段 | `text_extract_prompt` | 必须包含至少一个 `<search_result>标签</search_result>` |
+| VL 类字段 | `vl_extract_prompt` | 必须包含 `value` 与 `reason` 关键字（大小写不敏感，VL 直接输出 JSON） |
+| VL 类字段 | `vl_config.batch_prompt_template`（仅 vl_progressive 自定义时） | 必须含占位符 `{field_hints}` `{page_label}` `{total_pages}` `{history}` |
+| VL 类字段 | `vl_config.locate_prompt_template`（仅 vl_locate 自定义时） | 必须含占位符 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}` |
 | 分析规则 | `expression` | 必须包含至少一个 `<field_result>字段标识</field_result>` |
 
 **不符合规则时**: API 返回 422 错误，提示占位符缺失。
@@ -736,14 +860,17 @@ analysis_result (分析结果)
 
 ## 附录：字段类型速查表
 
-| source_type | search_type | 适用场景 | 关键配置 |
-|-------------|-------------|----------|----------|
+| source_type | 子类型 | 适用场景 | 关键配置 |
+|-------------|--------|----------|----------|
 | `table` | - | 表格数据 | `table_name_pattern`, `table_match_type` |
-| `text` | `context` | 关键词上下文 | `keywords`, `context_before/after` |
-| `text` | `section` | 章节内容 | `section_pattern`, `section_match_type` |
-| `text` | `rule` | 精确边界提取 | `keywords`, `stop_words`, `direction` |
-| `text` | `chunk_db` | 分块过滤 | `keywords`, `max_results` |
-| `text` | `vector_db` | 语义检索 | `query_text`, `top_k` |
+| `text` | `search_type=context` | 关键词上下文 | `keywords`, `context_before/after` |
+| `text` | `search_type=section` | 章节内容 | `section_pattern`, `section_match_type` |
+| `text` | `search_type=rule` | 精确边界提取 | `keywords`, `stop_words`, `direction` |
+| `text` | `search_type=chunk_db` | 分块过滤 | `keywords`, `max_results` |
+| `text` | `search_type=vector_db` | 语义检索 | `query_text`, `top_k` |
+| `vl` | `vl_method=vl_model` | 短文档全量视觉抽取 | `page_range`, `max_pixels` |
+| `vl` | `vl_method=vl_progressive` | 长文档逐批扫描 | `field_hints`, `batch_size` |
+| `vl` | `vl_method=vl_locate` | 长文档先定位再高清抽取 | `field_hints`, `grid_pages`, `key_pages_limit` |
 
 ---
 

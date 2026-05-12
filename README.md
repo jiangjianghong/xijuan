@@ -10,7 +10,8 @@
 - **AI 表格名称校验**：LLM 自动识别表格标题，支持并发处理，名称截断 30 字
 - **智能分块**：递归字符分割，表格保持完整性
 - **向量检索**：Milvus 存储，支持 5 种文本检索 + 4 种表格匹配
-- **字段提取**：LLM 驱动，可配置提取规则
+- **字段提取（文本 / 表格类）**：LLM 驱动，可配置 9 种检索/匹配规则后送 LLM 抽取
+- **字段提取（VL 类）**：基于 PDF 视觉模型端到端抽取，3 种方法——`vl_model`（全量）/ `vl_progressive`（逐批扫描）/ `vl_locate`（缩略图定位+高清提取），由 VL 直出 `{value, reason}` JSON，不经文本 LLM 二次抽取
 - **逻辑分析**：支持判断类（LLM）和计算类（numexpr）规则
 - **三种执行模式**：async（异步）、sync（同步）、stream（SSE 流式）
 - **细粒度流式事件**：支持逐字段、逐规则实时推送提取和分析进度
@@ -34,8 +35,10 @@
 | 表格校验 | Markdown 中的 HTML 表格 | 带名称的表格列表 | LLM 并发提取表名 |
 | 分块 | Markdown 文本 | 文本块列表 | 递归字符分割 |
 | 向量化 | 文本块 | 向量数据 | Embedding API + Milvus |
-| 提取 | 向量/文本检索结果 | 字段值 | LLM + 5种检索方式 |
+| 提取 | 向量/文本检索结果（text/table）或 `uploads/{file_id}.pdf`（vl） | 字段值 | LLM + 5 种检索方式 / VL 视觉模型 |
 | 分析 | 提取字段值 | 判断/计算结果 | LLM / numexpr |
+
+> 字段提取支持 `table` / `text` / `vl` 三类。前两类经检索后送文本 LLM；`vl` 类直接读上传时持久化的 `uploads/{file_id}.pdf`，由 VL 模型一步输出 JSON。
 
 ## 快速开始
 
@@ -92,6 +95,9 @@ curl "http://localhost:5019/file/{file_id}/extraction"
 | `extraction.llm_model` | 提取用 LLM 模型 | qwen-max |
 | `table_name_validation.llm_model` | 表格名称校验 LLM 模型 | qwen3.5-35b-a3b |
 | `table_name_validation.max_concurrency` | 表格校验并发数 | 20 |
+| `vl_model.model` | VL 视觉模型（用于 vl 类字段，不配则 vl 字段不可用） | qwen-vl-max |
+| `vl_model.global_max_concurrency` | VL 调用全局并发上限（asyncio.Semaphore 治理） | 8 |
+| `vl_model.pdf_storage_dir` | 原始 PDF 持久化目录（vl 抽取依赖） | uploads |
 
 完整配置参考 [docs/design.md](docs/design.md#配置参数configyaml)
 
@@ -127,16 +133,19 @@ wanz_prase2_001/
 │   ├── table_service.py    # AI 表格名称校验（LLM）
 │   ├── chunk_service.py    # 文本分块
 │   ├── embedding_service.py # 向量化
-│   ├── extraction_service.py # 字段提取
-│   └── analysis_service.py # 逻辑分析
+│   ├── extraction_service.py # 字段提取（含 table/text/vl 分发）
+│   ├── analysis_service.py # 逻辑分析
+│   └── vl_service/         # VL 端到端抽取（model / progressive / locate）
 ├── model/                  # 数据模型
 │   ├── tables.py           # SQLAlchemy ORM 模型
 │   ├── schemas.py          # Pydantic 请求/响应模型
 │   └── database.py         # 数据库连接管理
 ├── ui/                     # 前端界面
+├── uploads/                # 原始 PDF 持久化（vl 抽取依赖；.gitignore 已排除）
 └── utils/                  # 工具类
     ├── llm_client.py       # LLM 调用
     ├── milvus_client.py    # Milvus 客户端
+    ├── vl_client.py        # VL HTTP 客户端 + PDF 渲染（PyMuPDF / Pillow）
     └── config.py           # 配置加载
 ```
 
@@ -145,3 +154,4 @@ wanz_prase2_001/
 - [详细设计文档](docs/design.md) - 算法流程、数据库表结构、检索方式详解
 - [数据库 Schema](docs/DATABASE_SCHEMA.md) - 表结构定义
 - [API 文档](openapi.yaml) - OpenAPI 规范
+- [VL 端到端抽取方法](docs/VL端到端抽取方法.md) - VL 三种方法的完整规格

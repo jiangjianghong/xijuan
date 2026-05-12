@@ -204,6 +204,8 @@
 
 ### 5.5 `extracting`
 
+> **关于 VL 字段：** 当前阶段除 `field_done` + `stage_done` 外，VL 抽取在 `/extraction/test/stream` SSE 调试通道还会推 `pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract` 进度事件。这些事件**仅** SSE 推送，**不会**经 `callback_url`。callback_url 消费者依然只收 `field_done` + `stage_done`，与现有契约一致。
+
 #### 5.5.1 单字段进度 `event=field_done`
 
 来源：`extraction_service.py:806-817`（成功）/ `:845-856`（失败）
@@ -236,6 +238,49 @@
 | `reason` | 异常文本 `str(e)` |
 | `source_refs` | `null` |
 | `success` | `false` |
+
+##### `source_refs` 形状随 `source_type` 不同
+
+- **table / text 字段**：`source_refs` 是**数组**，元素描述检索/匹配命中（上例所示）。
+- **VL 字段（source_type=vl）**：`source_refs` 是 **dict**，形如 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, batches_with_info?}}`。消费者应按 `source_refs` 是否为 `null`、是 dict 还是 array 分类处理；建议先判 `isinstance(refs, dict) and "_vl" in refs` 走 VL 分支。
+
+**VL 字段的 field_done 示例（vl_locate 方法）：**
+
+```json
+{
+  "file_id": "abc...",
+  "status": "extracting",
+  "event": "field_done",
+  "data": {
+    "field_id": "total_assets_vl",
+    "field_name": "资产总额",
+    "value": "1,234,567,890 元",
+    "reason": "见第 12 页资产负债表合计行",
+    "source_refs": {
+      "_vl": {
+        "method": "vl_locate",
+        "total_pages": 48,
+        "key_pages": [12, 13, 15],
+        "vl_total_tokens": 8421,
+        "batches_with_info": null
+      }
+    },
+    "success": true,
+    "index": 6,
+    "total": 12
+  }
+}
+```
+
+`source_refs._vl` 字段含义：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `method` | string | `vl_model` / `vl_progressive` / `vl_locate` |
+| `total_pages` | int | PDF 总页数 |
+| `key_pages` | int[] \| null | 真正发给 VL 的关键页（1-indexed）；vl_progressive 不适用，固定为 `null` |
+| `vl_total_tokens` | int | 本次抽取累计的 VL token 用量（包含所有轮次） |
+| `batches_with_info` | int? | 仅 vl_progressive 出现：累积到摘要的批次数 |
 
 #### 5.5.2 阶段汇总 `event=stage_done`
 

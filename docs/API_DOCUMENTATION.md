@@ -725,7 +725,7 @@ curl "http://localhost:5019/extraction/fields"
 |------|------|------|--------|------|
 | `field_id` | `string` | 是 | - | 字段 ID（字母数字下划线，最长 100） |
 | `field_name` | `string` | 是 | - | 字段名称（最长 200） |
-| `source_type` | `string` | 是 | - | 数据源类型：`table` / `text` |
+| `source_type` | `string` | 是 | - | 数据源类型：`table` / `text` / `vl` |
 | `enabled` | `int` | 否 | `1` | 是否启用：1=启用, 0=禁用 |
 | `priority` | `int` | 否 | `0` | 优先级（数值越小越优先） |
 | `table_name_pattern` | `string` | 否 | `null` | 表格名称匹配模式（`source_type=table` 时使用） |
@@ -734,6 +734,32 @@ curl "http://localhost:5019/extraction/fields"
 | `search_type` | `string` | 否 | `null` | 文本检索方式：`context` / `section` / `rule` / `chunk_db` / `vector_db` |
 | `search_config` | `object` | 否 | `null` | 检索配置参数 |
 | `text_extract_prompt` | `string` | 否 | `null` | 文本提取 Prompt |
+| `vl_method` | `string` | `source_type=vl` 时必填 | `null` | VL 抽取方法：`vl_model` / `vl_progressive` / `vl_locate` |
+| `vl_config` | `object` | 否 | `null` | VL 方法参数，结构按 `vl_method` 不同（见下方表） |
+| `vl_system_prompt` | `string` | 否 | `null` | VL 调用的系统提示词 |
+| `vl_extract_prompt` | `string` | `source_type=vl` 时必填 | `null` | VL 最终提取 Prompt，必须包含 `value` 与 `reason` 关键字 |
+
+**vl_config 各方法参数：**
+
+| vl_method | 字段 | 类型 | 默认值 | 说明 |
+|-----------|------|------|--------|------|
+| `vl_model` | `page_range` | string | `"all"` | `"all"` 或 `"1-3"` / `"1-3,5"` |
+| `vl_model` | `max_pixels` | int | `4000000` | 单图像素上限 |
+| `vl_progressive` | `field_hints` | string | - | 人类语言提示要找的字段 |
+| `vl_progressive` | `batch_size` | int | `2` | 每批塞 VL 的页数 |
+| `vl_progressive` | `max_pixels` | int | `4000000` | 单图像素上限 |
+| `vl_progressive` | `batch_prompt_template` | string | 内置默认 | 必含占位符 `{field_hints}` `{page_label}` `{total_pages}` `{history}` |
+| `vl_locate` | `field_hints` | string | - | 人类语言提示 |
+| `vl_locate` | `grid_pages` | int | `6` | 每张网格图包含的页数 |
+| `vl_locate` | `grid_cols` | int | `3` | 网格列数 |
+| `vl_locate` | `max_concurrent` | int | `20` | 第一轮并行上限（与全局 semaphore 取小） |
+| `vl_locate` | `thumb_scale` | float | `0.75` | 缩略图缩放系数 |
+| `vl_locate` | `key_pages_limit` | int | `6` | 第一轮命中的关键页上限 |
+| `vl_locate` | `fallback_pages` | int | `3` | 第一轮未命中时回退前 N 页 |
+| `vl_locate` | `max_pixels` | int | `4000000` | 第二轮高清重渲染像素上限 |
+| `vl_locate` | `locate_prompt_template` | string | 内置默认 | 必含占位符 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}` |
+
+> 模板字面 `{ }` 需写成 `{{ }}` 转义（后端 `str.format()` 渲染）。
 
 **请求示例（表格类字段）**
 
@@ -784,6 +810,29 @@ curl "http://localhost:5019/extraction/fields"
   "text_extract_prompt": "请从以下内容中提取公司信息：\n\n关于公司名称的内容：\n<search_result>公司名称</search_result>\n\n关于注册地址的内容：\n<search_result>注册地址</search_result>\n\n关于法定代表人的内容：\n<search_result>法定代表人</search_result>\n\n请提取：1.公司全称 2.详细地址 3.法人姓名"
 }
 ```
+
+**请求示例（VL 类字段 - vl_locate）**
+
+```json
+{
+  "field_id": "total_assets_vl",
+  "field_name": "资产总额",
+  "source_type": "vl",
+  "priority": 2,
+  "vl_method": "vl_locate",
+  "vl_config": {
+    "field_hints": "资产总额、负债总额、净利润",
+    "grid_pages": 6,
+    "grid_cols": 3,
+    "max_concurrent": 20,
+    "key_pages_limit": 6,
+    "fallback_pages": 3
+  },
+  "vl_extract_prompt": "请从以上高清财报页中提取「资产总额」。\n请只返回 JSON：{\"value\": \"金额（含单位）\", \"reason\": \"看到的页码与位置\"}\n未找到返回：{\"value\": \"\", \"reason\": \"未找到\"}"
+}
+```
+
+VL 类字段**不**依赖 `<search_result>` 占位符——VL 直接读 `uploads/{file_id}.pdf`，由视觉模型一次输出 `{value, reason}` JSON，**不**走文本 LLM 二次抽取。前置条件：上传时 PDF 字节已持久化到 `uploads/{file_id}.pdf`；`configs/config.yaml` 的 `vl_model:` 节配置了 `base_url` / `api_key` / `model`。
 
 **占位符说明**
 
@@ -949,6 +998,32 @@ curl "http://localhost:5019/extraction/fields/total_revenue/check"
 }
 ```
 
+**VL 字段响应示例（`source_type=vl`）**
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "search_results": [
+      {
+        "type": "vl_meta",
+        "method": "vl_locate",
+        "key_pages": [12, 13, 15],
+        "vl_total_tokens": 8421,
+        "batches_with_info": null
+      }
+    ],
+    "llm_input": "请从以上高清财报页中提取「资产总额」...",
+    "llm_output": "1234567890 元",
+    "extracted_value": "1234567890 元",
+    "reason": "见第 12 页资产负债表合计行"
+  }
+}
+```
+
+VL 字段的 `search_results` 是单元素数组，包含 `type: "vl_meta"` 和该方法的元数据；`llm_input` 是 `vl_extract_prompt` 原文，`llm_output` 与 `extracted_value` 一致（VL 直出 JSON，不再二次抽取）。
+
 **状态码**
 
 | 状态码 | 说明 |
@@ -999,14 +1074,21 @@ curl "http://localhost:5019/extraction/fields/total_revenue/check"
 
 | 步骤 | event | data 字段 | 说明 |
 |------|-------|-----------|------|
-| 1 | `search_results` | `source_type`, `matched_tables` / `results_by_label`, `results` | 检索结果 |
-| 2 | `prompt` | `system_prompt`, `user_prompt` | LLM 提示词 |
-| 3 | `llm_response` | `raw_response` | LLM 原始响应 |
-| 4 | `result` | `extracted_value`, `reason` | 提取结果 |
-| 5 | `done` | `{}` | 完成 |
-| - | `error` | `message` | 任意步骤失败时触发 |
+| 1 | `search_results` | `source_type`, `matched_tables` / `results_by_label`, `results` | 检索结果（table/text 字段） |
+| 1 (vl) | `pdf_loaded` | `total_pages`, `vl_method` | VL 字段：PDF 加载完成 |
+| 2 (vl_progressive) | `progressive_batch` | `page_label`, `has_info`, `summary_preview`, `batch_index`, `total_batches` | 每批扫描结果 |
+| 2 (vl_locate) | `locate_locate` | `phase`, `grid_idx`, `total_grids`, `page_labels`, `found_pages` | 缩略图网格定位结果 |
+| 3 (vl_locate) | `locate_extract` | `phase`, `key_pages` | 第一轮完成，关键页确定 |
+| 2-3 | `match_llm` | `step`, `prompt` / `llm_response` / `matched_indices` / `error` | LLM 表格匹配过程（仅 `source_type=table` 且 `table_match_type=llm`） |
+| 4 | `prompt` | `system_prompt`, `user_prompt` | LLM / VL 提示词 |
+| 5 | `llm_response` | `raw_response` | LLM 原始响应（table/text 字段；VL 字段无此事件，结果直接来自 VL） |
+| 6 | `result` | `extracted_value`, `reason`, `source_refs` | 提取结果。VL 字段的 `source_refs` 是 `{"_vl": {...}}` 形式 |
+| 7 | `done` | `{}` | 完成 |
+| - | `error` | `step`, `message` | 任意步骤失败时触发 |
 
-**SSE 事件数据格式示例**
+> VL 字段不会推 `search_results` / `llm_response`；table/text 字段不会推 `pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`。VL 进度事件**仅** SSE 推送，**不会**经异步 `callback_url`（见 `docs/ASYNC_CALLBACK.md`）。
+
+**SSE 事件数据格式示例（text 字段）**
 
 ```
 event: search_results
@@ -1020,6 +1102,30 @@ data: {"raw_response": "{\"value\": \"500000\", \"reason\": \"从文本中提取
 
 event: result
 data: {"extracted_value": "500000", "reason": "从文本中提取"}
+
+event: done
+data: {}
+```
+
+**SSE 事件数据格式示例（VL 字段 - vl_progressive）**
+
+```
+event: pdf_loaded
+data: {"total_pages": 24, "vl_method": "vl_progressive"}
+
+event: progressive_batch
+data: {"page_label": "第1-2页", "has_info": false, "summary_preview": "", "batch_index": 0, "total_batches": 12}
+
+event: progressive_batch
+data: {"page_label": "第3-4页", "has_info": true, "summary_preview": "签署日期：2024-12-15；签约方：甲方/乙方", "batch_index": 1, "total_batches": 12}
+
+... (其余批次省略)
+
+event: prompt
+data: {"system_prompt": "", "user_prompt": "基于以上累积摘要，请综合整理..."}
+
+event: result
+data: {"extracted_value": "2024-12-15；甲方/乙方", "reason": "综合第3-4页", "source_refs": {"_vl": {"method": "vl_progressive", "total_pages": 24, "key_pages": null, "vl_total_tokens": 8421, "batches_with_info": 3}}}
 
 event: done
 data: {}

@@ -285,6 +285,12 @@ parsing_   chunking_   embedding_    extracting_    analyzing_
 | `search_type` | ENUM | NULLABLE | NULL | 【文本类】检索方式 |
 | `search_config` | JSON | NULLABLE | NULL | 【文本类】检索配置参数 |
 | `text_extract_prompt` | TEXT | NULLABLE | NULL | 【文本类】LLM 提取提示词 |
+| `vl_method` | ENUM | NULLABLE | NULL | 【VL 类】VL 抽取方法 |
+| `vl_config` | JSON | NULLABLE | NULL | 【VL 类】VL 方法参数（按 vl_method 不同） |
+| `vl_system_prompt` | TEXT | NULLABLE | NULL | 【VL 类】VL 系统提示词（可选） |
+| `vl_extract_prompt` | TEXT | NULLABLE | NULL | 【VL 类】VL 最终提取提示词（vl 类必填，含 `value`/`reason` 关键字） |
+
+> 上述 4 列与 `source_type` ENUM 加入 `'vl'` 的扩展由 `service/init_service.py` 启动时自动 ALTER TABLE 迁移（ADD COLUMN + MODIFY COLUMN），不需要手工迁移脚本。
 
 #### 枚举值说明
 
@@ -292,8 +298,9 @@ parsing_   chunking_   embedding_    extracting_    analyzing_
 
 | 值 | 说明 |
 |----|------|
-| `table` | 从表格中提取 |
-| `text` | 从文本中提取 |
+| `table` | 从 file_table 表中匹配表格后送 LLM 抽取 |
+| `text` | 从 file_content / file_chunk / Milvus 检索后送 LLM 抽取 |
+| `vl` | 直接读 `uploads/{file_id}.pdf`，由 VL 视觉模型直出 `{value, reason}` JSON，**不**走文本 LLM 二次抽取 |
 
 **table_match_type（表格匹配方式）**
 
@@ -313,6 +320,14 @@ parsing_   chunking_   embedding_    extracting_    analyzing_
 | `rule` | 规则检索 |
 | `chunk_db` | 数据库分块检索 |
 | `vector_db` | 向量数据库检索 |
+
+**vl_method（VL 抽取方法）**
+
+| 值 | 说明 |
+|----|------|
+| `vl_model` | 全量模式：把 `page_range` 指定页一次性塞 VL，1 次调用产 JSON |
+| `vl_progressive` | 逐批扫描：按 `batch_size` 分批，让 VL 自判相关性 + 摘要，最后一次文本聚合 |
+| `vl_locate` | 两轮：第一轮缩略图网格并行让 VL 定位关键页，第二轮把关键页高清重渲染塞给 VL |
 
 #### search_config JSON 结构
 
@@ -369,6 +384,56 @@ parsing_   chunking_   embedding_    extracting_    analyzing_
 }
 ```
 
+#### vl_config JSON 结构
+
+根据 `vl_method` 不同，结构差异较大：
+
+**vl_model 模式**
+```json
+{
+  "page_range": "all",
+  "max_pixels": 4000000
+}
+```
+- `page_range`：`"all"` 或 `"1-3"` / `"1-3,5"`；后端 `parse_page_range` 解析，超界页码会被 clamp
+- `max_pixels`：单图像素上限，超出按比例缩
+
+**vl_progressive 模式**
+```json
+{
+  "field_hints": "投资金额、签署日期",
+  "batch_size": 2,
+  "max_pixels": 4000000,
+  "batch_prompt_template": null
+}
+```
+- `field_hints`：人类语言提示要找的字段
+- `batch_size`：每批塞 VL 的页数
+- `batch_prompt_template`：可选自定义模板，留 `null` 时使用 `service/vl_service/_defaults.py:DEFAULT_BATCH_PROMPT`；必须含占位符 `{field_hints} {page_label} {total_pages} {history}`
+
+**vl_locate 模式**
+```json
+{
+  "field_hints": "资产总额、负债总额",
+  "grid_pages": 6,
+  "grid_cols": 3,
+  "max_concurrent": 20,
+  "thumb_scale": 0.75,
+  "key_pages_limit": 6,
+  "fallback_pages": 3,
+  "max_pixels": 4000000,
+  "locate_prompt_template": null
+}
+```
+- `grid_pages` × `grid_cols`：第一轮每张网格图的布局（如 6 页 × 3 列 = 2 行）
+- `max_concurrent`：第一轮多网格并行上限（与全局 `vl_model.global_max_concurrency` 取小）
+- `thumb_scale`：缩略图缩放系数
+- `key_pages_limit`：第一轮命中的关键页上限（去重排序后截断）
+- `fallback_pages`：第一轮一页未命中时回退取前 N 页
+- `locate_prompt_template`：可选自定义模板，留 `null` 时用 `_defaults.py:DEFAULT_LOCATE_PROMPT`；必须含占位符 `{field_hints} {page_labels} {position_map} {grid_rows} {grid_cols}`
+
+> VL 模板里字面 `{ }` 必须写成 `{{ }}` 转义（后端用 `str.format()` 渲染）。
+
 #### 示例数据
 
 **表格类字段**
@@ -406,6 +471,36 @@ parsing_   chunking_   embedding_    extracting_    analyzing_
     "context_after": 100
   },
   "text_extract_prompt": "从以下内容提取公司全称：\n<search_result>公司名称</search_result>\n<search_result>企业名称</search_result>"
+}
+```
+
+**VL 类字段（vl_locate）**
+```json
+{
+  "field_id": "total_assets",
+  "field_name": "资产总额",
+  "source_type": "vl",
+  "enabled": 1,
+  "priority": 2,
+  "table_name_pattern": null,
+  "table_match_type": null,
+  "table_extract_prompt": null,
+  "search_type": null,
+  "search_config": null,
+  "text_extract_prompt": null,
+  "vl_method": "vl_locate",
+  "vl_config": {
+    "field_hints": "资产总额、负债总额",
+    "grid_pages": 6,
+    "grid_cols": 3,
+    "max_concurrent": 20,
+    "thumb_scale": 0.75,
+    "key_pages_limit": 6,
+    "fallback_pages": 3,
+    "max_pixels": 4000000
+  },
+  "vl_system_prompt": null,
+  "vl_extract_prompt": "请基于以上图片提取「资产总额」。\n请只返回 JSON：{\"value\": \"数值（含单位）\", \"reason\": \"看到的页码与位置\"}\n未找到返回：{\"value\": \"\", \"reason\": \"未找到\"}"
 }
 ```
 
@@ -668,7 +763,7 @@ CREATE TABLE IF NOT EXISTS file_chunk (
 CREATE TABLE IF NOT EXISTS extraction_field (
   field_id VARCHAR(100) PRIMARY KEY,
   field_name VARCHAR(200) NOT NULL,
-  source_type ENUM('table', 'text') NOT NULL,
+  source_type ENUM('table', 'text', 'vl') NOT NULL,
   enabled TINYINT DEFAULT 1,
   priority INT DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -678,8 +773,15 @@ CREATE TABLE IF NOT EXISTS extraction_field (
   table_extract_prompt TEXT NULL,
   search_type ENUM('context', 'section', 'rule', 'chunk_db', 'vector_db') NULL,
   search_config JSON NULL,
-  text_extract_prompt TEXT NULL
+  text_extract_prompt TEXT NULL,
+  vl_method VARCHAR(32) NULL,        -- 应用层 enum：vl_model/vl_progressive/vl_locate
+  vl_config JSON NULL,
+  vl_system_prompt TEXT NULL,
+  vl_extract_prompt TEXT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 注：vl_method 在 ORM (model/tables.py) 层用 ENUM('vl_model','vl_progressive','vl_locate')；
+-- DDL 用 VARCHAR(32) 是 init_service.py 自动迁移逻辑的兼容选择，旧库 ALTER ADD 时不需重排 ENUM。
 
 -- 6. analysis_rule 表
 CREATE TABLE IF NOT EXISTS analysis_rule (

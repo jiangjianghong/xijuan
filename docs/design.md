@@ -89,7 +89,7 @@ PRIMARY KEY (file_id, chunk_id)
 | --- | --- | --- |
 | field_id | VARCHAR(100) PK | 字段ID（用户输入，字母数字下划线，唯一，用于逻辑分析引用） |
 | field_name | VARCHAR(200) | 字段中文名（展示用） |
-| source_type | ENUM('table','text') | 来源类型：表格/文本 |
+| source_type | ENUM('table','text','vl') | 来源类型：表格 / 文本 / VL 视觉模型 |
 | enabled | TINYINT DEFAULT 1 | 是否启用（0=软删除/禁用） |
 | priority | INT DEFAULT 0 | 优先级（执行顺序） |
 | created_at | DATETIME | 创建时间 |
@@ -102,6 +102,13 @@ PRIMARY KEY (file_id, chunk_id)
 | search_type | ENUM('context','section','rule','chunk_db','vector_db') | 检索类型（一个字段只配一种） |
 | search_config | JSON | 检索配置（见下方说明） |
 | text_extract_prompt | TEXT | 文本字段提取提示词（使用 `<search_result>` 占位符表示检索结果） |
+| **VL 类专用** | | |
+| vl_method | ENUM('vl_model','vl_progressive','vl_locate') NULL | VL 抽取方法（仅 source_type='vl' 时必填） |
+| vl_config | JSON NULL | VL 方法的可调参数，结构按 vl_method 不同（见 7.3） |
+| vl_system_prompt | TEXT NULL | VL 调用的系统提示词（可选） |
+| vl_extract_prompt | TEXT NULL | VL 最终提取提示词（vl 类必填，必须含 `value` 与 `reason` 关键字，VL 直接输出 JSON） |
+
+> 4 列与 source_type enum 扩展由 `service/init_service.py` 在启动时自动 ALTER 迁移；无需手工迁移脚本。
 
 **search_config JSON 结构：**
 
@@ -450,7 +457,49 @@ chunk_id = hashlib.sha256((file_id + str(chunk_index)).encode('utf-8')).hexdiges
 <search_result>
 ```
 
-#### 7.3 检索类型详细说明
+#### 7.3 VL 类提取流程（source_type='vl'）
+
+VL 类**不走** file_content / file_chunk / file_table，也**不**调用文本 LLM 二次抽取。直接读取上传时持久化的 `uploads/{file_id}.pdf`，由 VL 视觉模型一次输出 `{value, reason}` JSON。整条链路由 `service/extraction_service.py:extract_vl_field` 分发到 `service/vl_service/` 三个子方法。
+
+```
+1. 读取 uploads/{file_id}.pdf（缺失则 reason="PDF 原始文件不存在"）
+2. 按 vl_method 派发到对应实现：
+   - vl_model       一次性把 page_range 指定页全部塞给 VL，1 次调用
+   - vl_progressive 按 batch_size 逐批扫描，每批让 VL 自判相关性 + 输出摘要，最后再做一次文本聚合
+   - vl_locate      第一轮缩略图网格并行让 VL 定位关键页，第二轮把关键页高清重渲染塞给 VL
+3. 解析 VL 输出 JSON（剥 <think>、去 markdown 围栏、兜底正则）
+4. extracted_value 存 value，reason 存 reason，source_refs={"_vl": {method, total_pages, key_pages, vl_total_tokens, batches_with_info?}}
+```
+
+**vl_config 各方法字段：**
+
+| vl_method | 字段 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- | --- |
+| vl_model | page_range | string | "all" | "all" / "1-3" / "1-3,5"；前端 UI 用「从第 X 页到第 Y 页」两个数字框收集 |
+| vl_model | max_pixels | int | 4_000_000 | 单图像素上限，超出按比例缩 |
+| vl_progressive | field_hints | string | - | 提示要找的字段（人类语言） |
+| vl_progressive | batch_size | int | 2 | 每批塞 VL 的页数 |
+| vl_progressive | max_pixels | int | 4_000_000 | 同上 |
+| vl_progressive | batch_prompt_template | string optional | 见 `_defaults.py` | 必含 `{field_hints} {page_label} {total_pages} {history}` |
+| vl_locate | field_hints | string | - | 同上 |
+| vl_locate | grid_pages | int | 6 | 每张网格图包含的页数 |
+| vl_locate | grid_cols | int | 3 | 网格列数 |
+| vl_locate | max_concurrent | int | 20 | 第一轮多网格并行上限（与全局 semaphore 取小） |
+| vl_locate | thumb_scale | float | 0.75 | 缩略图缩放系数 |
+| vl_locate | key_pages_limit | int | 6 | 第一轮命中的关键页上限（去重排序后截断） |
+| vl_locate | fallback_pages | int | 3 | 第一轮一页未命中时回退取前 N 页 |
+| vl_locate | max_pixels | int | 4_000_000 | 第二轮高清重渲染像素上限 |
+| vl_locate | locate_prompt_template | string optional | 见 `_defaults.py` | 必含 `{field_hints} {page_labels} {position_map} {grid_rows} {grid_cols}` |
+
+**vl_extract_prompt 校验：**
+- `source_type='vl'` 时必填
+- 必须包含 `value` 与 `reason` 关键字（大小写不敏感），因为 VL 直接输出 `{"value":..., "reason":...}` JSON
+
+**全局并发治理：** `utils/vl_client.py` 持有进程级 `asyncio.Semaphore(vl_model.global_max_concurrency)`（默认 8），所有 VL HTTP 调用穿过这个信号量，确保 vl_progressive 串行批 / vl_locate 多网格并行 / 多字段并行不会击穿模型侧 QPS。
+
+**异步回调（callback_url）路径：** 仅推 `field_done` + `stage_done`。VL 字段的 `field_done.data.source_refs` 形状是 `{"_vl": {...}}`（dict），与 table/text 字段的数组形状不同——消费者需按 `source_type` 区分。`pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract` **仅** 由 `/extraction/test/stream` 调试 SSE 推送，**不会**经 callback_url。
+
+#### 7.4 检索类型详细说明
 
 **context（上下文检索）：**
 1. 加载 file_content 全文
@@ -709,6 +758,19 @@ extraction:
   llm_retry_count: 3
   max_context_length: 4096  # LLM最大输入长度
 
+# VL（视觉模型）抽取配置
+vl_model:
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  api_key: "<your-key>"
+  model: "qwen-vl-max"
+  temperature: 0.1
+  max_tokens: 4096
+  timeout: 180
+  enable_thinking: false
+  global_max_concurrency: 8        # 进程级并发上限（utils/vl_client.py 的 asyncio.Semaphore）
+  default_max_pixels: 4000000      # 单图像素上限的兜底默认值
+  pdf_storage_dir: "uploads"       # 上传 PDF 持久化目录；vl 字段直接读这里
+
 # 逻辑分析配置
 analysis:
   calc_precision: 2         # 计算结果小数位数
@@ -731,3 +793,9 @@ analysis:
 - embedding_failed → 清理 Milvus 中 file_id 对应记录
 - extracting_failed → 清理 extraction_result 中 file_id 对应记录
 - analyzing_failed → 清理 analysis_result 中 file_id 对应记录
+
+**uploads/ 目录生命周期：**
+- 上传时（`blue_print/file_router.py`）按 `vl_model.pdf_storage_dir` 持久化原始 PDF 字节到 `{dir}/{file_id}.pdf`
+- 单文件 DELETE / 批量 DELETE / 文档类型 force 级联删除时同步 `unlink` PDF
+- 服务启动时 `service/init_service.cleanup_orphan_pdfs` 兜底：扫描目录、清理 files 表中不存在 file_id 的孤儿 PDF
+- 写盘失败**不阻断** pipeline（仅警告日志）；后续 VL 抽取会返回 "PDF 原始文件不存在" reason
