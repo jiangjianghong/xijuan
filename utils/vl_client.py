@@ -50,18 +50,19 @@ async def vl_chat(
     """
     cfg = get_config().vl_model
 
-    payload: dict[str, Any] = {
-        "model": cfg.model,
-        "messages": messages,
-        "temperature": cfg.temperature,
-        "max_tokens": max_tokens or cfg.max_tokens,
-    }
     body_extras: dict[str, Any] = {
         "chat_template_kwargs": {"enable_thinking": cfg.enable_thinking}
     }
     if extra_body:
         body_extras.update(extra_body)
-    payload.update(body_extras)
+
+    payload: dict[str, Any] = {
+        "model": cfg.model,
+        "messages": messages,
+        "temperature": cfg.temperature,
+        "max_tokens": max_tokens or cfg.max_tokens,
+        "extra_body": body_extras,
+    }
 
     headers = {"Content-Type": "application/json"}
     if cfg.api_key:

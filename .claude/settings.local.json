@@ -13,7 +13,9 @@
       "Bash(git *)",
       "Bash(uv sync *)",
       "Bash(cp ui/js/ruleConfig.js /tmp/rc_full.js)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(awk '{print $5, $9}')",
+      "Bash(PYTHONIOENCODING=utf-8 uv run *)"
     ]
   }
 }

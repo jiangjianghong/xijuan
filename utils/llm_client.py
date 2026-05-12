@@ -20,6 +20,7 @@ async def chat_completion(
     timeout: Optional[int] = None,
     messages: Optional[List[Dict[str, str]]] = None,
     max_retries: Optional[int] = None,
+    enable_thinking: Optional[bool] = None,
 ) -> str:
     """调用 OpenAI 兼容 chat/completions 接口。
 
@@ -31,6 +32,7 @@ async def chat_completion(
         timeout: 超时秒数，默认从配置读取。
         messages: 自定义 messages 列表，优先于 prompt。
         max_retries: 最大重试次数，默认从配置读取。
+        enable_thinking: 是否启用思考链，None 时回退到 extraction.enable_thinking。
 
     Returns:
         LLM 返回的文本内容。
@@ -41,6 +43,8 @@ async def chat_completion(
     api_key = api_key or cfg.llm_api_key or "EMPTY"
     timeout = timeout or cfg.llm_timeout
     retry_count = max_retries or cfg.llm_retry_count or 1
+    if enable_thinking is None:
+        enable_thinking = cfg.enable_thinking
 
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
@@ -52,6 +56,9 @@ async def chat_completion(
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
+        "extra_body": {
+            "chat_template_kwargs": {"enable_thinking": enable_thinking}
+        },
     }
 
     url = f"{base_url.rstrip('/')}/chat/completions"

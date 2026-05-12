@@ -75,6 +75,7 @@ class ExtractionConfig(BaseModel):
     llm_timeout: int = 60
     llm_retry_count: int = 3
     max_context_length: int = 4096
+    enable_thinking: bool = False
 
 
 class TableNameValidationConfig(BaseModel):
@@ -86,6 +87,7 @@ class TableNameValidationConfig(BaseModel):
     max_context_length: int | None = None
     max_context_lines: int | None = None
     max_concurrency: int | None = None
+    enable_thinking: bool | None = None
 
 
 class AnalysisConfig(BaseModel):

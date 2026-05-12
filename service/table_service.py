@@ -150,6 +150,11 @@ async def _extract_table_name_with_llm(
     api_key = table_name_cfg.llm_api_key or extraction_cfg.llm_api_key
     timeout = table_name_cfg.llm_timeout or extraction_cfg.llm_timeout
     retry_count = table_name_cfg.llm_retry_count or extraction_cfg.llm_retry_count
+    enable_thinking = (
+        table_name_cfg.enable_thinking
+        if table_name_cfg.enable_thinking is not None
+        else extraction_cfg.enable_thinking
+    )
 
     prompt = (
         "你是文档表格标题抽取助手。\n"
@@ -169,6 +174,7 @@ async def _extract_table_name_with_llm(
             api_key=api_key,
             timeout=timeout,
             max_retries=retry_count,
+            enable_thinking=enable_thinking,
         )
         data = _extract_json_obj(response)
         llm_name = _clean_text_line(str(data.get("table_name", "")))
