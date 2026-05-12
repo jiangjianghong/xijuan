@@ -206,7 +206,10 @@ const StreamDemo = {
         const formData = new FormData();
         formData.append('file', this.selectedFile);
 
-        fetch(`/file/parse?mode=stream`, {
+        const tid = encodeURIComponent(
+            (typeof API !== 'undefined' && API.getCurrentTypeId) ? API.getCurrentTypeId() : 'default'
+        );
+        fetch(`/file/parse?mode=stream&type_id=${tid}`, {
             method: 'POST',
             body: formData,
         }).then(response => {
