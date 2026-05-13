@@ -282,7 +282,13 @@ const RuleConfig = {
             const val = (document.getElementById('fm-table-name-pattern') || {}).value;
             if (val && val.trim()) labels = [val.trim()];
         } else if (textareaId === 'fm-text-extract-prompt') {
-            labels = this.getKeywordTags('fm-sc-keywords');
+            const searchTypeEl = document.getElementById('fm-search-type');
+            const searchType = searchTypeEl ? searchTypeEl.value : '';
+            if (searchType === 'page') {
+                labels = ['page_content'];
+            } else {
+                labels = this.getKeywordTags('fm-sc-keywords');
+            }
         } else if (textareaId === 'fm-expression' || textareaId === 'fm-expression-calc') {
             const raw = (document.getElementById('fm-depend-fields') || {}).value || '';
             labels = raw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
