@@ -122,3 +122,133 @@ def test_slice_by_page_range_empty_md():
     r = slice_by_page_range("", _make_mapping(), 1, 1, 30000)
     assert r["ok"] is False
 
+
+from unittest.mock import MagicMock
+
+import service.extraction_service as ext_svc
+from service.extraction_service import _extract_page_field
+
+
+def _make_field(prompt='提取问题: <search_result>page_content</search_result>', system=None):
+    """构造一个简单的 ExtractionField stub。"""
+    field = MagicMock()
+    field.field_id = "fld_test"
+    field.text_extract_prompt = prompt
+    field.text_system_prompt = system
+    return field
+
+
+@pytest.mark.asyncio
+async def test_extract_page_field_happy(monkeypatch):
+    captured = {}
+
+    async def fake_chat(prompt, messages=None):
+        captured["prompt"] = prompt
+        captured["messages"] = messages
+        return '{"value": "答案", "reason": "在第3页"}'
+
+    monkeypatch.setattr(ext_svc, "chat_completion", fake_chat)
+
+    field = _make_field()
+    config = {"page_range": "3", "max_length": 30000}
+    value, reason, refs = await _extract_page_field(_MD_5P, _make_mapping(), config, field)
+
+    assert value == "答案"
+    assert reason == "在第3页"
+    assert refs == {
+        "page_content": [
+            {
+                "type": "page",
+                "page_range": "3",
+                "start_pos": 18,
+                "end_pos": 27,
+                "length": 9,
+                "truncated": False,
+                "page_num": "3",
+            }
+        ]
+    }
+    sent = captured["prompt"] or (captured["messages"] and captured["messages"][-1]["content"])
+    assert "PAGE3_CCC" in sent
+    assert "<search_result>" not in sent
+
+
+@pytest.mark.asyncio
+async def test_extract_page_field_truncated(monkeypatch):
+    async def fake_chat(prompt, messages=None):
+        return '{"value": "v", "reason": "r"}'
+
+    monkeypatch.setattr(ext_svc, "chat_completion", fake_chat)
+
+    field = _make_field()
+    config = {"page_range": "1-5", "max_length": 10}
+    value, reason, refs = await _extract_page_field(_MD_5P, _make_mapping(), config, field)
+
+    assert value == "v"
+    assert refs["page_content"][0]["truncated"] is True
+    assert refs["page_content"][0]["length"] == 10
+
+
+@pytest.mark.asyncio
+async def test_extract_page_field_invalid_range():
+    field = _make_field()
+    value, reason, refs = await _extract_page_field(
+        _MD_5P, _make_mapping(), {"page_range": "5-3"}, field
+    )
+    assert value == ""
+    assert "page_range" in reason
+    assert "'5-3'" in reason
+    assert refs is None
+
+
+@pytest.mark.asyncio
+async def test_extract_page_field_missing_range():
+    field = _make_field()
+    value, reason, refs = await _extract_page_field(_MD_5P, _make_mapping(), {}, field)
+    assert value == ""
+    assert "page_range" in reason
+    assert refs is None
+
+
+@pytest.mark.asyncio
+async def test_extract_page_field_empty_mapping():
+    field = _make_field()
+    value, reason, refs = await _extract_page_field(
+        _MD_5P, [], {"page_range": "1-2"}, field
+    )
+    assert value == ""
+    assert "page_mapping" in reason
+    assert refs is None
+
+
+@pytest.mark.asyncio
+async def test_extract_page_field_out_of_range():
+    field = _make_field()
+    value, reason, refs = await _extract_page_field(
+        _MD_5P, _make_mapping(), {"page_range": "100-200"}, field
+    )
+    assert value == ""
+    assert "100-200" in reason
+    assert refs is None
+
+
+@pytest.mark.asyncio
+async def test_extract_page_field_missing_placeholder(monkeypatch):
+    """prompt 不带占位符时返回空 value，与现有 5 种方法一致。"""
+    fake_chat_called = False
+
+    async def fake_chat(prompt, messages=None):
+        nonlocal fake_chat_called
+        fake_chat_called = True
+        return '{"value": "X", "reason": ""}'
+
+    monkeypatch.setattr(ext_svc, "chat_completion", fake_chat)
+
+    field = _make_field(prompt="提取问题（无占位符）")
+    value, reason, refs = await _extract_page_field(
+        _MD_5P, _make_mapping(), {"page_range": "1"}, field
+    )
+    assert value == ""
+    assert fake_chat_called is False
+
+

@@ -580,6 +580,71 @@ JSON_OUTPUT_INSTRUCTION = """
 注意：value 的格式请严格遵循 system_prompt 中的要求（如有），可以是字符串、JSON数组或JSON对象。"""
 
 
+async def _extract_page_field(
+    content: str,
+    page_mapping: List[Dict[str, Any]],
+    search_config: Dict[str, Any],
+    field: ExtractionField,
+) -> Tuple[str, str, Optional[Dict]]:
+    """page 检索方式：直接按页码切 markdown 喂 LLM。
+
+    与其他 5 种 text 方法不同，page 不做关键词过滤，只用一个固定 label
+    `page_content` 作为 prompt 占位符。
+    """
+    page_range_raw = (search_config or {}).get("page_range", "")
+    parsed = _parse_page_range(page_range_raw)
+    if not parsed:
+        return "", f"page_range 配置非法：{page_range_raw!r}", None
+    start_page, end_page = parsed
+
+    max_length = (search_config or {}).get("max_length", 30000)
+    if not isinstance(max_length, int) or max_length <= 0:
+        return "", f"max_length 配置非法：{max_length!r}", None
+
+    sliced = slice_by_page_range(content, page_mapping, start_page, end_page, max_length)
+    if not sliced["ok"]:
+        return "", sliced["reason"], None
+
+    results_text_by_label = {"page_content": sliced["text"]}
+    source_refs: Dict[str, List[Dict[str, Any]]] = {
+        "page_content": [
+            {
+                "type": "page",
+                "page_range": page_range_raw,
+                "start_pos": sliced["start_pos"],
+                "end_pos": sliced["end_pos"],
+                "length": sliced["length"],
+                "truncated": sliced["truncated"],
+                "page_num": page_range_raw,
+            }
+        ]
+    }
+
+    prompt_template = field.text_extract_prompt or ""
+    if not validate_prompt_has_placeholder(prompt_template):
+        logger.warning("字段 {} 的 text_extract_prompt 缺少占位符", field.field_id)
+        return "", "", None
+
+    llm_input = replace_search_result_placeholders(prompt_template, results_text_by_label)
+    llm_input += JSON_OUTPUT_INSTRUCTION
+
+    try:
+        system_prompt = (field.text_system_prompt or "").strip()
+        if system_prompt:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": llm_input},
+            ]
+            response = await chat_completion("", messages=messages)
+        else:
+            response = await chat_completion(llm_input)
+        value, reason = parse_llm_json_response(response)
+        return value, reason, source_refs
+    except Exception as e:
+        logger.error("LLM 文本提取失败 (page): {}", e)
+        return "", "", None
+
+
 async def extract_table_field(
     file_id: str, field: ExtractionField, session: AsyncSession
 ) -> Tuple[str, str, Optional[Dict]]:
