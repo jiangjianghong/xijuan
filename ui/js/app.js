@@ -439,7 +439,7 @@ const App = {
             this.els.drawerFilesize.textContent = Utils.formatFileSize(detail.file_size);
             this.renderTimeline(detail);
             this.renderErrorSection(detail);
-            this.switchTab('tables');
+            this.switchTab('outline');
         } catch (error) {
             Toast.error('加载详情失败');
         }
@@ -518,6 +518,33 @@ const App = {
             let html = '';
 
             switch (tab) {
+                case 'outline':
+                    data = await API.getFileOutline(fileId);
+                    if (data.length === 0) {
+                        html = '<div class="tab-content-empty">暂无章节(文档无 # X 编号标题格式)</div>';
+                    } else {
+                        let sidebar = '';
+                        data.forEach((item, idx) => {
+                            const label = `${item.number} ${item.title}`;
+                            sidebar += `<div class="table-split-name${idx === 0 ? ' active' : ''}" data-oidx="${idx}" title="${this.escapeHtml(label)}">${this.escapeHtml(label)}</div>`;
+                        });
+                        const first = data[0];
+                        const firstLabel = `${first.number} ${first.title}`;
+                        html = `
+                            <div class="table-split">
+                                <div class="table-split-sidebar">${sidebar}</div>
+                                <div class="table-split-content">
+                                    <div class="data-card">
+                                        <div class="data-card-title">${this.escapeHtml(firstLabel)}</div>
+                                        <div class="data-card-content">${this.escapeHtml(first.content)}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        this._outlineData = data;
+                    }
+                    break;
+
                 case 'tables':
                     data = await API.getFileTables(fileId);
                     if (data.length === 0) {
@@ -621,6 +648,26 @@ const App = {
                             <div class="data-card">
                                 <div class="data-card-title">${this.escapeHtml(item.table_name || `表格 ${item.table_index}`)}${pageTag}</div>
                                 <div class="data-card-content table-rendered">${Utils.sanitizeTableHtml(item.table_content)}</div>
+                            </div>
+                        `;
+                    });
+                });
+            }
+
+            if (tab === 'outline' && this._outlineData && this._outlineData.length > 0) {
+                this.els.tabContent.querySelectorAll('.table-split-name').forEach(el => {
+                    el.addEventListener('click', () => {
+                        const idx = parseInt(el.dataset.oidx);
+                        const item = this._outlineData[idx];
+                        if (!item) return;
+                        this.els.tabContent.querySelectorAll('.table-split-name').forEach(n => n.classList.remove('active'));
+                        el.classList.add('active');
+                        const contentArea = this.els.tabContent.querySelector('.table-split-content');
+                        const label = `${item.number} ${item.title}`;
+                        contentArea.innerHTML = `
+                            <div class="data-card">
+                                <div class="data-card-title">${this.escapeHtml(label)}</div>
+                                <div class="data-card-content">${this.escapeHtml(item.content)}</div>
                             </div>
                         `;
                     });

@@ -167,6 +167,14 @@ const API = {
     },
 
     /**
+     * 获取文件大纲(章节列表,含正文切片)
+     */
+    async getFileOutline(fileId) {
+        const result = await this.request(`/file/${fileId}/outline`);
+        return result.data;
+    },
+
+    /**
      * 删除单个文件
      */
     async deleteFile(fileId) {

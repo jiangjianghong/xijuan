@@ -13,6 +13,7 @@ const CustomSelect = {
         activeWrapper: null,
         activeTrigger: null,
         activeKeyHandler: null,
+        enhanced: new WeakSet(),
     },
 
     init() {
@@ -59,24 +60,36 @@ const CustomSelect = {
 
     enhance(select) {
         if (!select.classList.contains('form-select') && !select.classList.contains('status-filter')) return;
-        if (select.dataset.csEnhanced === '1') return;
-        select.dataset.csEnhanced = '1';
+        if (this.state.enhanced.has(select)) return;
+        this.state.enhanced.add(select);
 
-        const wrapper = document.createElement('div');
-        wrapper.className = 'cs-wrapper';
-        if (select.classList.contains('status-filter')) wrapper.classList.add('cs-pill');
+        // 复用既有 cs-wrapper(innerHTML 往返后产生的"哑"结构):
+        // 序列化保留了 wrapper / cs-native select / trigger DOM,但 JS 监听器已丢失,
+        // 需重建 trigger 并重新挂载所有监听。
+        let wrapper = select.parentNode && select.parentNode.classList?.contains('cs-wrapper')
+            ? select.parentNode
+            : null;
 
-        if (select.style.width) {
-            wrapper.style.width = select.style.width;
-            select.style.width = '';
+        if (!wrapper) {
+            wrapper = document.createElement('div');
+            wrapper.className = 'cs-wrapper';
+            if (select.classList.contains('status-filter')) wrapper.classList.add('cs-pill');
+
+            if (select.style.width) {
+                wrapper.style.width = select.style.width;
+                select.style.width = '';
+            }
+            if (select.style.minWidth) {
+                wrapper.style.minWidth = select.style.minWidth;
+                select.style.minWidth = '';
+            }
+
+            select.parentNode.insertBefore(wrapper, select);
+            wrapper.appendChild(select);
+        } else {
+            wrapper.classList.remove('cs-active');
+            wrapper.querySelectorAll(':scope > :not(select)').forEach(n => n.remove());
         }
-        if (select.style.minWidth) {
-            wrapper.style.minWidth = select.style.minWidth;
-            select.style.minWidth = '';
-        }
-
-        select.parentNode.insertBefore(wrapper, select);
-        wrapper.appendChild(select);
 
         const trigger = document.createElement('div');
         trigger.className = 'cs-trigger';
