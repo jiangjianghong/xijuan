@@ -74,6 +74,10 @@ class ExportFieldItem(BaseModel):
     search_config: Optional[Dict[str, Any]] = None
     text_system_prompt: Optional[str] = None
     text_extract_prompt: Optional[str] = None
+    vl_method: Optional[str] = None
+    vl_config: Optional[Dict[str, Any]] = None
+    vl_system_prompt: Optional[str] = None
+    vl_extract_prompt: Optional[str] = None
 
 
 class ExportRuleItem(BaseModel):

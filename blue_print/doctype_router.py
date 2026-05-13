@@ -292,6 +292,10 @@ async def copy_configs(
             search_config=src.search_config,
             text_system_prompt=src.text_system_prompt,
             text_extract_prompt=src.text_extract_prompt,
+            vl_method=src.vl_method,
+            vl_config=src.vl_config,
+            vl_system_prompt=src.vl_system_prompt,
+            vl_extract_prompt=src.vl_extract_prompt,
         )
         db.add(new_field)
         target_field_names.add(new_name)
@@ -437,6 +441,10 @@ async def export_configs(type_id: str, db: AsyncSession = Depends(get_db)):
                 search_config=f.search_config,
                 text_system_prompt=f.text_system_prompt,
                 text_extract_prompt=f.text_extract_prompt,
+                vl_method=f.vl_method,
+                vl_config=f.vl_config,
+                vl_system_prompt=f.vl_system_prompt,
+                vl_extract_prompt=f.vl_extract_prompt,
             )
             for f in fields
         ],
@@ -536,6 +544,10 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
             search_config=src.search_config,
             text_system_prompt=src.text_system_prompt,
             text_extract_prompt=src.text_extract_prompt,
+            vl_method=src.vl_method,
+            vl_config=src.vl_config,
+            vl_system_prompt=src.vl_system_prompt,
+            vl_extract_prompt=src.vl_extract_prompt,
         )
         db.add(new_field)
         target_field_names.add(new_name)
