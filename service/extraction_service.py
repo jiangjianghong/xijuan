@@ -1506,8 +1506,22 @@ async def test_field_extraction_stream(
                     return
 
                 content = file_content.file_content
+                page_mapping = file_content.page_mapping or []
 
-                if search_type == "context":
+                search_results = []
+                if search_type == "page":
+                    # page 方法不走通用按 keyword 分组流程，stream 预览也直接展示切片文本
+                    page_range_raw = (search_config or {}).get("page_range", "")
+                    parsed = _parse_page_range(page_range_raw)
+                    if parsed:
+                        start_p, end_p = parsed
+                        max_len = (search_config or {}).get("max_length", 30000)
+                        if not isinstance(max_len, int) or max_len <= 0:
+                            max_len = 30000
+                        sliced = slice_by_page_range(content, page_mapping, start_p, end_p, max_len)
+                        if sliced["ok"]:
+                            results_by_label["page_content"] = sliced["text"]
+                elif search_type == "context":
                     search_results = await search_context(content, search_config)
                 elif search_type == "section":
                     search_results = await search_section(content, search_config)
