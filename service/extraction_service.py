@@ -109,6 +109,43 @@ def validate_prompt_has_placeholder(prompt: str) -> bool:
     return bool(re.search(pattern, prompt))
 
 
+# ── 页码区间解析（page 检索方式） ─────────────────────────────
+
+
+def _parse_page_range(raw: Any) -> Optional[Tuple[int, int]]:
+    """解析 '5' 或 '5-7' 形式的页码区间。
+
+    Returns:
+        (start_page, end_page)；不合法返回 None。
+    """
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    if "-" in s:
+        parts = s.split("-")
+        if len(parts) != 2:
+            return None
+        a_str, b_str = parts[0].strip(), parts[1].strip()
+        if not a_str or not b_str:
+            return None
+        try:
+            a = int(a_str)
+            b = int(b_str)
+        except ValueError:
+            return None
+    else:
+        try:
+            a = int(s)
+        except ValueError:
+            return None
+        b = a
+    if a < 1 or b < a:
+        return None
+    return a, b
+
+
 # ── 章节解析 ────────────────────────────────────────────────
 
 @dataclass

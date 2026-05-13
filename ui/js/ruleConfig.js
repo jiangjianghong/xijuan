@@ -523,12 +523,12 @@ const RuleConfig = {
                     ${this.buildKeywordTagsHtml('fm-sc-keywords', '关键词', config.keywords || [], '输入关键词后按回车或点击添加')}
                     <div class="form-row">
                         <div class="form-group">
-                            <label class="form-label">上文行数</label>
-                            <input class="form-input" id="fm-sc-context-before" type="number" value="${config.context_before ?? 3}" min="0">
+                            <label class="form-label">上文字数</label>
+                            <input class="form-input" id="fm-sc-context-before" type="number" value="${config.context_before ?? 200}" min="0">
                         </div>
                         <div class="form-group">
-                            <label class="form-label">下文行数</label>
-                            <input class="form-input" id="fm-sc-context-after" type="number" value="${config.context_after ?? 3}" min="0">
+                            <label class="form-label">下文字数</label>
+                            <input class="form-input" id="fm-sc-context-after" type="number" value="${config.context_after ?? 200}" min="0">
                         </div>
                     </div>
                     <div class="form-row">
@@ -539,27 +539,29 @@ const RuleConfig = {
                         <div class="form-group">
                             <label class="form-label">排序方式</label>
                             <select class="form-select" id="fm-sc-sort-order">
-                                <option value="first" ${(config.sort_order || 'first') === 'first' ? 'selected' : ''}>出现顺序</option>
-                                <option value="relevance" ${config.sort_order === 'relevance' ? 'selected' : ''}>相关度</option>
+                                <option value="asc" ${(config.sort_order || 'asc') === 'asc' ? 'selected' : ''}>正序</option>
+                                <option value="desc" ${config.sort_order === 'desc' ? 'selected' : ''}>倒序</option>
                             </select>
                         </div>
                     </div>
                 `;
                 break;
 
-            case 'section':
+            case 'section': {
+                const sectionMatchType = config.section_match_type || 'contains';
                 html = `
                     <div class="form-group">
                         <label class="form-label">章节模式</label>
-                        <input class="form-input" id="fm-sc-section-pattern" value="${Utils.escapeHtml(config.section_pattern || '')}" placeholder="正则表达式">
+                        <input class="form-input" id="fm-sc-section-pattern" value="${Utils.escapeHtml(config.section_pattern || '')}" placeholder="章节标题或关键词">
                     </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">匹配方式</label>
-                            <select class="form-select" id="fm-sc-section-match-type">
-                                <option value="regex" ${(config.section_match_type || 'regex') === 'regex' ? 'selected' : ''}>正则匹配</option>
-                                <option value="exact" ${config.section_match_type === 'exact' ? 'selected' : ''}>精确匹配</option>
-                                <option value="contains" ${config.section_match_type === 'contains' ? 'selected' : ''}>包含匹配</option>
+                            <select class="form-select" id="fm-sc-section-match-type" onchange="RuleConfig.onSectionMatchTypeChange(this.value)">
+                                <option value="contains" ${sectionMatchType === 'contains' ? 'selected' : ''}>包含匹配</option>
+                                <option value="exact" ${sectionMatchType === 'exact' ? 'selected' : ''}>精确匹配</option>
+                                <option value="fuzzy" ${sectionMatchType === 'fuzzy' ? 'selected' : ''}>模糊匹配</option>
+                                <option value="llm" ${sectionMatchType === 'llm' ? 'selected' : ''}>LLM 匹配</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -567,15 +569,21 @@ const RuleConfig = {
                             <input class="form-input" id="fm-sc-max-results" type="number" value="${config.max_results ?? 5}" min="1">
                         </div>
                     </div>
+                    <div class="form-group" id="fm-sc-section-threshold-group" style="${sectionMatchType === 'fuzzy' ? '' : 'display:none'}">
+                        <label class="form-label">相似度阈值</label>
+                        <input class="form-input" id="fm-sc-section-threshold" type="number" step="0.01" value="${config.threshold ?? 0.8}" min="0" max="1">
+                        <div class="form-hint">章节标题与"章节模式"的相似度 ≥ 该值才命中（0-1）</div>
+                    </div>
                     <div class="form-group">
                         <label class="form-label">排序方式</label>
                         <select class="form-select" id="fm-sc-sort-order">
-                            <option value="first" ${(config.sort_order || 'first') === 'first' ? 'selected' : ''}>出现顺序</option>
-                            <option value="relevance" ${config.sort_order === 'relevance' ? 'selected' : ''}>相关度</option>
+                            <option value="asc" ${(config.sort_order || 'asc') === 'asc' ? 'selected' : ''}>正序</option>
+                            <option value="desc" ${config.sort_order === 'desc' ? 'selected' : ''}>倒序</option>
                         </select>
                     </div>
                 `;
                 break;
+            }
 
             case 'rule':
                 html = `
@@ -608,8 +616,8 @@ const RuleConfig = {
                     <div class="form-group">
                         <label class="form-label">排序方式</label>
                         <select class="form-select" id="fm-sc-sort-order">
-                            <option value="first" ${(config.sort_order || 'first') === 'first' ? 'selected' : ''}>出现顺序</option>
-                            <option value="relevance" ${config.sort_order === 'relevance' ? 'selected' : ''}>相关度</option>
+                            <option value="asc" ${(config.sort_order || 'asc') === 'asc' ? 'selected' : ''}>正序</option>
+                            <option value="desc" ${config.sort_order === 'desc' ? 'selected' : ''}>倒序</option>
                         </select>
                     </div>
                 `;
@@ -631,8 +639,8 @@ const RuleConfig = {
                         <div class="form-group">
                             <label class="form-label">排序方式</label>
                             <select class="form-select" id="fm-sc-sort-order">
-                                <option value="first" ${(config.sort_order || 'first') === 'first' ? 'selected' : ''}>出现顺序</option>
-                                <option value="relevance" ${config.sort_order === 'relevance' ? 'selected' : ''}>相关度</option>
+                                <option value="asc" ${(config.sort_order || 'asc') === 'asc' ? 'selected' : ''}>正序</option>
+                                <option value="desc" ${config.sort_order === 'desc' ? 'selected' : ''}>倒序</option>
                             </select>
                         </div>
                     </div>
@@ -860,6 +868,13 @@ const RuleConfig = {
         area.innerHTML = this.buildSearchConfigFields(type, config);
     },
 
+    onSectionMatchTypeChange(matchType) {
+        const group = document.getElementById('fm-sc-section-threshold-group');
+        if (group) {
+            group.style.display = matchType === 'fuzzy' ? '' : 'none';
+        }
+    },
+
     // ─────────────────────────────────────────────────────────
     // 规则表单
     // ─────────────────────────────────────────────────────────
@@ -1036,16 +1051,19 @@ const RuleConfig = {
         switch (searchType) {
             case 'context':
                 config.keywords = this.getKeywordTags('fm-sc-keywords');
-                config.context_before = getInt('fm-sc-context-before', 3);
-                config.context_after = getInt('fm-sc-context-after', 3);
+                config.context_before = getInt('fm-sc-context-before', 200);
+                config.context_after = getInt('fm-sc-context-after', 200);
                 config.max_results = getInt('fm-sc-max-results', 5);
-                config.sort_order = getVal('fm-sc-sort-order') || 'first';
+                config.sort_order = getVal('fm-sc-sort-order') || 'asc';
                 break;
             case 'section':
                 config.section_pattern = getVal('fm-sc-section-pattern');
-                config.section_match_type = getVal('fm-sc-section-match-type') || 'regex';
+                config.section_match_type = getVal('fm-sc-section-match-type') || 'contains';
                 config.max_results = getInt('fm-sc-max-results', 5);
-                config.sort_order = getVal('fm-sc-sort-order') || 'first';
+                config.sort_order = getVal('fm-sc-sort-order') || 'asc';
+                if (config.section_match_type === 'fuzzy') {
+                    config.threshold = getFloat('fm-sc-section-threshold', 0.8);
+                }
                 break;
             case 'rule':
                 config.keywords = this.getKeywordTags('fm-sc-keywords');
@@ -1054,12 +1072,12 @@ const RuleConfig = {
                 config.min_length = getInt('fm-sc-min-length', 0);
                 config.max_length = getInt('fm-sc-max-length', 1000);
                 config.max_results = getInt('fm-sc-max-results', 5);
-                config.sort_order = getVal('fm-sc-sort-order') || 'first';
+                config.sort_order = getVal('fm-sc-sort-order') || 'asc';
                 break;
             case 'chunk_db':
                 config.keywords = this.getKeywordTags('fm-sc-keywords');
                 config.max_results = getInt('fm-sc-max-results', 5);
-                config.sort_order = getVal('fm-sc-sort-order') || 'first';
+                config.sort_order = getVal('fm-sc-sort-order') || 'asc';
                 break;
             case 'vector_db':
                 config.query_text = getVal('fm-sc-query-text');
