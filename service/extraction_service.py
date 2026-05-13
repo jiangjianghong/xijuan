@@ -808,6 +808,10 @@ async def extract_text_field(
     search_type = field.search_type or "context"
     search_config = field.search_config or {}
 
+    # page 方法走独立路径（不经按 keyword 分组的通用流程）
+    if search_type == "page":
+        return await _extract_page_field(content, page_mapping, search_config, field)
+
     # 调用对应的检索方法
     search_results = []
     if search_type == "context":
