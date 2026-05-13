@@ -1,5 +1,5 @@
-# 使用官方 Python 3.12 镜像
-FROM python:3.12-slim
+# 使用官方 Python 3.12 镜像（国内镜像源加速）
+FROM docker.1ms.run/library/python:3.12-slim
 
 # 设置工作目录
 WORKDIR /app

@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: wanz-prase2-001
     image: wanz-prase2-001:latest
-    restart: unless-stopped
+    restart: always
     network_mode: host
     volumes:
       # 挂载配置文件，支持热更新配置
@@ -22,33 +22,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    depends_on:
-      mysql:
-        condition: service_healthy
-
-  mysql:
-    image: mysql:8.0
-    container_name: wanz-prase2-mysql
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      - MYSQL_ROOT_PASSWORD=1940
-      - MYSQL_DATABASE=wanzi_prase2_001
-      - TZ=Asia/Shanghai
-    command:
-      - --port=6036
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-      - --default-authentication-plugin=mysql_native_password
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-P", "6036", "-uroot", "-p1940"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-volumes:
-  mysql_data:
-    name: wanz-prase2-mysql-data

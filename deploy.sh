@@ -13,7 +13,6 @@ NC='\033[0m' # No Color
 
 # 项目配置
 PROJECT_NAME="wanz-prase2-001"
-MYSQL_CONTAINER="wanz-prase2-mysql"
 COMPOSE_FILE="docker-compose.yaml"
 DOCKER_COMPOSE=""
 
@@ -69,18 +68,10 @@ check_config() {
     log_info "配置文件检查通过"
 }
 
-# 停止并删除现有容器（保留运行中的 MySQL）
+# 停止并删除现有应用容器
 stop_existing_container() {
     log_info "检查现有容器..."
 
-    # 检查 MySQL 容器状态
-    local mysql_running=false
-    if docker ps --format '{{.Names}}' | grep -q "^${MYSQL_CONTAINER}$"; then
-        mysql_running=true
-        log_info "MySQL 容器正在运行，将保留"
-    fi
-
-    # 检查应用容器
     if docker ps -a --format '{{.Names}}' | grep -q "^${PROJECT_NAME}$"; then
         log_warn "发现已存在的应用容器: ${PROJECT_NAME}"
         log_info "正在停止应用容器..."
@@ -89,15 +80,6 @@ stop_existing_container() {
         log_info "应用容器已停止并移除"
     else
         log_info "未发现现有应用容器"
-    fi
-
-    # 如果 MySQL 未运行，检查是否存在已停止的 MySQL 容器
-    if [ "$mysql_running" = false ]; then
-        if docker ps -a --format '{{.Names}}' | grep -q "^${MYSQL_CONTAINER}$"; then
-            log_warn "发现已停止的 MySQL 容器，将重新启动"
-        else
-            log_info "MySQL 容器不存在，将创建新容器"
-        fi
     fi
 }
 
@@ -141,16 +123,9 @@ build_image() {
 
 # 启动容器
 start_container() {
-    log_info "启动容器..."
+    log_info "启动应用容器..."
 
-    # 检查 MySQL 是否已在运行
-    if docker ps --format '{{.Names}}' | grep -q "^${MYSQL_CONTAINER}$"; then
-        log_info "MySQL 已在运行，仅启动应用容器..."
-        $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d --no-deps wanz-prase2
-    else
-        log_info "启动所有容器（MySQL + 应用）..."
-        $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d
-    fi
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d
 
     # 等待容器启动
     sleep 5
@@ -163,13 +138,6 @@ start_container() {
     else
         log_error "应用容器启动失败，请检查日志: docker logs ${PROJECT_NAME}"
         exit 1
-    fi
-
-    # 检查 MySQL 容器状态
-    if docker ps --format '{{.Names}}' | grep -q "^${MYSQL_CONTAINER}$"; then
-        log_info "MySQL 容器运行正常 (端口: 6036)"
-    else
-        log_error "MySQL 容器未运行，请检查日志: docker logs ${MYSQL_CONTAINER}"
     fi
 }
 
