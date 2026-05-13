@@ -146,6 +146,67 @@ def _parse_page_range(raw: Any) -> Optional[Tuple[int, int]]:
     return a, b
 
 
+def slice_by_page_range(
+    md: str,
+    page_mapping: List[Dict[str, Any]],
+    start_page: int,
+    end_page: int,
+    max_length: int,
+) -> Dict[str, Any]:
+    """按页码区间切 markdown。
+
+    Returns:
+        {"ok": True, "text": str, "start_pos": int, "end_pos": int,
+         "length": int, "truncated": bool}
+        失败时返回 {"ok": False, "reason": str}。
+    """
+    if not md:
+        return {"ok": False, "reason": "文档内容为空"}
+    if not page_mapping:
+        return {
+            "ok": False,
+            "reason": "该文件无 page_mapping，无法按页码取文本",
+        }
+
+    slice_start: Optional[int] = None
+    for entry in page_mapping:
+        if entry["page_num"] >= start_page:
+            slice_start = entry["start_pos"]
+            break
+    if slice_start is None:
+        return {
+            "ok": False,
+            "reason": f"页码区间 {start_page}-{end_page} 不在文档范围内",
+        }
+
+    slice_end = len(md)
+    for entry in page_mapping:
+        if entry["page_num"] > end_page:
+            slice_end = entry["start_pos"]
+            break
+
+    if slice_end <= slice_start:
+        return {
+            "ok": False,
+            "reason": f"页码区间 {start_page}-{end_page} 切片为空",
+        }
+
+    text = md[slice_start:slice_end]
+    truncated = False
+    if len(text) > max_length:
+        text = text[:max_length]
+        truncated = True
+
+    return {
+        "ok": True,
+        "text": text,
+        "start_pos": slice_start,
+        "end_pos": slice_start + len(text),
+        "length": len(text),
+        "truncated": truncated,
+    }
+
+
 # ── 章节解析 ────────────────────────────────────────────────
 
 @dataclass
