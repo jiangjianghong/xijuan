@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PDF 文档智能处理系统</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="apple-touch-icon" href="favicon.svg">
     <!-- TailwindCSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Google Fonts: Nunito + Lora -->
@@ -567,7 +569,7 @@
                 </div>
                 <div style="margin-bottom:12px;">
                     <label style="font-size:12px; color:#4F775D;">来源类型</label>
-                    <select id="copy-source-select" class="form-input" style="width:100%;" onchange="DocTypeManager.onSourceTypeChange()"></select>
+                    <select id="copy-source-select" class="form-select" style="width:100%;" onchange="DocTypeManager.onSourceTypeChange()"></select>
                 </div>
                 <div style="margin-bottom:12px;">
                     <label style="font-size:12px; color:#4F775D;">复制内容</label>
@@ -578,7 +580,7 @@
                 </div>
                 <div style="margin-bottom:12px;">
                     <label style="font-size:12px; color:#4F775D;">同名冲突处理</label>
-                    <select id="copy-conflict" class="form-input" style="width:100%;">
+                    <select id="copy-conflict" class="form-select" style="width:100%;">
                         <option value="rename">自动改名（追加" (副本)"）</option>
                         <option value="skip">跳过同名</option>
                     </select>
@@ -593,6 +595,7 @@
     </div>
 
     <script src="js/utils.js"></script>
+    <script src="js/customSelect.js"></script>
     <script src="js/api.js"></script>
     <script src="js/doctype.js"></script>
     <script src="js/ruleConfig.js"></script>

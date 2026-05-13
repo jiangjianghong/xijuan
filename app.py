@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from blue_print import register_routers
@@ -27,6 +28,11 @@ register_routers(app)
 
 # 挂载静态文件服务
 app.mount("/ui", StaticFiles(directory="ui", html=True), name="ui")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def _favicon():
+    return RedirectResponse(url="/ui/favicon.svg")
 
 
 if __name__ == "__main__":

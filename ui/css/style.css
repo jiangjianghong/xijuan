@@ -278,15 +278,25 @@ h1, h2, h3, h4, h5, h6,
 }
 
 .status-filter {
-    padding: 6px 12px;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding: 6px 30px 6px 14px;
     border: 1px solid var(--border);
     border-radius: 9999px;
-    background: white;
+    background-color: white;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236B8F7B' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
     font-size: 13px;
     color: var(--text-primary);
     outline: none;
     cursor: pointer;
     transition: var(--transition);
+}
+
+.status-filter:hover {
+    border-color: var(--bio-light);
 }
 
 .status-filter:focus {
@@ -1373,19 +1383,7 @@ h1, h2, h3, h4, h5, h6,
 
 .debug-controls select {
     flex: 1;
-    padding: 8px 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: white;
     font-size: 13px;
-    color: var(--text-primary);
-    outline: none;
-    transition: var(--transition);
-}
-
-.debug-controls select:focus {
-    border-color: var(--bio-med);
-    box-shadow: 0 0 0 3px rgba(79, 119, 93, 0.15);
 }
 
 .debug-test-btn {
@@ -1575,12 +1573,27 @@ h1, h2, h3, h4, h5, h6,
     padding: 8px 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    background: white;
+    background-color: white;
     font-size: 14px;
     color: var(--text-primary);
     outline: none;
     transition: var(--transition);
     font-family: inherit;
+}
+
+.form-select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    cursor: pointer;
+    padding-right: 36px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236B8F7B' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+}
+
+.form-select:hover:not(:disabled) {
+    border-color: var(--bio-light);
 }
 
 .form-input:focus,
@@ -2880,4 +2893,166 @@ input[type="checkbox"] {
     .result-table td {
         max-width: 120px;
     }
+}
+
+/* ── Custom Select ── */
+.cs-wrapper {
+    position: relative;
+    display: block;
+    width: 100%;
+}
+
+.cs-pill {
+    display: inline-block;
+    width: auto;
+}
+
+.cs-native {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    opacity: 0;
+    pointer-events: none;
+    background: transparent;
+}
+
+.cs-trigger {
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 36px 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background-color: white;
+    font-size: 14px;
+    color: var(--text-primary);
+    font-family: inherit;
+    cursor: pointer;
+    outline: none;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.cs-pill .cs-trigger {
+    min-height: 32px;
+    padding: 6px 30px 6px 14px;
+    border-radius: 9999px;
+    font-size: 13px;
+}
+
+.cs-trigger:hover:not(.cs-trigger-disabled) {
+    border-color: var(--bio-light);
+}
+
+.cs-trigger:focus,
+.cs-wrapper.cs-active > .cs-trigger {
+    border-color: var(--bio-med);
+    box-shadow: 0 0 0 3px rgba(79, 119, 93, 0.15);
+}
+
+.cs-trigger-disabled {
+    background: var(--bio-pale);
+    color: var(--text-secondary);
+    cursor: not-allowed;
+}
+
+.cs-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cs-placeholder {
+    color: var(--text-secondary);
+    opacity: 0.65;
+}
+
+.cs-chevron {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236B8F7B' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: center;
+    transition: transform 0.2s ease;
+}
+
+.cs-pill .cs-chevron {
+    width: 12px;
+    height: 12px;
+}
+
+.cs-wrapper.cs-active .cs-chevron {
+    transform: rotate(180deg);
+}
+
+/* 下拉面板 */
+.cs-dropdown {
+    position: fixed;
+    z-index: 10000;
+    padding: 6px;
+    max-height: 280px;
+    overflow-y: auto;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-hover);
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+    transform-origin: top center;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    pointer-events: none;
+}
+
+.cs-dropdown.cs-flip-up {
+    transform-origin: bottom center;
+    transform: translateY(4px) scale(0.98);
+}
+
+.cs-dropdown.cs-open {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+}
+
+.cs-option {
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    color: var(--text-primary);
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.15s ease, color 0.15s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cs-dropdown-pill .cs-option {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+.cs-option:hover:not(.cs-disabled),
+.cs-option.cs-focused {
+    background: var(--bio-pale);
+}
+
+.cs-option.cs-selected {
+    background: rgba(79, 119, 93, 0.12);
+    color: var(--bio-dark);
+    font-weight: 600;
+}
+
+.cs-option.cs-disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
