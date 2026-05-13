@@ -200,15 +200,14 @@ const StreamDemo = {
 
         // Clear log and add start entry
         this.clearLog();
-        this.addLogEntry('info', 'start', `开始上传并处理文件: ${this.selectedFile.name}`);
+        const _currentType = (typeof API !== 'undefined' && API.getCurrentTypeId) ? API.getCurrentTypeId() : 'default';
+        this.addLogEntry('info', 'start', `开始上传并处理文件: ${this.selectedFile.name} (type_id=${_currentType})`);
 
         // Upload with streaming
         const formData = new FormData();
         formData.append('file', this.selectedFile);
 
-        const tid = encodeURIComponent(
-            (typeof API !== 'undefined' && API.getCurrentTypeId) ? API.getCurrentTypeId() : 'default'
-        );
+        const tid = encodeURIComponent(_currentType);
         fetch(`/file/parse?mode=stream&type_id=${tid}`, {
             method: 'POST',
             body: formData,
