@@ -19,3 +19,12 @@ async def test_get_file_tables(client: AsyncClient):
     """测试获取文件表格列表。"""
     resp = await client.get("/file/testfile/tables")
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_get_file_outline_route(client: AsyncClient):
+    """测试获取文件大纲(路由可达 + 空集回退)。"""
+    resp = await client.get("/file/nonexistent/outline")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["data"] == []

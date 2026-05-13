@@ -34,6 +34,7 @@ from model.tables import (
     FileTable,
 )
 from service.pipeline_service import run_from_stage, run_from_stage_stream, run_pipeline, run_pipeline_stream
+from service.extraction_service import parse_sections
 from utils.config import get_config
 from utils.file_utils import generate_file_id
 from utils.milvus_client import MilvusClient
@@ -622,6 +623,39 @@ async def get_file_chunks(file_id: str, db: AsyncSession = Depends(get_db)):
                 page_num=c.page_num or "",
             ).model_dump()
             for c in chunks
+        ]
+    )
+
+
+@router.get("/{file_id}/outline", response_model=ResponseWrapper)
+async def get_file_outline(file_id: str, db: AsyncSession = Depends(get_db)):
+    """获取文件大纲(基于 parse_sections 正则解析的章节列表,含切片后的正文)。
+
+    与抽取阶段 search_section 使用的章节口径完全一致 —
+    前端看到什么 = 抽取时能匹配到什么。文件不存在或内容为空 → 返回空列表(非 404),
+    与 /tables、/chunks 行为一致。
+    """
+    stmt = select(FileContent).where(FileContent.file_id == file_id)
+    result = await db.execute(stmt)
+    file_content = result.scalar_one_or_none()
+
+    if not file_content or not file_content.file_content:
+        return ResponseWrapper(data=[])
+
+    content = file_content.file_content
+    sections = parse_sections(content)
+
+    return ResponseWrapper(
+        data=[
+            {
+                "index": s.index,
+                "number": s.number,
+                "title": s.title,
+                "content": content[s.start_pos:s.end_pos],
+                "start_pos": s.start_pos,
+                "end_pos": s.end_pos,
+            }
+            for s in sections
         ]
     )
 
