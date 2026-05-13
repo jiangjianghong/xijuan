@@ -463,6 +463,7 @@ const RuleConfig = {
                         <option value="rule" ${searchType === 'rule' ? 'selected' : ''}>规则检索</option>
                         <option value="chunk_db" ${searchType === 'chunk_db' ? 'selected' : ''}>分块数据库</option>
                         <option value="vector_db" ${searchType === 'vector_db' ? 'selected' : ''}>向量数据库</option>
+                        <option value="page" ${searchType === 'page' ? 'selected' : ''}>按页码取文</option>
                     </select>
                 </div>
                 <div id="fm-search-config-area">
@@ -662,6 +663,23 @@ const RuleConfig = {
                         <div class="form-group">
                             <label class="form-label">分数阈值</label>
                             <input class="form-input" id="fm-sc-score-threshold" type="number" step="0.01" value="${config.score_threshold ?? 0.5}" min="0" max="1">
+                        </div>
+                    </div>
+                `;
+                break;
+
+            case 'page':
+                html = `
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">页码范围</label>
+                            <input class="form-input" id="fm-sc-page-range" value="${Utils.escapeHtml(config.page_range || '')}" placeholder="如 5-7 或单页 5">
+                            <div class="form-hint">单一连续区间，1 起。直接把这些页的解析文本喂给 LLM</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">最大字符数</label>
+                            <input class="form-input" id="fm-sc-page-max-length" type="number" value="${config.max_length ?? 30000}" min="1">
+                            <div class="form-hint">超过则末尾截断，避免超过 LLM 上下文上限</div>
                         </div>
                     </div>
                 `;
@@ -1084,6 +1102,10 @@ const RuleConfig = {
                 config.top_k = getInt('fm-sc-top-k', 5);
                 config.score_threshold = getFloat('fm-sc-score-threshold', 0.5);
                 break;
+            case 'page':
+                config.page_range = getVal('fm-sc-page-range');
+                config.max_length = getInt('fm-sc-page-max-length', 30000);
+                break;
         }
 
         return config;
@@ -1485,7 +1507,7 @@ const RuleConfig = {
         return `
             <div class="debug-panel">
                 <div class="debug-controls">
-                    <select id="debug-file-select">
+                    <select id="debug-file-select" class="form-select">
                         <option value="">-- 选择测试文件 --</option>
                     </select>
                     <button class="debug-test-btn" id="debug-test-btn" onclick="RuleConfig.runFieldTest()" disabled>测试</button>
@@ -1886,7 +1908,7 @@ const RuleConfig = {
         return `
             <div class="debug-panel">
                 <div class="debug-controls">
-                    <select id="debug-file-select">
+                    <select id="debug-file-select" class="form-select">
                         <option value="">-- 选择测试文件 --</option>
                     </select>
                     <button class="debug-test-btn" id="debug-test-btn" onclick="RuleConfig.runRuleTest()" disabled>测试</button>
