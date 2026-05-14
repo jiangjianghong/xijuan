@@ -1,7 +1,8 @@
 # 文档解析与逻辑分析系统 - API 接口文档
 
-> **版本**: 0.1.0
-> **技术栈**: FastAPI + SQLAlchemy + MySQL + Milvus + Aliyun DashScope
+> **版本**: 0.2.0
+> **技术栈**: FastAPI + SQLAlchemy (async) + MySQL + Milvus + DashScope (Qwen / Qwen-VL)
+> **管线阶段**: parsing → tableing → chunking → embedding → extracting → analyzing → complete
 
 ---
 
@@ -9,13 +10,17 @@
 
 1. [基础信息](#1-基础信息)
 2. [通用响应格式](#2-通用响应格式)
-3. [文件处理接口 `/file/*`](#3-文件处理接口)
-4. [字段提取配置接口 `/extraction/*`](#4-字段提取配置接口)
-5. [逻辑分析配置接口 `/analysis/*`](#5-逻辑分析配置接口)
-6. [向量检索接口 `/search`](#6-向量检索接口)
-7. [数据模型说明](#7-数据模型说明)
-8. [枚举值说明](#8-枚举值说明)
-9. [错误码说明](#9-错误码说明)
+3. [文档类型接口 `/doctype/*`](#3-文档类型接口-doctype)
+4. [文件处理接口 `/file/*`](#4-文件处理接口-file)
+5. [字段提取配置接口 `/extraction/*`](#5-字段提取配置接口-extraction)
+6. [逻辑分析配置接口 `/analysis/*`](#6-逻辑分析配置接口-analysis)
+7. [向量检索接口 `/search`](#7-向量检索接口-search)
+8. [异步回调约定](#8-异步回调约定)
+9. [SSE 事件清单](#9-sse-事件清单)
+10. [数据模型说明](#10-数据模型说明)
+11. [枚举值说明](#11-枚举值说明)
+12. [错误码说明](#12-错误码说明)
+13. [附录：接口总览](#13-附录接口总览)
 
 ---
 
@@ -27,13 +32,16 @@
 | 协议 | HTTP |
 | 数据格式 | JSON（`Content-Type: application/json`） |
 | 文件上传 | `multipart/form-data` |
+| SSE 流 | `text/event-stream` |
 | 认证方式 | 无（当前版本） |
+| 文件 ID 生成 | `SHA256[:32]( (type_id, file_name, time.time_ns(), secrets.token_hex(8)) )` —— 每次上传都是新 ID，不做去重 |
+| 默认文档类型 | `default`（系统启动时自动创建，不可删除） |
 
 ---
 
 ## 2. 通用响应格式
 
-所有接口均返回统一的 `ResponseWrapper` 结构：
+所有业务接口统一返回 `ResponseWrapper`：
 
 ```json
 {
@@ -49,13 +57,250 @@
 | `message` | `string` | 描述信息 |
 | `data` | `any` | 响应数据，具体格式因接口而异 |
 
+> 部分校验/4xx 错误使用 FastAPI 默认的 `HTTPException`，响应体格式为 `{"detail": "..."}`，详见第 12 节。
+
 ---
 
-## 3. 文件处理接口
+## 3. 文档类型接口 `/doctype`
 
-### 3.1 提交文件解析
+文档类型用于隔离不同格式文件的抽取字段与逻辑规则配置。每个文件归属唯一 `type_id`（默认 `default`），抽取字段与规则按 `type_id` 隔离，**配置不跨类型共享**。
 
-提交文件进行解析，支持同步、异步、流式三种处理模式。
+### 3.1 列出所有文档类型
+
+- **URL**: `GET /doctype/list`
+
+**响应示例**
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": [
+    {
+      "type_id": "default",
+      "type_name": "默认类型",
+      "description": null,
+      "is_default": 1,
+      "enabled": 1,
+      "created_at": "2025-01-15T10:00:00",
+      "updated_at": "2025-01-15T10:00:00",
+      "file_count": 12,
+      "field_count": 8,
+      "rule_count": 3
+    },
+    {
+      "type_id": "annual_report",
+      "type_name": "年报",
+      "description": "上市公司年报",
+      "is_default": 0,
+      "enabled": 1,
+      "created_at": "2025-02-01T10:00:00",
+      "updated_at": "2025-02-01T10:00:00",
+      "file_count": 30,
+      "field_count": 15,
+      "rule_count": 5
+    }
+  ]
+}
+```
+
+---
+
+### 3.2 新增/更新文档类型
+
+按 `type_id` upsert：存在则更新（不能改 `is_default`），不存在则新增。
+
+- **URL**: `POST /doctype`
+- **Content-Type**: `application/json`
+
+**请求体**
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `type_id` | `string` | 是 | - | 类型 ID，正则 `^[a-zA-Z0-9_-]+$`，最长 64 |
+| `type_name` | `string` | 是 | - | 类型名称，最长 200 |
+| `description` | `string` | 否 | `null` | 类型描述 |
+| `enabled` | `int` | 否 | `1` | 是否启用：1=启用, 0=禁用 |
+
+**响应示例**
+
+```json
+{
+  "code": 200,
+  "message": "类型已创建",
+  "data": {"type_id": "annual_report"}
+}
+```
+
+---
+
+### 3.3 删除文档类型
+
+- **URL**: `DELETE /doctype/{type_id}`
+
+**查询参数**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `force` | `bool` | `false` | 是否级联删除该类型下所有文件、字段、规则、Milvus 向量、`uploads/{file_id}.pdf` |
+
+**约束**
+
+- 默认类型（`is_default=1`）禁止删除 → 400
+- 非默认类型有关联文件/字段/规则但未传 `force=true` → 409
+
+**响应示例（force=true）**
+
+```json
+{
+  "code": 200,
+  "message": "类型已删除",
+  "data": {
+    "type_id": "annual_report",
+    "deleted_files": 30,
+    "deleted_fields": 15,
+    "deleted_rules": 5
+  }
+}
+```
+
+---
+
+### 3.4 复制配置（同实例跨类型）
+
+从源类型复制字段+规则到目标类型，**生成全新 ID** 的独立副本（编辑互不影响）。
+
+- **URL**: `POST /doctype/{type_id}/copy_from`
+- **Content-Type**: `application/json`
+
+**请求体**
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `source_type_id` | `string` | 是 | - | 源类型 ID（不能等于目标 `type_id`） |
+| `field_ids` | `string[]` | 否 | `null`（全部） | 仅复制指定字段 |
+| `rule_ids` | `string[]` | 否 | `null`（全部） | 仅复制指定规则 |
+| `on_conflict` | `string` | 否 | `"rename"` | 同名冲突策略：`skip` / `rename`（自动加“ (副本)”后缀） |
+
+**响应示例**
+
+```json
+{
+  "code": 200,
+  "message": "配置复制完成",
+  "data": {
+    "copied_fields": 8,
+    "skipped_fields": 0,
+    "copied_rules": 3,
+    "skipped_rules": 0,
+    "missing_dependencies": ["利润率检查::净利润"]
+  }
+}
+```
+
+`missing_dependencies` 列出**规则 depend_fields** 在目标类型中找不到同名字段的位置（格式 `规则名::字段名`），不会自动跳过规则，调用方需自行处理。
+
+---
+
+### 3.5 导出配置（跨实例迁移）
+
+把指定类型的字段+规则序列化为 JSON 载荷，可保存后通过 `POST /doctype/import` 恢复到其他环境。
+
+- **URL**: `GET /doctype/{type_id}/export`
+
+**响应示例**
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "type_id": "annual_report",
+    "type_name": "年报",
+    "description": "上市公司年报",
+    "version": 1,
+    "fields": [
+      {
+        "field_id": "company_name",
+        "field_name": "公司名称",
+        "source_type": "text",
+        "enabled": 1,
+        "priority": 0,
+        "search_type": "context",
+        "search_config": {"keywords": ["公司名称"]},
+        "text_extract_prompt": "...",
+        "table_name_pattern": null,
+        "table_match_type": null,
+        "table_match_keywords": null,
+        "table_match_max_results": null,
+        "table_system_prompt": null,
+        "table_extract_prompt": null,
+        "text_system_prompt": null,
+        "vl_method": null,
+        "vl_config": null,
+        "vl_system_prompt": null,
+        "vl_extract_prompt": null
+      }
+    ],
+    "rules": [
+      {
+        "rule_id": "revenue_check",
+        "rule_name": "营收达标检查",
+        "rule_type": "judge",
+        "expression": "请判断营业总收入 <field_result>total_revenue</field_result> 是否大于 1000000",
+        "system_prompt": null,
+        "depend_field_names": ["营业总收入"],
+        "enabled": 1,
+        "priority": 0
+      }
+    ]
+  }
+}
+```
+
+> 规则依赖以 **`field_name`** 序列化（不依赖原 `field_id`），导入时按字段名重映射。
+
+---
+
+### 3.6 导入配置
+
+- **URL**: `POST /doctype/import`
+- **Content-Type**: `application/json`
+
+**请求体**
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `payload` | `ExportPayload` | 是 | - | 由 `GET /doctype/{type_id}/export` 产生的载荷 |
+| `target_type_id` | `string` | 否 | `payload.type_id` | 目标类型 ID。**空时取 payload 中的值** |
+| `create_type_if_missing` | `bool` | 否 | `true` | 目标类型不存在时是否自动创建 |
+| `on_conflict` | `string` | 否 | `"rename"` | 同名冲突策略：`skip` / `rename` |
+
+**响应示例**
+
+```json
+{
+  "code": 200,
+  "message": "配置导入完成",
+  "data": {
+    "target_type_id": "annual_report_v2",
+    "created_type": true,
+    "copied_fields": 8,
+    "skipped_fields": 0,
+    "copied_rules": 3,
+    "skipped_rules": 0,
+    "missing_dependencies": []
+  }
+}
+```
+
+字段 `field_id` 始终重新生成（避免与全局 `field_id` 唯一约束冲突）。
+
+---
+
+## 4. 文件处理接口 `/file`
+
+### 4.1 提交文件解析
 
 - **URL**: `POST /file/parse`
 - **Content-Type**: `multipart/form-data`
@@ -64,138 +309,88 @@
 
 | 参数 | 位置 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|------|--------|------|
-| `file` | form-data | `File` | 是 | - | 上传的文件（最大 100MB） |
+| `file` | form-data | `File` | 是 | - | 上传的文件（受 `mineru.max_file_size` 限制，默认 100MB） |
 | `mode` | query | `string` | 否 | `"async"` | 处理模式：`sync` / `async` / `stream` |
-| `callback_url` | query | `string` | 否 | - | 回调地址，每个阶段完成后 POST `{"file_id":"...","status":"..."}` |
+| `type_id` | query | `string` | 否 | `"default"` | 归属的文档类型，决定使用哪一套字段/规则 |
+| `callback_url` | query | `string` | 否 | - | 异步回调地址，详见第 8 节 |
 
-**请求示例**
-
-```bash
-# 异步模式（默认）
-curl -X POST "http://localhost:5019/file/parse?mode=async" \
-  -F "file=@/path/to/document.pdf"
-
-# 异步模式 + 回调通知
-curl -X POST "http://localhost:5019/file/parse?mode=async&callback_url=http://your-server.com/webhook" \
-  -F "file=@/path/to/document.pdf"
-```
-
-**响应示例（async 模式）**
+**响应示例（async / sync）**
 
 ```json
 {
   "code": 200,
   "message": "文件已提交处理（异步）",
-  "data": {
-    "file_id": "a1b2c3d4e5f6"
-  }
+  "data": {"file_id": "a1b2c3d4e5f6..."}
 }
 ```
 
-**响应示例（sync 模式）**
+**响应（stream 模式）** 返回 `text/event-stream`，事件序列见第 9 节。
 
-```json
-{
-  "code": 200,
-  "message": "文件处理完成",
-  "data": {
-    "file_id": "a1b2c3d4e5f6"
-  }
-}
-```
+**重要约束**
 
-**响应示例（stream 模式）**
-
-返回 `text/event-stream` 格式的 SSE 流，逐步推送处理进度事件。
-
-**SSE 事件类型说明**
-
-| 事件名 | 阶段 | 说明 |
-|--------|------|------|
-| `parsing_start` | 解析 | 开始 MinerU 解析 |
-| `parsing` | 解析 | MinerU 解析完成 |
-| `content_saved` | 解析 | MD 内容已存储 |
-| `md_content` | 解析 | **MD 文档内容**（包含完整 Markdown 文本） |
-| `tables_extracted` | 解析 | 表格提取完成 |
-| `chunking_start` | 分块 | 开始分块 |
-| `chunking` | 分块 | 分块完成 |
-| `chunks_saving` | 分块 | 开始存储分块 |
-| `chunks_saved` | 分块 | 分块已存储到数据库 |
-| `embedding_start` | 向量化 | 开始向量化 |
-| `embedding` | 向量化 | 向量化完成 |
-| `milvus_submitting` | 向量化 | 开始提交向量到 Milvus |
-| `milvus_submitted` | 向量化 | 向量已提交到 Milvus |
-| `tasks_loading` | 提取/分析 | 开始获取提取/分析任务 |
-| `tasks_loaded` | 提取/分析 | 已获取提取/分析任务 |
-| `extraction_start` | 字段提取 | 开始关键词提取 |
-| `field_extracted` | 字段提取 | **单个字段提取完成**（每个字段独立发送） |
-| `extraction` | 字段提取 | 全部关键词提取完成 |
-| `analysis_start` | 逻辑分析 | 开始逻辑分析 |
-| `rule_analyzed` | 逻辑分析 | **单条规则分析完成**（每条规则独立发送） |
-| `analysis` | 逻辑分析 | 全部逻辑分析完成 |
-| `complete` | 完成 | 文件处理完成 |
-| `error` | 错误 | 处理过程中发生错误 |
-
-**SSE 事件数据格式示例**
-
-```
-event: parsing
-data: {"file_id": "abc123", "stage": "parsing", "message": "MinerU 解析完成", "content_length": 5000}
-
-event: md_content
-data: {"file_id": "abc123", "stage": "md_content", "message": "MD 文档内容", "content": "# 1 公司简介\n\n某某公司..."}
-
-event: field_extracted
-data: {"file_id": "abc123", "stage": "field_extracted", "message": "字段提取完成: 公司名称", "field_id": "company_name", "field_name": "公司名称", "extracted_value": "某某科技有限公司", "reason": "从第一段提取", "success": true, "current": 1, "total": 5}
-
-event: rule_analyzed
-data: {"file_id": "abc123", "stage": "rule_analyzed", "message": "规则分析完成: 是否盈利", "rule_id": "is_profitable", "rule_name": "是否盈利", "rule_type": "judge", "result_value": "true", "input_values": {"net_profit": "5000000"}, "reason": "净利润大于0", "success": true, "current": 1, "total": 3}
-
-event: complete
-data: {"file_id": "abc123", "stage": "complete", "message": "文件处理完成"}
-```
-
-**特殊逻辑说明**
-
-`file_id` 由 `(type_id, file_name, 当前纳秒时间戳, 随机盐)` 生成 SHA256[:32]，**每次上传都产生新的 `file_id`**，不做服务端去重。同名文件重复上传 → 各自一条独立记录、各自走完整管线、`uploads/` 下也各自一个 PDF。
-
-若需要从失败阶段重试，请使用 `POST /file/{file_id}/retry/{stage}`，或先 `DELETE /file/{file_id}` 清掉旧记录后再重新上传。
-
-**回调通知（callback_url）**
-
-当传入 `callback_url` 参数时，管线每完成一个阶段会向该地址 POST 一条 JSON 通知：
-
-```json
-{"file_id": "a1b2c3d4e5f6", "status": "parsing"}
-```
-
-回调状态依次为：`parsing` → `chunking` → `embedding` → `extracting` → `analyzing` → `complete`。
-
-> 回调失败**不会**影响主处理流程（仅记录 warning 日志）。
+- `file_id` 由 `(type_id, file_name, 当前纳秒时间戳, 随机盐)` SHA256[:32] 生成。**每次上传都产生新的 `file_id`，没有服务端去重**。
+- 同时持久化原始 PDF 字节到 `uploads/{file_id}.pdf`，供 VL 抽取使用；写盘失败不阻断主流程。
+- 失败重试请使用 `POST /file/{file_id}/retry/{stage}`，**不要**重新上传（会产生新记录）。
 
 **状态码**
 
 | 状态码 | 说明 |
 |--------|------|
-| 200 | 提交成功或处理完成 |
-| 400 | 文件大小超过限制 |
+| 200 | 提交成功 / 处理完成 |
+| 400 | 文件大小超限（`code=400` 包在 `ResponseWrapper` 中） |
 
 ---
 
-### 3.2 查询文件处理进度
+### 4.2 文件分页列表
 
-- **URL**: `GET /file/{file_id}/status`
+- **URL**: `GET /file/list`
 
-**路径参数**
+**查询参数**
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `file_id` | `string` | 是 | 文件 ID |
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `page` | `int` | `1` | 页码（从 1 开始） |
+| `page_size` | `int` | `20` | 每页条数 |
+| `status` | `string` | `""` | 按 `progress` 精确匹配过滤（见第 11.6 节） |
+| `type_id` | `string` | `""` | 按 `type_id` 精确匹配过滤 |
 
-**请求示例**
+**响应示例**
 
-```bash
-curl "http://localhost:5019/file/a1b2c3d4e5f6/status"
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "items": [
+      {
+        "file_id": "a1b2...",
+        "file_name": "report.pdf",
+        "file_size": 2048576,
+        "progress": "complete",
+        "type_id": "annual_report",
+        "error": null,
+        "create_time": "2025-01-15T10:30:00"
+      }
+    ],
+    "total": 30,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 2
+  }
+}
+```
+
+---
+
+### 4.3 批量删除文件
+
+- **URL**: `DELETE /file/batch`
+- **Content-Type**: `application/json`
+
+**请求体**
+
+```json
+{"file_ids": ["a1b2...", "c3d4..."]}
 ```
 
 **响应示例**
@@ -205,10 +400,32 @@ curl "http://localhost:5019/file/a1b2c3d4e5f6/status"
   "code": 200,
   "message": "success",
   "data": {
-    "file_id": "a1b2c3d4e5f6",
+    "deleted_count": 2,
+    "failed_ids": []
+  }
+}
+```
+
+不存在的 `file_id` 会进入 `failed_ids`；Milvus / PDF 文件清理失败仅记录 warning，不影响 MySQL 删除。
+
+---
+
+### 4.4 查询文件状态
+
+- **URL**: `GET /file/{file_id}/status`
+
+**响应示例**
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "file_id": "a1b2...",
     "file_name": "report.pdf",
     "file_size": 2048576,
     "progress": "complete",
+    "type_id": "annual_report",
     "error": null,
     "create_time": "2025-01-15T10:30:00",
     "updated_at": "2025-01-15T10:32:00"
@@ -216,276 +433,112 @@ curl "http://localhost:5019/file/a1b2c3d4e5f6/status"
 }
 ```
 
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 查询成功 |
-| 404 | 文件不存在 |
+**状态码**: 200 / 404（文件不存在）
 
 ---
 
-### 3.3 删除文件
+### 4.5 文件完整详情
 
-删除文件及所有关联数据（MySQL 记录 + Milvus 向量数据）。
+返回所有阶段的开始/结束时间戳，可计算阶段耗时。
 
-- **URL**: `DELETE /file/{file_id}`
-
-**路径参数**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `file_id` | `string` | 是 | 文件 ID |
-
-**请求示例**
-
-```bash
-curl -X DELETE "http://localhost:5019/file/a1b2c3d4e5f6"
-```
+- **URL**: `GET /file/{file_id}/detail`
 
 **响应示例**
 
 ```json
 {
   "code": 200,
-  "message": "文件已删除",
-  "data": null
+  "message": "success",
+  "data": {
+    "file_id": "a1b2...",
+    "file_name": "report.pdf",
+    "file_size": 2048576,
+    "progress": "complete",
+    "type_id": "annual_report",
+    "error": null,
+    "create_time": "2025-01-15T10:30:00",
+    "updated_at": "2025-01-15T10:35:00",
+    "start_parsing_time": "2025-01-15T10:30:00",
+    "end_parsing_time": "2025-01-15T10:31:20",
+    "start_tableing_time": "2025-01-15T10:31:20",
+    "end_tableing_time": "2025-01-15T10:31:30",
+    "start_chunking_time": "2025-01-15T10:31:30",
+    "end_chunking_time": "2025-01-15T10:31:45",
+    "start_embedding_time": "2025-01-15T10:31:45",
+    "end_embedding_time": "2025-01-15T10:32:00",
+    "end_extracting_time": "2025-01-15T10:34:10",
+    "end_analyzing_time": "2025-01-15T10:35:00"
+  }
 }
 ```
 
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 删除成功 |
-| 404 | 文件不存在 |
+**状态码**: 200 / 404
 
 ---
 
-### 3.4 从指定阶段重试
+### 4.6 删除文件
 
-从指定的处理阶段开始重试，支持同步、异步、流式三种处理模式。
+删除文件及所有关联数据：MySQL（files / file_content / file_table / file_chunk / extraction_result / analysis_result）、Milvus 向量、`uploads/{file_id}.pdf`。
+
+- **URL**: `DELETE /file/{file_id}`
+
+**响应示例**
+
+```json
+{"code": 200, "message": "文件已删除", "data": null}
+```
+
+**状态码**: 200 / 404
+
+---
+
+### 4.7 从指定阶段重试
+
+清掉指定阶段及其下游已有数据，从该阶段重跑。
 
 - **URL**: `POST /file/{file_id}/retry/{stage}`
 
 **路径参数**
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `file_id` | `string` | 是 | 文件 ID |
-| `stage` | `string` | 是 | 重试阶段，可选值：`chunking` / `embedding` / `extracting` / `analyzing` |
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `file_id` | `string` | 文件 ID |
+| `stage` | `string` | 阶段：`tableing` / `chunking` / `embedding` / `extracting` / `analyzing`。兼容旧别名：`table_name_validating` → `tableing` |
 
 **查询参数**
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `mode` | `string` | 否 | `"async"` | 处理模式：`async` / `stream` / `sync` |
-| `callback_url` | `string` | 否 | - | 回调地址，每个阶段完成后 POST 状态通知 |
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `mode` | `string` | `"async"` | 处理模式：`async` / `stream` / `sync` |
+| `callback_url` | `string` | - | 回调地址（仅 async/sync 模式使用） |
 
-**请求示例**
-
-```bash
-# async 模式（默认）
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding?mode=async"
-
-# async 模式 + 回调
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding?mode=async&callback_url=http://your-server.com/webhook"
-
-# stream 模式
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding?mode=stream"
-
-# sync 模式
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/embedding?mode=sync"
-```
-
-**响应示例（async 模式）**
+**响应示例（async）**
 
 ```json
-{
-  "code": 200,
-  "message": "已从 embedding 阶段开始重试",
-  "data": null
-}
+{"code": 200, "message": "已从 embedding 阶段开始重试", "data": null}
 ```
 
-**响应示例（sync 模式）**
+**stream 模式** 返回 SSE 流，事件类型与 `POST /file/parse?mode=stream` 一致。
 
-```json
-{
-  "code": 200,
-  "message": "已从 embedding 阶段重试完成",
-  "data": null
-}
-```
-
-**响应示例（stream 模式）**
-
-返回 `text/event-stream` 格式的 SSE 流，从指定阶段开始推送处理进度事件（事件类型与 `/file/parse` 的 stream 模式一致）。
-
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 重试已提交或处理完成 |
-| 400 | 无效的阶段名称 |
-| 404 | 文件不存在 |
+**状态码**: 200 / 400（无效阶段名）/ 404（文件不存在）
 
 ---
 
-### 3.5 重试字段提取
+### 4.8 快捷重试：字段提取 / 逻辑分析
 
-快捷重试字段提取阶段，支持同步、异步、流式三种处理模式。
+完全等价于 `POST /file/{file_id}/retry/extracting` 和 `POST /file/{file_id}/retry/analyzing`。
 
 - **URL**: `POST /file/{file_id}/retry/extracting`
-
-**路径参数**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `file_id` | `string` | 是 | 文件 ID |
-
-**查询参数**
-
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `mode` | `string` | 否 | `"async"` | 处理模式：`async` / `stream` / `sync` |
-| `callback_url` | `string` | 否 | - | 回调地址，每个阶段完成后 POST 状态通知 |
-
-**请求示例**
-
-```bash
-# async 模式（默认）
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting"
-
-# async 模式 + 回调
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting?callback_url=http://your-server.com/webhook"
-
-# stream 模式
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting?mode=stream"
-
-# sync 模式
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/extracting?mode=sync"
-```
-
-**响应示例（async 模式）**
-
-```json
-{
-  "code": 200,
-  "message": "已从 extracting 阶段开始重试",
-  "data": null
-}
-```
-
-**响应示例（sync 模式）**
-
-```json
-{
-  "code": 200,
-  "message": "已从 extracting 阶段重试完成",
-  "data": null
-}
-```
-
-**响应示例（stream 模式）**
-
-返回 `text/event-stream` 格式的 SSE 流，从 extracting 阶段开始推送处理进度事件。
-
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 重试已提交或处理完成 |
-| 404 | 文件不存在 |
-
----
-
-### 3.6 重试逻辑分析
-
-快捷重试逻辑分析阶段，支持同步、异步、流式三种处理模式。
-
 - **URL**: `POST /file/{file_id}/retry/analyzing`
 
-**路径参数**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `file_id` | `string` | 是 | 文件 ID |
-
-**查询参数**
-
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `mode` | `string` | 否 | `"async"` | 处理模式：`async` / `stream` / `sync` |
-| `callback_url` | `string` | 否 | - | 回调地址，每个阶段完成后 POST 状态通知 |
-
-**请求示例**
-
-```bash
-# async 模式（默认）
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/analyzing"
-
-# async 模式 + 回调
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/analyzing?callback_url=http://your-server.com/webhook"
-
-# stream 模式
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/analyzing?mode=stream"
-
-# sync 模式
-curl -X POST "http://localhost:5019/file/a1b2c3d4e5f6/retry/analyzing?mode=sync"
-```
-
-**响应示例（async 模式）**
-
-```json
-{
-  "code": 200,
-  "message": "已从 analyzing 阶段开始重试",
-  "data": null
-}
-```
-
-**响应示例（sync 模式）**
-
-```json
-{
-  "code": 200,
-  "message": "已从 analyzing 阶段重试完成",
-  "data": null
-}
-```
-
-**响应示例（stream 模式）**
-
-返回 `text/event-stream` 格式的 SSE 流，从 analyzing 阶段开始推送处理进度事件。
-
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 重试已提交或处理完成 |
-| 404 | 文件不存在 |
+查询参数与响应同 4.7。
 
 ---
 
-### 3.7 获取文件表格列表
-
-获取文件中提取出的所有表格数据。
+### 4.9 文件表格列表
 
 - **URL**: `GET /file/{file_id}/tables`
 
-**路径参数**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `file_id` | `string` | 是 | 文件 ID |
-
-**请求示例**
-
-```bash
-curl "http://localhost:5019/file/a1b2c3d4e5f6/tables"
-```
-
 **响应示例**
 
 ```json
@@ -494,42 +547,25 @@ curl "http://localhost:5019/file/a1b2c3d4e5f6/tables"
   "message": "success",
   "data": [
     {
-      "file_id": "a1b2c3d4e5f6",
+      "file_id": "a1b2...",
       "table_index": 0,
       "total_table": 3,
       "table_name": "财务报表",
-      "table_content": "| 项目 | 金额 |\n|------|------|\n| 收入 | 1000 |"
+      "table_content": "<table>...</table>",
+      "page_num": "12"
     }
   ]
 }
 ```
 
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 查询成功（无表格时返回空数组） |
+无数据时返回 `[]`。
 
 ---
 
-### 3.8 获取文件分块列表
-
-获取文件的文本分块数据。
+### 4.10 文件分块列表
 
 - **URL**: `GET /file/{file_id}/chunks`
 
-**路径参数**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `file_id` | `string` | 是 | 文件 ID |
-
-**请求示例**
-
-```bash
-curl "http://localhost:5019/file/a1b2c3d4e5f6/chunks"
-```
-
 **响应示例**
 
 ```json
@@ -538,42 +574,52 @@ curl "http://localhost:5019/file/a1b2c3d4e5f6/chunks"
   "message": "success",
   "data": [
     {
-      "file_id": "a1b2c3d4e5f6",
+      "file_id": "a1b2...",
       "chunk_id": "chunk_001",
       "chunk_index": 0,
       "total_chunks": 15,
-      "chunk_content": "这是文档的第一个分块内容..."
+      "chunk_content": "...",
+      "page_num": "3-4"
     }
   ]
 }
 ```
 
-**状态码**
+---
 
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 查询成功（无分块时返回空数组） |
+### 4.11 文件大纲（章节切片）
+
+正则解析 Markdown 章节标题（与抽取阶段 `search_type=section` 用同一套口径）。
+
+- **URL**: `GET /file/{file_id}/outline`
+
+**响应示例**
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": [
+    {
+      "index": 0,
+      "number": "1",
+      "title": "公司简介",
+      "content": "# 1 公司简介\n...",
+      "start_pos": 0,
+      "end_pos": 1532
+    }
+  ]
+}
+```
+
+文件不存在或内容为空时返回 `[]`（不返回 404）。
 
 ---
 
-### 3.9 获取字段提取结果
-
-获取文件的所有字段提取结果。
+### 4.12 字段提取结果
 
 - **URL**: `GET /file/{file_id}/extraction`
 
-**路径参数**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `file_id` | `string` | 是 | 文件 ID |
-
-**请求示例**
-
-```bash
-curl "http://localhost:5019/file/a1b2c3d4e5f6/extraction"
-```
-
 **响应示例**
 
 ```json
@@ -582,47 +628,23 @@ curl "http://localhost:5019/file/a1b2c3d4e5f6/extraction"
   "message": "success",
   "data": [
     {
-      "file_id": "a1b2c3d4e5f6",
+      "file_id": "a1b2...",
       "field_id": "company_name",
       "extracted_value": "某某科技有限公司",
-      "reason": "从文档第一段'公司名称：某某科技有限公司'中提取"
-    },
-    {
-      "file_id": "a1b2c3d4e5f6",
-      "field_id": "total_revenue",
-      "extracted_value": "1500000",
-      "reason": "从利润表第3行'营业总收入'列提取"
+      "reason": "从文档第一段提取"
     }
   ]
 }
 ```
 
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 查询成功（无结果时返回空数组） |
+> `source_refs`（参考块/VL 元数据）存在 `extraction_result.source_refs` 列里，但本接口当前**不返回**该字段（如需可走 `/extraction/test`）。
 
 ---
 
-### 3.10 获取逻辑分析结果
-
-获取文件的所有逻辑分析结果。
+### 4.13 逻辑分析结果
 
 - **URL**: `GET /file/{file_id}/analysis`
 
-**路径参数**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `file_id` | `string` | 是 | 文件 ID |
-
-**请求示例**
-
-```bash
-curl "http://localhost:5019/file/a1b2c3d4e5f6/analysis"
-```
-
 **响应示例**
 
 ```json
@@ -631,122 +653,92 @@ curl "http://localhost:5019/file/a1b2c3d4e5f6/analysis"
   "message": "success",
   "data": [
     {
-      "file_id": "a1b2c3d4e5f6",
+      "file_id": "a1b2...",
       "rule_id": "revenue_check",
       "result_value": "true",
-      "input_values": {
-        "total_revenue": "1500000",
-        "threshold": "1000000"
-      },
-      "reason": "营业总收入1500000大于阈值1000000，判断为达标"
+      "input_values": {"total_revenue": "1500000"},
+      "reason": "营业总收入1500000大于阈值1000000"
     }
   ]
 }
 ```
 
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 查询成功（无结果时返回空数组） |
-
 ---
 
-## 4. 字段提取配置接口
+## 5. 字段提取配置接口 `/extraction`
 
-### 4.1 获取字段配置列表
-
-获取所有已启用的字段提取配置，按优先级排序。
+### 5.1 列出字段配置
 
 - **URL**: `GET /extraction/fields`
 
-**请求示例**
+**查询参数**
 
-```bash
-curl "http://localhost:5019/extraction/fields"
-```
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `type_id` | `string` | `""` | 按 `type_id` 过滤；空表示全量 |
 
-**响应示例**
-
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": [
-    {
-      "field_id": "company_name",
-      "field_name": "公司名称",
-      "source_type": "text",
-      "enabled": 1,
-      "priority": 0,
-      "table_name_pattern": null,
-      "table_match_type": null,
-      "table_extract_prompt": null,
-      "search_type": "context",
-      "search_config": {"keyword": "公司"},
-      "text_extract_prompt": "请从以下文本中提取公司名称",
-      "created_at": "2025-01-15T10:00:00",
-      "updated_at": "2025-01-15T10:00:00"
-    },
-    {
-      "field_id": "total_revenue",
-      "field_name": "营业总收入",
-      "source_type": "table",
-      "enabled": 1,
-      "priority": 1,
-      "table_name_pattern": "利润表",
-      "table_match_type": "fuzzy",
-      "table_extract_prompt": "请从表格中提取营业总收入金额",
-      "search_type": null,
-      "search_config": null,
-      "text_extract_prompt": null,
-      "created_at": "2025-01-15T10:00:00",
-      "updated_at": "2025-01-15T10:00:00"
-    }
-  ]
-}
-```
+返回数组按 `priority` 升序。每条字段的字段说明见 5.2。
 
 ---
 
-### 4.2 新增/更新字段配置
+### 5.2 新增/更新字段配置
 
-根据 `field_id` 执行 upsert 操作：存在则更新，不存在则新增。
+按 `field_id` upsert（全局唯一）。若已存在记录归属于其他 `type_id`，返回 **409**。
 
 - **URL**: `POST /extraction/fields`
 - **Content-Type**: `application/json`
 
-**请求体**
+**通用字段**
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| `field_id` | `string` | 是 | - | 字段 ID（字母数字下划线，最长 100） |
-| `field_name` | `string` | 是 | - | 字段名称（最长 200） |
-| `source_type` | `string` | 是 | - | 数据源类型：`table` / `text` / `vl` |
-| `enabled` | `int` | 否 | `1` | 是否启用：1=启用, 0=禁用 |
-| `priority` | `int` | 否 | `0` | 优先级（数值越小越优先） |
-| `table_name_pattern` | `string` | 否 | `null` | 表格名称匹配模式（`source_type=table` 时使用） |
-| `table_match_type` | `string` | 否 | `null` | 表格匹配方式：`exact` / `fuzzy` / `contains` / `llm` |
-| `table_extract_prompt` | `string` | 否 | `null` | 表格提取 Prompt |
-| `search_type` | `string` | 否 | `null` | 文本检索方式：`context` / `section` / `rule` / `chunk_db` / `vector_db` |
-| `search_config` | `object` | 否 | `null` | 检索配置参数 |
-| `text_extract_prompt` | `string` | 否 | `null` | 文本提取 Prompt |
-| `vl_method` | `string` | `source_type=vl` 时必填 | `null` | VL 抽取方法：`vl_model` / `vl_progressive` / `vl_locate` |
-| `vl_config` | `object` | 否 | `null` | VL 方法参数，结构按 `vl_method` 不同（见下方表） |
-| `vl_system_prompt` | `string` | 否 | `null` | VL 调用的系统提示词 |
-| `vl_extract_prompt` | `string` | `source_type=vl` 时必填 | `null` | VL 最终提取 Prompt，必须包含 `value` 与 `reason` 关键字 |
+| `field_id` | `string` | 是 | - | 全局唯一，正则 `^[a-zA-Z0-9_]+$`，最长 100 |
+| `type_id` | `string` | 否 | `"default"` | 归属的文档类型 |
+| `field_name` | `string` | 是 | - | 字段名称，最长 200 |
+| `source_type` | `string` | 是 | - | `table` / `text` / `vl` |
+| `enabled` | `int` | 否 | `1` | 是否启用 |
+| `priority` | `int` | 否 | `0` | 越小越优先 |
 
-**vl_config 各方法参数：**
+**`source_type=table` 时**
 
-| vl_method | 字段 | 类型 | 默认值 | 说明 |
-|-----------|------|------|--------|------|
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `table_name_pattern` | `string` | 否 | 表格名匹配模式 |
+| `table_match_type` | `string` | 否 | `exact` / `fuzzy` / `contains` / `llm` |
+| `table_match_keywords` | `string[]` | 否 | `llm` 匹配时的关键词列表（辅助 LLM 决策） |
+| `table_match_max_results` | `int` | 否 | 匹配上限 |
+| `table_system_prompt` | `string` | 否 | 表格提取的 system prompt |
+| `table_extract_prompt` | `string` | 否 | 表格提取 prompt，**必须**包含至少一个 `<search_result>标签</search_result>` 占位符 |
+
+**`source_type=text` 时**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `search_type` | `string` | 否 | `context` / `section` / `rule` / `chunk_db` / `vector_db` / `page` |
+| `search_config` | `object` | 否 | 检索配置（结构随 `search_type` 不同） |
+| `text_system_prompt` | `string` | 否 | 文本提取的 system prompt |
+| `text_extract_prompt` | `string` | 否 | 文本提取 prompt，**必须**包含至少一个 `<search_result>标签</search_result>` 占位符 |
+
+**`source_type=vl` 时**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `vl_method` | `string` | **是** | `vl_model` / `vl_progressive` / `vl_locate` |
+| `vl_config` | `object` | 否 | 方法相关参数（见下方表） |
+| `vl_system_prompt` | `string` | 否 | VL 调用的 system prompt |
+| `vl_extract_prompt` | `string` | **是** | 最终提取 prompt，**必须**包含 `value` 和 `reason` 关键字（大小写不敏感），因为 VL 要输出 `{value, reason}` JSON |
+
+**`vl_config` 按方法参数**
+
+| `vl_method` | 字段 | 类型 | 默认值 | 说明 |
+|-------------|------|------|--------|------|
 | `vl_model` | `page_range` | string | `"all"` | `"all"` 或 `"1-3"` / `"1-3,5"` |
 | `vl_model` | `max_pixels` | int | `4000000` | 单图像素上限 |
-| `vl_progressive` | `field_hints` | string | - | 人类语言提示要找的字段 |
+| `vl_progressive` | `field_hints` | string | - | 自然语言提示要找的字段 |
 | `vl_progressive` | `batch_size` | int | `2` | 每批塞 VL 的页数 |
 | `vl_progressive` | `max_pixels` | int | `4000000` | 单图像素上限 |
 | `vl_progressive` | `batch_prompt_template` | string | 内置默认 | 必含占位符 `{field_hints}` `{page_label}` `{total_pages}` `{history}` |
-| `vl_locate` | `field_hints` | string | - | 人类语言提示 |
+| `vl_locate` | `field_hints` | string | - | 自然语言提示 |
 | `vl_locate` | `grid_pages` | int | `6` | 每张网格图包含的页数 |
 | `vl_locate` | `grid_cols` | int | `3` | 网格列数 |
 | `vl_locate` | `max_concurrent` | int | `20` | 第一轮并行上限（与全局 semaphore 取小） |
@@ -758,184 +750,109 @@ curl "http://localhost:5019/extraction/fields"
 
 > 模板字面 `{ }` 需写成 `{{ }}` 转义（后端 `str.format()` 渲染）。
 
-**请求示例（表格类字段）**
+**占位符规则（text / table）**
+
+| 占位符 | 解释 |
+|--------|------|
+| `<search_result>标签</search_result>` | 抽取 prompt 中的检索结果占位符，标签**不可为空** |
+| 文本类标签 | 通常对应 `search_config.keywords` 中的关键词 |
+| 表格类标签 | 通常对应 `table_name_pattern` 匹配出的表格名 |
+| 无匹配结果 | 替换为 `（未找到 '标签' 的相关内容）` |
+
+VL 类字段**不**使用 `<search_result>` 占位符 —— 直接读 `uploads/{file_id}.pdf`，由视觉模型一次输出 `{value, reason}` JSON，不再走文本 LLM 二次抽取；`source_refs` 形如 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, batches_with_info}}`。
+
+**请求示例（表格类）**
 
 ```json
 {
   "field_id": "total_revenue",
+  "type_id": "annual_report",
   "field_name": "营业总收入",
   "source_type": "table",
   "priority": 1,
   "table_name_pattern": "利润表",
   "table_match_type": "fuzzy",
-  "table_extract_prompt": "检索到的表格如下：\n<search_result>利润表</search_result>\n\n请从表格中提取营业总收入金额，仅返回数值。"
+  "table_extract_prompt": "检索到的表格：\n<search_result>利润表</search_result>\n\n请提取营业总收入金额，仅返回数值。"
 }
 ```
 
-**请求示例（文本类字段 - 单关键词）**
-
-```json
-{
-  "field_id": "company_name",
-  "field_name": "公司名称",
-  "source_type": "text",
-  "priority": 0,
-  "search_type": "context",
-  "search_config": {
-    "keywords": ["公司名称"],
-    "context_before": 100,
-    "context_after": 200
-  },
-  "text_extract_prompt": "从以下内容中提取公司全称：\n<search_result>公司名称</search_result>\n\n请返回完整的公司名称。"
-}
-```
-
-**请求示例（文本类字段 - 多关键词）**
+**请求示例（文本类，多关键词）**
 
 ```json
 {
   "field_id": "company_info",
+  "type_id": "default",
   "field_name": "公司基本信息",
   "source_type": "text",
-  "priority": 0,
   "search_type": "context",
   "search_config": {
     "keywords": ["公司名称", "注册地址", "法定代表人"],
     "context_before": 100,
     "context_after": 200
   },
-  "text_extract_prompt": "请从以下内容中提取公司信息：\n\n关于公司名称的内容：\n<search_result>公司名称</search_result>\n\n关于注册地址的内容：\n<search_result>注册地址</search_result>\n\n关于法定代表人的内容：\n<search_result>法定代表人</search_result>\n\n请提取：1.公司全称 2.详细地址 3.法人姓名"
+  "text_extract_prompt": "公司名称：\n<search_result>公司名称</search_result>\n\n注册地址：\n<search_result>注册地址</search_result>\n\n法人：\n<search_result>法定代表人</search_result>\n\n请提取：1.公司全称 2.详细地址 3.法人姓名"
 }
 ```
 
-**请求示例（VL 类字段 - vl_locate）**
+**请求示例（VL `vl_locate`）**
 
 ```json
 {
   "field_id": "total_assets_vl",
+  "type_id": "annual_report",
   "field_name": "资产总额",
   "source_type": "vl",
-  "priority": 2,
   "vl_method": "vl_locate",
   "vl_config": {
     "field_hints": "资产总额、负债总额、净利润",
     "grid_pages": 6,
     "grid_cols": 3,
-    "max_concurrent": 20,
     "key_pages_limit": 6,
     "fallback_pages": 3
   },
-  "vl_extract_prompt": "请从以上高清财报页中提取「资产总额」。\n请只返回 JSON：{\"value\": \"金额（含单位）\", \"reason\": \"看到的页码与位置\"}\n未找到返回：{\"value\": \"\", \"reason\": \"未找到\"}"
+  "vl_extract_prompt": "请从以上高清财报页中提取「资产总额」。\n只返回 JSON：{\"value\": \"金额（含单位）\", \"reason\": \"看到的页码与位置\"}\n未找到返回：{\"value\": \"\", \"reason\": \"未找到\"}"
 }
 ```
 
-VL 类字段**不**依赖 `<search_result>` 占位符——VL 直接读 `uploads/{file_id}.pdf`，由视觉模型一次输出 `{value, reason}` JSON，**不**走文本 LLM 二次抽取。前置条件：上传时 PDF 字节已持久化到 `uploads/{file_id}.pdf`；`configs/config.yaml` 的 `vl_model:` 节配置了 `base_url` / `api_key` / `model`。
-
-**占位符说明**
-
-| 占位符格式 | 说明 |
-|-----------|------|
-| `<search_result>标签</search_result>` | 搜索结果占位符，标签不可为空 |
-| 文本类字段标签 | 使用 search_config.keywords 中的关键词 |
-| 表格类字段标签 | 使用 table_name_pattern 匹配的表格名称 |
-| 无匹配结果时 | 替换为 `（未找到 '标签' 的相关内容）` |
-
-**响应示例（新增）**
+**响应示例**
 
 ```json
-{
-  "code": 200,
-  "message": "字段配置已创建",
-  "data": {
-    "field_id": "total_revenue"
-  }
-}
+{"code": 200, "message": "字段配置已创建", "data": {"field_id": "total_revenue"}}
 ```
 
-**响应示例（更新）**
-
-```json
-{
-  "code": 200,
-  "message": "字段配置已更新",
-  "data": {
-    "field_id": "total_revenue"
-  }
-}
-```
+**状态码**: 200 / 409（`field_id` 已被其他 `type_id` 占用）/ 422（Pydantic 校验失败）
 
 ---
 
-### 4.3 删除字段配置
+### 5.3 删除字段配置
 
-软删除字段提取配置（将 `enabled` 设为 0）。
+**硬删除**（直接从 `extraction_field` 表删除，不再走 enabled=0 的软删除路径）。
 
 - **URL**: `DELETE /extraction/fields/{field_id}`
 
-**路径参数**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `field_id` | `string` | 是 | 字段 ID |
-
-**请求示例**
-
-```bash
-curl -X DELETE "http://localhost:5019/extraction/fields/total_revenue"
-```
-
 **响应示例**
 
 ```json
-{
-  "code": 200,
-  "message": "字段配置已禁用",
-  "data": null
-}
+{"code": 200, "message": "字段配置已删除", "data": null}
 ```
 
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 删除（禁用）成功 |
-| 404 | 字段配置不存在 |
+**状态码**: 200 / 404
 
 ---
 
-### 4.4 检查字段 ID 是否存在
+### 5.4 检查字段 ID 是否存在
 
 - **URL**: `GET /extraction/fields/{field_id}/check`
 
-**路径参数**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `field_id` | `string` | 是 | 字段 ID |
-
-**请求示例**
-
-```bash
-curl "http://localhost:5019/extraction/fields/total_revenue/check"
-```
-
-**响应示例**
-
 ```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {
-    "exists": true
-  }
-}
+{"code": 200, "message": "success", "data": {"exists": true}}
 ```
 
 ---
 
-### 4.5 字段提取调试
+### 5.5 字段提取调试（同步）
 
-调试字段提取逻辑，支持两种模式：使用已保存配置或临时配置。
+支持两种模式：使用已保存的 `field_id` 或 传入临时 `config`。
 
 - **URL**: `POST /extraction/test`
 - **Content-Type**: `application/json`
@@ -945,36 +862,10 @@ curl "http://localhost:5019/extraction/fields/total_revenue/check"
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `file_id` | `string` | 是 | 目标文件 ID |
-| `field_id` | `string` | 否* | 模式 1：使用已保存的字段配置 |
-| `config` | `object` | 否* | 模式 2：使用临时配置 |
+| `field_id` | `string` | 二选一 | 模式 1：使用已保存配置 |
+| `config` | `object` | 二选一 | 模式 2：临时配置（结构同 5.2 请求体，不含 `field_id`/`type_id`） |
 
-> \* `field_id` 和 `config` 必须提供其中一个。
-
-**请求示例（模式 1：使用已保存配置）**
-
-```json
-{
-  "file_id": "a1b2c3d4e5f6",
-  "field_id": "company_name"
-}
-```
-
-**请求示例（模式 2：使用临时配置）**
-
-```json
-{
-  "file_id": "a1b2c3d4e5f6",
-  "config": {
-    "field_name": "测试字段",
-    "source_type": "text",
-    "search_type": "context",
-    "search_config": {"keyword": "利润"},
-    "text_extract_prompt": "请提取净利润数值"
-  }
-}
-```
-
-**响应示例**
+**响应（普通字段）**
 
 ```json
 {
@@ -982,20 +873,17 @@ curl "http://localhost:5019/extraction/fields/total_revenue/check"
   "message": "success",
   "data": {
     "search_results": [
-      {
-        "table_name": "利润表",
-        "table_content": "| 项目 | 金额 |\n| 净利润 | 500000 |"
-      }
+      {"table_name": "利润表", "table_content": "..."}
     ],
-    "llm_input": "请从表格中提取营业总收入金额",
+    "llm_input": "检索到的表格...",
     "llm_output": "1500000",
     "extracted_value": "1500000",
-    "reason": "从利润表第3行'营业总收入'列提取得到数值1500000"
+    "reason": "从利润表第3行提取"
   }
 }
 ```
 
-**VL 字段响应示例（`source_type=vl`）**
+**响应（VL 字段）**
 
 ```json
 {
@@ -1019,177 +907,41 @@ curl "http://localhost:5019/extraction/fields/total_revenue/check"
 }
 ```
 
-VL 字段的 `search_results` 是单元素数组，包含 `type: "vl_meta"` 和该方法的元数据；`llm_input` 是 `vl_extract_prompt` 原文，`llm_output` 与 `extracted_value` 一致（VL 直出 JSON，不再二次抽取）。
+VL 字段 `llm_output` 与 `extracted_value` 一致（VL 直出 JSON，不再二次抽取）。
 
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 调试成功 |
-| 400 | 未提供 `field_id` 或 `config` |
-| 404 | 字段配置不存在 / 文件内容不存在 |
-| 500 | 提取过程异常 |
+**状态码**: 200 / 400（缺 `field_id`/`config`） / 404（字段配置或文件内容不存在）/ 500（提取异常）
 
 ---
 
-### 4.6 字段提取流式调试
-
-流式调试字段提取逻辑，通过 SSE 分步返回检索结果、提示词、LLM 响应和提取结果。
+### 5.6 字段提取流式调试（SSE）
 
 - **URL**: `POST /extraction/test/stream`
 - **Content-Type**: `application/json`
 - **响应类型**: `text/event-stream`
 
-**请求体**
-
-与 4.5 字段提取调试相同。
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `file_id` | `string` | 是 | 目标文件 ID |
-| `field_id` | `string` | 否* | 模式 1：使用已保存的字段配置 |
-| `config` | `object` | 否* | 模式 2：使用临时配置 |
-
-> \* `field_id` 和 `config` 必须提供其中一个。
-
-**请求示例**
-
-```json
-{
-  "file_id": "a1b2c3d4e5f6",
-  "config": {
-    "field_name": "测试字段",
-    "source_type": "text",
-    "search_type": "context",
-    "search_config": {"keywords": ["利润"]},
-    "text_extract_prompt": "请提取净利润数值：\n<search_result>利润</search_result>"
-  }
-}
-```
-
-**SSE 事件序列**
-
-| 步骤 | event | data 字段 | 说明 |
-|------|-------|-----------|------|
-| 1 | `search_results` | `source_type`, `matched_tables` / `results_by_label`, `results` | 检索结果（table/text 字段） |
-| 1 (vl) | `pdf_loaded` | `total_pages`, `vl_method` | VL 字段：PDF 加载完成 |
-| 2 (vl_progressive) | `progressive_batch` | `page_label`, `has_info`, `summary_preview`, `batch_index`, `total_batches` | 每批扫描结果 |
-| 2 (vl_locate) | `locate_locate` | `phase`, `grid_idx`, `total_grids`, `page_labels`, `found_pages` | 缩略图网格定位结果 |
-| 3 (vl_locate) | `locate_extract` | `phase`, `key_pages` | 第一轮完成，关键页确定 |
-| 2-3 | `match_llm` | `step`, `prompt` / `llm_response` / `matched_indices` / `error` | LLM 表格匹配过程（仅 `source_type=table` 且 `table_match_type=llm`） |
-| 4 | `prompt` | `system_prompt`, `user_prompt` | LLM / VL 提示词 |
-| 5 | `llm_response` | `raw_response` | LLM 原始响应（table/text 字段；VL 字段无此事件，结果直接来自 VL） |
-| 6 | `result` | `extracted_value`, `reason`, `source_refs` | 提取结果。VL 字段的 `source_refs` 是 `{"_vl": {...}}` 形式 |
-| 7 | `done` | `{}` | 完成 |
-| - | `error` | `step`, `message` | 任意步骤失败时触发 |
-
-> VL 字段不会推 `search_results` / `llm_response`；table/text 字段不会推 `pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`。VL 进度事件**仅** SSE 推送，**不会**经异步 `callback_url`（见 `docs/ASYNC_CALLBACK.md`）。
-
-**SSE 事件数据格式示例（text 字段）**
-
-```
-event: search_results
-data: {"source_type": "text", "search_type": "context", "results": [...], "results_by_label": {"利润": "...相关文本..."}}
-
-event: prompt
-data: {"system_prompt": "", "user_prompt": "请提取净利润数值：\n..."}
-
-event: llm_response
-data: {"raw_response": "{\"value\": \"500000\", \"reason\": \"从文本中提取\"}"}
-
-event: result
-data: {"extracted_value": "500000", "reason": "从文本中提取"}
-
-event: done
-data: {}
-```
-
-**SSE 事件数据格式示例（VL 字段 - vl_progressive）**
-
-```
-event: pdf_loaded
-data: {"total_pages": 24, "vl_method": "vl_progressive"}
-
-event: progressive_batch
-data: {"page_label": "第1-2页", "has_info": false, "summary_preview": "", "batch_index": 0, "total_batches": 12}
-
-event: progressive_batch
-data: {"page_label": "第3-4页", "has_info": true, "summary_preview": "签署日期：2024-12-15；签约方：甲方/乙方", "batch_index": 1, "total_batches": 12}
-
-... (其余批次省略)
-
-event: prompt
-data: {"system_prompt": "", "user_prompt": "基于以上累积摘要，请综合整理..."}
-
-event: result
-data: {"extracted_value": "2024-12-15；甲方/乙方", "reason": "综合第3-4页", "source_refs": {"_vl": {"method": "vl_progressive", "total_pages": 24, "key_pages": null, "vl_total_tokens": 8421, "batches_with_info": 3}}}
-
-event: done
-data: {}
-```
-
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 开始流式调试（SSE 流） |
-| 400 | 未提供 `field_id` 或 `config` |
-| 404 | 字段配置不存在 |
+请求体同 5.5。事件序列详见第 9.2 节。
 
 ---
 
-## 5. 逻辑分析配置接口
+## 6. 逻辑分析配置接口 `/analysis`
 
-### 5.1 获取分析规则列表
-
-获取所有已启用的逻辑分析规则，按优先级排序。
+### 6.1 列出分析规则
 
 - **URL**: `GET /analysis/rules`
 
-**请求示例**
+**查询参数**
 
-```bash
-curl "http://localhost:5019/analysis/rules"
-```
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `type_id` | `string` | `""` | 按 `type_id` 过滤；空表示全量 |
 
-**响应示例**
-
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": [
-    {
-      "rule_id": "revenue_check",
-      "rule_name": "营收达标检查",
-      "rule_type": "judge",
-      "expression": "请判断营业总收入 <field_result>total_revenue</field_result> 是否大于 1000000",
-      "depend_fields": ["total_revenue"],
-      "enabled": 1,
-      "priority": 0,
-      "created_at": "2025-01-15T10:00:00",
-      "updated_at": "2025-01-15T10:00:00"
-    },
-    {
-      "rule_id": "profit_rate",
-      "rule_name": "利润率计算",
-      "rule_type": "calc",
-      "expression": "<field_result>net_profit</field_result> / <field_result>total_revenue</field_result> * 100",
-      "depend_fields": ["net_profit", "total_revenue"],
-      "enabled": 1,
-      "priority": 1,
-      "created_at": "2025-01-15T10:00:00",
-      "updated_at": "2025-01-15T10:00:00"
-    }
-  ]
-}
-```
+按 `priority` 升序。每条规则字段同 6.2。
 
 ---
 
-### 5.2 新增/更新分析规则
+### 6.2 新增/更新分析规则
 
-根据 `rule_id` 执行 upsert 操作：存在则更新，不存在则新增。
+按 `rule_id` upsert（全局唯一）。若已存在记录归属于其他 `type_id`，返回 **409**。
 
 - **URL**: `POST /analysis/rules`
 - **Content-Type**: `application/json`
@@ -1198,31 +950,36 @@ curl "http://localhost:5019/analysis/rules"
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| `rule_id` | `string` | 是 | - | 规则 ID（字母数字下划线，最长 100） |
-| `rule_name` | `string` | 是 | - | 规则名称（最长 200） |
-| `rule_type` | `string` | 是 | - | 规则类型：`judge`（判断） / `calc`（计算） |
-| `expression` | `string` | 是 | - | 表达式（使用 `<field_result>字段标识</field_result>` 引用提取字段） |
+| `rule_id` | `string` | 是 | - | 全局唯一，正则 `^[a-zA-Z0-9_]+$`，最长 100 |
+| `type_id` | `string` | 否 | `"default"` | 归属的文档类型 |
+| `rule_name` | `string` | 是 | - | 规则名称，最长 200 |
+| `rule_type` | `string` | 是 | - | `judge` / `calc` |
+| `expression` | `string` | 是 | - | 表达式，**必须**包含至少一个 `<field_result>字段ID</field_result>` 占位符 |
+| `system_prompt` | `string` | 否 | `null` | judge 类型可自定义 LLM system prompt |
 | `depend_fields` | `string[]` | 否 | `null` | 依赖的字段 ID 列表 |
-| `enabled` | `int` | 否 | `1` | 是否启用：1=启用, 0=禁用 |
-| `priority` | `int` | 否 | `0` | 优先级（数值越小越优先） |
+| `enabled` | `int` | 否 | `1` | 是否启用 |
+| `priority` | `int` | 否 | `0` | 越小越优先 |
 
-**请求示例（判断类规则）**
+**请求示例（judge）**
 
 ```json
 {
   "rule_id": "revenue_check",
+  "type_id": "annual_report",
   "rule_name": "营收达标检查",
   "rule_type": "judge",
   "expression": "请判断营业总收入 <field_result>total_revenue</field_result> 是否大于 1000000",
+  "system_prompt": "你是一个专业的财务分析师，仅依据提供的数值判断。",
   "depend_fields": ["total_revenue"]
 }
 ```
 
-**请求示例（计算类规则）**
+**请求示例（calc）**
 
 ```json
 {
   "rule_id": "profit_rate",
+  "type_id": "annual_report",
   "rule_name": "利润率计算",
   "rule_type": "calc",
   "expression": "<field_result>net_profit</field_result> / <field_result>total_revenue</field_result> * 100",
@@ -1230,111 +987,47 @@ curl "http://localhost:5019/analysis/rules"
 }
 ```
 
-**字段占位符说明**
+**占位符规则**
 
-| 占位符格式 | 说明 |
-|-----------|------|
-| `<field_result>字段标识</field_result>` | 字段结果占位符，标签不可为空 |
-| 字段标识 | 使用 depend_fields 中声明的 field_id |
-| 无提取结果时 | 替换为 `（未找到字段 '字段标识' 的提取结果）` |
-```
+| 占位符 | 解释 |
+|--------|------|
+| `<field_result>字段ID</field_result>` | 字段结果占位符，标签**不可为空** |
+| 字段 ID | 必须是 `depend_fields` 列表中存在的某个 `field_id` |
+| 无提取结果 | 替换为 `（未找到字段 '字段ID' 的提取结果）` |
 
-**响应示例（新增）**
-
-```json
-{
-  "code": 200,
-  "message": "规则配置已创建",
-  "data": {
-    "rule_id": "revenue_check"
-  }
-}
-```
-
-**响应示例（更新）**
+**响应示例**
 
 ```json
-{
-  "code": 200,
-  "message": "规则配置已更新",
-  "data": {
-    "rule_id": "revenue_check"
-  }
-}
+{"code": 200, "message": "规则配置已创建", "data": {"rule_id": "revenue_check"}}
 ```
+
+**状态码**: 200 / 409（`rule_id` 已被其他 `type_id` 占用）/ 422
 
 ---
 
-### 5.3 删除分析规则
+### 6.3 删除分析规则
 
-软删除逻辑分析规则（将 `enabled` 设为 0）。
+**硬删除**。
 
 - **URL**: `DELETE /analysis/rules/{rule_id}`
 
-**路径参数**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `rule_id` | `string` | 是 | 规则 ID |
-
-**请求示例**
-
-```bash
-curl -X DELETE "http://localhost:5019/analysis/rules/revenue_check"
-```
-
-**响应示例**
-
 ```json
-{
-  "code": 200,
-  "message": "规则配置已禁用",
-  "data": null
-}
+{"code": 200, "message": "规则配置已删除", "data": null}
 ```
-
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 删除（禁用）成功 |
-| 404 | 规则配置不存在 |
 
 ---
 
-### 5.4 检查规则 ID 是否存在
+### 6.4 检查规则 ID 是否存在
 
 - **URL**: `GET /analysis/rules/{rule_id}/check`
 
-**路径参数**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `rule_id` | `string` | 是 | 规则 ID |
-
-**请求示例**
-
-```bash
-curl "http://localhost:5019/analysis/rules/revenue_check/check"
-```
-
-**响应示例**
-
 ```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {
-    "exists": true
-  }
-}
+{"code": 200, "message": "success", "data": {"exists": true}}
 ```
 
 ---
 
-### 5.5 逻辑分析调试
-
-调试逻辑分析规则，支持两种模式：使用已保存配置或临时配置。
+### 6.5 逻辑分析调试（同步）
 
 - **URL**: `POST /analysis/test`
 - **Content-Type**: `application/json`
@@ -1344,32 +1037,8 @@ curl "http://localhost:5019/analysis/rules/revenue_check/check"
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `file_id` | `string` | 是 | 目标文件 ID |
-| `rule_id` | `string` | 否* | 模式 1：使用已保存的规则配置 |
-| `config` | `object` | 否* | 模式 2：使用临时配置 |
-
-> \* `rule_id` 和 `config` 必须提供其中一个。
-
-**请求示例（模式 1：使用已保存配置）**
-
-```json
-{
-  "file_id": "a1b2c3d4e5f6",
-  "rule_id": "revenue_check"
-}
-```
-
-**请求示例（模式 2：使用临时配置）**
-
-```json
-{
-  "file_id": "a1b2c3d4e5f6",
-  "config": {
-    "rule_type": "calc",
-    "expression": "<field_result>net_profit</field_result> / <field_result>total_revenue</field_result> * 100",
-    "depend_fields": ["net_profit", "total_revenue"]
-  }
-}
-```
+| `rule_id` | `string` | 二选一 | 模式 1：使用已保存规则 |
+| `config` | `object` | 二选一 | 模式 2：临时配置（含 `rule_type` / `expression` / `system_prompt` / `depend_fields`） |
 
 **响应示例**
 
@@ -1378,10 +1047,7 @@ curl "http://localhost:5019/analysis/rules/revenue_check/check"
   "code": 200,
   "message": "success",
   "data": {
-    "input_values": {
-      "net_profit": "500000",
-      "total_revenue": "1500000"
-    },
+    "input_values": {"net_profit": "500000", "total_revenue": "1500000"},
     "expression_resolved": "500000 / 1500000 * 100",
     "result_value": "33.33",
     "reason": "计算公式: 500000 / 1500000 * 100 = 33.33"
@@ -1389,139 +1055,20 @@ curl "http://localhost:5019/analysis/rules/revenue_check/check"
 }
 ```
 
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 调试成功 |
-| 400 | 未提供 `rule_id` 或 `config` |
-| 404 | 规则配置不存在 |
-| 500 | 分析过程异常 |
+**状态码**: 200 / 400 / 404 / 500
 
 ---
 
-### 5.6 逻辑分析流式调试
-
-流式调试逻辑分析规则，通过 SSE 分步返回依赖字段值、表达式解析、LLM 提示词/响应和分析结果。
+### 6.6 逻辑分析流式调试（SSE）
 
 - **URL**: `POST /analysis/test/stream`
-- **Content-Type**: `application/json`
 - **响应类型**: `text/event-stream`
 
-**请求体**
-
-与 5.5 逻辑分析调试相同。
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `file_id` | `string` | 是 | 目标文件 ID |
-| `rule_id` | `string` | 否* | 模式 1：使用已保存的规则配置 |
-| `config` | `object` | 否* | 模式 2：使用临时配置 |
-
-> \* `rule_id` 和 `config` 必须提供其中一个。
-
-**请求示例（judge 类型）**
-
-```json
-{
-  "file_id": "a1b2c3d4e5f6",
-  "config": {
-    "rule_type": "judge",
-    "system_prompt": "你是一个专业的财务分析师。",
-    "expression": "请判断营业总收入 <field_result>total_revenue</field_result> 是否大于 1000000",
-    "depend_fields": ["total_revenue"]
-  }
-}
-```
-
-**请求示例（calc 类型）**
-
-```json
-{
-  "file_id": "a1b2c3d4e5f6",
-  "config": {
-    "rule_type": "calc",
-    "expression": "<field_result>net_profit</field_result> / <field_result>total_revenue</field_result> * 100",
-    "depend_fields": ["net_profit", "total_revenue"]
-  }
-}
-```
-
-**Judge 类型 SSE 事件序列**
-
-| 步骤 | event | data 字段 | 说明 |
-|------|-------|-----------|------|
-| 1 | `input_values` | `input_values`, `depend_fields` | 依赖字段的提取值 |
-| 2 | `resolved_expression` | `original_expression`, `resolved_expression` | 表达式解析（占位符替换） |
-| 3 | `prompt` | `system_prompt`, `user_prompt` | LLM 提示词 |
-| 4 | `llm_response` | `raw_response` | LLM 原始响应 |
-| 5 | `result` | `result_value`, `reason` | 分析结果 |
-| 6 | `done` | `{}` | 完成 |
-| - | `error` | `message` | 任意步骤失败时触发 |
-
-**Calc 类型 SSE 事件序列（无 prompt / llm_response 步骤）**
-
-| 步骤 | event | data 字段 | 说明 |
-|------|-------|-----------|------|
-| 1 | `input_values` | `input_values`, `depend_fields` | 依赖字段的提取值 |
-| 2 | `resolved_expression` | `original_expression`, `resolved_expression` | 表达式解析 |
-| 3 | `result` | `result_value`, `reason` | 计算结果 |
-| 4 | `done` | `{}` | 完成 |
-| - | `error` | `message` | 任意步骤失败时触发 |
-
-**SSE 事件数据格式示例（judge）**
-
-```
-event: input_values
-data: {"input_values": {"total_revenue": "1500000"}, "depend_fields": ["total_revenue"]}
-
-event: resolved_expression
-data: {"original_expression": "请判断营业总收入 <field_result>total_revenue</field_result> 是否大于 1000000", "resolved_expression": "请判断营业总收入 1500000 是否大于 1000000"}
-
-event: prompt
-data: {"system_prompt": "你是一个专业的财务分析师。", "user_prompt": "请判断营业总收入 1500000 是否大于 1000000\n\n请根据以上内容进行判断，以 JSON 格式返回结果：\n{\"result\": \"true 或 false\", \"reason\": \"判断理由/依据\"}"}
-
-event: llm_response
-data: {"raw_response": "{\"result\": \"true\", \"reason\": \"营业总收入1500000大于1000000\"}"}
-
-event: result
-data: {"result_value": "true", "reason": "营业总收入1500000大于1000000"}
-
-event: done
-data: {}
-```
-
-**SSE 事件数据格式示例（calc）**
-
-```
-event: input_values
-data: {"input_values": {"net_profit": "500000", "total_revenue": "1500000"}, "depend_fields": ["net_profit", "total_revenue"]}
-
-event: resolved_expression
-data: {"original_expression": "<field_result>net_profit</field_result> / <field_result>total_revenue</field_result> * 100", "resolved_expression": "500000 / 1500000 * 100"}
-
-event: result
-data: {"result_value": "33.33", "reason": "计算公式: 500000 / 1500000 * 100 = 33.33"}
-
-event: done
-data: {}
-```
-
-**状态码**
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 开始流式调试（SSE 流） |
-| 400 | 未提供 `rule_id` 或 `config` |
-| 404 | 规则配置不存在 |
+请求体同 6.5。事件序列详见第 9.3 节。
 
 ---
 
-## 6. 向量检索接口
-
-### 6.1 向量相似度检索
-
-基于 Milvus 向量数据库进行语义相似度检索。
+## 7. 向量检索接口 `/search`
 
 - **URL**: `POST /search`
 - **Content-Type**: `application/json`
@@ -1530,21 +1077,10 @@ data: {}
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| `query` | `string` | 是 | - | 检索查询文本 |
-| `file_id` | `string` | 否 | `null` | 限定检索范围的文件 ID |
-| `top_k` | `int` | 否 | `10` | 返回结果数量 |
-| `score_threshold` | `float` | 否 | `null` | 分数阈值（L2 距离，越小越相似） |
-
-**请求示例**
-
-```json
-{
-  "query": "公司营业收入情况",
-  "file_id": "a1b2c3d4e5f6",
-  "top_k": 5,
-  "score_threshold": 0.8
-}
-```
+| `query` | `string` | 是 | - | 检索文本 |
+| `file_id` | `string` | 否 | `null` | 限定检索范围 |
+| `top_k` | `int` | 否 | `10` | 返回条数 |
+| `score_threshold` | `float` | 否 | `null` | L2 距离上限（越小越相似），超过则过滤 |
 
 **响应示例**
 
@@ -1555,17 +1091,14 @@ data: {}
   "data": [
     {
       "chunk_id": "chunk_003",
-      "file_id": "a1b2c3d4e5f6",
+      "file_id": "a1b2...",
       "chunk_index": 3,
-      "chunk_content": "公司2024年度营业收入为1500万元，同比增长15%...",
+      "total_chunks": 15,
+      "chunk_content": "公司2024年度营业收入为1500万元...",
+      "start_pos": 1200,
+      "end_pos": 1450,
+      "page_num": "5",
       "score": 0.25
-    },
-    {
-      "chunk_id": "chunk_007",
-      "file_id": "a1b2c3d4e5f6",
-      "chunk_index": 7,
-      "chunk_content": "营业收入构成中，主营业务收入占比85%...",
-      "score": 0.38
     }
   ]
 }
@@ -1573,199 +1106,361 @@ data: {}
 
 ---
 
-## 7. 数据模型说明
+## 8. 异步回调约定
 
-### 7.1 数据库表结构
+当 `POST /file/parse` 或 `POST /file/{file_id}/retry/{stage}` 携带 `callback_url` 时（仅 `mode=async`/`sync`），管线会向该地址 POST JSON 通知。
 
-#### files - 文件主表
+| 通知类型 | 说明 |
+|---------|------|
+| 阶段入口 | 每个阶段开始时各 1 次 |
+| `field_done` / `rule_done` | 抽取/分析每完成 1 个字段/规则触发 1 次 |
+| `stage_done` | 每个阶段完整数据合并下发 1 次 |
 
-| 列名 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| `file_id` | VARCHAR(64) | PK | 文件唯一标识 |
-| `file_name` | VARCHAR(512) | NOT NULL | 文件名称 |
-| `file_size` | BIGINT | DEFAULT 0 | 文件大小（字节） |
-| `create_time` | DATETIME | DEFAULT NOW() | 创建时间 |
-| `start_parsing_time` | DATETIME | NULLABLE | 开始解析时间 |
-| `end_parsing_time` | DATETIME | NULLABLE | 解析完成时间 |
-| `start_chunking_time` | DATETIME | NULLABLE | 开始分块时间 |
-| `end_chunking_time` | DATETIME | NULLABLE | 分块完成时间 |
-| `start_embedding_time` | DATETIME | NULLABLE | 开始向量化时间 |
-| `end_embedding_time` | DATETIME | NULLABLE | 向量化完成时间 |
-| `end_extracting_time` | DATETIME | NULLABLE | 字段提取完成时间 |
-| `end_analyzing_time` | DATETIME | NULLABLE | 逻辑分析完成时间 |
-| `progress` | VARCHAR(32) | DEFAULT "parsing" | 处理进度状态 |
-| `error` | TEXT | NULLABLE | 错误信息 |
-| `updated_at` | DATETIME | AUTO UPDATE | 最后更新时间 |
+**通用 schema**
 
-#### file_content - 文件内容表
+```json
+{
+  "file_id": "...",
+  "status": "parsing|tableing|chunking|embedding|extracting|analyzing|complete",
+  "event": "field_done|rule_done|stage_done",
+  "data": { /* 见下 */ }
+}
+```
 
-| 列名 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| `file_id` | VARCHAR(64) | PK | 文件 ID |
-| `file_content` | LONGTEXT | NOT NULL | 文件解析后的全文内容 |
+> `event` 字段缺省时表示阶段入口通知；老消费者只读 `status` 不受影响。
 
-#### file_table - 文件表格表
+**`stage_done.data` 按阶段**
 
-| 列名 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| `file_id` | VARCHAR(64) | PK (复合) | 文件 ID |
-| `table_index` | INT | PK (复合) | 表格序号 |
-| `total_table` | INT | DEFAULT 0 | 表格总数 |
-| `table_name` | VARCHAR(500) | DEFAULT "" | 表格名称 |
-| `table_content` | LONGTEXT | NOT NULL | 表格内容 |
+| stage | data 内容 |
+|-------|----------|
+| `parsing` | `{content, middle_json, page_mapping}`（完整 MD） |
+| `tableing` | `{total, tables: [{file_id, table_index, total_table, table_name, table_content, start_pos, end_pos, page_num}]}` |
+| `chunking` | `{total, chunks: [{file_id, chunk_id, chunk_index, total_chunks, chunk_content, start_pos, end_pos, page_num}]}` |
+| `embedding` | **无 data**（仅作完成信号；向量量太大不下发，需查 Milvus） |
+| `extracting` | `{total, succeeded, failed, results: [field_done.data ...]}` |
+| `analyzing` | `{total, succeeded, failed, results: [rule_done.data ...]}` |
 
-#### file_chunk - 文件分块表
+**单字段/单规则事件**
 
-| 列名 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| `file_id` | VARCHAR(64) | PK (复合) | 文件 ID |
-| `chunk_id` | VARCHAR(64) | PK (复合) | 分块 ID |
-| `chunk_index` | INT | DEFAULT 0 | 分块序号 |
-| `total_chunks` | INT | DEFAULT 0 | 分块总数 |
-| `chunk_content` | TEXT | NOT NULL | 分块内容 |
+```json
+{
+  "file_id": "...", "status": "extracting", "event": "field_done",
+  "data": {"field_id", "field_name", "value", "reason",
+           "source_refs", "success": true, "index": 5, "total": 12}
+}
+```
 
-#### extraction_field - 字段提取配置表
+```json
+{
+  "file_id": "...", "status": "analyzing", "event": "rule_done",
+  "data": {"rule_id", "rule_name", "rule_type", "result", "reason",
+           "input_values", "source_refs", "success": true, "index": 3, "total": 8}
+}
+```
 
-| 列名 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| `field_id` | VARCHAR(100) | PK | 字段 ID |
-| `field_name` | VARCHAR(200) | NOT NULL | 字段名称 |
-| `source_type` | ENUM("table","text") | NOT NULL | 数据源类型 |
-| `enabled` | TINYINT | DEFAULT 1 | 是否启用 |
-| `priority` | INT | DEFAULT 0 | 优先级 |
-| `created_at` | DATETIME | DEFAULT NOW() | 创建时间 |
-| `updated_at` | DATETIME | AUTO UPDATE | 更新时间 |
-| `table_name_pattern` | VARCHAR(500) | NULLABLE | 表格名称匹配模式 |
-| `table_match_type` | ENUM("exact","fuzzy","contains","llm") | NULLABLE | 表格匹配方式 |
-| `table_extract_prompt` | TEXT | NULLABLE | 表格提取 Prompt |
-| `search_type` | ENUM("context","section","rule","chunk_db","vector_db") | NULLABLE | 文本检索方式 |
-| `search_config` | JSON | NULLABLE | 检索配置 |
-| `text_extract_prompt` | TEXT | NULLABLE | 文本提取 Prompt |
+**完整事件序列**
 
-#### analysis_rule - 逻辑分析规则表
+```
+parsing                    → parsing + stage_done(MD)
+tableing                   → tableing + stage_done(tables)
+chunking                   → chunking + stage_done(chunks)
+embedding                  → embedding + stage_done(无 data)
+extracting + field_done×N  → extracting + stage_done(results)
+analyzing  + rule_done×N   → analyzing  + stage_done(results)
+complete
+```
 
-| 列名 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| `rule_id` | VARCHAR(100) | PK | 规则 ID |
-| `rule_name` | VARCHAR(200) | NOT NULL | 规则名称 |
-| `rule_type` | ENUM("judge","calc") | NOT NULL | 规则类型 |
-| `expression` | TEXT | NOT NULL | 表达式 |
-| `depend_fields` | JSON | NULLABLE | 依赖字段 ID 列表 |
-| `enabled` | TINYINT | DEFAULT 1 | 是否启用 |
-| `priority` | INT | DEFAULT 0 | 优先级 |
-| `created_at` | DATETIME | DEFAULT NOW() | 创建时间 |
-| `updated_at` | DATETIME | AUTO UPDATE | 更新时间 |
+**调用约束**
 
-#### extraction_result - 提取结果表
-
-| 列名 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| `file_id` | VARCHAR(64) | PK (复合) | 文件 ID |
-| `field_id` | VARCHAR(100) | PK (复合) | 字段 ID |
-| `extracted_value` | TEXT | DEFAULT "" | 提取值 |
-| `reason` | TEXT | NULLABLE | 提取理由/依据 |
-
-#### analysis_result - 分析结果表
-
-| 列名 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| `file_id` | VARCHAR(64) | PK (复合) | 文件 ID |
-| `rule_id` | VARCHAR(100) | PK (复合) | 规则 ID |
-| `result_value` | VARCHAR(500) | DEFAULT "" | 分析结果 |
-| `input_values` | JSON | NULLABLE | 输入字段值 |
-| `reason` | TEXT | NULLABLE | 分析理由/依据 |
+- 每次回调超时 **2.5s**，失败仅 warning，**不影响主管线**。
+- VL 类字段的"进度事件"（progressive_batch / locate_locate / locate_extract）**仅 SSE 推送**，**不**走 `callback_url`。
 
 ---
 
-## 8. 枚举值说明
+## 9. SSE 事件清单
 
-### 8.1 SourceTypeEnum - 数据源类型
+所有 SSE 响应均为 `text/event-stream`，单条事件格式：
+
+```
+event: <event_name>
+data: <json>
+
+```
+
+### 9.1 `POST /file/parse?mode=stream` 与 `POST /file/{file_id}/retry/{stage}?mode=stream`
+
+| 事件 | 阶段 | 说明 |
+|------|------|------|
+| `resume` | 重试入口 | 仅 retry 流，标识从哪个阶段继续 |
+| `parsing_start` / `parsing` | 解析 | MinerU 解析开始 / 完成 |
+| `content_saved` / `md_content` | 解析 | MD 已落库 / 推送完整 MD 文本 |
+| `tableing_start` / `tableing` | 表格识别 | 表格抽取与 LLM 命名开始 / 完成 |
+| `chunking_start` / `chunking` / `chunks_saving` / `chunks_saved` | 分块 | 分块各阶段 |
+| `embedding_start` / `embedding` / `milvus_submitting` / `milvus_submitted` | 向量化 | 向量化与 Milvus 写入 |
+| `tasks_loading` / `tasks_loaded` | 提取/分析 | 加载字段/规则任务 |
+| `extraction_start` / `field_extracted` / `extraction` | 字段提取 | 单字段事件含 `field_id` / `field_name` / `extracted_value` / `reason` / `success` / `current` / `total` |
+| `analysis_start` / `rule_analyzed` / `analysis` | 逻辑分析 | 单规则事件含 `rule_id` / `rule_name` / `rule_type` / `result_value` / `input_values` / `reason` / `success` / `current` / `total` |
+| `complete` | 完成 | 全流程结束 |
+| `error` | 错误 | 任意阶段失败时推送 |
+
+---
+
+### 9.2 `POST /extraction/test/stream`
+
+| 步骤 | event | data 字段 |
+|------|-------|-----------|
+| 1（table/text）| `search_results` | `source_type`, `search_type`, `matched_tables` / `results_by_label`, `results` |
+| 1（vl）| `pdf_loaded` | `total_pages`, `vl_method` |
+| 2（vl_progressive）| `progressive_batch` | `page_label`, `has_info`, `summary_preview`, `batch_index`, `total_batches` |
+| 2（vl_locate）| `locate_locate` | `phase`, `grid_idx`, `total_grids`, `page_labels`, `found_pages` |
+| 3（vl_locate）| `locate_extract` | `phase`, `key_pages` |
+| 2-3（仅 `source_type=table` 且 `table_match_type=llm`）| `match_llm` | `step`, `prompt` / `llm_response` / `matched_indices` / `error` |
+| 4 | `prompt` | `system_prompt`, `user_prompt` |
+| 5（table/text）| `llm_response` | `raw_response` |
+| 6 | `result` | `extracted_value`, `reason`, `source_refs` |
+| 7 | `done` | `{}` |
+| —  | `error` | `step`, `message` |
+
+> VL 字段不会推 `search_results` / `llm_response`；table/text 字段不会推 `pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`。
+
+---
+
+### 9.3 `POST /analysis/test/stream`
+
+**Judge 类型**
+
+| 步骤 | event | data 字段 |
+|------|-------|-----------|
+| 1 | `input_values` | `input_values`, `depend_fields` |
+| 2 | `resolved_expression` | `original_expression`, `resolved_expression` |
+| 3 | `prompt` | `system_prompt`, `user_prompt` |
+| 4 | `llm_response` | `raw_response` |
+| 5 | `result` | `result_value`, `reason` |
+| 6 | `done` | `{}` |
+| — | `error` | `message` |
+
+**Calc 类型**（无 `prompt` / `llm_response`）
+
+| 步骤 | event | data 字段 |
+|------|-------|-----------|
+| 1 | `input_values` | `input_values`, `depend_fields` |
+| 2 | `resolved_expression` | `original_expression`, `resolved_expression` |
+| 3 | `result` | `result_value`, `reason` |
+| 4 | `done` | `{}` |
+
+---
+
+## 10. 数据模型说明
+
+### 10.1 `doc_type`
+
+| 列 | 类型 | 说明 |
+|---|------|------|
+| `type_id` | VARCHAR(64) PK | 类型 ID |
+| `type_name` | VARCHAR(200) NOT NULL | 类型名称 |
+| `description` | TEXT | 描述 |
+| `is_default` | TINYINT DEFAULT 0 | 1=默认类型，不可删 |
+| `enabled` | TINYINT DEFAULT 1 | 启用标志 |
+| `created_at` / `updated_at` | DATETIME | 时间戳 |
+
+### 10.2 `files`
+
+| 列 | 类型 | 说明 |
+|---|------|------|
+| `file_id` | VARCHAR(64) PK | 文件 ID（SHA256[:32]） |
+| `type_id` | VARCHAR(64) NOT NULL DEFAULT 'default' | 归属类型，索引 |
+| `file_name` | VARCHAR(512) | 文件名 |
+| `file_size` | BIGINT | 字节数 |
+| `progress` | VARCHAR(32) DEFAULT 'parsing' | 进度状态（见 11.6） |
+| `error` | TEXT | 错误信息 |
+| `create_time` | DATETIME | 创建时间 |
+| `updated_at` | DATETIME | 自动更新 |
+| `start_parsing_time` / `end_parsing_time` | DATETIME | 解析时间戳 |
+| `start_tableing_time` / `end_tableing_time` | DATETIME | 表格阶段时间戳 |
+| `start_chunking_time` / `end_chunking_time` | DATETIME | 分块时间戳 |
+| `start_embedding_time` / `end_embedding_time` | DATETIME | 向量化时间戳 |
+| `end_extracting_time` | DATETIME | 提取完成时间 |
+| `end_analyzing_time` | DATETIME | 分析完成时间 |
+
+### 10.3 `file_content`
+
+| 列 | 类型 | 说明 |
+|---|------|------|
+| `file_id` | VARCHAR(64) PK | |
+| `file_content` | LONGTEXT NOT NULL | MinerU 输出的完整 Markdown |
+| `middle_json` | LONGTEXT | MinerU 中间 JSON |
+| `page_mapping` | JSON | MD 偏移量→PDF 页号映射 |
+
+### 10.4 `file_table`
+
+| 列 | 类型 | 说明 |
+|---|------|------|
+| `file_id`, `table_index` | 复合 PK | |
+| `total_table` | INT | 表格总数 |
+| `table_name` | VARCHAR(500) | LLM 解析出的表名（截断 30 字） |
+| `table_content` | LONGTEXT | `<table>...</table>` HTML |
+| `start_pos` / `end_pos` | INT | 在原文中的偏移 |
+| `page_num` | VARCHAR(20) | PDF 页号（可能是范围如 `"3-4"`） |
+
+### 10.5 `file_chunk`
+
+| 列 | 类型 | 说明 |
+|---|------|------|
+| `file_id`, `chunk_id` | 复合 PK | |
+| `chunk_index` / `total_chunks` | INT | 序号与总数 |
+| `chunk_content` | TEXT | 分块文本 |
+| `start_pos` / `end_pos` | INT | 偏移 |
+| `page_num` | VARCHAR(20) | PDF 页号 |
+
+### 10.6 `extraction_field`
+
+| 列 | 类型 | 说明 |
+|---|------|------|
+| `field_id` | VARCHAR(100) PK | 全局唯一 |
+| `type_id` | VARCHAR(64) NOT NULL DEFAULT 'default' | 索引 |
+| `field_name` | VARCHAR(200) NOT NULL | |
+| `source_type` | ENUM('table','text','vl') NOT NULL | |
+| `enabled` | TINYINT DEFAULT 1 | |
+| `priority` | INT DEFAULT 0 | |
+| `table_name_pattern` | VARCHAR(500) | |
+| `table_match_type` | ENUM('exact','fuzzy','contains','llm') | |
+| `table_match_keywords` | JSON | LLM 匹配关键词 |
+| `table_match_max_results` | INT | |
+| `table_system_prompt` / `table_extract_prompt` | TEXT | |
+| `search_type` | ENUM('context','section','rule','chunk_db','vector_db','page') | |
+| `search_config` | JSON | |
+| `text_system_prompt` / `text_extract_prompt` | TEXT | |
+| `vl_method` | ENUM('vl_model','vl_progressive','vl_locate') | |
+| `vl_config` | JSON | |
+| `vl_system_prompt` / `vl_extract_prompt` | TEXT | |
+| `created_at` / `updated_at` | DATETIME | |
+
+### 10.7 `analysis_rule`
+
+| 列 | 类型 | 说明 |
+|---|------|------|
+| `rule_id` | VARCHAR(100) PK | 全局唯一 |
+| `type_id` | VARCHAR(64) NOT NULL DEFAULT 'default' | 索引 |
+| `rule_name` | VARCHAR(200) NOT NULL | |
+| `rule_type` | ENUM('judge','calc') NOT NULL | |
+| `expression` | TEXT NOT NULL | 含 `<field_result>` 占位符 |
+| `system_prompt` | TEXT | judge 类型可用 |
+| `depend_fields` | JSON | `field_id` 列表 |
+| `enabled` / `priority` | TINYINT / INT | |
+| `created_at` / `updated_at` | DATETIME | |
+
+### 10.8 `extraction_result`
+
+| 列 | 类型 | 说明 |
+|---|------|------|
+| `file_id`, `field_id` | 复合 PK | |
+| `extracted_value` | TEXT | |
+| `reason` | TEXT | LLM 给出的理由 |
+| `source_refs` | JSON | 参考块/页码/VL 元数据 |
+
+### 10.9 `analysis_result`
+
+| 列 | 类型 | 说明 |
+|---|------|------|
+| `file_id`, `rule_id` | 复合 PK | |
+| `result_value` | VARCHAR(500) | |
+| `input_values` | JSON | 解析时的依赖字段值 |
+| `reason` | TEXT | |
+| `source_refs` | JSON | 依赖字段的参考块 |
+
+---
+
+## 11. 枚举值说明
+
+### 11.1 `SourceType`
 
 | 值 | 说明 |
-|------|------|
-| `table` | 从文档表格中提取 |
-| `text` | 从文本内容中提取 |
+|----|------|
+| `table` | 从已提取的表格中匹配并 LLM 抽取 |
+| `text` | 从 Markdown 文本检索后 LLM 抽取 |
+| `vl` | 直接对原 PDF 走 VL 视觉模型抽取 |
 
-### 8.2 TableMatchTypeEnum - 表格匹配方式
-
-| 值 | 说明 |
-|------|------|
-| `exact` | 精确匹配表格名称 |
-| `fuzzy` | 模糊匹配表格名称 |
-| `contains` | 表格名称包含指定模式 |
-| `llm` | 使用 LLM 进行语义匹配 |
-
-### 8.3 SearchTypeEnum - 文本检索方式
+### 11.2 `TableMatchType`
 
 | 值 | 说明 |
-|------|------|
-| `context` | 上下文检索 |
-| `section` | 章节检索 |
-| `rule` | 规则检索 |
-| `chunk_db` | 数据库分块检索（MySQL） |
-| `vector_db` | 向量数据库检索（Milvus） |
+|----|------|
+| `exact` | 精确匹配 |
+| `fuzzy` | 模糊匹配 |
+| `contains` | 包含匹配 |
+| `llm` | LLM 语义匹配（可携带 `table_match_keywords`） |
 
-### 8.4 RuleTypeEnum - 分析规则类型
-
-| 值 | 说明 |
-|------|------|
-| `judge` | 判断类规则，返回布尔结果（true/false） |
-| `calc` | 计算类规则，返回数值结果（精度：2 位小数） |
-
-### 8.5 文件处理进度状态
+### 11.3 `SearchType`
 
 | 值 | 说明 |
-|------|------|
-| `parsing` | 正在解析文件 |
-| `parsing_failed` | 文件解析失败 |
-| `chunking` | 正在分块 |
-| `chunking_failed` | 分块失败 |
-| `embedding` | 正在向量化 |
-| `embedding_failed` | 向量化失败 |
-| `extracting` | 正在提取字段 |
-| `extracting_failed` | 字段提取失败 |
-| `analyzing` | 正在逻辑分析 |
-| `analyzing_failed` | 逻辑分析失败 |
+|----|------|
+| `context` | 关键词命中 + 前后上下文 |
+| `section` | 章节标题匹配 |
+| `rule` | 关键词起点 + 停止词边界 |
+| `chunk_db` | MySQL 内分块检索 |
+| `vector_db` | Milvus 语义检索 |
+| `page` | 按 `page_range` 直接切 Markdown 喂 LLM；占位符固定为 `<search_result>page_content</search_result>`，可配 `max_length` 末尾截断 |
+
+### 11.4 `VLMethod`
+
+| 值 | 说明 |
+|----|------|
+| `vl_model` | 指定页全部塞 VL 一次出 JSON |
+| `vl_progressive` | 分批扫描 + 伪历史累积 + 最后文本聚合 |
+| `vl_locate` | 缩略图网格并行定位 + 关键页高清提取 |
+
+### 11.5 `RuleType`
+
+| 值 | 说明 |
+|----|------|
+| `judge` | LLM 判断，返回 `true`/`false`（也可能是 LLM 自由文本判断结果） |
+| `calc` | `numexpr` 计算表达式，按 `analysis.calc_precision`（默认 2 位）保留小数 |
+
+### 11.6 文件处理进度 `progress`
+
+成功路径：`parsing` → `tableing` → `chunking` → `embedding` → `extracting` → `analyzing` → `complete`
+
+每个 `*ing` 状态都有对应的 `*_failed` 失败态：
+
+| 值 | 说明 |
+|----|------|
+| `parsing` / `parsing_failed` | 解析（MinerU） |
+| `tableing` / `tableing_failed` | 表格识别（LLM 命名） |
+| `chunking` / `chunking_failed` | 分块 |
+| `embedding` / `embedding_failed` | 向量化 + Milvus 写入 |
+| `extracting` / `extracting_failed` | 字段提取 |
+| `analyzing` / `analyzing_failed` | 逻辑分析 |
 | `complete` | 处理完成 |
 
+> 启动时 `init_service` 会把所有 `*ing` 状态强制改为 `*_failed`（崩溃恢复）。兼容旧值 `table_name_validating` → `tableing`。
+
 ---
 
-## 9. 错误码说明
+## 12. 错误码说明
 
-### 9.1 HTTP 状态码
+### 12.1 HTTP 状态码
 
-| 状态码 | 说明 | 场景 |
-|--------|------|------|
-| 200 | 成功 | 请求处理成功 |
-| 400 | 请求错误 | 参数校验失败、文件超过大小限制、无效的阶段名称 |
-| 404 | 资源不存在 | 文件/字段配置/规则配置不存在 |
-| 409 | 冲突 | 文件正在处理中，不可重复提交 |
-| 422 | 参数校验错误 | Pydantic 模型校验失败（FastAPI 自动返回） |
-| 500 | 服务器内部错误 | 提取/分析过程异常 |
+| 状态码 | 场景 |
+|--------|------|
+| 200 | 成功 |
+| 400 | 参数错误：文件超大、阶段名无效、`target_type_id` 缺失、源/目标类型相同等 |
+| 404 | 资源不存在（文件、字段、规则、类型） |
+| 409 | 冲突：`field_id`/`rule_id` 被其他 `type_id` 占用、未传 `force=true` 删除非空类型 |
+| 422 | Pydantic 校验失败（FastAPI 自动返回） |
+| 500 | 服务端异常（提取/分析过程） |
 
-### 9.2 业务错误响应格式
-
-当返回非 200 状态码时，响应体格式为：
-
-**ResponseWrapper 格式（code=400）**
+### 12.2 业务错误体（`ResponseWrapper` 风格）
 
 ```json
-{
-  "code": 400,
-  "message": "文件大小超过限制 (100MB)",
-  "data": null
-}
+{"code": 400, "message": "文件大小超过限制 (100MB)", "data": null}
 ```
 
-**HTTPException 格式（FastAPI 默认）**
+### 12.3 HTTPException 错误体
 
 ```json
-{
-  "detail": "文件不存在"
-}
+{"detail": "文件不存在"}
 ```
 
-### 9.3 Pydantic 校验错误格式（422）
+### 12.4 Pydantic 校验错误（422）
 
 ```json
 {
@@ -1783,30 +1478,40 @@ data: {}
 
 ---
 
-## 附录：接口总览
+## 13. 附录：接口总览
 
 | # | 方法 | 路径 | 说明 |
 |---|------|------|------|
-| 1 | POST | `/file/parse` | 提交文件解析 |
-| 2 | GET | `/file/{file_id}/status` | 查询处理进度 |
-| 3 | DELETE | `/file/{file_id}` | 删除文件 |
-| 4 | POST | `/file/{file_id}/retry/{stage}` | 从指定阶段重试 |
-| 5 | POST | `/file/{file_id}/retry/extracting` | 重试字段提取 |
-| 6 | POST | `/file/{file_id}/retry/analyzing` | 重试逻辑分析 |
-| 7 | GET | `/file/{file_id}/tables` | 获取表格列表 |
-| 8 | GET | `/file/{file_id}/chunks` | 获取分块列表 |
-| 9 | GET | `/file/{file_id}/extraction` | 获取提取结果 |
-| 10 | GET | `/file/{file_id}/analysis` | 获取分析结果 |
-| 11 | GET | `/extraction/fields` | 获取字段配置列表 |
-| 12 | POST | `/extraction/fields` | 新增/更新字段配置 |
-| 13 | DELETE | `/extraction/fields/{field_id}` | 删除字段配置 |
-| 14 | GET | `/extraction/fields/{field_id}/check` | 检查字段 ID 是否存在 |
-| 15 | POST | `/extraction/test` | 字段提取调试 |
-| 16 | POST | `/extraction/test/stream` | 字段提取流式调试（SSE） |
-| 17 | GET | `/analysis/rules` | 获取分析规则列表 |
-| 18 | POST | `/analysis/rules` | 新增/更新分析规则 |
-| 19 | DELETE | `/analysis/rules/{rule_id}` | 删除分析规则 |
-| 20 | GET | `/analysis/rules/{rule_id}/check` | 检查规则 ID 是否存在 |
-| 21 | POST | `/analysis/test` | 逻辑分析调试 |
-| 22 | POST | `/analysis/test/stream` | 逻辑分析流式调试（SSE） |
-| 23 | POST | `/search` | 向量相似度检索 |
+| 1 | GET | `/doctype/list` | 列出所有文档类型 |
+| 2 | POST | `/doctype` | 新增/更新文档类型 |
+| 3 | DELETE | `/doctype/{type_id}` | 删除文档类型（可级联） |
+| 4 | POST | `/doctype/{type_id}/copy_from` | 同实例跨类型复制配置 |
+| 5 | GET | `/doctype/{type_id}/export` | 导出配置 JSON |
+| 6 | POST | `/doctype/import` | 导入配置 JSON |
+| 7 | POST | `/file/parse` | 提交文件解析（sync/async/stream） |
+| 8 | GET | `/file/list` | 分页查询文件 |
+| 9 | DELETE | `/file/batch` | 批量删除 |
+| 10 | GET | `/file/{file_id}/status` | 查询处理进度 |
+| 11 | GET | `/file/{file_id}/detail` | 完整详情（含所有时间字段） |
+| 12 | DELETE | `/file/{file_id}` | 删除文件及关联数据 |
+| 13 | POST | `/file/{file_id}/retry/{stage}` | 从指定阶段重试 |
+| 14 | POST | `/file/{file_id}/retry/extracting` | 重试字段提取 |
+| 15 | POST | `/file/{file_id}/retry/analyzing` | 重试逻辑分析 |
+| 16 | GET | `/file/{file_id}/tables` | 表格列表 |
+| 17 | GET | `/file/{file_id}/chunks` | 分块列表 |
+| 18 | GET | `/file/{file_id}/outline` | 章节大纲 |
+| 19 | GET | `/file/{file_id}/extraction` | 字段提取结果 |
+| 20 | GET | `/file/{file_id}/analysis` | 逻辑分析结果 |
+| 21 | GET | `/extraction/fields` | 字段配置列表（可 `type_id` 过滤） |
+| 22 | POST | `/extraction/fields` | 新增/更新字段配置 |
+| 23 | DELETE | `/extraction/fields/{field_id}` | 删除字段配置（硬删） |
+| 24 | GET | `/extraction/fields/{field_id}/check` | 检查 ID 是否存在 |
+| 25 | POST | `/extraction/test` | 字段提取调试 |
+| 26 | POST | `/extraction/test/stream` | 字段提取流式调试（SSE） |
+| 27 | GET | `/analysis/rules` | 规则配置列表（可 `type_id` 过滤） |
+| 28 | POST | `/analysis/rules` | 新增/更新规则 |
+| 29 | DELETE | `/analysis/rules/{rule_id}` | 删除规则（硬删） |
+| 30 | GET | `/analysis/rules/{rule_id}/check` | 检查 ID 是否存在 |
+| 31 | POST | `/analysis/test` | 逻辑分析调试 |
+| 32 | POST | `/analysis/test/stream` | 逻辑分析流式调试（SSE） |
+| 33 | POST | `/search` | 向量相似度检索 |
