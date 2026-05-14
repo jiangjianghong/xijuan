@@ -9,13 +9,17 @@
 
 **任务提交，支持异步或同步（同步支持流式及非流式）**
 
-根据文件名计算file_id 确认重复性
+每次上传都生成新的 file_id，不做服务端去重 —— 同名文件重传 = 两条独立记录、两次完整管线。
 
 ```python
-import hashlib
-def generate_file_id(file_name: str) -> str:
-    """仅根据文件名生成file_id，同名文件视为重复"""
-    return hashlib.sha256(file_name.encode('utf-8')).hexdigest()[:32]
+import hashlib, secrets, time
+def generate_file_id(type_id: str, file_name: str) -> str:
+    """每次调用都返回不同 id：拼接纳秒时间戳 + 8 字节随机盐后 SHA256[:32]。
+
+    Windows 上 time.time_ns() 分辨率有限，需额外随机盐避免同毫秒冲突。
+    """
+    raw = f"{type_id}|{file_name}|{time.time_ns()}|{secrets.token_hex(8)}"
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]
 ```
 
 ## 库表
@@ -286,14 +290,12 @@ POST {mineru.base_url}/file_parse
   - `lang_list`：`"ch"` — 语言中文
   - `output_dir`：`"."` — 输出目录
 
-这里的接口需要先生成file_id 然后去数据库进行检索，如果存在则检查其状态：
-- 状态为 **parsing_failed** → 清理 file_content, file_table, file_chunk, Milvus，然后重新开始解析
-- 状态为 **chunking_failed** → 清理 file_chunk, Milvus，然后从分块阶段重新开始
-- 状态为 **embedding_failed** → 清理 Milvus 中 file_id 对应记录，然后从向量化阶段重新开始
-- 状态为 **extracting_failed** → 清理 extraction_result 中 file_id 对应记录，然后从字段提取阶段重新开始
-- 状态为 **analyzing_failed** → 清理 analysis_result 中 file_id 对应记录，然后从逻辑分析阶段重新开始
-- 状态为 **parsing/chunking/embedding/extracting/analyzing**（处理中） → 拒绝重复提交，返回当前状态
-- 状态为 **complete** → 返回已完成
+这里的接口每次都生成新的 file_id 直接建档、不再做"已存在则按状态分支"判断。失败重试改用显式接口 `POST /file/{file_id}/retry/{stage}`（或先 `DELETE` 旧记录再重新上传）：
+- 状态为 **parsing_failed** → 调 retry 时清理 file_content, file_table, file_chunk, Milvus，然后重新开始解析
+- 状态为 **chunking_failed** → 调 retry 时清理 file_chunk, Milvus，然后从分块阶段重新开始
+- 状态为 **embedding_failed** → 调 retry 时清理 Milvus 中 file_id 对应记录，然后从向量化阶段重新开始
+- 状态为 **extracting_failed** → 调 retry 时清理 extraction_result 中 file_id 对应记录，然后从字段提取阶段重新开始
+- 状态为 **analyzing_failed** → 调 retry 时清理 analysis_result 中 file_id 对应记录，然后从逻辑分析阶段重新开始
 
 ### 2.存整个md到关系数据库
 

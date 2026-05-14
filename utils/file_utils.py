@@ -1,15 +1,18 @@
 """文件操作工具函数。"""
 
 import hashlib
+import secrets
+import time
 
 
 def generate_file_id(type_id: str, file_name: str) -> str:
-    """根据 type_id + 文件名生成 file_id。
+    """根据 type_id + 文件名 + 当前纳秒时间戳 + 随机盐生成 file_id。
 
-    同一类型下的同名文件视为同一记录，可触发"重传即重试"语义；
-    不同类型下的同名文件互不影响。
+    每次调用都会得到不同的 id —— 同名文件重传也会生成新记录，
+    强制重新走完整管线，不再做去重 / 重传重试。
+    Windows 上 time.time_ns() 分辨率有限，需额外随机盐避免同毫秒冲突。
     """
-    raw = f"{type_id}|{file_name}"
+    raw = f"{type_id}|{file_name}|{time.time_ns()}|{secrets.token_hex(8)}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 

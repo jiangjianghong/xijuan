@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from loguru import logger
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.database import get_db
@@ -223,177 +223,16 @@ async def parse_file(
     except Exception as e:
         logger.warning("写盘 PDF 失败（不阻断 pipeline）: file_id={} error={}", file_id, e)
 
-    # 检查文件是否已存在
-    stmt = select(FileModel).where(FileModel.file_id == file_id)
-    result = await db.execute(stmt)
-    existing_file = result.scalar_one_or_none()
-
-    if existing_file:
-        # type_id 不一致（理论上不会发生，因为 file_id 已经包含 type_id 哈希；保险起见仍校验）
-        if (existing_file.type_id or "default") != type_id:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"文件 ID 冲突：已存在记录归属 type_id={existing_file.type_id}，"
-                    f"与请求 type_id={type_id} 不一致"
-                ),
-            )
-        progress = existing_file.progress
-
-        # 归一化历史状态名，统一使用 tableing / tableing_failed
-        progress_aliases = {
-            "table_name_validating": "tableing",
-            "table_name_validating_failed": "tableing_failed",
-        }
-        normalized_progress = progress_aliases.get(progress)
-        if normalized_progress:
-            await db.execute(
-                update(FileModel)
-                .where(FileModel.file_id == file_id)
-                .values(progress=normalized_progress)
-            )
-            await db.commit()
-            progress = normalized_progress
-
-        # *ing 状态 → 拒绝重复提交
-        if progress in ("parsing", "tableing", "chunking", "embedding", "extracting", "analyzing"):
-            raise HTTPException(
-                status_code=409,
-                detail=f"文件正在处理中，当前状态: {progress}",
-            )
-
-        # complete → 返回已完成
-        if progress == "complete":
-            return ResponseWrapper(
-                message="文件已处理完成",
-                data={"file_id": file_id, "progress": progress},
-            )
-
-        # *_failed → 清理并从对应阶段重试
-        stage_mapping = {
-            "parsing_failed": "parsing",
-            "tableing_failed": "tableing",
-            "chunking_failed": "chunking",
-            "embedding_failed": "embedding",
-            "extracting_failed": "extracting",
-            "analyzing_failed": "analyzing",
-        }
-
-        if progress in stage_mapping:
-            retry_stage = stage_mapping[progress]
-
-            # 对于 parsing_failed，需要重新解析，所以删除记录重新创建
-            if progress == "parsing_failed":
-                # 删除旧记录及关联数据
-                await db.execute(delete(FileContent).where(FileContent.file_id == file_id))
-                await db.execute(delete(FileTable).where(FileTable.file_id == file_id))
-                await db.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
-                await db.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
-                await db.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
-                await db.execute(delete(FileModel).where(FileModel.file_id == file_id))
-                await db.commit()
-
-                try:
-                    milvus_client = MilvusClient()
-                    milvus_client.connect()
-                    milvus_client.delete_by_file_id(file_id)
-                except Exception as e:
-                    logger.warning("Milvus 删除失败: {}", e)
-
-                # 重新创建文件记录
-                new_file = FileModel(
-                    file_id=file_id,
-                    type_id=type_id,
-                    file_name=file_name,
-                    file_size=len(file_content_bytes),
-                    progress="parsing",
-                )
-                db.add(new_file)
-                await db.commit()
-
-                if mode == "async":
-                    background_tasks.add_task(
-                        _run_pipeline_background, file_id, file_name, file_content_bytes, callback_url
-                    )
-                    return ResponseWrapper(
-                        message="文件已提交处理（异步）",
-                        data={"file_id": file_id},
-                    )
-                elif mode == "stream":
-                    return StreamingResponse(
-                        _stream_pipeline_generator(file_id, file_name, file_content_bytes),
-                        media_type="text/event-stream",
-                        headers={
-                            "Cache-Control": "no-cache",
-                            "Connection": "keep-alive",
-                            "X-Accel-Buffering": "no",
-                        },
-                    )
-                else:
-                    await run_pipeline(file_id, file_name, file_content_bytes, db, callback_url=callback_url)
-                    return ResponseWrapper(
-                        message="文件处理完成",
-                        data={"file_id": file_id},
-                    )
-            else:
-                # 其他失败状态：从对应阶段重试
-                async def _retry_from_stage_background():
-                    from model.database import get_session_factory
-
-                    session_factory = get_session_factory()
-                    async with session_factory() as session:
-                        try:
-                            await run_from_stage(file_id, retry_stage, session, callback_url=callback_url)
-                        except Exception as e:
-                            logger.exception(
-                                "从 {} 阶段重试失败: type={}, repr={}",
-                                retry_stage,
-                                type(e).__name__,
-                                repr(e),
-                            )
-
-                async def _retry_from_stage_stream_generator():
-                    """流式重试生成器，内部管理数据库会话。"""
-                    from model.database import get_session_factory
-
-                    session_factory = get_session_factory()
-                    async with session_factory() as session:
-                        async for event in run_from_stage_stream(file_id, retry_stage, session):
-                            yield event
-
-                if mode == "async":
-                    background_tasks.add_task(_retry_from_stage_background)
-                    return ResponseWrapper(
-                        message=f"文件已从 {retry_stage} 阶段重新提交处理（异步）",
-                        data={"file_id": file_id},
-                    )
-                elif mode == "stream":
-                    return StreamingResponse(
-                        _retry_from_stage_stream_generator(),
-                        media_type="text/event-stream",
-                        headers={
-                            "Cache-Control": "no-cache",
-                            "Connection": "keep-alive",
-                            "X-Accel-Buffering": "no",
-                        },
-                    )
-                else:
-                    await run_from_stage(file_id, retry_stage, db, callback_url=callback_url)
-                    return ResponseWrapper(
-                        message="文件处理完成",
-                        data={"file_id": file_id},
-                    )
-    else:
-        # 创建新文件记录
-        new_file = FileModel(
-            file_id=file_id,
-            type_id=type_id,
-            file_name=file_name,
-            file_size=len(file_content_bytes),
-            progress="parsing",
-        )
-        db.add(new_file)
-        await db.commit()
+    # file_id 已带纳秒时间戳，每次上传都是全新记录，直接建档
+    new_file = FileModel(
+        file_id=file_id,
+        type_id=type_id,
+        file_name=file_name,
+        file_size=len(file_content_bytes),
+        progress="parsing",
+    )
+    db.add(new_file)
+    await db.commit()
 
     if mode == "async":
         background_tasks.add_task(

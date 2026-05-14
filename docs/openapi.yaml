@@ -220,12 +220,9 @@ paths:
         status 依次为：`parsing` → `chunking` → `embedding` → `extracting` → `analyzing` → `complete`。
         回调失败不会影响主处理流程（仅记录警告日志）。
 
-        **文件 ID 生成规则**：基于文件名的 MD5 哈希生成，相同文件名将生成相同的 file_id。
+        **文件 ID 生成规则**：基于 `(type_id, file_name, time.time_ns(), 8 字节随机盐)` 计算 SHA256[:32]，**每次上传都会产生新的 `file_id`**，不做服务端去重。
 
-        **重复上传处理逻辑**：
-        - 若文件正在处理中（*ing 状态），返回 409 拒绝重复提交
-        - 若文件已处理完成（complete），返回已完成状态和 file_id
-        - 若文件之前处理失败（*_failed 状态），自动清理失败数据并从失败阶段重试
+        **重复上传处理逻辑**：同名文件重复上传 → 各自一条独立记录、各自走完整管线、`uploads/` 下各自一个 PDF。需要从失败阶段重试请用 `POST /file/{file_id}/retry/{stage}`，或先 `DELETE /file/{file_id}` 后再重新上传。
 
         **文件大小限制**：由服务端配置 `mineru.max_file_size` 控制，超过限制返回 400。
 
@@ -335,12 +332,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ResponseWrapper'
-        '409':
-          description: 文件正在处理中
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
 
   /file/{file_id}/status:
     get:

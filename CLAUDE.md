@@ -145,7 +145,7 @@ Two rule types:
 - `init_service.py` handles crash recovery on startup - any `*ing` state is reset to `*_failed` and orphan data cleaned. Orphan cleanup scope varies by failure stage (e.g., `parsing_failed` cleans file_content + file_table + file_chunk + Milvus; `extracting_failed` cleans only extraction_result). Also normalizes legacy status names (`table_name_validating` -> `tableing`).
 - Prompt templates use XML-style placeholders: `<search_result>label</search_result>` for extraction, `<field_result>field_id</field_result>` for analysis.
 - LLM responses are parsed as JSON with fallback to regex extraction (`parse_llm_json_response`).
-- `file_id` is deterministically generated from `(type_id, file_name)` via SHA256[:32] (`utils/file_utils.py`). Same filename in different doc types → different `file_id` (independent records). Same filename in same type → hits existing record. Re-uploads auto-detect state: returns "already complete", rejects "in progress", or auto-retries from failed stage.
+- `file_id` is generated from `(type_id, file_name, time.time_ns(), secrets.token_hex(8))` via SHA256[:32] (`utils/file_utils.py`). **Every upload produces a new `file_id`** — same filename re-uploaded always creates a fresh record and re-runs the full pipeline. There is no upload-side dedup / "retry from failed stage" path; failed files must be retried explicitly via `POST /file/{file_id}/retry/{stage}` (or deleted then re-uploaded).
 - Tables from parsing are preserved as independent chunks (not split). Table names are prepended as context. Super-long tables (>8192 chars) are split on `</tr>`, `</td>`, or `\n` boundaries.
 
 ## Testing

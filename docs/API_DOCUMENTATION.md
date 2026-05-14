@@ -157,11 +157,9 @@ data: {"file_id": "abc123", "stage": "complete", "message": "文件处理完成"
 
 **特殊逻辑说明**
 
-| 文件状态 | 行为 |
-|----------|------|
-| 正在处理中（`parsing`/`chunking`/`embedding`/`extracting`/`analyzing`） | 返回 409，拒绝重复提交 |
-| 已完成（`complete`） | 直接返回已完成状态 |
-| 失败状态（`*_failed`） | 自动清理并从对应阶段重试 |
+`file_id` 由 `(type_id, file_name, 当前纳秒时间戳, 随机盐)` 生成 SHA256[:32]，**每次上传都产生新的 `file_id`**，不做服务端去重。同名文件重复上传 → 各自一条独立记录、各自走完整管线、`uploads/` 下也各自一个 PDF。
+
+若需要从失败阶段重试，请使用 `POST /file/{file_id}/retry/{stage}`，或先 `DELETE /file/{file_id}` 清掉旧记录后再重新上传。
 
 **回调通知（callback_url）**
 
@@ -181,7 +179,6 @@ data: {"file_id": "abc123", "stage": "complete", "message": "文件处理完成"
 |--------|------|
 | 200 | 提交成功或处理完成 |
 | 400 | 文件大小超过限制 |
-| 409 | 文件正在处理中，不可重复提交 |
 
 ---
 
