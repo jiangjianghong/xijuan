@@ -1,0 +1,2542 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "文档解析与逻辑分析系统",
+    "description": "PDF 文档智能处理系统的 HTTP API。\n\n**管线**: parsing → tableing → chunking → embedding → extracting → analyzing → complete\n\n**关键概念**\n\n- **文档类型 (`type_id`)** —— 隔离不同格式文件的字段/规则配置。每个文件归属唯一 `type_id`，默认 `default`，不可删除。\n- **`file_id`** —— 由 `(type_id, file_name, time.time_ns(), secrets.token_hex(8))` SHA256[:32] 生成；每次上传都是新 ID，**不做去重**。\n- **重试** —— 失败后用 `POST /file/{file_id}/retry/{stage}`，不要重新上传（会产生新记录）。\n- **配置隔离** —— `extraction_field` / `analysis_rule` 按 `type_id` 隔离；`field_id` / `rule_id` 全局唯一，跨 `type_id` 冲突返回 409。\n- **回调** —— `POST /file/parse` / `retry` 携带 `callback_url` 时，每阶段开始 + `stage_done` + 每条 `field_done`/`rule_done` 都会 POST 通知（超时 2.5s，失败仅 warning）。\n- **SSE 流** —— `mode=stream` 与 `/extraction/test/stream` / `/analysis/test/stream` 返回 `text/event-stream`。详细事件序列见 `docs/API_DOCUMENTATION.md` 第 9 节。\n- **VL 抽取** —— `source_type=vl` 字段绕过 MinerU Markdown，直接读 `uploads/{file_id}.pdf`，由视觉模型一次产出 `{value, reason}` JSON，不再走文本 LLM 二次抽取。",
+    "version": "0.2.0"
+  },
+  "paths": {
+    "/file/list": {
+      "get": {
+        "tags": [
+          "file"
+        ],
+        "summary": "分页查询文件列表",
+        "description": "按 `create_time desc` 分页。`status` 与 `type_id` 均为精确匹配，空表示不过滤。\n\n---\n\n_原 docstring_:\n\n分页查询文件列表。可选按 type_id 过滤。",
+        "operationId": "list_files_file_list_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "type_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Type Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/batch": {
+      "delete": {
+        "tags": [
+          "file"
+        ],
+        "summary": "批量删除文件",
+        "description": "删除请求体中所有 `file_id` 关联的 MySQL 记录、Milvus 向量、`uploads/{file_id}.pdf`。\n\n不存在的 `file_id` 不报错，会出现在响应 `failed_ids` 中。Milvus / PDF 清理失败仅记 warning，不影响 MySQL 删除。\n\n---\n\n_原 docstring_:\n\n批量删除文件及关联数据。",
+        "operationId": "batch_delete_files_file_batch_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/parse": {
+      "post": {
+        "tags": [
+          "file"
+        ],
+        "summary": "提交文件解析",
+        "description": "上传文件并启动 6 阶段处理管线。\n\n**`mode` 行为差异**\n- `async`（默认）：后台任务，立即返回 `file_id`，可配合 `callback_url` 监听阶段事件\n- `sync`：阻塞直到全部完成或失败\n- `stream`：返回 `text/event-stream`，事件序列见 `API_DOCUMENTATION.md` 第 9.1 节\n\n**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— 每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`。\n\n原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n---\n\n_原 docstring_:\n\n提交文件解析（支持 sync/async/stream）。\n\n- type_id：归属的文档类型（默认 'default'，通过 query 参数传入）\n- 当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：\n  {\"file_id\": \"...\", \"status\": \"parsing/tableing/chunking/embedding/extracting/analyzing/complete\"}",
+        "operationId": "parse_file_file_parse_post",
+        "parameters": [
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "async",
+              "title": "Mode"
+            }
+          },
+          {
+            "name": "type_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "default",
+              "title": "Type Id"
+            }
+          },
+          {
+            "name": "callback_url",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Callback Url"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_parse_file_file_parse_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/{file_id}/status": {
+      "get": {
+        "tags": [
+          "file"
+        ],
+        "summary": "查询文件处理进度",
+        "description": "返回当前 `progress` 与最近的 `error`。完整时间戳请走 `/file/{file_id}/detail`。\n\n---\n\n_原 docstring_:\n\n查询文件处理进度。",
+        "operationId": "get_file_status_file__file_id__status_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/{file_id}": {
+      "delete": {
+        "tags": [
+          "file"
+        ],
+        "summary": "删除文件",
+        "description": "级联删除：`files` / `file_content` / `file_table` / `file_chunk` / `extraction_result` / `analysis_result` / Milvus 向量 / `uploads/{file_id}.pdf`。\n\nMilvus / PDF 清理失败仅 warning。\n\n---\n\n_原 docstring_:\n\n删除文件及所有关联数据。",
+        "operationId": "delete_file_file__file_id__delete",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/{file_id}/retry/{stage}": {
+      "post": {
+        "tags": [
+          "file"
+        ],
+        "summary": "从指定阶段重试",
+        "description": "清掉指定阶段及其下游已有数据，从该阶段重跑。\n\n**有效阶段**: `tableing` / `chunking` / `embedding` / `extracting` / `analyzing`\n\n兼容旧别名 `table_name_validating` → `tableing`。\n\n`mode=stream` 返回的事件序列与 `/file/parse?mode=stream` 一致（额外可能有 `resume` 事件）。\n\n---\n\n_原 docstring_:\n\n从指定阶段重试（支持 async/stream/sync）。\n\n当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：\n{\"file_id\": \"...\", \"status\": \"parsing/tableing/chunking/embedding/extracting/analyzing/complete\"}",
+        "operationId": "retry_file_file__file_id__retry__stage__post",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Stage"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "async",
+              "title": "Mode"
+            }
+          },
+          {
+            "name": "callback_url",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Callback Url"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/{file_id}/retry/extracting": {
+      "post": {
+        "tags": [
+          "file"
+        ],
+        "summary": "快捷重试：字段提取",
+        "description": "等价于 `POST /file/{file_id}/retry/extracting`。\n\n---\n\n_原 docstring_:\n\n重试字段提取（支持 async/stream/sync）。",
+        "operationId": "retry_extracting_file__file_id__retry_extracting_post",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "async",
+              "title": "Mode"
+            }
+          },
+          {
+            "name": "callback_url",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Callback Url"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/{file_id}/retry/analyzing": {
+      "post": {
+        "tags": [
+          "file"
+        ],
+        "summary": "快捷重试：逻辑分析",
+        "description": "等价于 `POST /file/{file_id}/retry/analyzing`。\n\n---\n\n_原 docstring_:\n\n重试逻辑分析（支持 async/stream/sync）。",
+        "operationId": "retry_analyzing_file__file_id__retry_analyzing_post",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "async",
+              "title": "Mode"
+            }
+          },
+          {
+            "name": "callback_url",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Callback Url"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/{file_id}/tables": {
+      "get": {
+        "tags": [
+          "file"
+        ],
+        "summary": "文件表格列表",
+        "description": "返回 `file_table` 中按 `table_index` 升序的全部表格。\n\n`table_name` 由 LLM 在 `tableing` 阶段从表前文本识别得出（截断 30 字），`page_num` 是该表格在 PDF 中的页号（可能是范围如 `\"3-4\"`）。\n\n---\n\n_原 docstring_:\n\n获取文件表格列表。",
+        "operationId": "get_file_tables_file__file_id__tables_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/{file_id}/chunks": {
+      "get": {
+        "tags": [
+          "file"
+        ],
+        "summary": "文件分块列表",
+        "description": "返回 `file_chunk` 按 `chunk_index` 升序的全部分块。表格作为独立 chunk 不拆分。\n\n---\n\n_原 docstring_:\n\n获取文件分块列表。",
+        "operationId": "get_file_chunks_file__file_id__chunks_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/{file_id}/outline": {
+      "get": {
+        "tags": [
+          "file"
+        ],
+        "summary": "文件章节大纲",
+        "description": "正则解析 Markdown 章节标题，与 `extraction.search_type=section` 使用同一套切片口径—— 前端看到什么 = 抽取时能匹配到什么。\n\n文件不存在或内容为空返回 `[]`（不返回 404），与 `/tables`、`/chunks` 一致。\n\n---\n\n_原 docstring_:\n\n获取文件大纲(基于 parse_sections 正则解析的章节列表,含切片后的正文)。\n\n与抽取阶段 search_section 使用的章节口径完全一致 —\n前端看到什么 = 抽取时能匹配到什么。文件不存在或内容为空 → 返回空列表(非 404),\n与 /tables、/chunks 行为一致。",
+        "operationId": "get_file_outline_file__file_id__outline_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/{file_id}/extraction": {
+      "get": {
+        "tags": [
+          "file"
+        ],
+        "summary": "字段提取结果",
+        "description": "返回 `extraction_result` 全表行。\n\n注意：`source_refs`（参考块/VL 元数据）虽然存在数据库里，但本接口当前**不返回**该字段；如需调试细节请走 `/extraction/test` 或 `/extraction/test/stream`。\n\n---\n\n_原 docstring_:\n\n获取文件字段提取结果。",
+        "operationId": "get_extraction_results_file__file_id__extraction_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/{file_id}/analysis": {
+      "get": {
+        "tags": [
+          "file"
+        ],
+        "summary": "逻辑分析结果",
+        "description": "返回 `analysis_result` 全表行（含 `input_values` 但不含 `source_refs`）。\n\n---\n\n_原 docstring_:\n\n获取文件逻辑分析结果。",
+        "operationId": "get_analysis_results_file__file_id__analysis_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file/{file_id}/detail": {
+      "get": {
+        "tags": [
+          "file"
+        ],
+        "summary": "文件完整详情",
+        "description": "包含 `start_*_time` / `end_*_time` 全套时间戳，可计算每阶段耗时。\n\n---\n\n_原 docstring_:\n\n获取文件完整详情（含所有时间字段）。",
+        "operationId": "get_file_detail_file__file_id__detail_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/extraction/fields": {
+      "get": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "列出字段配置",
+        "description": "按 `priority` 升序。`type_id` 为空时返回全量；非空时按精确匹配过滤。\n\n---\n\n_原 docstring_:\n\n获取字段提取配置列表。可选按 type_id 过滤。",
+        "operationId": "list_fields_extraction_fields_get",
+        "parameters": [
+          {
+            "name": "type_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Type Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "新增/更新字段配置（upsert）",
+        "description": "按 `field_id` 全局唯一 upsert。\n\n**冲突处理**：若 `field_id` 已存在但归属其他 `type_id`，返回 **409**，提示换 ID 或先删除原记录。\n\n**Prompt 校验**（Pydantic 层）\n- `source_type=text` 时 `text_extract_prompt` 必须含至少一个 `<search_result>标签</search_result>`\n- `source_type=table` 时 `table_extract_prompt` 同上\n- `source_type=vl` 时 `vl_method` 与 `vl_extract_prompt` 必填，且 prompt 必须含 `value` 和 `reason` 关键字（大小写不敏感）\n- `vl_progressive` 的自定义 `batch_prompt_template` 必含 `{field_hints}` `{page_label}` `{total_pages}` `{history}`\n- `vl_locate` 的自定义 `locate_prompt_template` 必含 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`\n- 模板字面 `{ }` 需写成 `{{ }}` 转义（`str.format()` 渲染）\n\n---\n\n_原 docstring_:\n\n新增/更新字段提取配置（根据 field_id 判断 upsert）。\n\nfield_id 全局唯一；若已存在记录归属于其他 type_id，返回 409。",
+        "operationId": "upsert_field_extraction_fields_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractionFieldCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/extraction/fields/{field_id}": {
+      "delete": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "删除字段配置",
+        "description": "**硬删除**（直接从表中 DELETE，不再走 `enabled=0` 的软删除路径）。\n\n---\n\n_原 docstring_:\n\n删除字段提取配置。",
+        "operationId": "delete_field_extraction_fields__field_id__delete",
+        "parameters": [
+          {
+            "name": "field_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Field Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/extraction/fields/{field_id}/check": {
+      "get": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "检查字段 ID 是否存在",
+        "description": "用于前端在保存前检测 ID 重复。\n\n---\n\n_原 docstring_:\n\n检查 field_id 是否已存在。",
+        "operationId": "check_field_extraction_fields__field_id__check_get",
+        "parameters": [
+          {
+            "name": "field_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Field Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/extraction/test": {
+      "post": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "字段提取调试（同步）",
+        "description": "两种模式：传 `field_id` 加载已保存配置，或传 `config` 用临时配置；二选一。\n\n**响应差异**\n- 普通字段：`search_results` 是检索片段，`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，`extracted_value`/`reason` 是解析后结果\n- VL 字段：`search_results` 是单元素数组 `[{type:\"vl_meta\", method, key_pages, vl_total_tokens, batches_with_info}]`；`llm_output` = `extracted_value`（VL 直出 JSON）\n\n---\n\n_原 docstring_:\n\n字段提取调试接口（支持两种模式）。\n\n模式 1: field_id + file_id - 使用已保存的字段配置\n模式 2: config + file_id - 使用临时配置",
+        "operationId": "test_extraction_extraction_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractionTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/extraction/test/stream": {
+      "post": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "字段提取流式调试（SSE）",
+        "description": "通过 SSE 分步推送检索结果 → prompt → LLM/VL 响应 → 最终结果。\n\n事件类型清单见 `docs/API_DOCUMENTATION.md` 第 9.2 节。VL 字段的进度事件（`pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`）**仅** SSE 推送，不走异步 `callback_url`。\n\n---\n\n_原 docstring_:\n\n字段提取调试流式接口，分步返回检索结果、提示词、LLM 响应和提取结果。",
+        "operationId": "test_extraction_stream_extraction_test_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractionTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analysis/rules": {
+      "get": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "列出分析规则",
+        "description": "按 `priority` 升序。`type_id` 为空时返回全量。\n\n---\n\n_原 docstring_:\n\n获取逻辑分析配置列表。可选按 type_id 过滤。",
+        "operationId": "list_rules_analysis_rules_get",
+        "parameters": [
+          {
+            "name": "type_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Type Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "新增/更新分析规则（upsert）",
+        "description": "按 `rule_id` 全局唯一 upsert。`rule_id` 已被其他 `type_id` 占用时返回 **409**。\n\n**校验**：`expression` 必须包含至少一个 `<field_result>字段ID</field_result>` 占位符。\n\n`system_prompt` 仅 `judge` 类型生效；`calc` 类型直接用 `numexpr` 计算，结果按 `analysis.calc_precision`（默认 2 位）保留小数。\n\n---\n\n_原 docstring_:\n\n新增/更新逻辑分析配置（根据 rule_id 判断 upsert）。\n\nrule_id 全局唯一；若已存在记录归属于其他 type_id，返回 409。",
+        "operationId": "upsert_rule_analysis_rules_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisRuleCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analysis/rules/{rule_id}": {
+      "delete": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "删除分析规则",
+        "description": "**硬删除**。\n\n---\n\n_原 docstring_:\n\n删除逻辑分析配置。",
+        "operationId": "delete_rule_analysis_rules__rule_id__delete",
+        "parameters": [
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Rule Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analysis/rules/{rule_id}/check": {
+      "get": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "检查规则 ID 是否存在",
+        "description": "用于前端在保存前检测 ID 重复。\n\n---\n\n_原 docstring_:\n\n检查 rule_id 是否已存在。",
+        "operationId": "check_rule_analysis_rules__rule_id__check_get",
+        "parameters": [
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Rule Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analysis/test": {
+      "post": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "逻辑分析调试（同步）",
+        "description": "两种模式：传 `rule_id` 加载已保存规则，或传 `config` 用临时配置；二选一。\n\n返回 `input_values`（依赖字段提取值）、`expression_resolved`（占位符替换后的表达式）、`result_value` 与 `reason`。\n\n---\n\n_原 docstring_:\n\n逻辑分析调试接口（支持两种模式）。\n\n模式 1: rule_id + file_id - 使用已保存的规则配置\n模式 2: config + file_id - 使用临时配置",
+        "operationId": "test_analysis_analysis_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analysis/test/stream": {
+      "post": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "逻辑分析流式调试（SSE)",
+        "description": "SSE 分步推送：`input_values` → `resolved_expression` → （judge: `prompt` → `llm_response`）→ `result` → `done`。\n\ncalc 类型无 `prompt` / `llm_response` 步骤。\n\n---\n\n_原 docstring_:\n\n逻辑分析调试流式接口，分步返回依赖字段值、表达式解析、LLM 提示词/响应和分析结果。\n\n模式 1: rule_id + file_id - 使用已保存的规则配置\n模式 2: config + file_id - 使用临时配置",
+        "operationId": "test_analysis_stream_analysis_test_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/search": {
+      "post": {
+        "tags": [
+          "search"
+        ],
+        "summary": "向量相似度检索",
+        "description": "将 `query` 通过 embedding 接口向量化后在 Milvus 中检索，返回分块及 L2 距离 `score`（越小越相似）。\n\n- `file_id` 限定检索范围\n- `score_threshold` 上限，超过该距离的结果被过滤\n- 返回字段包含 `chunk_id` / `file_id` / `chunk_index` / `total_chunks` / `chunk_content` / `start_pos` / `end_pos` / `page_num` / `score`\n\n---\n\n_原 docstring_:\n\n向量检索。",
+        "operationId": "search_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/doctype/list": {
+      "get": {
+        "tags": [
+          "doctype"
+        ],
+        "summary": "列出所有文档类型",
+        "description": "返回所有文档类型，附带各类型下的 `file_count` / `field_count` / `rule_count`。\n\n排序：默认类型在前，其余按 `created_at` 升序。\n\n---\n\n_原 docstring_:\n\n列出所有文档类型，附带文件/字段/规则数量。",
+        "operationId": "list_doctypes_doctype_list_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/doctype": {
+      "post": {
+        "tags": [
+          "doctype"
+        ],
+        "summary": "新增/更新文档类型",
+        "description": "按 `type_id` upsert：已存在则更新 `type_name` / `description` / `enabled`，不存在则新建（`is_default` 强制为 0）。\n\n默认类型（`is_default=1`）禁止通过本接口创建或改 `is_default`。\n\n---\n\n_原 docstring_:\n\n创建/更新类型（按 type_id upsert）。",
+        "operationId": "upsert_doctype_doctype_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocTypeCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/doctype/{type_id}": {
+      "delete": {
+        "tags": [
+          "doctype"
+        ],
+        "summary": "删除文档类型",
+        "description": "**默认类型不可删除**。非默认类型若有关联数据：\n- 不传 `force` → 返回 409 + 数量提示\n- `force=true` → 级联删除该类型下所有文件、Milvus 向量、`uploads/{file_id}.pdf`、字段、规则\n\n返回 `data.deleted_files/fields/rules` 仅在 `force=true` 时非零。\n\n---\n\n_原 docstring_:\n\n删除类型。\n- 默认类型（is_default=1）禁止删除\n- 默认拒绝有关联文件/字段/规则的类型；force=true 时级联删除",
+        "operationId": "delete_doctype_doctype__type_id__delete",
+        "parameters": [
+          {
+            "name": "type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Type Id"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "是否级联删除该类型下所有文件与配置",
+              "default": false,
+              "title": "Force"
+            },
+            "description": "是否级联删除该类型下所有文件与配置"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/doctype/{type_id}/copy_from": {
+      "post": {
+        "tags": [
+          "doctype"
+        ],
+        "summary": "同实例跨类型复制配置",
+        "description": "把源类型的字段+规则复制到目标 `type_id`（生成全新 ID 的独立副本）。\n\n- `field_ids` / `rule_ids` 留空表示全部复制\n- `on_conflict=skip`：目标已有同名时跳过\n- `on_conflict=rename`（默认）：自动加 ` (副本)` 后缀\n- 规则 `depend_fields` 按 **field_name** 在目标类型重映射到新的 `field_id`；找不到同名字段的依赖记入 `missing_dependencies` 返回，规则照常创建。\n\n---\n\n_原 docstring_:\n\n从 source_type_id 复制字段/规则到当前 type_id（独立副本）。\n\n- field_ids/rule_ids 为空表示复制全部\n- on_conflict=skip：目标已有同 field_name/rule_name 时跳过\n- on_conflict=rename：自动改名加\" (副本)\"\n- 规则的 depend_fields 按 field_name 重映射到目标类型对应的新 field_id；\n  若目标类型缺少同名字段，记入 missing_dependencies 返回。",
+        "operationId": "copy_configs_doctype__type_id__copy_from_post",
+        "parameters": [
+          {
+            "name": "type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Type Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyConfigsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/doctype/{type_id}/export": {
+      "get": {
+        "tags": [
+          "doctype"
+        ],
+        "summary": "导出配置为 JSON 载荷",
+        "description": "把目标类型的字段+规则序列化为可跨实例迁移的 JSON。\n\n规则依赖以 **field_name** 列表（`depend_field_names`）序列化，避免依赖原 `field_id`。\n\n---\n\n_原 docstring_:\n\n导出指定类型的所有字段+规则为 JSON 载荷。\n\n返回的 JSON 可直接保存为文件，并通过 POST /doctype/import 导入到其他环境。\n规则的 depend_fields 在导出时按 field_name 序列化，导入时按 field_name 在目标\n类型中重映射，避免依赖原始 field_id。",
+        "operationId": "export_configs_doctype__type_id__export_get",
+        "parameters": [
+          {
+            "name": "type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Type Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/doctype/import": {
+      "post": {
+        "tags": [
+          "doctype"
+        ],
+        "summary": "从 JSON 载荷导入配置",
+        "description": "把 `GET /doctype/{type_id}/export` 产生的载荷导入到目标类型。\n\n- `target_type_id` 为空时使用 `payload.type_id`\n- 目标类型不存在且 `create_type_if_missing=true` → 自动创建\n- 字段始终生成**新 `field_id`**，避免与全局唯一约束冲突\n- 规则按 `depend_field_names` 在目标类型重映射；缺失的依赖进 `missing_dependencies`\n\n---\n\n_原 docstring_:\n\n从 JSON 载荷导入字段+规则到目标类型。\n\n- 目标类型不存在且 create_type_if_missing=true 时自动创建\n- 字段以新生成的 field_id 写入（不复用源 field_id），避免跨类型冲突\n- 规则的 depend_field_names 按字段名重映射到目标类型的字段；\n  若目标缺失某依赖，记入 missing_dependencies 返回（依赖该字段的位置由规则引用）",
+        "operationId": "import_configs_doctype_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportConfigsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AnalysisRuleCreate": {
+        "properties": {
+          "rule_id": {
+            "type": "string",
+            "maxLength": 100,
+            "pattern": "^[a-zA-Z0-9_]+$",
+            "title": "Rule Id"
+          },
+          "type_id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Type Id",
+            "default": "default"
+          },
+          "rule_name": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Rule Name"
+          },
+          "rule_type": {
+            "$ref": "#/components/schemas/RuleTypeEnum"
+          },
+          "expression": {
+            "type": "string",
+            "title": "Expression"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "depend_fields": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depend Fields"
+          },
+          "enabled": {
+            "type": "integer",
+            "title": "Enabled",
+            "default": 1
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "rule_id",
+          "rule_name",
+          "rule_type",
+          "expression"
+        ],
+        "title": "AnalysisRuleCreate"
+      },
+      "AnalysisTestRequest": {
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "title": "File Id"
+          },
+          "rule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Id"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "title": "AnalysisTestRequest",
+        "description": "逻辑分析调试请求：rule_id + file_id 模式 或 完整 config 模式。"
+      },
+      "BatchDeleteRequest": {
+        "properties": {
+          "file_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "File Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_ids"
+        ],
+        "title": "BatchDeleteRequest"
+      },
+      "Body_parse_file_file_parse_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_parse_file_file_parse_post"
+      },
+      "CopyConfigsRequest": {
+        "properties": {
+          "source_type_id": {
+            "type": "string",
+            "title": "Source Type Id"
+          },
+          "field_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field Ids"
+          },
+          "rule_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Ids"
+          },
+          "on_conflict": {
+            "type": "string",
+            "pattern": "^(skip|rename)$",
+            "title": "On Conflict",
+            "default": "rename"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_type_id"
+        ],
+        "title": "CopyConfigsRequest",
+        "description": "从源类型复制配置到目标类型。\n\nfield_ids / rule_ids 留空表示全部复制；\non_conflict 决定目标类型已有同名字段/规则时的行为。"
+      },
+      "DocTypeCreate": {
+        "properties": {
+          "type_id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Type Id"
+          },
+          "type_name": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Type Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "type": "integer",
+            "title": "Enabled",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "type_id",
+          "type_name"
+        ],
+        "title": "DocTypeCreate"
+      },
+      "ExportFieldItem": {
+        "properties": {
+          "field_id": {
+            "type": "string",
+            "title": "Field Id"
+          },
+          "field_name": {
+            "type": "string",
+            "title": "Field Name"
+          },
+          "source_type": {
+            "type": "string",
+            "title": "Source Type"
+          },
+          "enabled": {
+            "type": "integer",
+            "title": "Enabled",
+            "default": 1
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "default": 0
+          },
+          "table_name_pattern": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Name Pattern"
+          },
+          "table_match_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Match Type"
+          },
+          "table_match_keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Match Keywords"
+          },
+          "table_match_max_results": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Match Max Results"
+          },
+          "table_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table System Prompt"
+          },
+          "table_extract_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Extract Prompt"
+          },
+          "search_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Type"
+          },
+          "search_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Config"
+          },
+          "text_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text System Prompt"
+          },
+          "text_extract_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Extract Prompt"
+          },
+          "vl_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vl Method"
+          },
+          "vl_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vl Config"
+          },
+          "vl_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vl System Prompt"
+          },
+          "vl_extract_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vl Extract Prompt"
+          }
+        },
+        "type": "object",
+        "required": [
+          "field_id",
+          "field_name",
+          "source_type"
+        ],
+        "title": "ExportFieldItem",
+        "description": "导出格式的字段项（不含 type_id / field_id / 时间戳）。"
+      },
+      "ExportPayload": {
+        "properties": {
+          "type_id": {
+            "type": "string",
+            "title": "Type Id"
+          },
+          "type_name": {
+            "type": "string",
+            "title": "Type Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "default": 1
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/ExportFieldItem"
+            },
+            "type": "array",
+            "title": "Fields",
+            "default": []
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/ExportRuleItem"
+            },
+            "type": "array",
+            "title": "Rules",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "type_id",
+          "type_name"
+        ],
+        "title": "ExportPayload",
+        "description": "导出/导入的整体载荷。"
+      },
+      "ExportRuleItem": {
+        "properties": {
+          "rule_id": {
+            "type": "string",
+            "title": "Rule Id"
+          },
+          "rule_name": {
+            "type": "string",
+            "title": "Rule Name"
+          },
+          "rule_type": {
+            "type": "string",
+            "title": "Rule Type"
+          },
+          "expression": {
+            "type": "string",
+            "title": "Expression"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "depend_field_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Depend Field Names",
+            "default": []
+          },
+          "enabled": {
+            "type": "integer",
+            "title": "Enabled",
+            "default": 1
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "rule_id",
+          "rule_name",
+          "rule_type",
+          "expression"
+        ],
+        "title": "ExportRuleItem",
+        "description": "导出格式的规则项。depend_fields 用 field_name 列表，便于跨环境恢复。"
+      },
+      "ExtractionFieldCreate": {
+        "properties": {
+          "field_id": {
+            "type": "string",
+            "maxLength": 100,
+            "pattern": "^[a-zA-Z0-9_]+$",
+            "title": "Field Id"
+          },
+          "type_id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Type Id",
+            "default": "default"
+          },
+          "field_name": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Field Name"
+          },
+          "source_type": {
+            "$ref": "#/components/schemas/SourceTypeEnum"
+          },
+          "enabled": {
+            "type": "integer",
+            "title": "Enabled",
+            "default": 1
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "default": 0
+          },
+          "table_name_pattern": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Name Pattern"
+          },
+          "table_match_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TableMatchTypeEnum"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "table_match_keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Match Keywords"
+          },
+          "table_match_max_results": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Match Max Results"
+          },
+          "table_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table System Prompt"
+          },
+          "table_extract_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Extract Prompt"
+          },
+          "search_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchTypeEnum"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "search_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Config"
+          },
+          "text_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text System Prompt"
+          },
+          "text_extract_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Extract Prompt"
+          },
+          "vl_method": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VLMethodEnum"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vl_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vl Config"
+          },
+          "vl_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vl System Prompt"
+          },
+          "vl_extract_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vl Extract Prompt"
+          }
+        },
+        "type": "object",
+        "required": [
+          "field_id",
+          "field_name",
+          "source_type"
+        ],
+        "title": "ExtractionFieldCreate"
+      },
+      "ExtractionTestRequest": {
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "title": "File Id"
+          },
+          "field_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field Id"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "title": "ExtractionTestRequest",
+        "description": "字段提取调试请求：field_id + file_id 模式 或 完整 config 模式。"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImportConfigsRequest": {
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/ExportPayload"
+          },
+          "target_type_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Type Id"
+          },
+          "create_type_if_missing": {
+            "type": "boolean",
+            "title": "Create Type If Missing",
+            "default": true
+          },
+          "on_conflict": {
+            "type": "string",
+            "pattern": "^(skip|rename)$",
+            "title": "On Conflict",
+            "default": "rename"
+          }
+        },
+        "type": "object",
+        "required": [
+          "payload"
+        ],
+        "title": "ImportConfigsRequest",
+        "description": "从 JSON 载荷导入到目标类型。\n\ntarget_type_id 为空则使用 payload.type_id；\ncreate_type_if_missing=true 时若目标类型不存在则自动创建。"
+      },
+      "ResponseWrapper": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ResponseWrapper"
+      },
+      "RuleTypeEnum": {
+        "type": "string",
+        "enum": [
+          "judge",
+          "calc"
+        ],
+        "title": "RuleTypeEnum"
+      },
+      "SearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "file_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Id"
+          },
+          "top_k": {
+            "type": "integer",
+            "title": "Top K",
+            "default": 10
+          },
+          "score_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Threshold"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "SearchRequest"
+      },
+      "SearchTypeEnum": {
+        "type": "string",
+        "enum": [
+          "context",
+          "section",
+          "rule",
+          "chunk_db",
+          "vector_db",
+          "page"
+        ],
+        "title": "SearchTypeEnum"
+      },
+      "SourceTypeEnum": {
+        "type": "string",
+        "enum": [
+          "table",
+          "text",
+          "vl"
+        ],
+        "title": "SourceTypeEnum"
+      },
+      "TableMatchTypeEnum": {
+        "type": "string",
+        "enum": [
+          "exact",
+          "fuzzy",
+          "contains",
+          "llm"
+        ],
+        "title": "TableMatchTypeEnum"
+      },
+      "VLMethodEnum": {
+        "type": "string",
+        "enum": [
+          "vl_model",
+          "vl_progressive",
+          "vl_locate"
+        ],
+        "title": "VLMethodEnum"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "doctype",
+      "description": "文档类型管理：创建/列出/删除/复制/导出/导入。"
+    },
+    {
+      "name": "file",
+      "description": "文件解析、查询、删除、重试、结果获取。"
+    },
+    {
+      "name": "extraction",
+      "description": "字段提取配置 CRUD 与调试。"
+    },
+    {
+      "name": "analysis",
+      "description": "逻辑分析规则 CRUD 与调试。"
+    },
+    {
+      "name": "search",
+      "description": "Milvus 向量相似度检索。"
+    }
+  ],
+  "servers": [
+    {
+      "url": "http://localhost:5019",
+      "description": "本地开发"
+    }
+  ]
+}
