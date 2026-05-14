@@ -95,6 +95,25 @@ async def init_database() -> None:
             )
             logger.info("已扩展 extraction_field.source_type 枚举：加入 'vl'")
 
+        # search_type enum 扩展：旧值 (context,section,rule,chunk_db,vector_db) → 新增 'page'
+        result = await conn.execute(
+            text(
+                "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'extraction_field' "
+                "AND COLUMN_NAME = 'search_type'"
+            )
+        )
+        col_type = (result.scalar() or "").lower()
+        if col_type and "'page'" not in col_type:
+            await conn.execute(
+                text(
+                    "ALTER TABLE `extraction_field` "
+                    "MODIFY COLUMN `search_type` "
+                    "ENUM('context','section','rule','chunk_db','vector_db','page') NULL"
+                )
+            )
+            logger.info("已扩展 extraction_field.search_type 枚举：加入 'page'")
+
         # 索引补充：type_id 索引（IF NOT EXISTS 兼容方式）
         index_migrations = [
             ("files", "ix_files_type_id", "type_id"),

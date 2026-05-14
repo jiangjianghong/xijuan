@@ -176,6 +176,7 @@ class SearchTypeEnum(str, Enum):
     rule = "rule"
     chunk_db = "chunk_db"
     vector_db = "vector_db"
+    page = "page"
 
 
 class VLMethodEnum(str, Enum):
