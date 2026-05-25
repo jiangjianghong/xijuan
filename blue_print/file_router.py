@@ -37,7 +37,7 @@ from service.pipeline_service import run_from_stage, run_from_stage_stream, run_
 from service.extraction_service import parse_sections
 from utils.config import get_config
 from utils.file_utils import generate_file_id
-from utils.milvus_client import MilvusClient
+from utils.milvus_client import get_milvus_client
 
 router = APIRouter(prefix="/file", tags=["file"])
 
@@ -284,10 +284,36 @@ async def get_file_status(file_id: str, db: AsyncSession = Depends(get_db)):
     )
 
 
+def _cleanup_file_artifacts(file_id: str) -> None:
+    """删除接口的后台清理:Milvus 向量 + 持久化 PDF。
+
+    设计为同步函数,通过 BackgroundTasks 调度时 Starlette 会用
+    anyio.run_in_threadpool 执行,所以不会阻塞 asyncio 事件循环。
+    任何异常都吞掉只记日志——清理失败不影响用户已收到的删除成功响应。
+    """
+    try:
+        get_milvus_client().delete_by_file_id(file_id)
+    except Exception as e:
+        logger.warning("Milvus 删除失败 file_id={}: {}", file_id, e)
+
+    try:
+        from utils import vl_client as _vl_client_for_storage
+        _vl_client_for_storage.pdf_path(file_id).unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning("清理 PDF 失败 file_id={}: {}", file_id, e)
+
+
 @router.delete("/{file_id}", response_model=ResponseWrapper)
-async def delete_file(file_id: str, db: AsyncSession = Depends(get_db)):
-    """删除文件及所有关联数据。"""
-    # 检查文件是否存在
+async def delete_file(
+    file_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """删除文件及所有关联数据。
+
+    MySQL 关联表立刻删完并提交;Milvus 向量与持久化 PDF 走后台
+    清理,接口立即返回——前端列表轮询不会被 Milvus 调用阻塞。
+    """
     stmt = select(FileModel).where(FileModel.file_id == file_id)
     result = await db.execute(stmt)
     file_record = result.scalar_one_or_none()
@@ -295,7 +321,6 @@ async def delete_file(file_id: str, db: AsyncSession = Depends(get_db)):
     if not file_record:
         raise HTTPException(status_code=404, detail="文件不存在")
 
-    # 删除所有关联数据
     await db.execute(delete(FileContent).where(FileContent.file_id == file_id))
     await db.execute(delete(FileTable).where(FileTable.file_id == file_id))
     await db.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
@@ -304,20 +329,7 @@ async def delete_file(file_id: str, db: AsyncSession = Depends(get_db)):
     await db.execute(delete(FileModel).where(FileModel.file_id == file_id))
     await db.commit()
 
-    # 删除 Milvus 数据
-    try:
-        milvus_client = MilvusClient()
-        milvus_client.connect()
-        milvus_client.delete_by_file_id(file_id)
-    except Exception as e:
-        logger.warning("Milvus 删除失败: {}", e)
-
-    # 删除持久化的 PDF
-    try:
-        from utils import vl_client as _vl_client_for_storage
-        _vl_client_for_storage.pdf_path(file_id).unlink(missing_ok=True)
-    except Exception as e:
-        logger.warning("清理 PDF 失败 file_id={}: {}", file_id, e)
+    background_tasks.add_task(_cleanup_file_artifacts, file_id)
 
     return ResponseWrapper(message="文件已删除")
 
