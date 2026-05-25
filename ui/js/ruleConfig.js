@@ -286,6 +286,9 @@ const RuleConfig = {
             const searchType = searchTypeEl ? searchTypeEl.value : '';
             if (searchType === 'page') {
                 labels = ['page_content'];
+            } else if (searchType === 'section') {
+                const val = (document.getElementById('fm-sc-section-pattern') || {}).value;
+                if (val && val.trim()) labels = [val.trim()];
             } else {
                 labels = this.getKeywordTags('fm-sc-keywords');
             }

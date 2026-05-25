@@ -12,7 +12,7 @@
           "file"
         ],
         "summary": "分页查询文件列表",
-        "description": "按 `create_time desc` 分页。`status` 与 `type_id` 均为精确匹配，空表示不过滤。\n\n---\n\n_原 docstring_:\n\n分页查询文件列表。可选按 type_id 过滤。",
+        "description": "按 `create_time desc` 分页。`status` 与 `type_id` 均为**精确匹配**，空字符串表示不过滤。\n\n**`status` 合法值**（见 `progress` 字段）：`parsing` / `tableing` / `chunking` / `embedding` / `extracting` / `analyzing` / `complete`，以及对应的 `*_failed` 失败态。\n\n返回 `FileListResponse{items, total, page, page_size, total_pages}`。\n\n---\n\n_原 docstring_:\n\n分页查询文件列表。可选按 type_id 过滤。",
         "operationId": "list_files_file_list_get",
         "parameters": [
           {
@@ -128,7 +128,7 @@
           "file"
         ],
         "summary": "提交文件解析",
-        "description": "上传文件并启动 6 阶段处理管线。\n\n**`mode` 行为差异**\n- `async`（默认）：后台任务，立即返回 `file_id`，可配合 `callback_url` 监听阶段事件\n- `sync`：阻塞直到全部完成或失败\n- `stream`：返回 `text/event-stream`，事件序列见 `API_DOCUMENTATION.md` 第 9.1 节\n\n**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— 每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`。\n\n原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n---\n\n_原 docstring_:\n\n提交文件解析（支持 sync/async/stream）。\n\n- type_id：归属的文档类型（默认 'default'，通过 query 参数传入）\n- 当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：\n  {\"file_id\": \"...\", \"status\": \"parsing/tableing/chunking/embedding/extracting/analyzing/complete\"}",
+        "description": "上传文件并启动 6 阶段处理管线（parsing → tableing → chunking → embedding → extracting → analyzing → complete）。`Content-Type` 必须为 `multipart/form-data`。\n\n**`mode` 行为差异**\n- `async`（默认）：后台任务，立即返回 `file_id`\n- `sync`：阻塞直到全部完成或失败，再返回 `file_id`\n- `stream`：返回 `text/event-stream`，事件序列见 `API_DOCUMENTATION.md` 第 9.1 节\n\n**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（管线每阶段开始、每条 `field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时 2.5s 失败仅 warning，不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— 每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`，**不要**重新上传（会产生新记录）。\n\n原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n**文件大小限制**：受 `mineru.max_file_size` 控制（默认 100MB），超限返回 `ResponseWrapper{code:400, message:\"文件大小超过限制 (XXX MB)\"}`。\n\n---\n\n_原 docstring_:\n\n提交文件解析（支持 sync/async/stream）。\n\n- type_id：归属的文档类型（默认 'default'，通过 query 参数传入）\n- 当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：\n  {\"file_id\": \"...\", \"status\": \"parsing/tableing/chunking/embedding/extracting/analyzing/complete\"}",
         "operationId": "parse_file_file_parse_post",
         "parameters": [
           {
@@ -206,7 +206,7 @@
           "file"
         ],
         "summary": "查询文件处理进度",
-        "description": "返回当前 `progress` 与最近的 `error`。完整时间戳请走 `/file/{file_id}/detail`。\n\n---\n\n_原 docstring_:\n\n查询文件处理进度。",
+        "description": "返回当前 `progress` 与最近的 `error`，含 `create_time` / `updated_at` 两个时间戳。\n\n`progress` 取值：`parsing` / `tableing` / `chunking` / `embedding` / `extracting` / `analyzing` / `complete`，以及对应的 `*_failed` 失败态。\n\n如需每阶段的开始/结束时间戳（计算阶段耗时），请走 `GET /file/{file_id}/detail`。\n\n**状态码**: 200 / 404（文件不存在）。\n\n---\n\n_原 docstring_:\n\n查询文件处理进度。",
         "operationId": "get_file_status_file__file_id__status_get",
         "parameters": [
           {
@@ -292,7 +292,7 @@
           "file"
         ],
         "summary": "从指定阶段重试",
-        "description": "清掉指定阶段及其下游已有数据，从该阶段重跑。\n\n**有效阶段**: `tableing` / `chunking` / `embedding` / `extracting` / `analyzing`\n\n兼容旧别名 `table_name_validating` → `tableing`。\n\n`mode=stream` 返回的事件序列与 `/file/parse?mode=stream` 一致（额外可能有 `resume` 事件）。\n\n---\n\n_原 docstring_:\n\n从指定阶段重试（支持 async/stream/sync）。\n\n当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：\n{\"file_id\": \"...\", \"status\": \"parsing/tableing/chunking/embedding/extracting/analyzing/complete\"}",
+        "description": "清掉指定阶段及其下游已有数据（依赖 `init_service` 同款清理逻辑），从该阶段重跑。\n\n**有效阶段**: `tableing` / `chunking` / `embedding` / `extracting` / `analyzing`。\n兼容旧别名 `table_name_validating` → `tableing`。其它值返回 400。\n\n**`mode`**：`async`（默认，后台任务）/ `sync`（阻塞返回）/ `stream`（SSE 流）。\n\n**`callback_url`** 仅在 `async` / `sync` 模式生效；`stream` 模式忽略，事件改走 SSE。\n\n`stream` 返回的事件序列与 `/file/parse?mode=stream` 完全一致，**多一条** 首发 `resume` 事件标识从哪个阶段继续。\n\n**状态码**: 200 / 400（无效阶段名）/ 404（文件不存在）。\n\n---\n\n_原 docstring_:\n\n从指定阶段重试（支持 async/stream/sync）。\n\n当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：\n{\"file_id\": \"...\", \"status\": \"parsing/tableing/chunking/embedding/extracting/analyzing/complete\"}",
         "operationId": "retry_file_file__file_id__retry__stage__post",
         "parameters": [
           {
@@ -368,7 +368,7 @@
           "file"
         ],
         "summary": "快捷重试：字段提取",
-        "description": "等价于 `POST /file/{file_id}/retry/extracting`。\n\n---\n\n_原 docstring_:\n\n重试字段提取（支持 async/stream/sync）。",
+        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=extracting`，内部就是转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）。\n\n---\n\n_原 docstring_:\n\n重试字段提取（支持 async/stream/sync）。",
         "operationId": "retry_extracting_file__file_id__retry_extracting_post",
         "parameters": [
           {
@@ -435,7 +435,7 @@
           "file"
         ],
         "summary": "快捷重试：逻辑分析",
-        "description": "等价于 `POST /file/{file_id}/retry/analyzing`。\n\n---\n\n_原 docstring_:\n\n重试逻辑分析（支持 async/stream/sync）。",
+        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=analyzing`，内部就是转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）。\n\n---\n\n_原 docstring_:\n\n重试逻辑分析（支持 async/stream/sync）。",
         "operationId": "retry_analyzing_file__file_id__retry_analyzing_post",
         "parameters": [
           {
@@ -717,7 +717,7 @@
           "file"
         ],
         "summary": "文件完整详情",
-        "description": "包含 `start_*_time` / `end_*_time` 全套时间戳，可计算每阶段耗时。\n\n---\n\n_原 docstring_:\n\n获取文件完整详情（含所有时间字段）。",
+        "description": "在 `/status` 字段基础上额外返回 `start_*_time` / `end_*_time` 全套时间戳（parsing / tableing / chunking / embedding 各有 start+end，extracting / analyzing 只有 end），可计算每阶段耗时。\n\n**状态码**: 200 / 404（文件不存在）。\n\n---\n\n_原 docstring_:\n\n获取文件完整详情（含所有时间字段）。",
         "operationId": "get_file_detail_file__file_id__detail_get",
         "parameters": [
           {
@@ -930,7 +930,7 @@
           "extraction"
         ],
         "summary": "字段提取调试（同步）",
-        "description": "两种模式：传 `field_id` 加载已保存配置，或传 `config` 用临时配置；二选一。\n\n**响应差异**\n- 普通字段：`search_results` 是检索片段，`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，`extracted_value`/`reason` 是解析后结果\n- VL 字段：`search_results` 是单元素数组 `[{type:\"vl_meta\", method, key_pages, vl_total_tokens, batches_with_info}]`；`llm_output` = `extracted_value`（VL 直出 JSON）\n\n---\n\n_原 docstring_:\n\n字段提取调试接口（支持两种模式）。\n\n模式 1: field_id + file_id - 使用已保存的字段配置\n模式 2: config + file_id - 使用临时配置",
+        "description": "两种模式（二选一）：传 `field_id` 加载已保存配置，或传 `config` 用临时配置。\n\n**`search_results` 形态因 `source_type` / `search_type` 不同而异**\n- `source_type=table`：`[{table_name, table_content(截断 500 字)}, ...]`\n- `source_type=text` + `search_type=context`：按关键词命中前后上下文的片段列表\n- `search_type=section`：章节切片列表\n- `search_type=rule`：关键词起点+停止词边界片段列表\n- `search_type=chunk_db`：MySQL 分块命中列表\n- `search_type=vector_db`：Milvus 语义命中列表（含 `score`）\n- `search_type=page`：按 `page_range` 切出的整页 Markdown\n- `source_type=vl`：**单元素**数组 `[{type:\"vl_meta\", method, key_pages, vl_total_tokens, batches_with_info}]`\n\n**`llm_input` / `llm_output`**\n- 普通字段：`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，`extracted_value`/`reason` 是 JSON 解析后的结果\n- VL 字段：`llm_input` 是 `vl_extract_prompt`，`llm_output` = `extracted_value`（VL 直出 JSON，不再二次抽取）\n\n**状态码**: 200 / 400（既未传 `field_id` 也未传 `config`）/ 404（字段或文件内容不存在）/ 500\n\n---\n\n_原 docstring_:\n\n字段提取调试接口（支持两种模式）。\n\n模式 1: field_id + file_id - 使用已保存的字段配置\n模式 2: config + file_id - 使用临时配置",
         "operationId": "test_extraction_extraction_test_post",
         "requestBody": {
           "content": {
@@ -1182,7 +1182,7 @@
           "analysis"
         ],
         "summary": "逻辑分析调试（同步）",
-        "description": "两种模式：传 `rule_id` 加载已保存规则，或传 `config` 用临时配置；二选一。\n\n返回 `input_values`（依赖字段提取值）、`expression_resolved`（占位符替换后的表达式）、`result_value` 与 `reason`。\n\n---\n\n_原 docstring_:\n\n逻辑分析调试接口（支持两种模式）。\n\n模式 1: rule_id + file_id - 使用已保存的规则配置\n模式 2: config + file_id - 使用临时配置",
+        "description": "两种模式（二选一）：传 `rule_id` 加载已保存规则，或传 `config` 用临时配置。\n\n返回字段：\n- `input_values`：依赖字段（`depend_fields`）的提取值字典；缺失字段值为空串\n- `expression_resolved`：`<field_result>...</field_result>` 占位符替换后的表达式\n- `result_value`：最终结果\n  - `judge` 类型：调用 LLM 判断（受 `system_prompt` 控制），通常返回 `true`/`false`\n  - `calc` 类型：`numexpr` 计算，按 `analysis.calc_precision`（默认 2 位）保留小数\n- `reason`：LLM 给出的判断理由（calc 类型为计算公式）\n\n**状态码**: 200 / 400（既未传 `rule_id` 也未传 `config`）/ 404（规则不存在）/ 500\n\n---\n\n_原 docstring_:\n\n逻辑分析调试接口（支持两种模式）。\n\n模式 1: rule_id + file_id - 使用已保存的规则配置\n模式 2: config + file_id - 使用临时配置",
         "operationId": "test_analysis_analysis_test_post",
         "requestBody": {
           "content": {
@@ -1264,7 +1264,7 @@
           "search"
         ],
         "summary": "向量相似度检索",
-        "description": "将 `query` 通过 embedding 接口向量化后在 Milvus 中检索，返回分块及 L2 距离 `score`（越小越相似）。\n\n- `file_id` 限定检索范围\n- `score_threshold` 上限，超过该距离的结果被过滤\n- 返回字段包含 `chunk_id` / `file_id` / `chunk_index` / `total_chunks` / `chunk_content` / `start_pos` / `end_pos` / `page_num` / `score`\n\n---\n\n_原 docstring_:\n\n向量检索。",
+        "description": "将 `query` 通过 embedding 接口向量化后在 Milvus 中检索，返回分块及 L2 距离 `score`（越小越相似）。\n\n**请求字段**\n- `query`：必填，检索文本（空串直接返回空列表）\n- `file_id`：可选，限定检索范围；省略则跨全部已向量化的文件\n- `top_k`：可选，默认 `10`\n- `score_threshold`：可选，L2 距离上限，超过该距离的结果被过滤；省略不过滤\n\n**响应字段**：`chunk_id` / `file_id` / `chunk_index` / `total_chunks` / `chunk_content` / `start_pos` / `end_pos` / `page_num` / `score`\n\n---\n\n_原 docstring_:\n\n向量检索。",
         "operationId": "search_search_post",
         "requestBody": {
           "content": {
@@ -1328,7 +1328,7 @@
           "doctype"
         ],
         "summary": "新增/更新文档类型",
-        "description": "按 `type_id` upsert：已存在则更新 `type_name` / `description` / `enabled`，不存在则新建（`is_default` 强制为 0）。\n\n默认类型（`is_default=1`）禁止通过本接口创建或改 `is_default`。\n\n---\n\n_原 docstring_:\n\n创建/更新类型（按 type_id upsert）。",
+        "description": "按 `type_id` upsert。\n\n- **新建**（`type_id` 不存在）：`is_default` 固定写为 0\n- **更新**（`type_id` 已存在）：只更新 `type_name` / `description` / `enabled`；**`is_default` 保留原值**（即默认类型可以改 `type_name`，但不会变成非默认；反之亦然）\n\n`type_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。\n\n---\n\n_原 docstring_:\n\n创建/更新类型（按 type_id upsert）。",
         "operationId": "upsert_doctype_doctype_post",
         "requestBody": {
           "content": {

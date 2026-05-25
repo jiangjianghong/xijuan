@@ -15,7 +15,9 @@
       "Bash(cp ui/js/ruleConfig.js /tmp/rc_full.js)",
       "Read(//tmp/**)",
       "Bash(awk '{print $5, $9}')",
-      "Bash(PYTHONIOENCODING=utf-8 uv run *)"
+      "Bash(PYTHONIOENCODING=utf-8 uv run *)",
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "mcp__plugin_context7_context7__query-docs"
     ]
   }
 }
