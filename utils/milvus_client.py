@@ -189,5 +189,24 @@ class MilvusClient:
 
         expr = f'file_id == "{file_id}"'
         collection.delete(expr)
-        collection.flush()
         logger.info("Milvus 删除 file_id={} 的所有记录", file_id)
+
+
+_singleton: Optional["MilvusClient"] = None
+
+
+def get_milvus_client() -> "MilvusClient":
+    """返回进程级 Milvus 客户端单例。
+
+    首次调用会 connect + ensure_collection,后续调用直接返回缓存实例。
+    创建过程中抛错则不缓存,下次调用会重试。
+    """
+    global _singleton
+    if _singleton is not None:
+        return _singleton
+
+    client = MilvusClient()
+    client.connect()
+    client.ensure_collection()
+    _singleton = client
+    return _singleton
