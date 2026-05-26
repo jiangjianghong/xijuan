@@ -95,3 +95,38 @@ async def test_delete_returns_404_when_file_missing(client):
     """文件不存在时仍返回 404,不调度后台任务。"""
     resp = await client.delete("/file/definitely_not_exists_xxx")
     assert resp.status_code == 404
+
+
+async def test_batch_delete_schedules_cleanup_per_file(client, fresh_uploads, monkeypatch):
+    """DELETE /file/batch: 每个成功删除的 file_id 都应调度一次后台清理。"""
+    from model.database import get_session_factory
+    from model.tables import File as FileModel
+    from sqlalchemy import delete as sql_delete
+
+    captured = {"file_ids": []}
+
+    def fake_cleanup(file_id: str) -> None:
+        captured["file_ids"].append(file_id)
+
+    monkeypatch.setattr(_file_router_module(), "_cleanup_file_artifacts", fake_cleanup)
+
+    ids = ["test_batch_001", "test_batch_002", "test_batch_003"]
+    session_factory = get_session_factory()
+    async with session_factory() as s:
+        for fid in ids:
+            s.add(FileModel(file_id=fid, file_name=f"{fid}.pdf", file_size=10, progress="complete"))
+        await s.commit()
+
+    # 第 4 个 id 故意不存在的混进去,验证只对存在的文件调度清理
+    payload = {"file_ids": ids + ["nonexistent_xxx"]}
+    try:
+        resp = await client.request("DELETE", "/file/batch", json=payload)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"]["deleted_count"] == 3
+        assert "nonexistent_xxx" in body["data"]["failed_ids"]
+        assert sorted(captured["file_ids"]) == sorted(ids)
+    finally:
+        async with session_factory() as s:
+            await s.execute(sql_delete(FileModel).where(FileModel.file_id.in_(ids)))
+            await s.commit()

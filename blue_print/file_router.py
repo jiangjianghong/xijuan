@@ -104,14 +104,22 @@ async def list_files(
 
 
 @router.delete("/batch", response_model=ResponseWrapper)
-async def batch_delete_files(request: BatchDeleteRequest, db: AsyncSession = Depends(get_db)):
-    """批量删除文件及关联数据。"""
+async def batch_delete_files(
+    request: BatchDeleteRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """批量删除文件及关联数据。
+
+    MySQL 关联表同步删完并一次性提交;每个被成功删除的 file_id 都
+    调度一次后台 `_cleanup_file_artifacts` 处理 Milvus + PDF。
+    """
     deleted_count = 0
-    failed_ids = []
+    failed_ids: list[str] = []
+    cleanup_ids: list[str] = []
 
     for file_id in request.file_ids:
         try:
-            # 检查文件是否存在
             stmt = select(FileModel).where(FileModel.file_id == file_id)
             result = await db.execute(stmt)
             file_record = result.scalar_one_or_none()
@@ -120,7 +128,6 @@ async def batch_delete_files(request: BatchDeleteRequest, db: AsyncSession = Dep
                 failed_ids.append(file_id)
                 continue
 
-            # 删除所有关联数据
             await db.execute(delete(FileContent).where(FileContent.file_id == file_id))
             await db.execute(delete(FileTable).where(FileTable.file_id == file_id))
             await db.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
@@ -128,27 +135,16 @@ async def batch_delete_files(request: BatchDeleteRequest, db: AsyncSession = Dep
             await db.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
             await db.execute(delete(FileModel).where(FileModel.file_id == file_id))
 
-            # 删除 Milvus 数据
-            try:
-                milvus_client = MilvusClient()
-                milvus_client.connect()
-                milvus_client.delete_by_file_id(file_id)
-            except Exception as e:
-                logger.warning("Milvus 删除失败 (file_id={}): {}", file_id, e)
-
-            # 删除持久化的 PDF
-            try:
-                from utils import vl_client as _vl_client_for_storage
-                _vl_client_for_storage.pdf_path(file_id).unlink(missing_ok=True)
-            except Exception as e:
-                logger.warning("清理 PDF 失败 file_id={}: {}", file_id, e)
-
+            cleanup_ids.append(file_id)
             deleted_count += 1
         except Exception as e:
             logger.error("删除文件失败 (file_id={}): {}", file_id, e)
             failed_ids.append(file_id)
 
     await db.commit()
+
+    for fid in cleanup_ids:
+        background_tasks.add_task(_cleanup_file_artifacts, fid)
 
     return ResponseWrapper(
         data=BatchDeleteResponse(

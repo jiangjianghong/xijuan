@@ -14,6 +14,21 @@ import pytest
 from utils import vl_client
 
 
+@pytest.fixture(autouse=True)
+async def reset_db_engine():
+    """每个测试都用全新 engine,避免跨 event loop 复用连接池。"""
+    from model import database as db_module
+
+    if db_module._engine is not None:
+        try:
+            await db_module._engine.dispose()
+        except Exception:
+            pass
+    db_module._engine = None
+    db_module._session_factory = None
+    yield
+
+
 @pytest.fixture
 def fresh_uploads(tmp_path, monkeypatch):
     """把 vl_client 的 storage dir 重定向到临时目录。"""
