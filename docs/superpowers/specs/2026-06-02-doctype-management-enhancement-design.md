@@ -78,7 +78,7 @@
 | `page` / `page_size` | 1-indexed 分页;**两者都不传 = 不分页(原样返回全部)** |
 | `sort` | 选填,仅允许 doc_type 自身列 `created_at`(默认 desc) / `type_name`(可 SQL 内排序+分页);按 file_count 排序需全局计数,与"只算当页计数"冲突,暂不支持 |
 
-**行为约定**:`q/scope/project_id/sort` 仅在传入时生效;分页仅在 `page`/`page_size` 传入时切片;响应始终带 `total`。**不传任何参数即旧行为**。
+**响应形态(关键)**:传齐 `page`+`page_size` 时返回 `{items, total}`;否则**原样返回数组**(与现状一致,向后兼容)。`q/scope/project_id/sort` 仅在传入时生效;分页仅在 `page`+`page_size` 都传入时切片。**不传任何参数即旧行为**(全量数组)。前端选择器用 `?scope=template`(无分页→数组),管理弹窗用分页(→ `{items,total}`)。
 
 **修 N+1 计数**:对**当前页**(或全量时的结果集)的 `type_id` 集合,用 3 条 `GROUP BY ... WHERE type_id IN (...)` 一次性取 files/extraction_field/analysis_rule 计数,再回填。每次请求计数固定 3 条查询。
 
