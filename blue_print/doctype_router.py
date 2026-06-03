@@ -60,38 +60,104 @@ def _new_id(prefix: str = "") -> str:
 
 
 @router.get("/list", response_model=ResponseWrapper)
-async def list_doctypes(db: AsyncSession = Depends(get_db)):
-    """列出所有文档类型，附带文件/字段/规则数量。"""
-    stmt = select(DocType).order_by(DocType.is_default.desc(), DocType.created_at)
-    result = await db.execute(stmt)
-    types = result.scalars().all()
+async def list_doctypes(
+    q: Optional[str] = Query(None, description="模糊搜 type_id/type_name"),
+    scope: str = Query("all", pattern=r"^(all|template|copy)$"),
+    project_id: Optional[str] = Query(None, description="项目过滤；__ungrouped__ 表示未分组"),
+    page: Optional[int] = Query(None, ge=1),
+    page_size: Optional[int] = Query(None, ge=1, le=500),
+    sort: str = Query("created_at", pattern=r"^(created_at|type_name)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """列出文档类型。
+
+    - 传齐 page+page_size：返回 {items, total}（分页）
+    - 否则：原样返回数组（向后兼容；不传任何参数即旧行为）
+    - q/scope/project_id/sort 仅在传入时生效
+    - 计数（file/field/rule）对结果集 type_id 用 3 条 GROUP BY 聚合，避免 N+1
+    """
+    base = select(DocType)
+    if q:
+        like = f"%{q}%"
+        base = base.where(or_(DocType.type_id.like(like), DocType.type_name.like(like)))
+    if scope == "template":
+        base = base.where(or_(DocType.is_template == 1, DocType.is_default == 1))
+    elif scope == "copy":
+        base = base.where(DocType.is_template == 0, DocType.is_default == 0)
+    if project_id == "__ungrouped__":
+        base = base.where(DocType.project_id.is_(None))
+    elif project_id:
+        base = base.where(DocType.project_id == project_id)
+
+    total = (
+        await db.execute(select(func.count()).select_from(base.subquery()))
+    ).scalar() or 0
+
+    sort_col = DocType.type_name.asc() if sort == "type_name" else DocType.created_at.desc()
+    stmt = base.order_by(DocType.is_default.desc(), sort_col)
+
+    paginated = bool(page and page_size)
+    if paginated:
+        stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+
+    types = (await db.execute(stmt)).scalars().all()
+    type_ids = [t.type_id for t in types]
+
+    # 计数：3 条 GROUP BY，仅覆盖当前结果集
+    file_counts: dict = {}
+    field_counts: dict = {}
+    rule_counts: dict = {}
+    if type_ids:
+        for col, target in (
+            (FileModel.type_id, file_counts),
+            (ExtractionField.type_id, field_counts),
+            (AnalysisRule.type_id, rule_counts),
+        ):
+            rows = (
+                await db.execute(
+                    select(col, func.count()).where(col.in_(type_ids)).group_by(col)
+                )
+            ).fetchall()
+            target.update({r[0]: r[1] for r in rows})
+
+    # 项目名映射
+    proj_ids = [t.project_id for t in types if t.project_id]
+    proj_name_map: dict = {}
+    if proj_ids:
+        rows = (
+            await db.execute(
+                select(Project.project_id, Project.project_name).where(
+                    Project.project_id.in_(proj_ids)
+                )
+            )
+        ).fetchall()
+        proj_name_map = {r[0]: r[1] for r in rows}
 
     items = []
     for t in types:
-        file_count = (await db.execute(
-            select(func.count(FileModel.file_id)).where(FileModel.type_id == t.type_id)
-        )).scalar() or 0
-        field_count = (await db.execute(
-            select(func.count(ExtractionField.field_id)).where(ExtractionField.type_id == t.type_id)
-        )).scalar() or 0
-        rule_count = (await db.execute(
-            select(func.count(AnalysisRule.rule_id)).where(AnalysisRule.type_id == t.type_id)
-        )).scalar() or 0
-        items.append({
-            **DocTypeResponse(
-                type_id=t.type_id,
-                type_name=t.type_name,
-                description=t.description,
-                is_default=t.is_default,
-                enabled=t.enabled,
-                created_at=t.created_at,
-                updated_at=t.updated_at,
-            ).model_dump(),
-            "file_count": file_count,
-            "field_count": field_count,
-            "rule_count": rule_count,
-        })
+        items.append(
+            {
+                **DocTypeResponse(
+                    type_id=t.type_id,
+                    type_name=t.type_name,
+                    description=t.description,
+                    is_default=t.is_default,
+                    enabled=t.enabled,
+                    is_template=t.is_template,
+                    parent_type_id=t.parent_type_id,
+                    project_id=t.project_id,
+                    project_name=proj_name_map.get(t.project_id),
+                    created_at=t.created_at,
+                    updated_at=t.updated_at,
+                ).model_dump(),
+                "file_count": file_counts.get(t.type_id, 0),
+                "field_count": field_counts.get(t.type_id, 0),
+                "rule_count": rule_counts.get(t.type_id, 0),
+            }
+        )
 
+    if paginated:
+        return ResponseWrapper(data={"items": items, "total": total})
     return ResponseWrapper(data=items)
 
 

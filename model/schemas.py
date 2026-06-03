@@ -33,6 +33,10 @@ class DocTypeResponse(BaseModel):
     description: Optional[str] = None
     is_default: int = 0
     enabled: int = 1
+    is_template: int = 0
+    parent_type_id: Optional[str] = None
+    project_id: Optional[str] = None
+    project_name: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
