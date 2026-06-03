@@ -124,13 +124,15 @@ const DocTypeManager = {
             const src = t.parent_type_id
                 ? '←' + escapeHtml(nameMap[t.parent_type_id] || t.parent_type_id)
                 : '—';
+            const parsePages = t.max_parse_pages ? `${escapeHtml(t.max_parse_pages)} 页` : '全部';
+            const embeddingText = t.enable_embedding === 0 ? '关闭' : '执行';
             const checkbox = isDef ? '' :
                 `<input type="checkbox" ${checked} onclick="DocTypeManager.toggleSelect('${escapeAttr(t.type_id)}', this.checked)">`;
             const tplItem = isDef ? '' : (isTpl
                 ? `<button onclick="DocTypeManager.demote('${escapeAttr(t.type_id)}')">取消模板</button>`
                 : `<button onclick="DocTypeManager.promote('${escapeAttr(t.type_id)}')">设为模板</button>`);
-            const renameItem = isDef ? '' :
-                `<button onclick="DocTypeManager.openRenameForm('${escapeAttr(t.type_id)}')">改名</button>`;
+            const renameItem =
+                `<button onclick="DocTypeManager.openRenameForm('${escapeAttr(t.type_id)}')">编辑</button>`;
             const delItem = isDef
                 ? `<button disabled title="默认类型不可删除">删除</button>`
                 : `<button class="danger" onclick="DocTypeManager.deleteType('${escapeAttr(t.type_id)}')">删除</button>`;
@@ -143,6 +145,8 @@ const DocTypeManager = {
                 </td>
                 <td>${tag}</td>
                 <td>${src}</td>
+                <td>${parsePages}</td>
+                <td>${embeddingText}</td>
                 <td>${t.file_count || 0}</td>
                 <td>${t.field_count || 0}</td>
                 <td>${t.rule_count || 0}</td>
@@ -290,6 +294,8 @@ const DocTypeManager = {
         this.closeRowMenu();
         try {
             const payload = await API.exportDocType(typeId);
+            const parsePages = payload.max_parse_pages ? `${escapeHtml(payload.max_parse_pages)} 页` : '全部';
+            const embeddingText = payload.enable_embedding === 0 ? '关闭' : '执行';
             const fields = (payload.fields || []).map(f =>
                 `<li><code>${escapeHtml(f.field_name)}</code> · ${escapeHtml(f.source_type)}${f.search_type ? '/' + escapeHtml(f.search_type) : ''}</li>`
             ).join('') || '<li style="color:#999;">无字段</li>';
@@ -298,7 +304,9 @@ const DocTypeManager = {
             ).join('') || '<li style="color:#999;">无规则</li>';
             document.getElementById('typeview-title').textContent = `查看配置：${payload.type_name || typeId}`;
             document.getElementById('typeview-body').innerHTML =
-                `<h4 style="margin:0 0 8px;">字段（${(payload.fields || []).length}）</h4><ul>${fields}</ul>
+                `<h4 style="margin:0 0 8px;">类型设置</h4>
+                 <div style="font-size:13px; color:#374151; margin-bottom:14px;">最大解析页数：${parsePages}；向量化：${embeddingText}</div>
+                 <h4 style="margin:0 0 8px;">字段（${(payload.fields || []).length}）</h4><ul>${fields}</ul>
                  <h4 style="margin:16px 0 8px;">规则（${(payload.rules || []).length}）</h4><ul>${rules}</ul>`;
             document.getElementById('typeview-modal-overlay').classList.add('active');
         } catch (e) { Toast.error('查看失败: ' + e.message); }
@@ -384,26 +392,37 @@ const DocTypeManager = {
         } catch (e) { Toast.error('复制失败: ' + e.message); }
     },
 
-    // ─── 类型表单：新建（空白/派生/导入）/ 改名 ───
+    // ─── 类型表单：新建（空白/派生/导入）/ 编辑基础配置 ───
 
     openCreateForm() { this._openTypeForm({ mode: 'create', sourceMode: 'blank' }); },
     openDeriveForm(sourceId) { this._openTypeForm({ mode: 'create', sourceMode: 'derive', sourceId }); },
     openRenameForm(typeId) {
         const t = this.manage.items.find(x => x.type_id === typeId);
-        this._openTypeForm({ mode: 'edit', typeId, typeName: t ? t.type_name : '' });
+        this._openTypeForm({
+            mode: 'edit',
+            typeId,
+            typeName: t ? t.type_name : '',
+            maxParsePages: t ? t.max_parse_pages : null,
+            enableEmbedding: t ? t.enable_embedding : 1,
+            isDefault: t ? t.is_default === 1 : false,
+        });
     },
 
-    _openTypeForm({ mode, sourceMode, sourceId, typeId, typeName }) {
+    _openTypeForm({ mode, sourceMode, sourceId, typeId, typeName, maxParsePages, enableEmbedding, isDefault }) {
         this.closeRowMenu();
-        this.typeForm = { mode };
+        this.typeForm = { mode, originalTypeId: typeId || '', isDefault: !!isDefault };
         this._importPayload = null;
         const isEdit = mode === 'edit';
-        document.getElementById('typeform-title').textContent = isEdit ? '重命名类型' : '新建文档类型';
+        document.getElementById('typeform-title').textContent = isEdit ? '编辑文档类型' : '新建文档类型';
         const idEl = document.getElementById('typeform-id');
         const nameEl = document.getElementById('typeform-name');
+        const maxPagesEl = document.getElementById('typeform-max-parse-pages');
+        const enableEmbeddingEl = document.getElementById('typeform-enable-embedding');
         idEl.value = isEdit ? typeId : '';
-        idEl.disabled = isEdit;
+        idEl.disabled = isEdit && !!isDefault;
         nameEl.value = isEdit ? (typeName || '') : '';
+        maxPagesEl.value = maxParsePages || '';
+        enableEmbeddingEl.checked = enableEmbedding !== 0;
 
         // 来源区仅新建可见
         document.getElementById('typeform-source-block').style.display = isEdit ? 'none' : '';
@@ -414,6 +433,9 @@ const DocTypeManager = {
         if (!isEdit) {
             // 源类型下拉：当前页全部类型（含默认/模板），排除将要新建的（提交时再校验不等于自身）
             const pool = this.manage.items.length ? this.manage.items : this.selectorTypes;
+            const sourceType = sourceId ? pool.find(t => t.type_id === sourceId) : null;
+            maxPagesEl.value = sourceType && sourceType.max_parse_pages ? sourceType.max_parse_pages : '';
+            enableEmbeddingEl.checked = sourceType ? sourceType.enable_embedding !== 0 : true;
             const srcSel = document.getElementById('typeform-source-type');
             srcSel.innerHTML = pool.map(t =>
                 `<option value="${escapeHtml(t.type_id)}">${escapeHtml(t.type_name)} (${escapeHtml(t.type_id)})</option>`
@@ -442,16 +464,50 @@ const DocTypeManager = {
         const mode = this.typeForm.mode;
         const id = (document.getElementById('typeform-id').value || '').trim();
         const name = (document.getElementById('typeform-name').value || '').trim();
+        const maxParseRaw = (document.getElementById('typeform-max-parse-pages').value || '').trim();
+        const maxParsePages = maxParseRaw ? Number(maxParseRaw) : null;
+        const enableEmbedding = document.getElementById('typeform-enable-embedding').checked ? 1 : 0;
         if (!name) { Toast.error('类型名称必填'); return; }
+        if (maxParseRaw && (!Number.isInteger(maxParsePages) || maxParsePages < 1)) {
+            Toast.error('最大解析页数必须是大于 0 的整数');
+            return;
+        }
+        const typePayload = {
+            type_id: id,
+            type_name: name,
+            enabled: 1,
+            max_parse_pages: maxParsePages,
+            enable_embedding: enableEmbedding,
+        };
 
-        // 改名：仅 upsert 名称
+        // 编辑：upsert 类型基础配置
         if (mode === 'edit') {
+            if (!/^[a-zA-Z0-9_-]+$/.test(id)) { Toast.error('类型 ID 只能包含英文/数字/_/-'); return; }
+            const originalId = this.typeForm.originalTypeId || id;
+            const idChanged = id !== originalId;
+            if (idChanged) {
+                const ok = confirm(
+                    `确认将类型 ID 从 "${originalId}" 修改为 "${id}"？\n\n` +
+                    '系统会同步更新该类型下的文件、字段、规则以及派生来源引用。'
+                );
+                if (!ok) return;
+            }
             try {
-                await API.saveDocType({ type_id: id, type_name: name, enabled: 1 });
-                Toast.success('已重命名');
+                await API.updateDocType(originalId, typePayload);
+                if (idChanged && API.getCurrentTypeId() === originalId) {
+                    API.setCurrentTypeId(id);
+                    this._currentName = name;
+                }
+                if (idChanged && this.manage.selected.has(originalId)) {
+                    this.manage.selected.delete(originalId);
+                    this.manage.selected.add(id);
+                }
+                if (this.manage.menuOpenId === originalId) this.manage.menuOpenId = null;
+                Toast.success('类型配置已保存');
                 this.closeTypeForm();
                 await this.loadManage();
                 await this.refresh();
+                if (idChanged && API.getCurrentTypeId() === id) this._reloadCurrentType();
             } catch (e) { Toast.error('保存失败: ' + e.message); }
             return;
         }
@@ -479,7 +535,7 @@ const DocTypeManager = {
 
         try {
             // 1. 建空白类型（带目标名称；upsert 语义）
-            await API.saveDocType({ type_id: id, type_name: name, enabled: 1 });
+            await API.saveDocType(typePayload);
 
             // 2. 按来源灌配置
             if (sourceMode === 'derive') {

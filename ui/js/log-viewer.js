@@ -177,16 +177,18 @@ const LogViewer = {
         if (empty) empty.remove();
 
         const rawLine = data.line || '';
-        const timestamp = this.extractTimestamp(rawLine);
-        const level = (data.level || 'INFO').toLowerCase();
+        const parsed = this.parseLogLine(rawLine, data);
+        const level = (parsed.level || 'INFO').toLowerCase();
 
         const entry = document.createElement('div');
         entry.className = `runtime-log-entry level-${level}`;
         entry.dataset.raw = rawLine;
         entry.innerHTML = `
-            <span class="runtime-log-time">${this.escapeHtml(timestamp)}</span>
-            <span class="runtime-log-level">${this.escapeHtml(data.level || 'INFO')}</span>
-            <span class="runtime-log-text">${this.escapeHtml(rawLine)}</span>
+            <span class="runtime-log-time">${this.escapeHtml(parsed.timestamp)}</span>
+            <span class="runtime-log-level">${this.escapeHtml(parsed.level)}</span>
+            <span class="runtime-log-type" title="${this.escapeAttr(parsed.typeId)}">${this.escapeHtml(parsed.typeId)}</span>
+            <span class="runtime-log-file" title="${this.escapeAttr(parsed.fileId)}">${this.escapeHtml(parsed.fileId)}</span>
+            <span class="runtime-log-text">${this.escapeHtml(parsed.message)}</span>
         `;
 
         this.els.container.appendChild(entry);
@@ -274,6 +276,19 @@ const LogViewer = {
         return new Date().toLocaleTimeString('zh-CN', { hour12: false });
     },
 
+    parseLogLine(line, data = {}) {
+        const rawLine = String(line || '');
+        const parts = rawLine.split(' | ');
+        const hasStructuredLine = parts.length >= 5 && /^[A-Z]+$/.test(parts[1].trim());
+        return {
+            timestamp: data.timestamp || (hasStructuredLine ? parts[0].trim() : this.extractTimestamp(rawLine)),
+            level: (data.level || (hasStructuredLine ? parts[1].trim() : 'INFO')).toUpperCase(),
+            typeId: data.type_id || (hasStructuredLine ? parts[2].trim() : '-') || '-',
+            fileId: data.file_id || (hasStructuredLine ? parts[3].trim() : '-') || '-',
+            message: data.message || (hasStructuredLine ? parts.slice(4).join(' | ') : rawLine),
+        };
+    },
+
     setStatus(state, text) {
         if (!this.els.status) return;
         this.els.status.className = `runtime-log-status ${state}`;
@@ -314,6 +329,10 @@ const LogViewer = {
         const div = document.createElement('div');
         div.textContent = text || '';
         return div.innerHTML;
+    },
+
+    escapeAttr(text) {
+        return this.escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     },
 };
 

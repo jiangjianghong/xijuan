@@ -24,6 +24,8 @@ class DocTypeCreate(BaseModel):
     type_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$", max_length=64)
     type_name: str = Field(..., max_length=200)
     description: Optional[str] = None
+    max_parse_pages: Optional[int] = Field(None, ge=1)
+    enable_embedding: int = Field(1, ge=0, le=1)
     enabled: int = 1
 
 
@@ -31,6 +33,8 @@ class DocTypeResponse(BaseModel):
     type_id: str
     type_name: str
     description: Optional[str] = None
+    max_parse_pages: Optional[int] = None
+    enable_embedding: int = 1
     is_default: int = 0
     enabled: int = 1
     is_template: int = 0
@@ -99,6 +103,8 @@ class ExportPayload(BaseModel):
     type_id: str
     type_name: str
     description: Optional[str] = None
+    max_parse_pages: Optional[int] = Field(None, ge=1)
+    enable_embedding: int = Field(1, ge=0, le=1)
     version: int = 1
     fields: List[ExportFieldItem] = []
     rules: List[ExportRuleItem] = []

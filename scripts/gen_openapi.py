@@ -39,7 +39,7 @@ from blue_print import register_routers
 # ─── 顶层元信息 ──────────────────────────────────────────────
 
 API_INFO_DESCRIPTION = """
-PDF 文档智能处理系统的 HTTP API —— 基于 **FastAPI + MinerU + LLM**，把 PDF 经过
+析卷 AI 的 HTTP API —— 基于 **FastAPI + MinerU + LLM**，把 PDF 经过
 六阶段管线沉淀为结构化的「字段提取结果」与「逻辑分析结论」。
 
 ## 处理管线
@@ -926,7 +926,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
 def build_app() -> FastAPI:
     """构造一个无 lifespan 的 FastAPI，仅注册路由用于导出 schema。"""
     app = FastAPI(
-        title="文档解析与逻辑分析系统",
+        title="析卷 AI",
         version="0.3.0",
         description=API_INFO_DESCRIPTION,
     )

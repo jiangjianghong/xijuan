@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF 文档智能处理系统</title>
+    <title>析卷 AI</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="apple-touch-icon" href="favicon.svg">
     <!-- TailwindCSS -->
@@ -67,7 +67,7 @@
     <!-- Header -->
     <header class="header glass-card relative z-10">
         <i data-lucide="leaf" class="w-6 h-6 text-bio-med mr-2 flex-shrink-0"></i>
-        <h1 class="font-serif text-bio-dark">PDF 文档智能处理系统</h1>
+        <h1 class="font-serif text-bio-dark">析卷 AI</h1>
         <nav class="header-nav">
             <button class="nav-btn active rounded-full" data-page="file-processing" onclick="App.switchPage('file-processing')">
                 <i data-lucide="file-text" class="w-4 h-4"></i>
@@ -620,6 +620,8 @@
                             <th>名称 / ID</th>
                             <th style="width:72px;">标签</th>
                             <th style="width:160px;">来源</th>
+                            <th style="width:92px;">解析页数</th>
+                            <th style="width:82px;">向量化</th>
                             <th style="width:56px;">文件</th>
                             <th style="width:56px;">字段</th>
                             <th style="width:56px;">规则</th>
@@ -682,7 +684,7 @@
         </div>
     </div>
 
-    <!-- Doc Type Form Modal (create: blank/derive/import; edit: rename) -->
+    <!-- Doc Type Form Modal (create: blank/derive/import; edit: base config) -->
     <div id="typeform-modal-overlay" class="rule-modal-overlay">
         <div class="rule-modal" style="max-width:640px;">
             <div class="rule-modal-header">
@@ -697,6 +699,19 @@
                 <div style="margin-bottom:12px;">
                     <label class="dt-form-label">类型名称</label>
                     <input id="typeform-name" type="text" placeholder="如：采购合同" class="form-input" style="width:100%;">
+                </div>
+                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin-bottom:12px;">
+                    <div>
+                        <label class="dt-form-label">最大解析页数</label>
+                        <input id="typeform-max-parse-pages" type="number" min="1" placeholder="留空=全部" class="form-input" style="width:100%;">
+                    </div>
+                    <div>
+                        <label class="dt-form-label">是否执行向量化</label>
+                        <label style="display:flex; align-items:center; gap:8px; height:38px;">
+                            <input id="typeform-enable-embedding" type="checkbox" checked>
+                            <span>执行向量化</span>
+                        </label>
+                    </div>
                 </div>
                 <!-- 来源（仅新建可见） -->
                 <div id="typeform-source-block" style="margin-bottom:12px;">

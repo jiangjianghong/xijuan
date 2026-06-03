@@ -13,7 +13,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.database import get_db
@@ -121,6 +121,8 @@ async def list_doctypes(
                     type_id=t.type_id,
                     type_name=t.type_name,
                     description=t.description,
+                    max_parse_pages=t.max_parse_pages,
+                    enable_embedding=t.enable_embedding if t.enable_embedding is not None else 1,
                     is_default=t.is_default,
                     enabled=t.enabled,
                     is_template=t.is_template,
@@ -149,6 +151,8 @@ async def upsert_doctype(payload: DocTypeCreate, db: AsyncSession = Depends(get_
         # default 类型禁止改 type_id（这里通过 upsert 保护）
         existing.type_name = payload.type_name
         existing.description = payload.description
+        existing.max_parse_pages = payload.max_parse_pages
+        existing.enable_embedding = payload.enable_embedding
         existing.enabled = payload.enabled
         await db.commit()
         return ResponseWrapper(message="类型已更新", data={"type_id": payload.type_id})
@@ -157,12 +161,95 @@ async def upsert_doctype(payload: DocTypeCreate, db: AsyncSession = Depends(get_
         type_id=payload.type_id,
         type_name=payload.type_name,
         description=payload.description,
+        max_parse_pages=payload.max_parse_pages,
+        enable_embedding=payload.enable_embedding,
         is_default=0,
         enabled=payload.enabled,
     )
     db.add(new_t)
     await db.commit()
     return ResponseWrapper(message="类型已创建", data={"type_id": payload.type_id})
+
+
+@router.put("/{type_id}", response_model=ResponseWrapper)
+async def update_doctype(
+    type_id: str, payload: DocTypeCreate, db: AsyncSession = Depends(get_db)
+):
+    """更新类型基础配置；当 payload.type_id 变化时级联重命名 type_id。"""
+    old_type_id = (type_id or "").strip()
+    new_type_id = (payload.type_id or "").strip()
+    if not old_type_id:
+        raise HTTPException(status_code=400, detail="原 type_id 不能为空")
+
+    existing = (
+        await db.execute(select(DocType).where(DocType.type_id == old_type_id))
+    ).scalar_one_or_none()
+    if not existing:
+        raise HTTPException(status_code=404, detail="类型不存在")
+
+    renamed = new_type_id != old_type_id
+    if renamed:
+        if existing.is_default == 1:
+            raise HTTPException(status_code=400, detail="默认类型不可修改 type_id")
+        target = (
+            await db.execute(select(DocType).where(DocType.type_id == new_type_id))
+        ).scalar_one_or_none()
+        if target:
+            raise HTTPException(status_code=409, detail=f"type_id={new_type_id} 已存在")
+
+    file_count = field_count = rule_count = child_count = 0
+    if renamed:
+        file_res = await db.execute(
+            update(FileModel)
+            .where(FileModel.type_id == old_type_id)
+            .values(type_id=new_type_id)
+        )
+        field_res = await db.execute(
+            update(ExtractionField)
+            .where(ExtractionField.type_id == old_type_id)
+            .values(type_id=new_type_id)
+        )
+        rule_res = await db.execute(
+            update(AnalysisRule)
+            .where(AnalysisRule.type_id == old_type_id)
+            .values(type_id=new_type_id)
+        )
+        child_res = await db.execute(
+            update(DocType)
+            .where(DocType.parent_type_id == old_type_id)
+            .values(parent_type_id=new_type_id)
+        )
+        file_count = file_res.rowcount or 0
+        field_count = field_res.rowcount or 0
+        rule_count = rule_res.rowcount or 0
+        child_count = child_res.rowcount or 0
+
+    await db.execute(
+        update(DocType)
+        .where(DocType.type_id == old_type_id)
+        .values(
+            type_id=new_type_id,
+            type_name=payload.type_name,
+            description=payload.description,
+            max_parse_pages=payload.max_parse_pages,
+            enable_embedding=payload.enable_embedding,
+            enabled=payload.enabled,
+        )
+    )
+    await db.commit()
+
+    return ResponseWrapper(
+        message="类型已更新",
+        data={
+            "old_type_id": old_type_id,
+            "type_id": new_type_id,
+            "renamed": renamed,
+            "updated_files": file_count,
+            "updated_fields": field_count,
+            "updated_rules": rule_count,
+            "updated_children": child_count,
+        },
+    )
 
 
 async def _delete_one_type(type_id: str, force: bool, db: AsyncSession) -> dict:
@@ -521,6 +608,8 @@ async def export_configs(type_id: str, db: AsyncSession = Depends(get_db)):
         type_id=target.type_id,
         type_name=target.type_name,
         description=target.description,
+        max_parse_pages=target.max_parse_pages,
+        enable_embedding=target.enable_embedding if target.enable_embedding is not None else 1,
         version=1,
         fields=[
             ExportFieldItem(
@@ -593,6 +682,8 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
             type_id=target_type_id,
             type_name=payload.type_name or target_type_id,
             description=payload.description,
+            max_parse_pages=payload.max_parse_pages,
+            enable_embedding=payload.enable_embedding,
             is_default=0,
             enabled=1,
         )

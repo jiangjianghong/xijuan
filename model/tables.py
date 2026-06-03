@@ -30,6 +30,8 @@ class DocType(Base):
     type_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     type_name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    max_parse_pages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    enable_embedding: Mapped[int] = mapped_column(TINYINT, nullable=False, default=1)
     is_default: Mapped[int] = mapped_column(TINYINT, default=0)
     is_template: Mapped[int] = mapped_column(TINYINT, default=0)
     parent_type_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

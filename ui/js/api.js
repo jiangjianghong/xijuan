@@ -391,6 +391,14 @@ const API = {
         });
     },
 
+    async updateDocType(typeId, data) {
+        const result = await this.request(`/doctype/${encodeURIComponent(typeId)}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+        return result.data;
+    },
+
     /**
      * 删除文档类型
      */

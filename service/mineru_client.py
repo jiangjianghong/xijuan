@@ -18,6 +18,7 @@ async def parse_pdf(
     file_id: Optional[str] = None,
     base_url: Optional[str] = None,
     timeout: Optional[int] = None,
+    max_parse_pages: Optional[int] = None,
 ) -> Dict[str, str]:
     """调用 MinerU 服务解析 PDF 文件。
 
@@ -30,6 +31,7 @@ async def parse_pdf(
         file_content: 文件二进制内容。
         base_url: MinerU 服务地址，默认从配置读取。
         timeout: 超时秒数，默认从配置读取。
+        max_parse_pages: 最大解析页数；为空时解析全部页。
 
     Returns:
         包含 md_content 和 middle_json 的字典。
@@ -37,24 +39,28 @@ async def parse_pdf(
     cfg = get_config().mineru
     base_url = base_url or cfg.base_url
     timeout = timeout or cfg.parse_timeout
+    if max_parse_pages is not None and max_parse_pages <= 0:
+        max_parse_pages = None
 
     url = f"{base_url.rstrip('/')}/file_parse"
 
     files = {"files": (file_name, file_content, "application/pdf")}
+    end_page_id = str(max_parse_pages - 1) if max_parse_pages else "99999"
     data = {
         "return_middle_json": "true",
         "return_model_output": "false",
         "return_md": "true",
         "return_images": "false",
         "start_page_id": "0",
-        "end_page_id": "99999",
+        "end_page_id": end_page_id,
         "parse_method": "auto",
         "lang_list": "ch",
         "output_dir": f"./{file_id}" if file_id else ".",
         "backend": cfg.backend,
     }
 
-    logger.info("调用 MinerU 解析: file_name={}", file_name)
+    page_limit = f"前 {max_parse_pages} 页" if max_parse_pages else "全部页"
+    logger.info("调用 MinerU 解析: file_name={}, page_limit={}", file_name, page_limit)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(url, files=files, data=data)

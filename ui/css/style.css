@@ -2830,7 +2830,7 @@ h1, h2, h3, h4, h5, h6,
 
 .runtime-log-entry {
     display: grid;
-    grid-template-columns: 156px 78px minmax(0, 1fr);
+    grid-template-columns: 156px 72px 112px minmax(132px, 220px) minmax(0, 1fr);
     gap: 10px;
     padding: 3px 14px;
     border-left: 3px solid transparent;
@@ -2842,7 +2842,9 @@ h1, h2, h3, h4, h5, h6,
 }
 
 .runtime-log-time,
-.runtime-log-level {
+.runtime-log-level,
+.runtime-log-type,
+.runtime-log-file {
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
 }
@@ -2854,6 +2856,18 @@ h1, h2, h3, h4, h5, h6,
 .runtime-log-level {
     font-weight: 700;
     letter-spacing: 0;
+}
+
+.runtime-log-type,
+.runtime-log-file {
+    min-width: 0;
+    color: rgba(220, 231, 222, 0.7);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.runtime-log-type {
+    color: rgba(166, 205, 172, 0.82);
 }
 
 .runtime-log-text {

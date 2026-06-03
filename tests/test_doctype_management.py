@@ -20,7 +20,15 @@ async def test_list_backward_compatible_array(client: AsyncClient):
 @pytest.mark.anyio
 async def test_list_paginated_shape_and_filters(client: AsyncClient):
     # 造一个普通类型（is_template=0, is_default=0），代表"副本/普通"
-    await client.post("/doctype", json={"type_id": "dm_plain", "type_name": "DM普通"})
+    await client.post(
+        "/doctype",
+        json={
+            "type_id": "dm_plain",
+            "type_name": "DM普通",
+            "max_parse_pages": 5,
+            "enable_embedding": 0,
+        },
+    )
     try:
         # 分页：返回 {items,total}
         r = await client.get("/doctype/list?page=1&page_size=100")
@@ -33,6 +41,8 @@ async def test_list_paginated_shape_and_filters(client: AsyncClient):
         items = r.json()["data"]["items"]
         assert len(items) == 1 and items[0]["type_id"] == "dm_plain"
         assert items[0]["is_template"] == 0
+        assert items[0]["max_parse_pages"] == 5
+        assert items[0]["enable_embedding"] == 0
         assert "project_id" not in items[0]
 
         # scope=template：含 default（is_default=1），不含 dm_plain
@@ -49,6 +59,19 @@ async def test_list_paginated_shape_and_filters(client: AsyncClient):
 
 
 @pytest.mark.anyio
+async def test_doctype_runtime_config_defaults(client: AsyncClient):
+    """运行配置不传时默认解析全部页并执行向量化。"""
+    await client.post("/doctype", json={"type_id": "dm_defaults", "type_name": "默认配置"})
+    try:
+        r = await client.get("/doctype/list?q=dm_defaults&page=1&page_size=10")
+        item = r.json()["data"]["items"][0]
+        assert item["max_parse_pages"] is None
+        assert item["enable_embedding"] == 1
+    finally:
+        await client.delete("/doctype/dm_defaults?force=true")
+
+
+@pytest.mark.anyio
 async def test_copy_from_records_parent(client: AsyncClient):
     await client.post("/doctype", json={"type_id": "dm_src", "type_name": "源"})
     await client.post("/doctype", json={"type_id": "dm_tgt", "type_name": "目标"})
@@ -61,6 +84,81 @@ async def test_copy_from_records_parent(client: AsyncClient):
     finally:
         await client.delete("/doctype/dm_src?force=true")
         await client.delete("/doctype/dm_tgt?force=true")
+
+
+@pytest.mark.anyio
+async def test_update_doctype_renames_type_id_and_cascades(client: AsyncClient):
+    await client.post("/doctype", json={"type_id": "dm_rename_src", "type_name": "源"})
+    await client.post("/doctype", json={"type_id": "dm_rename_child", "type_name": "子"})
+    try:
+        await client.post(
+            "/doctype/dm_rename_child/copy_from",
+            json={"source_type_id": "dm_rename_src"},
+        )
+        r = await client.post(
+            "/extraction/fields",
+            json={
+                "field_id": "dm_rename_field",
+                "type_id": "dm_rename_src",
+                "field_name": "金额",
+                "source_type": "text",
+                "enabled": 1,
+                "priority": 0,
+                "search_type": "context",
+                "search_config": {},
+            },
+        )
+        assert r.status_code == 200
+        r = await client.post(
+            "/analysis/rules",
+            json={
+                "rule_id": "dm_rename_rule",
+                "type_id": "dm_rename_src",
+                "rule_name": "金额检查",
+                "rule_type": "judge",
+                "expression": "<field_result>dm_rename_field</field_result> 是否存在",
+                "depend_fields": ["dm_rename_field"],
+                "enabled": 1,
+                "priority": 0,
+            },
+        )
+        assert r.status_code == 200
+
+        r = await client.put(
+            "/doctype/dm_rename_src",
+            json={
+                "type_id": "dm_rename_new",
+                "type_name": "新源",
+                "max_parse_pages": 9,
+                "enable_embedding": 0,
+                "enabled": 1,
+            },
+        )
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert data["renamed"] is True
+        assert data["updated_fields"] == 1
+        assert data["updated_rules"] == 1
+        assert data["updated_children"] == 1
+
+        r = await client.get("/doctype/list?q=dm_rename_new&page=1&page_size=10")
+        item = r.json()["data"]["items"][0]
+        assert item["type_id"] == "dm_rename_new"
+        assert item["type_name"] == "新源"
+        assert item["max_parse_pages"] == 9
+        assert item["enable_embedding"] == 0
+
+        r = await client.get("/doctype/list?q=dm_rename_child&page=1&page_size=10")
+        assert r.json()["data"]["items"][0]["parent_type_id"] == "dm_rename_new"
+
+        r = await client.get("/extraction/fields?type_id=dm_rename_new")
+        assert any(f["field_id"] == "dm_rename_field" for f in r.json()["data"])
+        r = await client.get("/analysis/rules?type_id=dm_rename_new")
+        assert any(rule["rule_id"] == "dm_rename_rule" for rule in r.json()["data"])
+    finally:
+        await client.delete("/doctype/dm_rename_src?force=true")
+        await client.delete("/doctype/dm_rename_new?force=true")
+        await client.delete("/doctype/dm_rename_child?force=true")
 
 
 @pytest.mark.anyio

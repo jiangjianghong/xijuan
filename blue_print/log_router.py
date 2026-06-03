@@ -71,7 +71,7 @@ def _normalize_level(level: str | None) -> str:
 
 
 def _detect_level(line: str) -> str:
-    parts = line.split(" | ", 3)
+    parts = line.split(" | ", 4)
     if len(parts) >= 3:
         maybe_level = parts[1].strip().upper()
         if maybe_level in _LOG_LEVELS:
@@ -79,11 +79,45 @@ def _detect_level(line: str) -> str:
     return "INFO"
 
 
+def _parse_log_line(line: str) -> dict:
+    """解析当前日志格式，给前端分列展示；兼容旧格式。"""
+    raw = line.rstrip("\r\n")
+    parts = raw.split(" | ", 4)
+    if len(parts) >= 5 and parts[1].strip().upper() in _LOG_LEVELS:
+        return {
+            "timestamp": parts[0].strip(),
+            "level": parts[1].strip().upper(),
+            "type_id": parts[2].strip() or "-",
+            "file_id": parts[3].strip() or "-",
+            "message": parts[4],
+        }
+    if len(parts) >= 3 and parts[1].strip().upper() in _LOG_LEVELS:
+        return {
+            "timestamp": parts[0].strip(),
+            "level": parts[1].strip().upper(),
+            "type_id": "-",
+            "file_id": "-",
+            "message": parts[-1],
+        }
+    return {
+        "timestamp": "",
+        "level": "INFO",
+        "type_id": "-",
+        "file_id": "-",
+        "message": raw,
+    }
+
+
 def _line_payload(path: Path, line: str, offset: int | None = None) -> dict:
+    parsed = _parse_log_line(line)
     return {
         "file": path.name,
-        "level": _detect_level(line),
+        "level": parsed["level"],
         "line": line.rstrip("\r\n"),
+        "timestamp": parsed["timestamp"],
+        "type_id": parsed["type_id"],
+        "file_id": parsed["file_id"],
+        "message": parsed["message"],
         "offset": offset,
     }
 

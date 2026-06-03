@@ -1,4 +1,4 @@
-# PDF 文档智能处理系统
+# 析卷 AI
 
 基于 MinerU + LLM 的 PDF 文档处理 Pipeline，支持解析、AI 表格名称校验、向量化、字段提取和逻辑分析。
 

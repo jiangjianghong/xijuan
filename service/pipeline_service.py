@@ -24,9 +24,12 @@ from service.embedding_service import embed_chunks, submit_to_milvus
 from service.extraction_service import run_extraction, run_extraction_stream
 from service.parse_service import parse_file, save_file_content
 from service.table_service import parse_tables, save_tables
+from service.type_config_service import get_file_type_runtime_config
 from utils.callback import notify_callback
 from utils.milvus_client import MilvusClient
 from utils.page_mapping import build_page_mapping
+
+EMBEDDING_DISABLED_MESSAGE = "配置已关闭此文件的向量化，直接进行下一步"
 
 
 def _sse_event(event: str, data: Dict[str, Any]) -> str:
@@ -204,36 +207,27 @@ async def run_pipeline_stream(
             "message": "开始向量化",
         })
 
+        type_cfg = await get_file_type_runtime_config(file_id, session)
+        embedding_started_at = datetime.now()
         stmt = (
             update(File)
             .where(File.file_id == file_id)
-            .values(progress="embedding", start_embedding_time=datetime.now())
+            .values(
+                progress="embedding",
+                start_embedding_time=embedding_started_at,
+                error=None,
+            )
         )
         await session.execute(stmt)
         await session.commit()
 
-        try:
-            embeddings = await embed_chunks(chunks)
-            yield _sse_event("embedding", {
-                "file_id": file_id,
-                "stage": "embedding",
-                "message": "向量化完成",
-                "embedding_count": len(embeddings),
-            })
-
-            yield _sse_event("milvus_submitting", {
-                "file_id": file_id,
-                "stage": "milvus_submitting",
-                "message": "开始提交向量到 Milvus",
-            })
-
-            await submit_to_milvus(chunks, embeddings)
-            yield _sse_event("milvus_submitted", {
-                "file_id": file_id,
-                "stage": "milvus_submitted",
-                "message": "向量已提交到 Milvus",
-            })
-
+        if not type_cfg.enable_embedding:
+            logger.info(
+                "{}: file_id={}, type_id={}",
+                EMBEDDING_DISABLED_MESSAGE,
+                file_id,
+                type_cfg.type_id,
+            )
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
@@ -241,15 +235,50 @@ async def run_pipeline_stream(
             )
             await session.execute(stmt)
             await session.commit()
-        except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="embedding_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
-            raise
+            yield _sse_event("embedding_skipped", {
+                "file_id": file_id,
+                "stage": "embedding_skipped",
+                "message": EMBEDDING_DISABLED_MESSAGE,
+            })
+        else:
+            try:
+                embeddings = await embed_chunks(chunks)
+                yield _sse_event("embedding", {
+                    "file_id": file_id,
+                    "stage": "embedding",
+                    "message": "向量化完成",
+                    "embedding_count": len(embeddings),
+                })
+
+                yield _sse_event("milvus_submitting", {
+                    "file_id": file_id,
+                    "stage": "milvus_submitting",
+                    "message": "开始提交向量到 Milvus",
+                })
+
+                await submit_to_milvus(chunks, embeddings)
+                yield _sse_event("milvus_submitted", {
+                    "file_id": file_id,
+                    "stage": "milvus_submitted",
+                    "message": "向量已提交到 Milvus",
+                })
+
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(end_embedding_time=datetime.now())
+                )
+                await session.execute(stmt)
+                await session.commit()
+            except Exception as e:
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="embedding_failed", error=_format_exception(e))
+                )
+                await session.execute(stmt)
+                await session.commit()
+                raise
 
         # ── 阶段 5: 字段提取 ──────────────────────────────────────
         yield _sse_event("tasks_loading", {
@@ -516,19 +545,23 @@ async def run_pipeline(
         )
 
         # ── 阶段 4: 向量化 ────────────────────────────────────────
+        type_cfg = await get_file_type_runtime_config(file_id, session)
         stmt = (
             update(File)
             .where(File.file_id == file_id)
-            .values(progress="embedding", start_embedding_time=datetime.now())
+            .values(progress="embedding", start_embedding_time=datetime.now(), error=None)
         )
         await session.execute(stmt)
         await session.commit()
 
         await notify_callback(callback_url, file_id, "embedding")
-        try:
-            embeddings = await embed_chunks(chunks)
-            await submit_to_milvus(chunks, embeddings)
-
+        if not type_cfg.enable_embedding:
+            logger.info(
+                "{}: file_id={}, type_id={}",
+                EMBEDDING_DISABLED_MESSAGE,
+                file_id,
+                type_cfg.type_id,
+            )
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
@@ -536,15 +569,27 @@ async def run_pipeline(
             )
             await session.execute(stmt)
             await session.commit()
-        except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="embedding_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
-            raise
+        else:
+            try:
+                embeddings = await embed_chunks(chunks)
+                await submit_to_milvus(chunks, embeddings)
+
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(end_embedding_time=datetime.now())
+                )
+                await session.execute(stmt)
+                await session.commit()
+            except Exception as e:
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="embedding_failed", error=_format_exception(e))
+                )
+                await session.execute(stmt)
+                await session.commit()
+                raise
 
         # embedding stage_done 不携带数据，仅作完成信号
         await notify_callback(callback_url, file_id, "embedding", event="stage_done")
@@ -880,6 +925,7 @@ async def run_from_stage_stream(
                 "message": "开始向量化",
             })
 
+            type_cfg = await get_file_type_runtime_config(file_id, session)
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
@@ -888,28 +934,13 @@ async def run_from_stage_stream(
             await session.execute(stmt)
             await session.commit()
 
-            try:
-                embeddings = await embed_chunks(chunks)
-                yield _sse_event("embedding", {
-                    "file_id": file_id,
-                    "stage": "embedding",
-                    "message": "向量化完成",
-                    "embedding_count": len(embeddings),
-                })
-
-                yield _sse_event("milvus_submitting", {
-                    "file_id": file_id,
-                    "stage": "milvus_submitting",
-                    "message": "开始提交向量到 Milvus",
-                })
-
-                await submit_to_milvus(chunks, embeddings)
-                yield _sse_event("milvus_submitted", {
-                    "file_id": file_id,
-                    "stage": "milvus_submitted",
-                    "message": "向量已提交到 Milvus",
-                })
-
+            if not type_cfg.enable_embedding:
+                logger.info(
+                    "{}: file_id={}, type_id={}",
+                    EMBEDDING_DISABLED_MESSAGE,
+                    file_id,
+                    type_cfg.type_id,
+                )
                 stmt = (
                     update(File)
                     .where(File.file_id == file_id)
@@ -917,15 +948,50 @@ async def run_from_stage_stream(
                 )
                 await session.execute(stmt)
                 await session.commit()
-            except Exception as e:
-                stmt = (
-                    update(File)
-                    .where(File.file_id == file_id)
-                    .values(progress="embedding_failed", error=_format_exception(e))
-                )
-                await session.execute(stmt)
-                await session.commit()
-                raise
+                yield _sse_event("embedding_skipped", {
+                    "file_id": file_id,
+                    "stage": "embedding_skipped",
+                    "message": EMBEDDING_DISABLED_MESSAGE,
+                })
+            else:
+                try:
+                    embeddings = await embed_chunks(chunks)
+                    yield _sse_event("embedding", {
+                        "file_id": file_id,
+                        "stage": "embedding",
+                        "message": "向量化完成",
+                        "embedding_count": len(embeddings),
+                    })
+
+                    yield _sse_event("milvus_submitting", {
+                        "file_id": file_id,
+                        "stage": "milvus_submitting",
+                        "message": "开始提交向量到 Milvus",
+                    })
+
+                    await submit_to_milvus(chunks, embeddings)
+                    yield _sse_event("milvus_submitted", {
+                        "file_id": file_id,
+                        "stage": "milvus_submitted",
+                        "message": "向量已提交到 Milvus",
+                    })
+
+                    stmt = (
+                        update(File)
+                        .where(File.file_id == file_id)
+                        .values(end_embedding_time=datetime.now())
+                    )
+                    await session.execute(stmt)
+                    await session.commit()
+                except Exception as e:
+                    stmt = (
+                        update(File)
+                        .where(File.file_id == file_id)
+                        .values(progress="embedding_failed", error=_format_exception(e))
+                    )
+                    await session.execute(stmt)
+                    await session.commit()
+                    raise
 
             current_stage = "extracting"
 
@@ -1277,6 +1343,7 @@ async def run_from_stage(
         if not chunks:
             raise ValueError("缺少分块数据，无法从 embedding 阶段开始")
 
+        type_cfg = await get_file_type_runtime_config(file_id, session)
         stmt = (
             update(File)
             .where(File.file_id == file_id)
@@ -1286,10 +1353,13 @@ async def run_from_stage(
         await session.commit()
 
         await notify_callback(callback_url, file_id, "embedding")
-        try:
-            embeddings = await embed_chunks(chunks)
-            await submit_to_milvus(chunks, embeddings)
-
+        if not type_cfg.enable_embedding:
+            logger.info(
+                "{}: file_id={}, type_id={}",
+                EMBEDDING_DISABLED_MESSAGE,
+                file_id,
+                type_cfg.type_id,
+            )
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
@@ -1297,15 +1367,27 @@ async def run_from_stage(
             )
             await session.execute(stmt)
             await session.commit()
-        except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="embedding_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
-            raise
+        else:
+            try:
+                embeddings = await embed_chunks(chunks)
+                await submit_to_milvus(chunks, embeddings)
+
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(end_embedding_time=datetime.now())
+                )
+                await session.execute(stmt)
+                await session.commit()
+            except Exception as e:
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="embedding_failed", error=_format_exception(e))
+                )
+                await session.execute(stmt)
+                await session.commit()
+                raise
 
         # embedding stage_done 不携带数据，仅作完成信号
         await notify_callback(callback_url, file_id, "embedding", event="stage_done")

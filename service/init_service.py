@@ -66,6 +66,8 @@ async def init_database() -> None:
             ("extraction_field", "vl_extract_prompt", "TEXT NULL"),
             ("doc_type", "is_template", "TINYINT NOT NULL DEFAULT 0"),
             ("doc_type", "parent_type_id", "VARCHAR(64) NULL"),
+            ("doc_type", "max_parse_pages", "INT NULL"),
+            ("doc_type", "enable_embedding", "TINYINT NOT NULL DEFAULT 1"),
         ]
         for table_name, column_name, column_type in migrations:
             result = await conn.execute(
@@ -165,11 +167,17 @@ async def init_database() -> None:
         await conn.execute(
             text("UPDATE analysis_rule SET type_id = 'default' WHERE type_id IS NULL OR type_id = ''")
         )
+        await conn.execute(
+            text("UPDATE doc_type SET enable_embedding = 1 WHERE enable_embedding IS NULL")
+        )
 
         # 确保默认类型记录存在
         await conn.execute(
-            text("INSERT IGNORE INTO doc_type (type_id, type_name, description, is_default, enabled) "
-                 "VALUES ('default', '默认类型', '系统默认文档类型，不可删除', 1, 1)")
+            text(
+                "INSERT IGNORE INTO doc_type "
+                "(type_id, type_name, description, is_default, enabled, enable_embedding) "
+                "VALUES ('default', '默认类型', '系统默认文档类型，不可删除', 1, 1, 1)"
+            )
         )
 
     logger.info("数据库表检查完成")

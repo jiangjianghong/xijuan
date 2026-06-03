@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.tables import File, FileContent
 from service.mineru_client import parse_pdf
+from service.type_config_service import get_file_type_runtime_config
 from utils.config import get_config
 
 
@@ -30,12 +31,21 @@ async def parse_file(
 
     try:
         cfg = get_config().mineru
+        type_cfg = await get_file_type_runtime_config(file_id, session)
+        if type_cfg.max_parse_pages:
+            logger.info(
+                "文件 {} 使用类型 {} 的最大解析页数: {}",
+                file_id,
+                type_cfg.type_id,
+                type_cfg.max_parse_pages,
+            )
         result = await parse_pdf(
             file_name=file_path,
             file_content=file_content_bytes,
             file_id=file_id,
             base_url=cfg.base_url,
             timeout=cfg.parse_timeout,
+            max_parse_pages=type_cfg.max_parse_pages,
         )
         content = result["md_content"]
         middle_json_str = result["middle_json"]

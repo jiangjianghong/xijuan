@@ -14,8 +14,8 @@ async def test_lineage_columns_kept_and_project_dropped():
     await init_database()  # 幂等：建表 + 补列 + 回收项目维度
     engine = get_engine()
     async with engine.connect() as conn:
-        # 血缘维度保留
-        for col in ("is_template", "parent_type_id"):
+        # 血缘维度与运行配置保留
+        for col in ("is_template", "parent_type_id", "max_parse_pages", "enable_embedding"):
             r = await conn.execute(
                 text(
                     "SELECT COUNT(*) FROM information_schema.COLUMNS "

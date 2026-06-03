@@ -11,6 +11,7 @@ from loguru import logger
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from logs import log_context
 from model.database import get_db
 from model.schemas import (
     AnalysisResultItem,
@@ -116,7 +117,7 @@ async def batch_delete_files(
     """
     deleted_count = 0
     failed_ids: list[str] = []
-    cleanup_ids: list[str] = []
+    cleanup_items: list[tuple[str, str]] = []
 
     for file_id in request.file_ids:
         try:
@@ -135,16 +136,17 @@ async def batch_delete_files(
             await db.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
             await db.execute(delete(FileModel).where(FileModel.file_id == file_id))
 
-            cleanup_ids.append(file_id)
+            cleanup_items.append((file_id, file_record.type_id or "default"))
             deleted_count += 1
         except Exception as e:
-            logger.error("删除文件失败 (file_id={}): {}", file_id, e)
+            with log_context(file_id=file_id):
+                logger.error("删除文件失败 (file_id={}): {}", file_id, e)
             failed_ids.append(file_id)
 
     await db.commit()
 
-    for fid in cleanup_ids:
-        background_tasks.add_task(_cleanup_file_artifacts, fid)
+    for fid, item_type_id in cleanup_items:
+        background_tasks.add_task(_cleanup_file_artifacts, fid, item_type_id)
 
     return ResponseWrapper(
         data=BatchDeleteResponse(
@@ -159,26 +161,39 @@ async def batch_delete_files(
 # ─────────────────────────────────────────────────────────────
 
 
-async def _run_pipeline_background(file_id: str, file_name: str, file_content_bytes: bytes, callback_url: str | None = None):
+async def _run_pipeline_background(
+    file_id: str,
+    file_name: str,
+    file_content_bytes: bytes,
+    callback_url: str | None = None,
+    type_id: str = "default",
+):
     """后台运行 pipeline。"""
     from model.database import get_session_factory
 
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        try:
-            await run_pipeline(file_id, file_name, file_content_bytes, session, callback_url=callback_url)
-        except Exception as e:
-            logger.exception("Pipeline 后台执行失败: type={}, repr={}", type(e).__name__, repr(e))
+    with log_context(file_id=file_id, type_id=type_id):
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            try:
+                await run_pipeline(file_id, file_name, file_content_bytes, session, callback_url=callback_url)
+            except Exception as e:
+                logger.exception("Pipeline 后台执行失败: type={}, repr={}", type(e).__name__, repr(e))
 
 
-async def _stream_pipeline_generator(file_id: str, file_name: str, file_content_bytes: bytes):
+async def _stream_pipeline_generator(
+    file_id: str,
+    file_name: str,
+    file_content_bytes: bytes,
+    type_id: str = "default",
+):
     """流式 pipeline 生成器，内部管理数据库会话。"""
     from model.database import get_session_factory
 
-    session_factory = get_session_factory()
-    async with session_factory() as session:
-        async for event in run_pipeline_stream(file_id, file_name, file_content_bytes, session):
-            yield event
+    with log_context(file_id=file_id, type_id=type_id):
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            async for event in run_pipeline_stream(file_id, file_name, file_content_bytes, session):
+                yield event
 
 
 @router.post("/parse")
@@ -211,13 +226,14 @@ async def parse_file(
     file_id = generate_file_id(type_id, file_name)
 
     # 持久化原始 PDF 字节，VL 抽取依赖（写盘失败不阻断主流程）
-    try:
-        from utils import vl_client as _vl_client_for_storage
-        pdf_target = _vl_client_for_storage.pdf_path(file_id)
-        pdf_target.parent.mkdir(parents=True, exist_ok=True)
-        pdf_target.write_bytes(file_content_bytes)
-    except Exception as e:
-        logger.warning("写盘 PDF 失败（不阻断 pipeline）: file_id={} error={}", file_id, e)
+    with log_context(file_id=file_id, type_id=type_id):
+        try:
+            from utils import vl_client as _vl_client_for_storage
+            pdf_target = _vl_client_for_storage.pdf_path(file_id)
+            pdf_target.parent.mkdir(parents=True, exist_ok=True)
+            pdf_target.write_bytes(file_content_bytes)
+        except Exception as e:
+            logger.warning("写盘 PDF 失败（不阻断 pipeline）: file_id={} error={}", file_id, e)
 
     # file_id 已带纳秒时间戳，每次上传都是全新记录，直接建档
     new_file = FileModel(
@@ -232,7 +248,7 @@ async def parse_file(
 
     if mode == "async":
         background_tasks.add_task(
-            _run_pipeline_background, file_id, file_name, file_content_bytes, callback_url
+            _run_pipeline_background, file_id, file_name, file_content_bytes, callback_url, type_id
         )
         return ResponseWrapper(
             message="文件已提交处理（异步）",
@@ -240,7 +256,7 @@ async def parse_file(
         )
     elif mode == "stream":
         return StreamingResponse(
-            _stream_pipeline_generator(file_id, file_name, file_content_bytes),
+            _stream_pipeline_generator(file_id, file_name, file_content_bytes, type_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -249,7 +265,8 @@ async def parse_file(
             },
         )
     else:
-        await run_pipeline(file_id, file_name, file_content_bytes, db, callback_url=callback_url)
+        with log_context(file_id=file_id, type_id=type_id):
+            await run_pipeline(file_id, file_name, file_content_bytes, db, callback_url=callback_url)
         return ResponseWrapper(
             message="文件处理完成",
             data={"file_id": file_id},
@@ -280,23 +297,24 @@ async def get_file_status(file_id: str, db: AsyncSession = Depends(get_db)):
     )
 
 
-def _cleanup_file_artifacts(file_id: str) -> None:
+def _cleanup_file_artifacts(file_id: str, type_id: str = "default") -> None:
     """删除接口的后台清理:Milvus 向量 + 持久化 PDF。
 
     设计为同步函数,通过 BackgroundTasks 调度时 Starlette 会用
     anyio.run_in_threadpool 执行,所以不会阻塞 asyncio 事件循环。
     任何异常都吞掉只记日志——清理失败不影响用户已收到的删除成功响应。
     """
-    try:
-        get_milvus_client().delete_by_file_id(file_id)
-    except Exception as e:
-        logger.warning("Milvus 删除失败 file_id={}: {}", file_id, e)
+    with log_context(file_id=file_id, type_id=type_id):
+        try:
+            get_milvus_client().delete_by_file_id(file_id)
+        except Exception as e:
+            logger.warning("Milvus 删除失败 file_id={}: {}", file_id, e)
 
-    try:
-        from utils import vl_client as _vl_client_for_storage
-        _vl_client_for_storage.pdf_path(file_id).unlink(missing_ok=True)
-    except Exception as e:
-        logger.warning("清理 PDF 失败 file_id={}: {}", file_id, e)
+        try:
+            from utils import vl_client as _vl_client_for_storage
+            _vl_client_for_storage.pdf_path(file_id).unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning("清理 PDF 失败 file_id={}: {}", file_id, e)
 
 
 @router.delete("/{file_id}", response_model=ResponseWrapper)
@@ -325,7 +343,7 @@ async def delete_file(
     await db.execute(delete(FileModel).where(FileModel.file_id == file_id))
     await db.commit()
 
-    background_tasks.add_task(_cleanup_file_artifacts, file_id)
+    background_tasks.add_task(_cleanup_file_artifacts, file_id, file_record.type_id or "default")
 
     return ResponseWrapper(message="文件已删除")
 
@@ -351,6 +369,7 @@ async def retry_file(
 
     if not file_record:
         raise HTTPException(status_code=404, detail="文件不存在")
+    type_id = file_record.type_id or "default"
 
     stage_aliases = {
         "table_name_validating": "tableing",
@@ -368,10 +387,11 @@ async def retry_file(
         async def _retry_stream_generator():
             from model.database import get_session_factory
 
-            session_factory = get_session_factory()
-            async with session_factory() as session:
-                async for event in run_from_stage_stream(file_id, stage, session):
-                    yield event
+            with log_context(file_id=file_id, type_id=type_id):
+                session_factory = get_session_factory()
+                async with session_factory() as session:
+                    async for event in run_from_stage_stream(file_id, stage, session):
+                        yield event
 
         return StreamingResponse(
             _retry_stream_generator(),
@@ -383,24 +403,26 @@ async def retry_file(
             },
         )
     elif mode == "sync":
-        await run_from_stage(file_id, stage, db, callback_url=callback_url)
+        with log_context(file_id=file_id, type_id=type_id):
+            await run_from_stage(file_id, stage, db, callback_url=callback_url)
         return ResponseWrapper(message=f"已从 {stage} 阶段重试完成")
     else:
         # async 模式（默认）
         async def _run_from_stage_background():
             from model.database import get_session_factory
 
-            session_factory = get_session_factory()
-            async with session_factory() as session:
-                try:
-                    await run_from_stage(file_id, stage, session, callback_url=callback_url)
-                except Exception as e:
-                    logger.exception(
-                        "从 {} 阶段重试失败: type={}, repr={}",
-                        stage,
-                        type(e).__name__,
-                        repr(e),
-                    )
+            with log_context(file_id=file_id, type_id=type_id):
+                session_factory = get_session_factory()
+                async with session_factory() as session:
+                    try:
+                        await run_from_stage(file_id, stage, session, callback_url=callback_url)
+                    except Exception as e:
+                        logger.exception(
+                            "从 {} 阶段重试失败: type={}, repr={}",
+                            stage,
+                            type(e).__name__,
+                            repr(e),
+                        )
 
         background_tasks.add_task(_run_from_stage_background)
         return ResponseWrapper(message=f"已从 {stage} 阶段开始重试")

@@ -1,4 +1,4 @@
-# 文档解析与逻辑分析系统 - API 接口文档
+# 析卷 AI - API 接口文档
 
 > **版本**: 0.3.0
 > **技术栈**: FastAPI + SQLAlchemy (async) + MySQL + Milvus + DashScope (Qwen / Qwen-VL)
