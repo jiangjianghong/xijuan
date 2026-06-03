@@ -524,65 +524,40 @@
                 <button class="rule-modal-close" onclick="DocTypeManager.closeManageDialog()">&times;</button>
             </div>
             <div class="rule-modal-body">
-                <!-- 工具条 -->
-                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
-                    <input id="dt-search" type="text" placeholder="搜索 类型ID / 名称" class="form-input" style="width:220px;"
+                <!-- 工具条：搜索 + 范围 + 新建 -->
+                <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+                    <input id="dt-search" type="text" placeholder="搜索 类型ID / 名称" class="form-input" style="width:240px;"
                            oninput="DocTypeManager.onSearchInput()">
-                    <select id="dt-scope" class="form-select" style="width:120px;" onchange="DocTypeManager.onFilterChange()">
+                    <select id="dt-scope" class="form-select" style="width:120px;" onchange="DocTypeManager.onScopeChange()">
                         <option value="all">全部</option>
-                        <option value="template">模板</option>
+                        <option value="template">★ 模板</option>
                         <option value="copy">副本</option>
                     </select>
-                    <select id="dt-project" class="form-select" style="width:160px;" onchange="DocTypeManager.onFilterChange()">
-                        <option value="">全部项目</option>
-                        <option value="__ungrouped__">未分组</option>
-                    </select>
                     <div style="flex:1;"></div>
-                    <button class="btn btn-secondary" onclick="DocTypeManager.openProjectDialog()">项目管理</button>
-                    <button class="btn btn-secondary" onclick="DocTypeManager.triggerImport()">导入</button>
-                </div>
-                <!-- 新增表单 -->
-                <div style="display:flex; gap:8px; align-items:flex-end; margin-bottom:12px;">
-                    <div style="flex:1;">
-                        <label style="font-size:12px; color:#4F775D;">类型 ID</label>
-                        <input id="doctype-new-id" type="text" placeholder="如：contract" class="form-input" style="width:100%;">
-                    </div>
-                    <div style="flex:1;">
-                        <label style="font-size:12px; color:#4F775D;">类型名称</label>
-                        <input id="doctype-new-name" type="text" placeholder="如：采购合同" class="form-input" style="width:100%;">
-                    </div>
-                    <div style="flex:1;">
-                        <label style="font-size:12px; color:#4F775D;">归属项目（选填）</label>
-                        <select id="doctype-new-project" class="form-select" style="width:100%;"><option value="">未分组</option></select>
-                    </div>
-                    <button class="btn btn-primary" onclick="DocTypeManager.createTypeFromForm()">新增</button>
+                    <button class="btn btn-primary" onclick="DocTypeManager.openCreateForm()">+ 新建类型</button>
                 </div>
                 <!-- 表格 -->
-                <table class="rule-table">
+                <table class="rule-table dt-table">
                     <thead>
                         <tr>
                             <th style="width:32px;"><input type="checkbox" id="dt-check-all" onclick="DocTypeManager.toggleSelectAll(this.checked)"></th>
-                            <th>类型 ID</th>
-                            <th>名称</th>
-                            <th>标签</th>
-                            <th>项目</th>
-                            <th>来源</th>
-                            <th>文件</th>
-                            <th>字段</th>
-                            <th>规则</th>
-                            <th>操作</th>
+                            <th>名称 / ID</th>
+                            <th style="width:72px;">标签</th>
+                            <th style="width:160px;">来源</th>
+                            <th style="width:56px;">文件</th>
+                            <th style="width:56px;">字段</th>
+                            <th style="width:56px;">规则</th>
+                            <th style="width:170px;">操作</th>
                         </tr>
                     </thead>
                     <tbody id="doctype-table-body"></tbody>
                 </table>
             </div>
             <div class="rule-modal-footer" style="display:flex; align-items:center; gap:12px;">
-                <span id="dt-selected-count" style="font-size:12px; color:#4F775D;">已选 0 项</span>
-                <button class="btn btn-danger" onclick="DocTypeManager.batchDelete()">批量删除</button>
-                <select id="dt-batch-project" class="form-select" style="width:150px;">
-                    <option value="">移动到…(未分组)</option>
-                </select>
-                <button class="btn btn-secondary" onclick="DocTypeManager.batchMove()">移动</button>
+                <div id="dt-batch-bar" style="display:none; align-items:center; gap:12px;">
+                    <span id="dt-selected-count" style="font-size:12px; color:#4F775D;">已选 0 项</span>
+                    <button class="btn btn-danger" onclick="DocTypeManager.batchDelete()">批量删除</button>
+                </div>
                 <div style="flex:1;"></div>
                 <button class="btn btn-ghost" onclick="DocTypeManager.prevPage()">◀</button>
                 <span id="dt-page-info" style="font-size:12px; color:#4F775D;">1 / 1</span>
@@ -631,32 +606,65 @@
         </div>
     </div>
 
-    <!-- Project Manage Modal -->
-    <div id="project-modal-overlay" class="rule-modal-overlay">
-        <div class="rule-modal" style="max-width:560px;">
+    <!-- Doc Type Form Modal (create: blank/derive/import; edit: rename) -->
+    <div id="typeform-modal-overlay" class="rule-modal-overlay">
+        <div class="rule-modal" style="max-width:640px;">
             <div class="rule-modal-header">
-                <h3>项目管理</h3>
-                <button class="rule-modal-close" onclick="DocTypeManager.closeProjectDialog()">&times;</button>
+                <h3 id="typeform-title">新建文档类型</h3>
+                <button class="rule-modal-close" onclick="DocTypeManager.closeTypeForm()">&times;</button>
             </div>
             <div class="rule-modal-body">
-                <div style="display:flex; gap:8px; align-items:flex-end; margin-bottom:12px;">
-                    <div style="flex:1;">
-                        <label style="font-size:12px; color:#4F775D;">项目 ID</label>
-                        <input id="project-new-id" type="text" placeholder="如：contract_group" class="form-input" style="width:100%;">
-                    </div>
-                    <div style="flex:1;">
-                        <label style="font-size:12px; color:#4F775D;">项目名称</label>
-                        <input id="project-new-name" type="text" placeholder="如：合同组" class="form-input" style="width:100%;">
-                    </div>
-                    <button class="btn btn-primary" onclick="DocTypeManager.createProjectFromForm()">新增/改名</button>
+                <div style="margin-bottom:12px;">
+                    <label class="dt-form-label">类型 ID</label>
+                    <input id="typeform-id" type="text" placeholder="如：contract" class="form-input" style="width:100%;">
                 </div>
-                <table class="rule-table">
-                    <thead><tr><th>项目 ID</th><th>名称</th><th>类型数</th><th>操作</th></tr></thead>
-                    <tbody id="project-table-body"></tbody>
-                </table>
+                <div style="margin-bottom:12px;">
+                    <label class="dt-form-label">类型名称</label>
+                    <input id="typeform-name" type="text" placeholder="如：采购合同" class="form-input" style="width:100%;">
+                </div>
+                <!-- 来源（仅新建可见） -->
+                <div id="typeform-source-block" style="margin-bottom:12px;">
+                    <label class="dt-form-label">初始配置来源</label>
+                    <select id="typeform-source-mode" class="form-select" style="width:100%;" onchange="DocTypeManager.onCreateSourceModeChange()">
+                        <option value="blank">空白（不带任何字段/规则）</option>
+                        <option value="derive">从已有类型派生（复制字段+规则）</option>
+                        <option value="import">从 JSON 文件导入</option>
+                    </select>
+                </div>
+                <!-- 派生选项 -->
+                <div id="typeform-derive-block" style="display:none;">
+                    <div style="margin-bottom:12px;">
+                        <label class="dt-form-label">源类型</label>
+                        <select id="typeform-source-type" class="form-select" style="width:100%;"></select>
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label class="dt-form-label">复制内容</label>
+                        <div style="display:flex; gap:16px; padding:6px 0;">
+                            <label><input type="checkbox" id="typeform-copy-fields" checked> 全部字段</label>
+                            <label><input type="checkbox" id="typeform-copy-rules" checked> 全部规则</label>
+                        </div>
+                    </div>
+                </div>
+                <!-- 导入选项 -->
+                <div id="typeform-import-block" style="display:none;">
+                    <div style="margin-bottom:12px;">
+                        <label class="dt-form-label">JSON 文件</label>
+                        <input id="typeform-import-file" type="file" accept=".json,application/json" class="form-input" style="width:100%;">
+                        <div id="typeform-import-hint" style="font-size:12px; color:#4F775D; margin-top:4px;"></div>
+                    </div>
+                </div>
+                <!-- 冲突策略（派生 / 导入） -->
+                <div id="typeform-conflict-block" style="display:none; margin-bottom:12px;">
+                    <label class="dt-form-label">同名冲突处理</label>
+                    <select id="typeform-conflict" class="form-select" style="width:100%;">
+                        <option value="rename">自动改名（追加" (副本)"）</option>
+                        <option value="skip">跳过同名</option>
+                    </select>
+                </div>
             </div>
             <div class="rule-modal-footer">
-                <button class="btn btn-ghost" onclick="DocTypeManager.closeProjectDialog()">关闭</button>
+                <button class="btn btn-ghost" onclick="DocTypeManager.closeTypeForm()">取消</button>
+                <button class="btn btn-primary" onclick="DocTypeManager.submitTypeForm()">保存</button>
             </div>
         </div>
     </div>
