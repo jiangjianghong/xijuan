@@ -21,6 +21,7 @@ from model.schemas import (
     BatchAssignProjectRequest,
     CopyConfigsRequest,
     CopyConfigsResponse,
+    DocTypeBatchDeleteRequest,
     DocTypeCreate,
     DocTypeResponse,
     ExportFieldItem,
@@ -188,58 +189,67 @@ async def upsert_doctype(payload: DocTypeCreate, db: AsyncSession = Depends(get_
     return ResponseWrapper(message="类型已创建", data={"type_id": payload.type_id})
 
 
-@router.delete("/{type_id}", response_model=ResponseWrapper)
-async def delete_doctype(
-    type_id: str,
-    force: bool = Query(False, description="是否级联删除该类型下所有文件与配置"),
-    db: AsyncSession = Depends(get_db),
-):
-    """删除类型。
-    - 默认类型（is_default=1）禁止删除
-    - 默认拒绝有关联文件/字段/规则的类型；force=true 时级联删除
-    """
-    stmt = select(DocType).where(DocType.type_id == type_id)
-    existing = (await db.execute(stmt)).scalar_one_or_none()
-    if not existing:
-        raise HTTPException(status_code=404, detail="类型不存在")
-    if existing.is_default == 1:
-        raise HTTPException(status_code=400, detail="默认类型不可删除")
+async def _delete_one_type(type_id: str, force: bool, db: AsyncSession) -> dict:
+    """删除单个类型（不 commit，由调用方统一提交）。
 
-    file_count = (await db.execute(
-        select(func.count(FileModel.file_id)).where(FileModel.type_id == type_id)
-    )).scalar() or 0
-    field_count = (await db.execute(
-        select(func.count(ExtractionField.field_id)).where(ExtractionField.type_id == type_id)
-    )).scalar() or 0
-    rule_count = (await db.execute(
-        select(func.count(AnalysisRule.rule_id)).where(AnalysisRule.type_id == type_id)
-    )).scalar() or 0
+    返回 {type_id, ok, reason?, deleted_files, deleted_fields, deleted_rules}。
+    不抛异常，便于批量场景逐条记录结果。
+    """
+    existing = (
+        await db.execute(select(DocType).where(DocType.type_id == type_id))
+    ).scalar_one_or_none()
+    if not existing:
+        return {"type_id": type_id, "ok": False, "reason": "类型不存在"}
+    if existing.is_default == 1:
+        return {"type_id": type_id, "ok": False, "reason": "默认类型不可删除"}
+
+    file_count = (
+        await db.execute(
+            select(func.count(FileModel.file_id)).where(FileModel.type_id == type_id)
+        )
+    ).scalar() or 0
+    field_count = (
+        await db.execute(
+            select(func.count(ExtractionField.field_id)).where(
+                ExtractionField.type_id == type_id
+            )
+        )
+    ).scalar() or 0
+    rule_count = (
+        await db.execute(
+            select(func.count(AnalysisRule.rule_id)).where(AnalysisRule.type_id == type_id)
+        )
+    ).scalar() or 0
 
     if (file_count or field_count or rule_count) and not force:
-        raise HTTPException(
-            status_code=409,
-            detail=(
+        return {
+            "type_id": type_id,
+            "ok": False,
+            "reason": (
                 f"类型下仍有数据：文件 {file_count}，字段 {field_count}，规则 {rule_count}。"
                 " 传 force=true 级联删除"
             ),
-        )
+        }
 
     if force:
-        # 找出所有该类型下的文件 ID
         file_ids = [
             row[0]
             for row in (
-                await db.execute(select(FileModel.file_id).where(FileModel.type_id == type_id))
+                await db.execute(
+                    select(FileModel.file_id).where(FileModel.type_id == type_id)
+                )
             ).fetchall()
         ]
-
-        # 删除文件级关联数据
         if file_ids:
             await db.execute(delete(FileContent).where(FileContent.file_id.in_(file_ids)))
             await db.execute(delete(FileTable).where(FileTable.file_id.in_(file_ids)))
             await db.execute(delete(FileChunk).where(FileChunk.file_id.in_(file_ids)))
-            await db.execute(delete(ExtractionResult).where(ExtractionResult.file_id.in_(file_ids)))
-            await db.execute(delete(AnalysisResult).where(AnalysisResult.file_id.in_(file_ids)))
+            await db.execute(
+                delete(ExtractionResult).where(ExtractionResult.file_id.in_(file_ids))
+            )
+            await db.execute(
+                delete(AnalysisResult).where(AnalysisResult.file_id.in_(file_ids))
+            )
             await db.execute(delete(FileModel).where(FileModel.file_id.in_(file_ids)))
 
             try:
@@ -253,31 +263,68 @@ async def delete_doctype(
             except Exception as e:
                 logger.warning("Milvus 连接失败: {}", e)
 
-            # 级联清理 PDF 持久化文件
             try:
                 from utils import vl_client as _vl_client_for_storage
+
                 for fid in file_ids:
                     try:
                         _vl_client_for_storage.pdf_path(fid).unlink(missing_ok=True)
                     except Exception as e:
-                        logger.warning("doctype 级联清理 PDF 失败 file_id={}: {}", fid, e)
+                        logger.warning("级联清理 PDF 失败 file_id={}: {}", fid, e)
             except Exception as e:
                 logger.warning("vl_client 导入失败，跳过 PDF 清理: {}", e)
 
-        # 删除字段/规则
         await db.execute(delete(ExtractionField).where(ExtractionField.type_id == type_id))
         await db.execute(delete(AnalysisRule).where(AnalysisRule.type_id == type_id))
 
     await db.delete(existing)
+    return {
+        "type_id": type_id,
+        "ok": True,
+        "deleted_files": file_count if force else 0,
+        "deleted_fields": field_count if force else 0,
+        "deleted_rules": rule_count if force else 0,
+    }
+
+
+@router.delete("/{type_id}", response_model=ResponseWrapper)
+async def delete_doctype(
+    type_id: str,
+    force: bool = Query(False, description="是否级联删除该类型下所有文件与配置"),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除类型（单个）。默认类型不可删；有关联数据需 force=true。"""
+    res = await _delete_one_type(type_id, force, db)
+    if not res["ok"]:
+        reason = res["reason"]
+        if reason == "类型不存在":
+            raise HTTPException(status_code=404, detail=reason)
+        if "默认类型" in reason:
+            raise HTTPException(status_code=400, detail=reason)
+        raise HTTPException(status_code=409, detail=reason)
     await db.commit()
     return ResponseWrapper(
         message="类型已删除",
         data={
             "type_id": type_id,
-            "deleted_files": file_count if force else 0,
-            "deleted_fields": field_count if force else 0,
-            "deleted_rules": rule_count if force else 0,
+            "deleted_files": res["deleted_files"],
+            "deleted_fields": res["deleted_fields"],
+            "deleted_rules": res["deleted_rules"],
         },
+    )
+
+
+@router.post("/batch_delete", response_model=ResponseWrapper)
+async def batch_delete_types(
+    req: DocTypeBatchDeleteRequest, db: AsyncSession = Depends(get_db)
+):
+    """批量删除类型；逐条记录结果，默认类型/不存在/有数据未 force 的会被跳过。"""
+    results = [await _delete_one_type(tid, req.force, db) for tid in req.type_ids]
+    await db.commit()
+    deleted = sum(1 for r in results if r["ok"])
+    return ResponseWrapper(
+        message=f"批量删除完成：成功 {deleted}/{len(results)}",
+        data={"results": results, "deleted": deleted},
     )
 
 

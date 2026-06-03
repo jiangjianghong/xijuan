@@ -146,5 +146,32 @@ async def test_promote_demote(client: AsyncClient):
         await client.delete("/doctype/dm_pm?force=true")
 
 
+@pytest.mark.anyio
+async def test_batch_delete(client: AsyncClient):
+    await client.post("/doctype", json={"type_id": "dm_d1", "type_name": "D1"})
+    await client.post("/doctype", json={"type_id": "dm_d2", "type_name": "D2"})
+    # 批量删除（含一个不存在的 + default 应被跳过）
+    r = await client.post(
+        "/doctype/batch_delete",
+        json={"type_ids": ["dm_d1", "dm_d2", "default", "no_such"], "force": True},
+    )
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["deleted"] == 2
+    by_id = {x["type_id"]: x for x in data["results"]}
+    assert by_id["dm_d1"]["ok"] is True
+    assert by_id["default"]["ok"] is False  # 默认类型被跳过
+    assert by_id["no_such"]["ok"] is False
+
+    # 确认已删
+    r = await client.get("/doctype/list?scope=copy&page=1&page_size=500")
+    ids = [i["type_id"] for i in r.json()["data"]["items"]]
+    assert "dm_d1" not in ids and "dm_d2" not in ids
+    # default 仍在
+    r = await client.get("/doctype/list?page=1&page_size=500")
+    assert any(i["type_id"] == "default" for i in r.json()["data"]["items"])
+
+
+
 
 

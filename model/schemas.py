@@ -148,6 +148,11 @@ class BatchAssignProjectRequest(BaseModel):
     project_id: Optional[str] = None  # None 表示移出项目（未分组）
 
 
+class DocTypeBatchDeleteRequest(BaseModel):
+    type_ids: List[str]
+    force: bool = False
+
+
 # ── 文件相关 ────────────────────────────────────────────────
 
 class FileStatusResponse(BaseModel):
