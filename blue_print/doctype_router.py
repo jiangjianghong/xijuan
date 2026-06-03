@@ -450,6 +450,14 @@ async def copy_configs(
         resp.copied_rules += 1
 
     resp.missing_dependencies = missing_deps
+
+    # 记录血缘：目标由源复制而来（默认类型不 reparent）
+    if target.is_default != 1:
+        target.parent_type_id = req.source_type_id
+        # 目标未分组时继承源项目；已分组不覆盖
+        if target.project_id is None and source.project_id is not None:
+            target.project_id = source.project_id
+
     await db.commit()
 
     return ResponseWrapper(message="配置复制完成", data=resp.model_dump())

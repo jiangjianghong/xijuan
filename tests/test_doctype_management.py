@@ -100,3 +100,26 @@ async def test_batch_assign_and_project_delete_unbinds(client: AsyncClient):
         await client.delete("/doctype/projects/dm_pa")
 
 
+@pytest.mark.anyio
+async def test_copy_from_records_parent_and_inherits_project(client: AsyncClient):
+    await client.post("/doctype/projects", json={"project_id": "dm_pc", "project_name": "源项目"})
+    await client.post("/doctype", json={"type_id": "dm_src", "type_name": "源"})
+    await client.post(
+        "/doctype/batch_assign_project",
+        json={"type_ids": ["dm_src"], "project_id": "dm_pc"},
+    )
+    await client.post("/doctype", json={"type_id": "dm_tgt", "type_name": "目标"})
+    try:
+        r = await client.post("/doctype/dm_tgt/copy_from", json={"source_type_id": "dm_src"})
+        assert r.status_code == 200
+        r = await client.get("/doctype/list?q=dm_tgt&page=1&page_size=10")
+        item = r.json()["data"]["items"][0]
+        assert item["parent_type_id"] == "dm_src"
+        assert item["project_id"] == "dm_pc"  # 目标原未分组 → 继承源项目
+    finally:
+        await client.delete("/doctype/dm_src?force=true")
+        await client.delete("/doctype/dm_tgt?force=true")
+        await client.delete("/doctype/projects/dm_pc")
+
+
+
