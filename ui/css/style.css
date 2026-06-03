@@ -1248,6 +1248,15 @@ h1, h2, h3, h4, h5, h6,
     opacity: 1;
 }
 
+/* ── 文档类型管理弹窗：全屏（铺满，无圆角） ── */
+#doctype-modal-overlay .rule-modal {
+    width: 100vw;
+    height: 100vh;
+    max-width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+}
+
 .rule-modal-header {
     display: flex;
     justify-content: space-between;
