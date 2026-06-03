@@ -9,6 +9,12 @@
  */
 const DocTypeManager = {
     types: [],
+    selectorTypes: [],     // 选择器用（模板+默认）
+    manage: {              // 管理弹窗状态
+        items: [], total: 0, page: 1, pageSize: 20,
+        q: '', scope: 'all', projectId: '', selected: new Set(),
+    },
+    projects: [],
 
     async init() {
         await this.refresh();
@@ -19,25 +25,31 @@ const DocTypeManager = {
     },
 
     async refresh() {
+        // 选择器只需要模板 + 默认（数组形态）
         try {
-            this.types = await API.getDocTypes();
+            this.selectorTypes = await API.listDocTypes({ scope: 'template' });
         } catch (e) {
             console.error('加载文档类型失败:', e);
-            this.types = [{ type_id: 'default', type_name: '默认类型', is_default: 1, file_count: 0, field_count: 0, rule_count: 0 }];
+            this.selectorTypes = [{ type_id: 'default', type_name: '默认类型', is_default: 1, file_count: 0 }];
         }
+        // 保留 this.types 供复制弹窗等旧逻辑使用（来源候选 = 模板+默认，合理）
+        this.types = this.selectorTypes;
         this.renderSelector();
-        this.renderManageTable();
     },
 
     renderSelector() {
         const sel = document.getElementById('doctype-selector');
         if (!sel) return;
         const current = API.getCurrentTypeId();
-        sel.innerHTML = this.types.map(t =>
+        const list = (this.selectorTypes || []).slice();
+        // 当前选中若不是模板/默认，则补进选择器，避免"看不到自己"
+        if (current && !list.some(t => t.type_id === current)) {
+            list.push({ type_id: current, type_name: current, file_count: 0 });
+        }
+        sel.innerHTML = list.map(t =>
             `<option value="${escapeHtml(t.type_id)}">${escapeHtml(t.type_name)} (${t.file_count || 0})</option>`
         ).join('');
-        // 若当前选中的类型不在列表中（被删了），回退到 default
-        const exists = this.types.some(t => t.type_id === current);
+        const exists = list.some(t => t.type_id === current);
         sel.value = exists ? current : 'default';
         if (!exists) API.setCurrentTypeId('default');
     },
