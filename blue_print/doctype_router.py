@@ -792,3 +792,33 @@ async def batch_assign_project(
         message="批量归类完成",
         data={"count": len(req.type_ids), "project_id": req.project_id},
     )
+
+
+@router.post("/{type_id}/promote", response_model=ResponseWrapper)
+async def promote_type(type_id: str, db: AsyncSession = Depends(get_db)):
+    """把副本/普通类型标记为模板（保留 parent_type_id 作血缘）。"""
+    t = (
+        await db.execute(select(DocType).where(DocType.type_id == type_id))
+    ).scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="类型不存在")
+    if t.is_default == 1:
+        raise HTTPException(status_code=400, detail="默认类型无需标记")
+    t.is_template = 1
+    await db.commit()
+    return ResponseWrapper(message="已标记为模板", data={"type_id": type_id})
+
+
+@router.post("/{type_id}/demote", response_model=ResponseWrapper)
+async def demote_type(type_id: str, db: AsyncSession = Depends(get_db)):
+    """取消模板标记。"""
+    t = (
+        await db.execute(select(DocType).where(DocType.type_id == type_id))
+    ).scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="类型不存在")
+    if t.is_default == 1:
+        raise HTTPException(status_code=400, detail="默认类型不可操作")
+    t.is_template = 0
+    await db.commit()
+    return ResponseWrapper(message="已取消模板标记", data={"type_id": type_id})

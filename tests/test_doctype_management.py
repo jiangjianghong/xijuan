@@ -122,4 +122,29 @@ async def test_copy_from_records_parent_and_inherits_project(client: AsyncClient
         await client.delete("/doctype/projects/dm_pc")
 
 
+@pytest.mark.anyio
+async def test_promote_demote(client: AsyncClient):
+    await client.post("/doctype", json={"type_id": "dm_pm", "type_name": "待提升"})
+    try:
+        r = await client.post("/doctype/dm_pm/promote")
+        assert r.status_code == 200
+        r = await client.get("/doctype/list?q=dm_pm&page=1&page_size=10")
+        assert r.json()["data"]["items"][0]["is_template"] == 1
+        # 提升后进入 template 过滤
+        r = await client.get("/doctype/list?scope=template&page=1&page_size=500")
+        assert any(i["type_id"] == "dm_pm" for i in r.json()["data"]["items"])
+
+        r = await client.post("/doctype/dm_pm/demote")
+        assert r.status_code == 200
+        r = await client.get("/doctype/list?q=dm_pm&page=1&page_size=10")
+        assert r.json()["data"]["items"][0]["is_template"] == 0
+
+        # 默认类型不可操作
+        r = await client.post("/doctype/default/promote")
+        assert r.status_code == 400
+    finally:
+        await client.delete("/doctype/dm_pm?force=true")
+
+
+
 
