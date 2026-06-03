@@ -33,20 +33,7 @@ class DocType(Base):
     is_default: Mapped[int] = mapped_column(TINYINT, default=0)
     is_template: Mapped[int] = mapped_column(TINYINT, default=0)
     parent_type_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     enabled: Mapped[int] = mapped_column(TINYINT, default=1)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
-    )
-
-
-class Project(Base):
-    __tablename__ = "project"
-
-    project_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    project_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

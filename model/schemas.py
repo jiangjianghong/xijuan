@@ -35,8 +35,6 @@ class DocTypeResponse(BaseModel):
     enabled: int = 1
     is_template: int = 0
     parent_type_id: Optional[str] = None
-    project_id: Optional[str] = None
-    project_name: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -126,26 +124,6 @@ class ImportConfigsResponse(BaseModel):
     copied_rules: int = 0
     skipped_rules: int = 0
     missing_dependencies: List[str] = []
-
-
-class ProjectCreate(BaseModel):
-    project_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$", max_length=64)
-    project_name: str = Field(..., max_length=200)
-    description: Optional[str] = None
-
-
-class ProjectResponse(BaseModel):
-    project_id: str
-    project_name: str
-    description: Optional[str] = None
-    type_count: int = 0
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-
-class BatchAssignProjectRequest(BaseModel):
-    type_ids: List[str]
-    project_id: Optional[str] = None  # None 表示移出项目（未分组）
 
 
 class DocTypeBatchDeleteRequest(BaseModel):
