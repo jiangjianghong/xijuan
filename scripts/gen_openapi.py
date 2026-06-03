@@ -65,11 +65,8 @@ parsing → tableing → chunking → embedding → extracting → analyzing →
 - **文档类型 (`type_id`)** —— 隔离不同格式文件的字段/规则配置。每个文件归属唯一
   `type_id`（默认 `default`，不可删除）。抽取字段 `extraction_field`、逻辑规则
   `analysis_rule` 均按 `type_id` 隔离，**不跨类型共享**；共享靠显式复制 / 导入。
-- **类型的两个正交维度**
-  - **血缘**：`is_template`（模板标记，`promote` / `demote` 切换）+ `parent_type_id`
-    （复制来源，`copy_from` / `import` 自动记录）。
-  - **项目**：`doc_type.project_id → project` 表，纯算法端分类；一个类型只属一个项目，
-    不影响文件处理 / 流水线。
+- **类型的血缘维度**：`is_template`（模板标记，`promote` / `demote` 切换）+ `parent_type_id`
+  （复制来源，`copy_from` / `import` 自动记录）。
 - **`file_id`** —— 由 `(type_id, file_name, time.time_ns(), secrets.token_hex(8))`
   取 `SHA256[:32]` 生成；**每次上传都是新 ID，不做去重**。
 - **`field_id` / `rule_id`** —— **全局唯一**（不只是类型内唯一）。upsert 时若 ID 已被
@@ -105,8 +102,7 @@ TAGS = [
     {
         "name": "doctype",
         "description": (
-            "文档类型管理：CRUD、跨类型复制、导出/导入、模板血缘（promote/demote）、"
-            "项目分组（projects + batch_assign_project）、批量删除。"
+            "文档类型管理：CRUD、跨类型复制、导出/导入、模板血缘（promote/demote）、批量删除。"
         ),
     },
     {"name": "file", "description": "文件解析（async/sync/stream）、进度查询、删除、按阶段重试、各阶段结果获取。"},
@@ -125,20 +121,19 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "get": {
             "summary": "列出文档类型（可搜索/过滤/分页）",
             "description": (
-                "列出文档类型，每项附 `file_count` / `field_count` / `rule_count` 计数与 `project_name`。\n\n"
+                "列出文档类型，每项附 `file_count` / `field_count` / `rule_count` 计数。\n\n"
                 "**返回形态（重要）**\n"
                 "- 传齐 `page` + `page_size` → `data = {items: [...], total: <int>}`（分页）\n"
                 "- 否则 → `data = [...]`（数组，向后兼容；不传任何参数即旧的全量行为）\n\n"
                 "**过滤**\n"
                 "- `q`：对 `type_id` / `type_name` 做 `LIKE %q%` 模糊匹配\n"
                 "- `scope`：`all`（全部）/ `template`（`is_template=1` 或默认类型）/ "
-                "`copy`（既非模板也非默认的副本）\n"
-                "- `project_id`：精确匹配所属项目；特殊值 `__ungrouped__` 表示 `project_id IS NULL`（未分组）\n\n"
+                "`copy`（既非模板也非默认的副本）\n\n"
                 "**排序**：默认类型恒置顶（`is_default DESC` 优先），其后按 `sort` —— "
                 "`created_at`（降序，默认）或 `type_name`（升序）。\n\n"
                 "**性能**：计数对当前结果集的 `type_id` 用 3 条 `GROUP BY` 聚合，避免 N+1。\n\n"
                 "**每项字段**：`type_id` / `type_name` / `description` / `is_default` / `enabled` / "
-                "`is_template` / `parent_type_id` / `project_id` / `project_name` / `created_at` / "
+                "`is_template` / `parent_type_id` / `created_at` / "
                 "`updated_at` / `file_count` / `field_count` / `rule_count`。\n\n"
                 "> 顶部类型选择器通常只取模板 + 默认 + 当前选中；副本的搜索/管理在「管理」弹窗里用本接口完成。"
             ),
@@ -153,8 +148,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "- **更新**（`type_id` 已存在）：只更新 `type_name` / `description` / `enabled`；"
                 "**`is_default` 保留原值**（默认类型可改名但不会变成非默认，反之亦然）\n\n"
                 "**不经由本接口设置**的字段：`is_template`（用 `promote`/`demote`）、"
-                "`parent_type_id`（由 `copy_from`/`import` 自动记录）、`project_id`"
-                "（用 `batch_assign_project`）。\n\n"
+                "`parent_type_id`（由 `copy_from`/`import` 自动记录）。\n\n"
                 "`type_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。返回 `data={type_id}`。"
             ),
         }
@@ -195,8 +189,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "- `on_conflict=rename`（默认）：自动加 ` (副本)`（再冲突则 ` (副本2)`…）后缀\n"
                 "- 规则的 `depend_fields` 按 **field_name** 在目标类型重映射到新的 `field_id`；"
                 "找不到同名字段的依赖记入 `missing_dependencies` 返回，规则仍照常创建（仅丢失该依赖）\n\n"
-                "**血缘副作用**（目标非默认类型时）：把目标 `parent_type_id` 记为 `source_type_id`；"
-                "若目标当前未分组而源有项目，则继承源的 `project_id`（目标已分组则不覆盖）。\n\n"
+                "**血缘副作用**（目标非默认类型时）：把目标 `parent_type_id` 记为 `source_type_id`。\n\n"
                 "**错误码**：400（源=目标）/ 404（源或目标不存在）。\n\n"
                 "返回 `data=CopyConfigsResponse{copied_fields, skipped_fields, copied_rules, "
                 "skipped_rules, missing_dependencies}`。"
@@ -226,41 +219,6 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "- 规则按 `depend_field_names` 在目标类型重映射；缺失依赖进 `missing_dependencies`\n\n"
                 "返回 `data=ImportConfigsResponse{target_type_id, created_type, copied_fields, "
                 "skipped_fields, copied_rules, skipped_rules, missing_dependencies}`。"
-            ),
-        }
-    },
-    "/doctype/projects": {
-        "get": {
-            "summary": "列出所有项目",
-            "description": (
-                "按 `created_at` 升序列出项目，每项附 `type_count`（该项目下的类型数，`GROUP BY` 聚合）。\n\n"
-                "项目是纯算法端分类，**不影响文件处理 / 流水线**。返回 `data=[ProjectResponse, ...]`。"
-            ),
-        },
-        "post": {
-            "summary": "新增/改名项目（upsert）",
-            "description": (
-                "按 `project_id` upsert：已存在 → 更新 `project_name` / `description`；不存在 → 新建。\n\n"
-                "`project_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。返回 `data={project_id}`。"
-            ),
-        },
-    },
-    "/doctype/projects/{project_id}": {
-        "delete": {
-            "summary": "删除项目",
-            "description": (
-                "**只解绑不删类型**：先把所有成员类型的 `project_id` 置空（移出项目），再删项目本身。\n\n"
-                "项目不存在 → 404。返回 `data={project_id}`。"
-            ),
-        }
-    },
-    "/doctype/batch_assign_project": {
-        "post": {
-            "summary": "批量归类到项目",
-            "description": (
-                "把 `type_ids` 批量归入 `project_id`；`project_id=null` 表示**移出项目**（置为未分组）。\n\n"
-                "一个类型只属一个项目，本操作直接覆盖原归属。`project_id` 非空时会校验项目存在"
-                "（不存在 → 404）。返回 `data={count, project_id}`。"
             ),
         }
     },
@@ -483,13 +441,21 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "/extraction/fields/{field_id}": {
         "delete": {
             "summary": "删除字段配置",
-            "description": "**硬删除**（直接 DELETE，不走 `enabled=0` 软删除）。字段不存在 → 404。",
+            "description": (
+                "**硬删除**（直接 `DELETE` 整行，不走 `enabled=0` 软删除），仅删除字段配置本身——"
+                "该字段历史已写入的 `extraction_result` 行**不会级联清理**。\n\n"
+                "字段不存在 → **404**。成功返回 `message=\"字段配置已删除\"`，`data=null`。"
+            ),
         }
     },
     "/extraction/fields/{field_id}/check": {
         "get": {
             "summary": "检查字段 ID 是否存在",
-            "description": "用于前端在保存前检测 ID 重复。返回 `data={exists: bool}`。",
+            "description": (
+                "只读探测 `field_id` 是否已被占用（前端保存前查重用）。\n\n"
+                "**全局**查存在性（不按 `type_id` 过滤），因此 `exists=true` 也可能是该 ID 被**其它类型**占用"
+                "——与 upsert 的跨类型 409 冲突一致。无论是否存在都返回 **200** + `data={exists: bool}`（不会 404）。"
+            ),
         }
     },
     "/extraction/test": {
@@ -554,13 +520,21 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "/analysis/rules/{rule_id}": {
         "delete": {
             "summary": "删除分析规则",
-            "description": "**硬删除**。规则不存在 → 404。",
+            "description": (
+                "**硬删除**（直接 `DELETE` 整行，不走 `enabled=0` 软删除），仅删除规则配置本身——"
+                "该规则历史已写入的 `analysis_result` 行**不会级联清理**。\n\n"
+                "规则不存在 → **404**。成功返回 `message=\"规则配置已删除\"`，`data=null`。"
+            ),
         }
     },
     "/analysis/rules/{rule_id}/check": {
         "get": {
             "summary": "检查规则 ID 是否存在",
-            "description": "用于前端在保存前检测 ID 重复。返回 `data={exists: bool}`。",
+            "description": (
+                "只读探测 `rule_id` 是否已被占用（前端保存前查重用）。\n\n"
+                "**全局**查存在性（不按 `type_id` 过滤），因此 `exists=true` 也可能是该 ID 被**其它类型**占用"
+                "——与 upsert 的跨类型 409 冲突一致。无论是否存在都返回 **200** + `data={exists: bool}`（不会 404）。"
+            ),
         }
     },
     "/analysis/test": {
@@ -620,7 +594,6 @@ GLOBAL_PARAM_DOCS: Dict[str, str] = {
     "file_id": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。",
     "field_id": "字段配置 ID（全局唯一，匹配 `^[a-zA-Z0-9_]+$`，最长 100）。",
     "rule_id": "分析规则 ID（全局唯一，匹配 `^[a-zA-Z0-9_]+$`，最长 100）。",
-    "project_id": "项目 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。",
     "type_id": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。",
     "page": "页码，从 1 开始。",
     "page_size": "每页条数。",
@@ -634,7 +607,6 @@ PARAM_OVERRIDES: Dict[tuple, Dict[str, Any]] = {
             "description": "范围过滤：`all` 全部 / `template` 模板（含默认类型）/ `copy` 副本（既非模板也非默认）。",
             "enum": ["all", "template", "copy"],
         },
-        "project_id": "项目过滤；精确匹配 `project_id`，特殊值 `__ungrouped__` 表示未分组（`project_id IS NULL`）；省略不过滤。",
         "page": "页码（从 1 开始）。**与 `page_size` 同时传入才启用分页**，返回 `{items, total}`；否则返回数组。",
         "page_size": "每页条数（1–500）。**与 `page` 同时传入才启用分页**。",
         "sort": {
@@ -744,23 +716,6 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "enabled": "是否启用，1 启用 / 0 停用。",
         },
         "examples": [{"type_id": "financial_report", "type_name": "财务报告", "description": "上市公司年度财报", "enabled": 1}],
-    },
-    "ProjectCreate": {
-        "description": "创建/改名项目的请求体（按 `project_id` upsert）。项目是纯算法端分类。",
-        "properties": {
-            "project_id": "项目 ID，匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。",
-            "project_name": "项目显示名（最长 200）。",
-            "description": "项目描述（可空）。",
-        },
-        "examples": [{"project_id": "bank_2026", "project_name": "2026 银行授信", "description": "银行授信场景类型集合"}],
-    },
-    "BatchAssignProjectRequest": {
-        "description": "批量把类型归入项目；`project_id=null` 表示移出（未分组）。",
-        "properties": {
-            "type_ids": "要归类的类型 ID 列表。",
-            "project_id": "目标项目 ID；`null` 表示移出项目（置未分组）。非空时校验项目存在。",
-        },
-        "examples": [{"type_ids": ["financial_report", "contract"], "project_id": "bank_2026"}],
     },
     "DocTypeBatchDeleteRequest": {
         "description": "批量删除类型的请求体；逐条记录结果，不因单条失败中断。",

@@ -65,10 +65,7 @@
 
 文档类型用于隔离不同格式文件的抽取字段与逻辑规则配置。每个文件归属唯一 `type_id`（默认 `default`），抽取字段与规则按 `type_id` 隔离，**配置不跨类型共享**。
 
-类型有两个正交维度：
-
-- **血缘**：`is_template`（模板标记，由 [3.7](#37-副本模板提升--取消) promote/demote 切换）+ `parent_type_id`（复制来源，由 [3.4](#34-复制配置同实例跨类型) `copy_from` 自动记录）。顶部类型选择器只展示「模板 + 默认 + 当前选中」。
-- **项目**：`project_id` → `project` 表（见 [3.10](#310-项目管理-doctypeprojects)），纯算法端分类，一个类型最多属于一个项目，**不影响文件处理 / 管线**。
+类型有**血缘**维度：`is_template`（模板标记，由 [3.7](#37-副本模板提升--取消) promote/demote 切换）+ `parent_type_id`（复制来源，由 [3.4](#34-复制配置同实例跨类型) `copy_from` 自动记录）。顶部类型选择器只展示「模板 + 默认 + 当前选中」。
 
 ### 3.1 列出 / 搜索文档类型
 
@@ -80,7 +77,6 @@
 |------|------|--------|------|
 | `q` | `string` | - | 模糊搜索 `type_id` / `type_name` |
 | `scope` | `string` | `all` | 范围过滤：`all` / `template`（模板，含默认类型）/ `copy`（副本，即非模板且非默认） |
-| `project_id` | `string` | - | 项目过滤；传 `__ungrouped__` 表示未分组（`project_id IS NULL`） |
 | `page` | `int` | - | 页码，≥1 |
 | `page_size` | `int` | - | 每页条数，1–500 |
 | `sort` | `string` | `created_at` | 排序：`created_at`（倒序）/ `type_name`（升序）；默认类型恒置顶 |
@@ -92,15 +88,13 @@
 
 > 文件/字段/规则计数对当前结果集用 3 条 `GROUP BY` 聚合，不再逐类型查询（修复 N+1）。
 
-**单项字段**（在原有基础上新增 `is_template` / `parent_type_id` / `project_id` / `project_name`）
+**单项字段**（在原有基础上新增 `is_template` / `parent_type_id`）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `is_default` | `int` | 1=默认类型 |
 | `is_template` | `int` | 1=模板 |
 | `parent_type_id` | `string \| null` | 复制来源类型（`copy_from` 自动记录） |
-| `project_id` | `string \| null` | 归属项目 ID |
-| `project_name` | `string \| null` | 归属项目名称（联表带出） |
 | `file_count` / `field_count` / `rule_count` | `int` | 关联计数 |
 
 **分页响应示例**（`?scope=copy&page=1&page_size=20`）
@@ -119,8 +113,6 @@
         "enabled": 1,
         "is_template": 0,
         "parent_type_id": "annual_report_tpl",
-        "project_id": "finance",
-        "project_name": "财务组",
         "created_at": "2025-02-01T10:00:00",
         "updated_at": "2025-02-01T10:00:00",
         "file_count": 30,
@@ -148,8 +140,6 @@
       "enabled": 1,
       "is_template": 0,
       "parent_type_id": null,
-      "project_id": null,
-      "project_name": null,
       "created_at": "2025-01-15T10:00:00",
       "updated_at": "2025-01-15T10:00:00",
       "file_count": 12,
@@ -256,10 +246,7 @@
 
 `missing_dependencies` 列出**规则 depend_fields** 在目标类型中找不到同名字段的位置（格式 `规则名::字段名`），不会自动跳过规则，调用方需自行处理。
 
-**副作用（自动记录血缘 / 继承项目）**：复制成功后，若目标类型不是默认类型，则——
-
-- 记录 `parent_type_id = source_type_id`（血缘来源）；
-- 若目标类型原本未分组（`project_id IS NULL`）且源类型已归项目，则目标**继承**源的 `project_id`（已分组则不覆盖）。
+**副作用（自动记录血缘）**：复制成功后，若目标类型不是默认类型，则记录 `parent_type_id = source_type_id`（血缘来源）。
 
 ---
 
@@ -412,90 +399,6 @@
 ```
 
 > 与单删 `DELETE /doctype/{type_id}` 共用底层删除逻辑（`_delete_one_type`）。
-
----
-
-### 3.9 批量归类到项目
-
-把若干类型一次性归入某项目，或移出项目（未分组）。
-
-- **URL**: `POST /doctype/batch_assign_project`
-- **Content-Type**: `application/json`
-
-**请求体**
-
-| 字段 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `type_ids` | `string[]` | 是 | - | 待归类的类型 ID 列表 |
-| `project_id` | `string \| null` | 否 | `null` | 目标项目；`null` 表示移出项目（未分组） |
-
-**约束**
-
-- `project_id` 非空且项目不存在 → 404
-
-**响应示例**
-
-```json
-{ "code": 200, "message": "批量归类完成", "data": {"count": 2, "project_id": "finance"} }
-```
-
----
-
-### 3.10 项目管理 `/doctype/projects`
-
-项目是纯算法端的分类维度，一个类型最多属于一个项目；项目不影响文件处理 / 管线。
-
-#### 3.10.1 列出项目
-
-- **URL**: `GET /doctype/projects`
-
-`type_count` 为该项目下的类型数。
-
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": [
-    {
-      "project_id": "finance",
-      "project_name": "财务组",
-      "description": null,
-      "type_count": 5,
-      "created_at": "2026-06-01T10:00:00",
-      "updated_at": "2026-06-01T10:00:00"
-    }
-  ]
-}
-```
-
-#### 3.10.2 新增 / 改名项目（upsert）
-
-- **URL**: `POST /doctype/projects`
-- **Content-Type**: `application/json`
-
-| 字段 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `project_id` | `string` | 是 | - | 正则 `^[a-zA-Z0-9_-]+$`，最长 64 |
-| `project_name` | `string` | 是 | - | 最长 200 |
-| `description` | `string` | 否 | `null` | 描述 |
-
-```json
-{ "code": 200, "message": "项目已创建", "data": {"project_id": "finance"} }
-```
-
-#### 3.10.3 删除项目
-
-删除项目本身，并把其下所有类型的 `project_id` 置空（**不删除类型**）。
-
-- **URL**: `DELETE /doctype/projects/{project_id}`
-
-**约束**
-
-- 项目不存在 → 404
-
-```json
-{ "code": 200, "message": "项目已删除", "data": {"project_id": "finance"} }
-```
 
 ---
 
@@ -1463,7 +1366,6 @@ data: <json>
 | `is_default` | TINYINT DEFAULT 0 | 1=默认类型，不可删 |
 | `is_template` | TINYINT DEFAULT 0 | 1=模板（选择器展示 / `scope=template`），由 promote/demote 切换 |
 | `parent_type_id` | VARCHAR(64) NULL | 复制来源类型，`copy_from` 自动记录（索引 `ix_doc_type_parent_type_id`） |
-| `project_id` | VARCHAR(64) NULL | 归属项目（→ `project` 表，见 §10.10；索引 `ix_doc_type_project_id`） |
 | `enabled` | TINYINT DEFAULT 1 | 启用标志 |
 | `created_at` / `updated_at` | DATETIME | 时间戳 |
 
@@ -1571,19 +1473,6 @@ data: <json>
 | `input_values` | JSON | 解析时的依赖字段值 |
 | `reason` | TEXT | |
 | `source_refs` | JSON | 依赖字段的参考块 |
-
----
-
-### 10.10 `project`
-
-| 列 | 类型 | 说明 |
-|---|------|------|
-| `project_id` | VARCHAR(64) PK | 项目 ID |
-| `project_name` | VARCHAR(200) NOT NULL | 项目名称 |
-| `description` | TEXT | 描述 |
-| `created_at` / `updated_at` | DATETIME | 时间戳 |
-
-> 项目与类型是一对多：`doc_type.project_id` 指向本表。删除项目仅把成员类型的 `project_id` 置空，**不级联删类型**。
 
 ---
 
@@ -1702,40 +1591,36 @@ data: <json>
 | 1 | GET | `/doctype/list` | 列出 / 搜索文档类型（可分页/筛选） |
 | 2 | POST | `/doctype` | 新增/更新文档类型 |
 | 3 | DELETE | `/doctype/{type_id}` | 删除文档类型（可级联） |
-| 4 | POST | `/doctype/{type_id}/copy_from` | 同实例跨类型复制配置（记录血缘/继承项目） |
+| 4 | POST | `/doctype/{type_id}/copy_from` | 同实例跨类型复制配置（记录血缘） |
 | 5 | GET | `/doctype/{type_id}/export` | 导出配置 JSON |
 | 6 | POST | `/doctype/import` | 导入配置 JSON |
 | 7 | POST | `/doctype/{type_id}/promote` | 标记为模板 |
 | 8 | POST | `/doctype/{type_id}/demote` | 取消模板标记 |
 | 9 | POST | `/doctype/batch_delete` | 批量删除类型（逐条返回结果） |
-| 10 | POST | `/doctype/batch_assign_project` | 批量归类到项目（`null` 即移出） |
-| 11 | GET | `/doctype/projects` | 列出项目 |
-| 12 | POST | `/doctype/projects` | 新增 / 改名项目（upsert） |
-| 13 | DELETE | `/doctype/projects/{project_id}` | 删除项目（成员类型解绑） |
-| 14 | POST | `/file/parse` | 提交文件解析（sync/async/stream） |
-| 15 | GET | `/file/list` | 分页查询文件 |
-| 16 | DELETE | `/file/batch` | 批量删除 |
-| 17 | GET | `/file/{file_id}/status` | 查询处理进度 |
-| 18 | GET | `/file/{file_id}/detail` | 完整详情（含所有时间字段） |
-| 19 | DELETE | `/file/{file_id}` | 删除文件及关联数据 |
-| 20 | POST | `/file/{file_id}/retry/{stage}` | 从指定阶段重试 |
-| 21 | POST | `/file/{file_id}/retry/extracting` | 重试字段提取 |
-| 22 | POST | `/file/{file_id}/retry/analyzing` | 重试逻辑分析 |
-| 23 | GET | `/file/{file_id}/tables` | 表格列表 |
-| 24 | GET | `/file/{file_id}/chunks` | 分块列表 |
-| 25 | GET | `/file/{file_id}/outline` | 章节大纲 |
-| 26 | GET | `/file/{file_id}/extraction` | 字段提取结果 |
-| 27 | GET | `/file/{file_id}/analysis` | 逻辑分析结果 |
-| 28 | GET | `/extraction/fields` | 字段配置列表（可 `type_id` 过滤） |
-| 29 | POST | `/extraction/fields` | 新增/更新字段配置 |
-| 30 | DELETE | `/extraction/fields/{field_id}` | 删除字段配置（硬删） |
-| 31 | GET | `/extraction/fields/{field_id}/check` | 检查 ID 是否存在 |
-| 32 | POST | `/extraction/test` | 字段提取调试 |
-| 33 | POST | `/extraction/test/stream` | 字段提取流式调试（SSE） |
-| 34 | GET | `/analysis/rules` | 规则配置列表（可 `type_id` 过滤） |
-| 35 | POST | `/analysis/rules` | 新增/更新规则 |
-| 36 | DELETE | `/analysis/rules/{rule_id}` | 删除规则（硬删） |
-| 37 | GET | `/analysis/rules/{rule_id}/check` | 检查 ID 是否存在 |
-| 38 | POST | `/analysis/test` | 逻辑分析调试 |
-| 39 | POST | `/analysis/test/stream` | 逻辑分析流式调试（SSE） |
-| 40 | POST | `/search` | 向量相似度检索 |
+| 10 | POST | `/file/parse` | 提交文件解析（sync/async/stream） |
+| 11 | GET | `/file/list` | 分页查询文件 |
+| 12 | DELETE | `/file/batch` | 批量删除 |
+| 13 | GET | `/file/{file_id}/status` | 查询处理进度 |
+| 14 | GET | `/file/{file_id}/detail` | 完整详情（含所有时间字段） |
+| 15 | DELETE | `/file/{file_id}` | 删除文件及关联数据 |
+| 16 | POST | `/file/{file_id}/retry/{stage}` | 从指定阶段重试 |
+| 17 | POST | `/file/{file_id}/retry/extracting` | 重试字段提取 |
+| 18 | POST | `/file/{file_id}/retry/analyzing` | 重试逻辑分析 |
+| 19 | GET | `/file/{file_id}/tables` | 表格列表 |
+| 20 | GET | `/file/{file_id}/chunks` | 分块列表 |
+| 21 | GET | `/file/{file_id}/outline` | 章节大纲 |
+| 22 | GET | `/file/{file_id}/extraction` | 字段提取结果 |
+| 23 | GET | `/file/{file_id}/analysis` | 逻辑分析结果 |
+| 24 | GET | `/extraction/fields` | 字段配置列表（可 `type_id` 过滤） |
+| 25 | POST | `/extraction/fields` | 新增/更新字段配置 |
+| 26 | DELETE | `/extraction/fields/{field_id}` | 删除字段配置（硬删） |
+| 27 | GET | `/extraction/fields/{field_id}/check` | 检查 ID 是否存在 |
+| 28 | POST | `/extraction/test` | 字段提取调试 |
+| 29 | POST | `/extraction/test/stream` | 字段提取流式调试（SSE） |
+| 30 | GET | `/analysis/rules` | 规则配置列表（可 `type_id` 过滤） |
+| 31 | POST | `/analysis/rules` | 新增/更新规则 |
+| 32 | DELETE | `/analysis/rules/{rule_id}` | 删除规则（硬删） |
+| 33 | GET | `/analysis/rules/{rule_id}/check` | 检查 ID 是否存在 |
+| 34 | POST | `/analysis/test` | 逻辑分析调试 |
+| 35 | POST | `/analysis/test/stream` | 逻辑分析流式调试（SSE） |
+| 36 | POST | `/search` | 向量相似度检索 |

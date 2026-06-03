@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "文档解析与逻辑分析系统",
-    "description": "PDF 文档智能处理系统的 HTTP API —— 基于 **FastAPI + MinerU + LLM**，把 PDF 经过\n六阶段管线沉淀为结构化的「字段提取结果」与「逻辑分析结论」。\n\n## 处理管线\n\n```\nparsing → tableing → chunking → embedding → extracting → analyzing → complete\n```\n\n| 阶段 | 动作 | 产物表 |\n|---|---|---|\n| `parsing` | MinerU 解析 PDF 为 Markdown + middle_json + 页码映射 | `file_content` |\n| `tableing` | LLM 从表前文识别每张表的名称（截断 30 字） | `file_table` |\n| `chunking` | 递归文本切分（表格作为独立块不拆分） | `file_chunk` |\n| `embedding` | 向量化写入 Milvus（向量数据不随回调下发） | Milvus |\n| `extracting` | 按字段配置用 LLM/VL 抽取 `{value, reason}` | `extraction_result` |\n| `analyzing` | judge（LLM 真假判断）/ calc（numexpr 计算） | `analysis_result` |\n\n每个阶段失败会把 `files.progress` 置为 `<stage>_failed` 并写入 `error`；进程崩溃后\n启动时 `init_service` 会把残留的 `*ing` 态归一为 `*_failed` 并清理孤儿数据。\n\n## 关键概念\n\n- **文档类型 (`type_id`)** —— 隔离不同格式文件的字段/规则配置。每个文件归属唯一\n  `type_id`（默认 `default`，不可删除）。抽取字段 `extraction_field`、逻辑规则\n  `analysis_rule` 均按 `type_id` 隔离，**不跨类型共享**；共享靠显式复制 / 导入。\n- **类型的两个正交维度**\n  - **血缘**：`is_template`（模板标记，`promote` / `demote` 切换）+ `parent_type_id`\n    （复制来源，`copy_from` / `import` 自动记录）。\n  - **项目**：`doc_type.project_id → project` 表，纯算法端分类；一个类型只属一个项目，\n    不影响文件处理 / 流水线。\n- **`file_id`** —— 由 `(type_id, file_name, time.time_ns(), secrets.token_hex(8))`\n  取 `SHA256[:32]` 生成；**每次上传都是新 ID，不做去重**。\n- **`field_id` / `rule_id`** —— **全局唯一**（不只是类型内唯一）。upsert 时若 ID 已被\n  其它 `type_id` 占用，返回 **409**。\n- **重试** —— 失败后用 `POST /file/{file_id}/retry/{stage}`（会清理该阶段及下游数据后\n  重跑），**不要**重新上传（上传必产生新 `file_id` 与新记录）。\n- **回调 (`callback_url`)** —— `POST /file/parse` / `retry`（`async` / `sync` 模式）携带时，\n  管线在「每阶段开始」「每条 `field_done` / `rule_done`」「每阶段 `stage_done`」都会向该\n  地址 POST 通知（超时 **2.5s**，失败仅 warning，绝不阻断主流程）。完整 payload 形态见\n  `docs/API_DOCUMENTATION.md` 与 `docs/ASYNC_CALLBACK.md`。\n- **SSE 流** —— `mode=stream` 与 `/extraction/test/stream` / `/analysis/test/stream`\n  返回 `text/event-stream`，逐阶段/逐步推送事件。\n- **VL 抽取** —— `source_type=vl` 字段绕过 MinerU Markdown，直接读 `uploads/{file_id}.pdf`，\n  由视觉模型一次产出 `{value, reason}` JSON，**不再走文本 LLM 二次抽取**。\n\n## 占位符体系\n\n- 抽取 prompt：`<search_result>标签</search_result>` —— 渲染时替换为对应检索片段。\n- 分析表达式：`<field_result>字段ID</field_result>` —— 渲染时替换为该字段的提取值。\n\n## 响应约定\n\n除 SSE 与 `multipart` 上传外，所有接口统一返回\n`ResponseWrapper{code:int=200, message:str, data:any}`。**业务负载在 `data` 里**；因为\n`data` 是动态类型，其具体形态写在每个接口的描述中，而非组件 schema。\n\n`/doctype/list` 的分页是唯一的形态切换：**传齐 `page` + `page_size` 返回\n`{items, total}`，否则原样返回数组**（向后兼容旧调用方）。",
+    "description": "PDF 文档智能处理系统的 HTTP API —— 基于 **FastAPI + MinerU + LLM**，把 PDF 经过\n六阶段管线沉淀为结构化的「字段提取结果」与「逻辑分析结论」。\n\n## 处理管线\n\n```\nparsing → tableing → chunking → embedding → extracting → analyzing → complete\n```\n\n| 阶段 | 动作 | 产物表 |\n|---|---|---|\n| `parsing` | MinerU 解析 PDF 为 Markdown + middle_json + 页码映射 | `file_content` |\n| `tableing` | LLM 从表前文识别每张表的名称（截断 30 字） | `file_table` |\n| `chunking` | 递归文本切分（表格作为独立块不拆分） | `file_chunk` |\n| `embedding` | 向量化写入 Milvus（向量数据不随回调下发） | Milvus |\n| `extracting` | 按字段配置用 LLM/VL 抽取 `{value, reason}` | `extraction_result` |\n| `analyzing` | judge（LLM 真假判断）/ calc（numexpr 计算） | `analysis_result` |\n\n每个阶段失败会把 `files.progress` 置为 `<stage>_failed` 并写入 `error`；进程崩溃后\n启动时 `init_service` 会把残留的 `*ing` 态归一为 `*_failed` 并清理孤儿数据。\n\n## 关键概念\n\n- **文档类型 (`type_id`)** —— 隔离不同格式文件的字段/规则配置。每个文件归属唯一\n  `type_id`（默认 `default`，不可删除）。抽取字段 `extraction_field`、逻辑规则\n  `analysis_rule` 均按 `type_id` 隔离，**不跨类型共享**；共享靠显式复制 / 导入。\n- **类型的血缘维度**：`is_template`（模板标记，`promote` / `demote` 切换）+ `parent_type_id`\n  （复制来源，`copy_from` / `import` 自动记录）。\n- **`file_id`** —— 由 `(type_id, file_name, time.time_ns(), secrets.token_hex(8))`\n  取 `SHA256[:32]` 生成；**每次上传都是新 ID，不做去重**。\n- **`field_id` / `rule_id`** —— **全局唯一**（不只是类型内唯一）。upsert 时若 ID 已被\n  其它 `type_id` 占用，返回 **409**。\n- **重试** —— 失败后用 `POST /file/{file_id}/retry/{stage}`（会清理该阶段及下游数据后\n  重跑），**不要**重新上传（上传必产生新 `file_id` 与新记录）。\n- **回调 (`callback_url`)** —— `POST /file/parse` / `retry`（`async` / `sync` 模式）携带时，\n  管线在「每阶段开始」「每条 `field_done` / `rule_done`」「每阶段 `stage_done`」都会向该\n  地址 POST 通知（超时 **2.5s**，失败仅 warning，绝不阻断主流程）。完整 payload 形态见\n  `docs/API_DOCUMENTATION.md` 与 `docs/ASYNC_CALLBACK.md`。\n- **SSE 流** —— `mode=stream` 与 `/extraction/test/stream` / `/analysis/test/stream`\n  返回 `text/event-stream`，逐阶段/逐步推送事件。\n- **VL 抽取** —— `source_type=vl` 字段绕过 MinerU Markdown，直接读 `uploads/{file_id}.pdf`，\n  由视觉模型一次产出 `{value, reason}` JSON，**不再走文本 LLM 二次抽取**。\n\n## 占位符体系\n\n- 抽取 prompt：`<search_result>标签</search_result>` —— 渲染时替换为对应检索片段。\n- 分析表达式：`<field_result>字段ID</field_result>` —— 渲染时替换为该字段的提取值。\n\n## 响应约定\n\n除 SSE 与 `multipart` 上传外，所有接口统一返回\n`ResponseWrapper{code:int=200, message:str, data:any}`。**业务负载在 `data` 里**；因为\n`data` 是动态类型，其具体形态写在每个接口的描述中，而非组件 schema。\n\n`/doctype/list` 的分页是唯一的形态切换：**传齐 `page` + `page_size` 返回\n`{items, total}`，否则原样返回数组**（向后兼容旧调用方）。",
     "version": "0.3.0"
   },
   "paths": {
@@ -897,7 +897,7 @@
           "extraction"
         ],
         "summary": "删除字段配置",
-        "description": "**硬删除**（直接 DELETE，不走 `enabled=0` 软删除）。字段不存在 → 404。",
+        "description": "**硬删除**（直接 `DELETE` 整行，不走 `enabled=0` 软删除），仅删除字段配置本身——该字段历史已写入的 `extraction_result` 行**不会级联清理**。\n\n字段不存在 → **404**。成功返回 `message=\"字段配置已删除\"`，`data=null`。",
         "operationId": "delete_field_extraction_fields__field_id__delete",
         "parameters": [
           {
@@ -941,7 +941,7 @@
           "extraction"
         ],
         "summary": "检查字段 ID 是否存在",
-        "description": "用于前端在保存前检测 ID 重复。返回 `data={exists: bool}`。",
+        "description": "只读探测 `field_id` 是否已被占用（前端保存前查重用）。\n\n**全局**查存在性（不按 `type_id` 过滤），因此 `exists=true` 也可能是该 ID 被**其它类型**占用——与 upsert 的跨类型 409 冲突一致。无论是否存在都返回 **200** + `data={exists: bool}`（不会 404）。",
         "operationId": "check_field_extraction_fields__field_id__check_get",
         "parameters": [
           {
@@ -1152,7 +1152,7 @@
           "analysis"
         ],
         "summary": "删除分析规则",
-        "description": "**硬删除**。规则不存在 → 404。",
+        "description": "**硬删除**（直接 `DELETE` 整行，不走 `enabled=0` 软删除），仅删除规则配置本身——该规则历史已写入的 `analysis_result` 行**不会级联清理**。\n\n规则不存在 → **404**。成功返回 `message=\"规则配置已删除\"`，`data=null`。",
         "operationId": "delete_rule_analysis_rules__rule_id__delete",
         "parameters": [
           {
@@ -1196,7 +1196,7 @@
           "analysis"
         ],
         "summary": "检查规则 ID 是否存在",
-        "description": "用于前端在保存前检测 ID 重复。返回 `data={exists: bool}`。",
+        "description": "只读探测 `rule_id` 是否已被占用（前端保存前查重用）。\n\n**全局**查存在性（不按 `type_id` 过滤），因此 `exists=true` 也可能是该 ID 被**其它类型**占用——与 upsert 的跨类型 409 冲突一致。无论是否存在都返回 **200** + `data={exists: bool}`（不会 404）。",
         "operationId": "check_rule_analysis_rules__rule_id__check_get",
         "parameters": [
           {
@@ -1364,7 +1364,7 @@
           "doctype"
         ],
         "summary": "列出文档类型（可搜索/过滤/分页）",
-        "description": "列出文档类型，每项附 `file_count` / `field_count` / `rule_count` 计数与 `project_name`。\n\n**返回形态（重要）**\n- 传齐 `page` + `page_size` → `data = {items: [...], total: <int>}`（分页）\n- 否则 → `data = [...]`（数组，向后兼容；不传任何参数即旧的全量行为）\n\n**过滤**\n- `q`：对 `type_id` / `type_name` 做 `LIKE %q%` 模糊匹配\n- `scope`：`all`（全部）/ `template`（`is_template=1` 或默认类型）/ `copy`（既非模板也非默认的副本）\n- `project_id`：精确匹配所属项目；特殊值 `__ungrouped__` 表示 `project_id IS NULL`（未分组）\n\n**排序**：默认类型恒置顶（`is_default DESC` 优先），其后按 `sort` —— `created_at`（降序，默认）或 `type_name`（升序）。\n\n**性能**：计数对当前结果集的 `type_id` 用 3 条 `GROUP BY` 聚合，避免 N+1。\n\n**每项字段**：`type_id` / `type_name` / `description` / `is_default` / `enabled` / `is_template` / `parent_type_id` / `project_id` / `project_name` / `created_at` / `updated_at` / `file_count` / `field_count` / `rule_count`。\n\n> 顶部类型选择器通常只取模板 + 默认 + 当前选中；副本的搜索/管理在「管理」弹窗里用本接口完成。",
+        "description": "列出文档类型，每项附 `file_count` / `field_count` / `rule_count` 计数。\n\n**返回形态（重要）**\n- 传齐 `page` + `page_size` → `data = {items: [...], total: <int>}`（分页）\n- 否则 → `data = [...]`（数组，向后兼容；不传任何参数即旧的全量行为）\n\n**过滤**\n- `q`：对 `type_id` / `type_name` 做 `LIKE %q%` 模糊匹配\n- `scope`：`all`（全部）/ `template`（`is_template=1` 或默认类型）/ `copy`（既非模板也非默认的副本）\n\n**排序**：默认类型恒置顶（`is_default DESC` 优先），其后按 `sort` —— `created_at`（降序，默认）或 `type_name`（升序）。\n\n**性能**：计数对当前结果集的 `type_id` 用 3 条 `GROUP BY` 聚合，避免 N+1。\n\n**每项字段**：`type_id` / `type_name` / `description` / `is_default` / `enabled` / `is_template` / `parent_type_id` / `created_at` / `updated_at` / `file_count` / `field_count` / `rule_count`。\n\n> 顶部类型选择器通常只取模板 + 默认 + 当前选中；副本的搜索/管理在「管理」弹窗里用本接口完成。",
         "operationId": "list_doctypes_doctype_list_get",
         "parameters": [
           {
@@ -1401,24 +1401,6 @@
               ]
             },
             "description": "范围过滤：`all` 全部 / `template` 模板（含默认类型）/ `copy` 副本（既非模板也非默认）。"
-          },
-          {
-            "name": "project_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "项目过滤；__ungrouped__ 表示未分组",
-              "title": "Project Id"
-            },
-            "description": "项目过滤；精确匹配 `project_id`，特殊值 `__ungrouped__` 表示未分组（`project_id IS NULL`）；省略不过滤。"
           },
           {
             "name": "page",
@@ -1504,7 +1486,7 @@
           "doctype"
         ],
         "summary": "新增/更新文档类型（upsert）",
-        "description": "按 `type_id` upsert。\n\n- **新建**（`type_id` 不存在）：`is_default` 固定写为 0\n- **更新**（`type_id` 已存在）：只更新 `type_name` / `description` / `enabled`；**`is_default` 保留原值**（默认类型可改名但不会变成非默认，反之亦然）\n\n**不经由本接口设置**的字段：`is_template`（用 `promote`/`demote`）、`parent_type_id`（由 `copy_from`/`import` 自动记录）、`project_id`（用 `batch_assign_project`）。\n\n`type_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。返回 `data={type_id}`。",
+        "description": "按 `type_id` upsert。\n\n- **新建**（`type_id` 不存在）：`is_default` 固定写为 0\n- **更新**（`type_id` 已存在）：只更新 `type_name` / `description` / `enabled`；**`is_default` 保留原值**（默认类型可改名但不会变成非默认，反之亦然）\n\n**不经由本接口设置**的字段：`is_template`（用 `promote`/`demote`）、`parent_type_id`（由 `copy_from`/`import` 自动记录）。\n\n`type_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。返回 `data={type_id}`。",
         "operationId": "upsert_doctype_doctype_post",
         "requestBody": {
           "content": {
@@ -1644,7 +1626,7 @@
           "doctype"
         ],
         "summary": "同实例跨类型复制配置",
-        "description": "把源类型（`source_type_id`）的字段+规则复制到当前 `type_id`，生成全新 ID 的**独立副本**（复制后两份互不影响）。\n\n- `field_ids` / `rule_ids` 留空表示该类目全部复制\n- `on_conflict=skip`：目标已有同 `field_name` / `rule_name` 时跳过\n- `on_conflict=rename`（默认）：自动加 ` (副本)`（再冲突则 ` (副本2)`…）后缀\n- 规则的 `depend_fields` 按 **field_name** 在目标类型重映射到新的 `field_id`；找不到同名字段的依赖记入 `missing_dependencies` 返回，规则仍照常创建（仅丢失该依赖）\n\n**血缘副作用**（目标非默认类型时）：把目标 `parent_type_id` 记为 `source_type_id`；若目标当前未分组而源有项目，则继承源的 `project_id`（目标已分组则不覆盖）。\n\n**错误码**：400（源=目标）/ 404（源或目标不存在）。\n\n返回 `data=CopyConfigsResponse{copied_fields, skipped_fields, copied_rules, skipped_rules, missing_dependencies}`。",
+        "description": "把源类型（`source_type_id`）的字段+规则复制到当前 `type_id`，生成全新 ID 的**独立副本**（复制后两份互不影响）。\n\n- `field_ids` / `rule_ids` 留空表示该类目全部复制\n- `on_conflict=skip`：目标已有同 `field_name` / `rule_name` 时跳过\n- `on_conflict=rename`（默认）：自动加 ` (副本)`（再冲突则 ` (副本2)`…）后缀\n- 规则的 `depend_fields` 按 **field_name** 在目标类型重映射到新的 `field_id`；找不到同名字段的依赖记入 `missing_dependencies` 返回，规则仍照常创建（仅丢失该依赖）\n\n**血缘副作用**（目标非默认类型时）：把目标 `parent_type_id` 记为 `source_type_id`。\n\n**错误码**：400（源=目标）/ 404（源或目标不存在）。\n\n返回 `data=CopyConfigsResponse{copied_fields, skipped_fields, copied_rules, skipped_rules, missing_dependencies}`。",
         "operationId": "copy_configs_doctype__type_id__copy_from_post",
         "parameters": [
           {
@@ -1749,154 +1731,6 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ImportConfigsRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/doctype/projects": {
-      "get": {
-        "tags": [
-          "doctype"
-        ],
-        "summary": "列出所有项目",
-        "description": "按 `created_at` 升序列出项目，每项附 `type_count`（该项目下的类型数，`GROUP BY` 聚合）。\n\n项目是纯算法端分类，**不影响文件处理 / 流水线**。返回 `data=[ProjectResponse, ...]`。",
-        "operationId": "list_projects_doctype_projects_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "doctype"
-        ],
-        "summary": "新增/改名项目（upsert）",
-        "description": "按 `project_id` upsert：已存在 → 更新 `project_name` / `description`；不存在 → 新建。\n\n`project_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。返回 `data={project_id}`。",
-        "operationId": "upsert_project_doctype_projects_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProjectCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/doctype/projects/{project_id}": {
-      "delete": {
-        "tags": [
-          "doctype"
-        ],
-        "summary": "删除项目",
-        "description": "**只解绑不删类型**：先把所有成员类型的 `project_id` 置空（移出项目），再删项目本身。\n\n项目不存在 → 404。返回 `data={project_id}`。",
-        "operationId": "delete_project_doctype_projects__project_id__delete",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Project Id"
-            },
-            "description": "项目 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/doctype/batch_assign_project": {
-      "post": {
-        "tags": [
-          "doctype"
-        ],
-        "summary": "批量归类到项目",
-        "description": "把 `type_ids` 批量归入 `project_id`；`project_id=null` 表示**移出项目**（置为未分组）。\n\n一个类型只属一个项目，本操作直接覆盖原归属。`project_id` 非空时会校验项目存在（不存在 → 404）。返回 `data={count, project_id}`。",
-        "operationId": "batch_assign_project_doctype_batch_assign_project_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BatchAssignProjectRequest"
               }
             }
           },
@@ -2156,45 +1990,6 @@
           {
             "file_id": "a1b2c3...",
             "rule_id": "assets_positive"
-          }
-        ]
-      },
-      "BatchAssignProjectRequest": {
-        "properties": {
-          "type_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Type Ids",
-            "description": "要归类的类型 ID 列表。"
-          },
-          "project_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Project Id",
-            "description": "目标项目 ID；`null` 表示移出项目（置未分组）。非空时校验项目存在。"
-          }
-        },
-        "type": "object",
-        "required": [
-          "type_ids"
-        ],
-        "title": "BatchAssignProjectRequest",
-        "description": "批量把类型归入项目；`project_id=null` 表示移出（未分组）。",
-        "examples": [
-          {
-            "type_ids": [
-              "financial_report",
-              "contract"
-            ],
-            "project_id": "bank_2026"
           }
         ]
       },
@@ -3081,49 +2876,6 @@
         "title": "ImportConfigsRequest",
         "description": "从 JSON 载荷导入字段+规则到目标类型。"
       },
-      "ProjectCreate": {
-        "properties": {
-          "project_id": {
-            "type": "string",
-            "maxLength": 64,
-            "pattern": "^[a-zA-Z0-9_-]+$",
-            "title": "Project Id",
-            "description": "项目 ID，匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。"
-          },
-          "project_name": {
-            "type": "string",
-            "maxLength": 200,
-            "title": "Project Name",
-            "description": "项目显示名（最长 200）。"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description",
-            "description": "项目描述（可空）。"
-          }
-        },
-        "type": "object",
-        "required": [
-          "project_id",
-          "project_name"
-        ],
-        "title": "ProjectCreate",
-        "description": "创建/改名项目的请求体（按 `project_id` upsert）。项目是纯算法端分类。",
-        "examples": [
-          {
-            "project_id": "bank_2026",
-            "project_name": "2026 银行授信",
-            "description": "银行授信场景类型集合"
-          }
-        ]
-      },
       "ResponseWrapper": {
         "properties": {
           "code": {
@@ -3291,7 +3043,7 @@
   "tags": [
     {
       "name": "doctype",
-      "description": "文档类型管理：CRUD、跨类型复制、导出/导入、模板血缘（promote/demote）、项目分组（projects + batch_assign_project）、批量删除。"
+      "description": "文档类型管理：CRUD、跨类型复制、导出/导入、模板血缘（promote/demote）、批量删除。"
     },
     {
       "name": "file",
