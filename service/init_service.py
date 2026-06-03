@@ -66,7 +66,6 @@ async def init_database() -> None:
             ("extraction_field", "vl_extract_prompt", "TEXT NULL"),
             ("doc_type", "is_template", "TINYINT NOT NULL DEFAULT 0"),
             ("doc_type", "parent_type_id", "VARCHAR(64) NULL"),
-            ("doc_type", "project_id", "VARCHAR(64) NULL"),
         ]
         for table_name, column_name, column_type in migrations:
             result = await conn.execute(
@@ -123,7 +122,6 @@ async def init_database() -> None:
             ("extraction_field", "ix_extraction_field_type_id", "type_id"),
             ("analysis_rule", "ix_analysis_rule_type_id", "type_id"),
             ("doc_type", "ix_doc_type_parent_type_id", "parent_type_id"),
-            ("doc_type", "ix_doc_type_project_id", "project_id"),
         ]
         for table_name, index_name, columns in index_migrations:
             result = await conn.execute(
@@ -136,6 +134,26 @@ async def init_database() -> None:
                     text(f"CREATE INDEX `{index_name}` ON `{table_name}` ({columns})")
                 )
                 logger.info("已为 {} 表添加索引 {}", table_name, index_name)
+
+        # 「项目」维度已废弃：彻底回收残留的 doc_type.project_id 列与 project 表
+        # （新库因 ORM 已无对应模型，本就不会创建；此处兜底删除存量库的遗留对象）。
+        result = await conn.execute(
+            text("SELECT COUNT(*) FROM information_schema.COLUMNS "
+                 "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doc_type' "
+                 "AND COLUMN_NAME = 'project_id'")
+        )
+        if result.scalar() == 1:
+            # 删除列会一并删除其上的 ix_doc_type_project_id 索引
+            await conn.execute(text("ALTER TABLE `doc_type` DROP COLUMN `project_id`"))
+            logger.info("已删除 doc_type.project_id 列（项目维度废弃）")
+
+        result = await conn.execute(
+            text("SELECT COUNT(*) FROM information_schema.TABLES "
+                 "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project'")
+        )
+        if result.scalar() == 1:
+            await conn.execute(text("DROP TABLE `project`"))
+            logger.info("已删除 project 表（项目维度废弃）")
 
         # 回填 default 类型（兼容老数据：旧列可能仍为 NULL/空串）
         await conn.execute(
