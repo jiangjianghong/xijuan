@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.database import get_db
 from model.schemas import (
+    BatchAssignProjectRequest,
     CopyConfigsRequest,
     CopyConfigsResponse,
     DocTypeCreate,
@@ -759,3 +760,27 @@ async def delete_project(project_id: str, db: AsyncSession = Depends(get_db)):
     await db.delete(existing)
     await db.commit()
     return ResponseWrapper(message="项目已删除", data={"project_id": project_id})
+
+
+@router.post("/batch_assign_project", response_model=ResponseWrapper)
+async def batch_assign_project(
+    req: BatchAssignProjectRequest, db: AsyncSession = Depends(get_db)
+):
+    """批量把 type 归入项目；project_id 为 null 表示移出（未分组）。"""
+    if req.project_id is not None:
+        exists = (
+            await db.execute(select(Project).where(Project.project_id == req.project_id))
+        ).scalar_one_or_none()
+        if not exists:
+            raise HTTPException(status_code=404, detail="项目不存在")
+    if req.type_ids:
+        await db.execute(
+            update(DocType)
+            .where(DocType.type_id.in_(req.type_ids))
+            .values(project_id=req.project_id)
+        )
+    await db.commit()
+    return ResponseWrapper(
+        message="批量归类完成",
+        data={"count": len(req.type_ids), "project_id": req.project_id},
+    )

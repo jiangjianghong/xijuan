@@ -143,6 +143,11 @@ class ProjectResponse(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+class BatchAssignProjectRequest(BaseModel):
+    type_ids: List[str]
+    project_id: Optional[str] = None  # None 表示移出项目（未分组）
+
+
 # ── 文件相关 ────────────────────────────────────────────────
 
 class FileStatusResponse(BaseModel):

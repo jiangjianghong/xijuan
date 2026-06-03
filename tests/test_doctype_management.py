@@ -65,3 +65,38 @@ async def test_list_paginated_shape_and_filters(client: AsyncClient):
     finally:
         await client.delete("/doctype/dm_plain?force=true")
 
+
+@pytest.mark.anyio
+async def test_batch_assign_and_project_delete_unbinds(client: AsyncClient):
+    await client.post("/doctype/projects", json={"project_id": "dm_pa", "project_name": "归类项目"})
+    await client.post("/doctype", json={"type_id": "dm_a1", "type_name": "A1"})
+    await client.post("/doctype", json={"type_id": "dm_a2", "type_name": "A2"})
+    try:
+        # 归类
+        r = await client.post(
+            "/doctype/batch_assign_project",
+            json={"type_ids": ["dm_a1", "dm_a2"], "project_id": "dm_pa"},
+        )
+        assert r.status_code == 200
+        r = await client.get("/doctype/list?project_id=dm_pa&page=1&page_size=10")
+        ids = [i["type_id"] for i in r.json()["data"]["items"]]
+        assert set(ids) == {"dm_a1", "dm_a2"}
+
+        # 项目不存在 → 404
+        r = await client.post(
+            "/doctype/batch_assign_project",
+            json={"type_ids": ["dm_a1"], "project_id": "no_such"},
+        )
+        assert r.status_code == 404
+
+        # 删项目 → 成员解绑（变未分组），type 仍在
+        await client.delete("/doctype/projects/dm_pa")
+        r = await client.get("/doctype/list?project_id=__ungrouped__&page=1&page_size=500")
+        ids = [i["type_id"] for i in r.json()["data"]["items"]]
+        assert "dm_a1" in ids and "dm_a2" in ids
+    finally:
+        await client.delete("/doctype/dm_a1?force=true")
+        await client.delete("/doctype/dm_a2?force=true")
+        await client.delete("/doctype/projects/dm_pa")
+
+
