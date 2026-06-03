@@ -1257,6 +1257,51 @@ h1, h2, h3, h4, h5, h6,
     border-radius: 0;
 }
 
+/* ── 文档类型管理：表格、标签、行内操作、⋯ 菜单 ── */
+.dt-table .dt-name { font-weight: 600; }
+.dt-table .dt-id-sub { font-size: 11px; color: #8a9a8e; margin-top: 2px; }
+.dt-table .dt-id-sub code { background: transparent; padding: 0; font-size: 11px; }
+
+.dt-tag { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 10px; }
+.dt-tag-default { background: #E8EFE6; color: #2C4C3B; }
+.dt-tag-template { background: #DCEBDD; color: #4F775D; }
+.dt-tag-copy { background: #F3EEE4; color: #8B735B; }
+.dt-tag-plain { color: #9aa39c; }
+
+.btn-sm { padding: 3px 10px; font-size: 12px; }
+
+.dt-actions { white-space: nowrap; }
+.dt-menu { position: relative; display: inline-block; margin-left: 4px; }
+.dt-menu-pop {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 30;
+    min-width: 132px;
+    background: #fff;
+    border: 1px solid rgba(44, 76, 59, 0.15);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(44, 76, 59, 0.18);
+    padding: 4px;
+}
+.dt-menu-pop button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: 0;
+    background: transparent;
+    padding: 7px 10px;
+    font-size: 13px;
+    color: #2C4C3B;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.dt-menu-pop button:hover { background: #E8EFE6; }
+.dt-menu-pop button.danger { color: #b3261e; }
+.dt-menu-pop button:disabled { color: #bbb; cursor: not-allowed; }
+
+.dt-form-label { display: block; font-size: 12px; color: #4F775D; margin-bottom: 4px; }
+
 .rule-modal-header {
     display: flex;
     justify-content: space-between;
