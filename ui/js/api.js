@@ -357,7 +357,6 @@ const API = {
         const qs = new URLSearchParams();
         if (params.q) qs.set('q', params.q);
         if (params.scope && params.scope !== 'all') qs.set('scope', params.scope);
-        if (params.projectId) qs.set('project_id', params.projectId);
         if (params.page) qs.set('page', params.page);
         if (params.pageSize) qs.set('page_size', params.pageSize);
         if (params.sort) qs.set('sort', params.sort);
@@ -380,30 +379,6 @@ const API = {
             body: JSON.stringify({ type_ids: typeIds, force }),
         });
         return result.data;
-    },
-
-    async batchAssignProject(typeIds, projectId) {
-        const result = await this.request('/doctype/batch_assign_project', {
-            method: 'POST',
-            body: JSON.stringify({ type_ids: typeIds, project_id: projectId ?? null }),
-        });
-        return result.data;
-    },
-
-    async getProjects() {
-        const result = await this.request('/doctype/projects');
-        return result.data;
-    },
-
-    async saveProject(data) {
-        return this.request('/doctype/projects', {
-            method: 'POST',
-            body: JSON.stringify(data),
-        });
-    },
-
-    async deleteProject(projectId) {
-        return this.request(`/doctype/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' });
     },
 
     /**
