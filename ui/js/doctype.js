@@ -148,9 +148,9 @@ const DocTypeManager = {
                 <td>${t.rule_count || 0}</td>
                 <td class="dt-actions">
                     <button class="btn btn-secondary btn-sm" onclick="DocTypeManager.selectType('${escapeAttr(t.type_id)}')">选用</button>
-                    <span class="dt-menu">
+                    <span class="dt-menu${menuOpen ? ' open' : ''}" data-type-id="${escapeAttr(t.type_id)}">
                         <button class="btn btn-ghost btn-sm" onclick="DocTypeManager.toggleRowMenu('${escapeAttr(t.type_id)}')">⋯</button>
-                        <div class="dt-menu-pop" style="display:${menuOpen ? 'block' : 'none'};">
+                        <div class="dt-menu-pop">
                             <button onclick="DocTypeManager.viewType('${escapeAttr(t.type_id)}')">查看配置</button>
                             <button onclick="DocTypeManager.openDeriveForm('${escapeAttr(t.type_id)}')">复制为新类型</button>
                             ${renameItem}
@@ -213,13 +213,18 @@ const DocTypeManager = {
 
     toggleRowMenu(typeId) {
         this.manage.menuOpenId = (this.manage.menuOpenId === typeId) ? null : typeId;
-        this.renderManageTable();
+        this._syncRowMenuState();
     },
     closeRowMenu() {
         if (this.manage.menuOpenId !== null) {
             this.manage.menuOpenId = null;
-            this.renderManageTable();
+            this._syncRowMenuState();
         }
+    },
+    _syncRowMenuState() {
+        document.querySelectorAll('#doctype-table-body .dt-menu').forEach(menu => {
+            menu.classList.toggle('open', menu.dataset.typeId === this.manage.menuOpenId);
+        });
     },
 
     // 选用 = 设为当前类型（任何类型都可，打破"只有模板能用"的死循环）

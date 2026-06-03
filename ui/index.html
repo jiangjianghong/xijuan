@@ -81,6 +81,10 @@
                 <i data-lucide="radio" class="w-4 h-4"></i>
                 流式演示
             </button>
+            <button class="nav-btn rounded-full" data-page="runtime-logs" onclick="App.switchPage('runtime-logs')">
+                <i data-lucide="square-terminal" class="w-4 h-4"></i>
+                实时日志
+            </button>
         </nav>
         <div class="doctype-bar" style="margin-left:auto; display:flex; align-items:center; gap:8px;">
             <i data-lucide="folder" class="w-4 h-4 text-bio-med"></i>
@@ -454,6 +458,78 @@
     </div>
     </div><!-- /page-stream-demo -->
 
+    <!-- Page: Runtime Logs -->
+    <div id="page-runtime-logs" class="page-container relative z-10">
+        <div class="runtime-log-content">
+            <section class="runtime-log-toolbar glass-card">
+                <div class="runtime-log-title">
+                    <h2 class="panel-title">
+                        <i data-lucide="square-terminal" class="w-5 h-5"></i>
+                        实时日志
+                    </h2>
+                    <span id="runtime-log-status" class="runtime-log-status disconnected">未连接</span>
+                </div>
+                <div class="runtime-log-controls">
+                    <label class="runtime-log-field">
+                        <span>日志文件</span>
+                        <select id="runtime-log-file"></select>
+                    </label>
+                    <label class="runtime-log-field">
+                        <span>等级</span>
+                        <select id="runtime-log-level">
+                            <option value="">全部</option>
+                            <option value="DEBUG">DEBUG</option>
+                            <option value="INFO">INFO</option>
+                            <option value="WARNING">WARNING</option>
+                            <option value="ERROR">ERROR</option>
+                            <option value="CRITICAL">CRITICAL</option>
+                        </select>
+                    </label>
+                    <label class="runtime-log-field">
+                        <span>初始行数</span>
+                        <select id="runtime-log-tail">
+                            <option value="100">100</option>
+                            <option value="200" selected>200</option>
+                            <option value="500">500</option>
+                            <option value="1000">1000</option>
+                        </select>
+                    </label>
+                    <div class="runtime-log-actions">
+                        <button id="runtime-log-connect" class="runtime-log-btn primary" type="button" title="连接日志流">
+                            <i data-lucide="plug-zap" class="w-4 h-4"></i>
+                            <span>连接</span>
+                        </button>
+                        <button id="runtime-log-pause" class="runtime-log-btn" type="button" title="暂停滚动">
+                            <i data-lucide="pause" class="w-4 h-4"></i>
+                            <span>暂停</span>
+                        </button>
+                        <button id="runtime-log-clear" class="runtime-log-btn" type="button" title="清空当前视图">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            <span>清空</span>
+                        </button>
+                        <button id="runtime-log-copy" class="runtime-log-btn" type="button" title="复制当前日志">
+                            <i data-lucide="copy" class="w-4 h-4"></i>
+                            <span>复制</span>
+                        </button>
+                        <button id="runtime-log-refresh" class="runtime-log-btn icon-only" type="button" title="刷新日志文件">
+                            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="runtime-log-shell glass-card">
+                <div class="runtime-log-meta">
+                    <span id="runtime-log-current-file">-</span>
+                    <span id="runtime-log-count">0 行</span>
+                </div>
+                <div id="runtime-log-container" class="runtime-log-container">
+                    <div class="runtime-log-empty">等待日志连接...</div>
+                </div>
+            </section>
+        </div>
+    </div><!-- /page-runtime-logs -->
+
     <!-- Rule Modal -->
     <div id="rule-modal-overlay" class="rule-modal-overlay">
         <div class="rule-modal">
@@ -690,6 +766,7 @@
     <script src="js/ruleConfig.js"></script>
     <script src="js/app.js"></script>
     <script src="js/stream-demo.js"></script>
+    <script src="js/log-viewer.js"></script>
     <!-- Initialize Lucide icons -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {

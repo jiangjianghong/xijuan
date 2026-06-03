@@ -703,6 +703,14 @@ const App = {
         if (page === 'rule-config' && !RuleConfig.state.loaded.fields) {
             RuleConfig.loadFields();
         }
+
+        if (typeof LogViewer !== 'undefined') {
+            if (page === 'runtime-logs') {
+                LogViewer.activate();
+            } else {
+                LogViewer.deactivate();
+            }
+        }
     },
 
     // ─────────────────────────────────────────────────────────
