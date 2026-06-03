@@ -114,6 +114,11 @@ Multi-type configuration support: each file is bound to one `type_id` (default `
 - `POST /doctype/{type_id}/copy_from` clones fields/rules from a source type into the target type. New `field_id`/`rule_id` are UUIDs; `depend_fields` are remapped by `field_name` to the new IDs in the target type. Missing dependencies are returned to the caller (not silently dropped).
 - After copy, the two copies are fully independent — editing one does not affect the other.
 - Default type (`is_default=1`) cannot be deleted. Deleting a non-default type with files/configs requires `force=true` (cascades file content + Milvus + configs).
+- 类型有两个正交维度:**血缘**(`is_template` 标记 + `parent_type_id` 复制来源,`copy_from` 自动记录、`POST /doctype/{id}/promote|demote` 切换模板标记)与**项目**(`doc_type.project_id` → `project` 表,纯算法端分类,一个 type 只属一个项目,不影响文件处理/流水线)。
+- `GET /doctype/list` 支持 `q/scope(all|template|copy)/project_id(含 __ungrouped__)/page/page_size/sort`;**传齐 page+page_size 返回 `{items,total}`,否则原样返回数组**(向后兼容)。计数用 3 条 GROUP BY 避免 N+1。
+- 批量接口:`POST /doctype/batch_delete`(`{type_ids,force}`)、`POST /doctype/batch_assign_project`(`{type_ids,project_id|null}`)。项目 CRUD:`GET/POST /doctype/projects`、`DELETE /doctype/projects/{id}`(删项目仅解绑成员,不删 type)。
+- 顶部选择器只展示模板 + 默认 + 当前选中;副本的搜索/查看/清理在「管理」弹窗内完成。「只读查看配置」复用 `GET /doctype/{id}/export`。
+- 存量(本次改动前)副本无 `parent_type_id`/`project_id`,需初期手工标模板、归项目;此后经 `copy_from` 新建的副本自动继承。
 
 ### Extraction System (`service/extraction_service.py`)
 Three source types:
