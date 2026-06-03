@@ -64,6 +64,9 @@ async def init_database() -> None:
             ("extraction_field", "vl_config", "JSON NULL"),
             ("extraction_field", "vl_system_prompt", "TEXT NULL"),
             ("extraction_field", "vl_extract_prompt", "TEXT NULL"),
+            ("doc_type", "is_template", "TINYINT NOT NULL DEFAULT 0"),
+            ("doc_type", "parent_type_id", "VARCHAR(64) NULL"),
+            ("doc_type", "project_id", "VARCHAR(64) NULL"),
         ]
         for table_name, column_name, column_type in migrations:
             result = await conn.execute(
@@ -119,6 +122,8 @@ async def init_database() -> None:
             ("files", "ix_files_type_id", "type_id"),
             ("extraction_field", "ix_extraction_field_type_id", "type_id"),
             ("analysis_rule", "ix_analysis_rule_type_id", "type_id"),
+            ("doc_type", "ix_doc_type_parent_type_id", "parent_type_id"),
+            ("doc_type", "ix_doc_type_project_id", "project_id"),
         ]
         for table_name, index_name, columns in index_migrations:
             result = await conn.execute(
