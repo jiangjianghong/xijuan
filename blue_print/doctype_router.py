@@ -13,7 +13,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.database import get_db
@@ -27,6 +27,8 @@ from model.schemas import (
     ExportRuleItem,
     ImportConfigsRequest,
     ImportConfigsResponse,
+    ProjectCreate,
+    ProjectResponse,
     ResponseWrapper,
 )
 from model.tables import (
@@ -39,6 +41,7 @@ from model.tables import (
     FileChunk,
     FileContent,
     FileTable,
+    Project,
 )
 from utils.milvus_client import MilvusClient
 
@@ -615,3 +618,78 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
     await db.commit()
 
     return ResponseWrapper(message="配置导入完成", data=resp.model_dump())
+
+
+# ─────────────────────────────────────────────────────────────
+# 项目（纯算法端分类，一个 type 只属一个项目）
+# ─────────────────────────────────────────────────────────────
+
+
+@router.get("/projects", response_model=ResponseWrapper)
+async def list_projects(db: AsyncSession = Depends(get_db)):
+    """列出所有项目，附带每个项目下的 type 数。"""
+    projects = (
+        await db.execute(select(Project).order_by(Project.created_at))
+    ).scalars().all()
+
+    rows = (
+        await db.execute(
+            select(DocType.project_id, func.count(DocType.type_id))
+            .where(DocType.project_id.isnot(None))
+            .group_by(DocType.project_id)
+        )
+    ).fetchall()
+    count_map = {r[0]: r[1] for r in rows}
+
+    items = [
+        ProjectResponse(
+            project_id=p.project_id,
+            project_name=p.project_name,
+            description=p.description,
+            type_count=count_map.get(p.project_id, 0),
+            created_at=p.created_at,
+            updated_at=p.updated_at,
+        ).model_dump()
+        for p in projects
+    ]
+    return ResponseWrapper(data=items)
+
+
+@router.post("/projects", response_model=ResponseWrapper)
+async def upsert_project(payload: ProjectCreate, db: AsyncSession = Depends(get_db)):
+    """创建/改名项目（按 project_id upsert）。"""
+    existing = (
+        await db.execute(select(Project).where(Project.project_id == payload.project_id))
+    ).scalar_one_or_none()
+    if existing:
+        existing.project_name = payload.project_name
+        existing.description = payload.description
+        await db.commit()
+        return ResponseWrapper(message="项目已更新", data={"project_id": payload.project_id})
+
+    db.add(
+        Project(
+            project_id=payload.project_id,
+            project_name=payload.project_name,
+            description=payload.description,
+        )
+    )
+    await db.commit()
+    return ResponseWrapper(message="项目已创建", data={"project_id": payload.project_id})
+
+
+@router.delete("/projects/{project_id}", response_model=ResponseWrapper)
+async def delete_project(project_id: str, db: AsyncSession = Depends(get_db)):
+    """删除项目：成员 type 的 project_id 置空，再删项目本身（不删 type）。"""
+    existing = (
+        await db.execute(select(Project).where(Project.project_id == project_id))
+    ).scalar_one_or_none()
+    if not existing:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    await db.execute(
+        update(DocType).where(DocType.project_id == project_id).values(project_id=None)
+    )
+    await db.delete(existing)
+    await db.commit()
+    return ResponseWrapper(message="项目已删除", data={"project_id": project_id})

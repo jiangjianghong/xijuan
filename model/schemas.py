@@ -124,6 +124,21 @@ class ImportConfigsResponse(BaseModel):
     missing_dependencies: List[str] = []
 
 
+class ProjectCreate(BaseModel):
+    project_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$", max_length=64)
+    project_name: str = Field(..., max_length=200)
+    description: Optional[str] = None
+
+
+class ProjectResponse(BaseModel):
+    project_id: str
+    project_name: str
+    description: Optional[str] = None
+    type_count: int = 0
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 # ── 文件相关 ────────────────────────────────────────────────
 
 class FileStatusResponse(BaseModel):
