@@ -54,28 +54,6 @@ const DocTypeManager = {
         if (!exists) API.setCurrentTypeId('default');
     },
 
-    renderManageTable() {
-        const tbody = document.getElementById('doctype-table-body');
-        if (!tbody) return;
-        tbody.innerHTML = this.types.map(t => {
-            const isDef = t.is_default === 1;
-            const delBtn = isDef
-                ? `<button class="btn btn-ghost" disabled title="默认类型不可删除">删除</button>`
-                : `<button class="btn btn-danger" onclick="DocTypeManager.deleteType('${escapeAttr(t.type_id)}')">删除</button>`;
-            return `<tr>
-                <td><code>${escapeHtml(t.type_id)}</code>${isDef ? ' <span style="color:#8DAA91;font-size:11px;">(默认)</span>' : ''}</td>
-                <td>${escapeHtml(t.type_name)}</td>
-                <td>${t.file_count || 0}</td>
-                <td>${t.field_count || 0}</td>
-                <td>${t.rule_count || 0}</td>
-                <td style="white-space:nowrap;">
-                    <button class="btn btn-ghost" onclick="DocTypeManager.exportType('${escapeAttr(t.type_id)}')">导出</button>
-                    ${delBtn}
-                </td>
-            </tr>`;
-        }).join('');
-    },
-
     async onSelectorChange() {
         const sel = document.getElementById('doctype-selector');
         if (!sel) return;
@@ -93,7 +71,221 @@ const DocTypeManager = {
 
     openManageDialog() {
         document.getElementById('doctype-modal-overlay').classList.add('active');
-        this.refresh();
+        this.manage.page = 1;
+        this.manage.selected = new Set();
+        this.loadProjectsIntoFilters();
+        this.loadManage();
+    },
+
+    async loadProjectsIntoFilters() {
+        try {
+            this.projects = await API.getProjects();
+        } catch (e) { this.projects = []; }
+        const opts = this.projects.map(p =>
+            `<option value="${escapeHtml(p.project_id)}">${escapeHtml(p.project_name)} (${p.type_count})</option>`
+        ).join('');
+        const projFilter = document.getElementById('dt-project');
+        if (projFilter) projFilter.innerHTML =
+            `<option value="">全部项目</option><option value="__ungrouped__">未分组</option>` + opts;
+        const newProj = document.getElementById('doctype-new-project');
+        if (newProj) newProj.innerHTML = `<option value="">未分组</option>` + opts;
+        const batchProj = document.getElementById('dt-batch-project');
+        if (batchProj) batchProj.innerHTML = `<option value="">移动到…(未分组)</option>` + opts;
+    },
+
+    async loadManage() {
+        const m = this.manage;
+        let data;
+        try {
+            data = await API.listDocTypes({
+                q: m.q, scope: m.scope, projectId: m.projectId,
+                page: m.page, pageSize: m.pageSize,
+            });
+        } catch (e) {
+            Toast.error('加载失败: ' + e.message);
+            return;
+        }
+        m.items = data.items || [];
+        m.total = data.total || 0;
+        this.renderManageTable();
+    },
+
+    renderManageTable() {
+        const m = this.manage;
+        const tbody = document.getElementById('doctype-table-body');
+        if (!tbody) return;
+        tbody.innerHTML = m.items.map(t => {
+            const isDef = t.is_default === 1;
+            const checked = m.selected.has(t.type_id) ? 'checked' : '';
+            const tag = t.is_template === 1
+                ? '<span style="color:#8DAA91;font-size:11px;">模板</span>'
+                : (isDef ? '<span style="color:#8DAA91;font-size:11px;">默认</span>' : '—');
+            const proj = t.project_name ? escapeHtml(t.project_name) : '—';
+            const src = t.parent_type_id ? '←' + escapeHtml(t.parent_type_id) : '—';
+            const tplBtn = isDef ? '' : (t.is_template === 1
+                ? `<button class="btn btn-ghost" onclick="DocTypeManager.demote('${escapeAttr(t.type_id)}')">取消模板</button>`
+                : `<button class="btn btn-ghost" onclick="DocTypeManager.promote('${escapeAttr(t.type_id)}')">设为模板</button>`);
+            const delBtn = isDef
+                ? `<button class="btn btn-ghost" disabled title="默认类型不可删除">删除</button>`
+                : `<button class="btn btn-danger" onclick="DocTypeManager.deleteType('${escapeAttr(t.type_id)}')">删除</button>`;
+            const checkbox = isDef ? '' :
+                `<input type="checkbox" ${checked} onclick="DocTypeManager.toggleSelect('${escapeAttr(t.type_id)}', this.checked)">`;
+            return `<tr>
+                <td>${checkbox}</td>
+                <td><code>${escapeHtml(t.type_id)}</code></td>
+                <td>${escapeHtml(t.type_name)}</td>
+                <td>${tag}</td>
+                <td>${proj}</td>
+                <td>${src}</td>
+                <td>${t.file_count || 0}</td>
+                <td>${t.field_count || 0}</td>
+                <td>${t.rule_count || 0}</td>
+                <td style="white-space:nowrap;">
+                    <button class="btn btn-ghost" onclick="DocTypeManager.viewType('${escapeAttr(t.type_id)}')">查看</button>
+                    ${tplBtn}
+                    <button class="btn btn-ghost" onclick="DocTypeManager.exportType('${escapeAttr(t.type_id)}')">导出</button>
+                    ${delBtn}
+                </td>
+            </tr>`;
+        }).join('');
+
+        const totalPages = Math.max(1, Math.ceil(m.total / m.pageSize));
+        document.getElementById('dt-page-info').textContent = `${m.page} / ${totalPages}`;
+        document.getElementById('dt-total').textContent = `共 ${m.total} 个`;
+        document.getElementById('dt-selected-count').textContent = `已选 ${m.selected.size} 项`;
+        const allBox = document.getElementById('dt-check-all');
+        if (allBox) allBox.checked = m.items.length > 0 &&
+            m.items.filter(t => t.is_default !== 1).every(t => m.selected.has(t.type_id));
+    },
+
+    onSearchInput() {
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => {
+            this.manage.q = document.getElementById('dt-search').value.trim();
+            this.manage.page = 1;
+            this.loadManage();
+        }, 300);
+    },
+
+    onFilterChange() {
+        this.manage.scope = document.getElementById('dt-scope').value;
+        this.manage.projectId = document.getElementById('dt-project').value;
+        this.manage.page = 1;
+        this.loadManage();
+    },
+
+    prevPage() { if (this.manage.page > 1) { this.manage.page--; this.loadManage(); } },
+    nextPage() {
+        const totalPages = Math.max(1, Math.ceil(this.manage.total / this.manage.pageSize));
+        if (this.manage.page < totalPages) { this.manage.page++; this.loadManage(); }
+    },
+
+    toggleSelect(typeId, checked) {
+        if (checked) this.manage.selected.add(typeId); else this.manage.selected.delete(typeId);
+        document.getElementById('dt-selected-count').textContent = `已选 ${this.manage.selected.size} 项`;
+    },
+    toggleSelectAll(checked) {
+        this.manage.items.filter(t => t.is_default !== 1).forEach(t => {
+            if (checked) this.manage.selected.add(t.type_id); else this.manage.selected.delete(t.type_id);
+        });
+        this.renderManageTable();
+    },
+
+    async promote(typeId) {
+        try { await API.promoteType(typeId); Toast.success('已设为模板'); await this.loadManage(); await this.refresh(); }
+        catch (e) { Toast.error('操作失败: ' + e.message); }
+    },
+    async demote(typeId) {
+        try { await API.demoteType(typeId); Toast.success('已取消模板'); await this.loadManage(); await this.refresh(); }
+        catch (e) { Toast.error('操作失败: ' + e.message); }
+    },
+
+    async batchDelete() {
+        const ids = Array.from(this.manage.selected);
+        if (ids.length === 0) { Toast.error('未选择任何类型'); return; }
+        if (!confirm(`确认删除选中的 ${ids.length} 个类型？有数据的将级联删除，不可撤销！`)) return;
+        try {
+            const res = await API.batchDeleteTypes(ids, true);
+            Toast.success(`批量删除：成功 ${res.deleted}/${ids.length}`);
+            const failed = res.results.filter(r => !r.ok);
+            if (failed.length) alert('以下未删除：\n' + failed.map(f => `${f.type_id}：${f.reason}`).join('\n'));
+            this.manage.selected = new Set();
+            await this.loadManage();
+            await this.refresh();
+        } catch (e) { Toast.error('批量删除失败: ' + e.message); }
+    },
+
+    async batchMove() {
+        const ids = Array.from(this.manage.selected);
+        if (ids.length === 0) { Toast.error('未选择任何类型'); return; }
+        const pid = document.getElementById('dt-batch-project').value || null;
+        try {
+            await API.batchAssignProject(ids, pid);
+            Toast.success(`已移动 ${ids.length} 个类型`);
+            this.manage.selected = new Set();
+            await this.loadProjectsIntoFilters();
+            await this.loadManage();
+        } catch (e) { Toast.error('移动失败: ' + e.message); }
+    },
+
+    async viewType(typeId) {
+        try {
+            const payload = await API.exportDocType(typeId);
+            const fields = (payload.fields || []).map(f =>
+                `<li><code>${escapeHtml(f.field_name)}</code> · ${escapeHtml(f.source_type)}${f.search_type ? '/' + escapeHtml(f.search_type) : ''}</li>`
+            ).join('') || '<li style="color:#999;">无字段</li>';
+            const rules = (payload.rules || []).map(r =>
+                `<li><code>${escapeHtml(r.rule_name)}</code> · ${escapeHtml(r.rule_type)}</li>`
+            ).join('') || '<li style="color:#999;">无规则</li>';
+            document.getElementById('typeview-title').textContent = `查看配置：${payload.type_name || typeId}`;
+            document.getElementById('typeview-body').innerHTML =
+                `<h4 style="margin:0 0 8px;">字段（${(payload.fields || []).length}）</h4><ul>${fields}</ul>
+                 <h4 style="margin:16px 0 8px;">规则（${(payload.rules || []).length}）</h4><ul>${rules}</ul>`;
+            document.getElementById('typeview-modal-overlay').classList.add('active');
+        } catch (e) { Toast.error('查看失败: ' + e.message); }
+    },
+    closeTypeView() { document.getElementById('typeview-modal-overlay').classList.remove('active'); },
+
+    // ─── 项目管理子弹窗 ───
+    async openProjectDialog() {
+        document.getElementById('project-modal-overlay').classList.add('active');
+        await this.renderProjectTable();
+    },
+    closeProjectDialog() {
+        document.getElementById('project-modal-overlay').classList.remove('active');
+        this.loadProjectsIntoFilters();
+    },
+    async renderProjectTable() {
+        try { this.projects = await API.getProjects(); } catch (e) { this.projects = []; }
+        const tbody = document.getElementById('project-table-body');
+        tbody.innerHTML = this.projects.map(p => `<tr>
+            <td><code>${escapeHtml(p.project_id)}</code></td>
+            <td>${escapeHtml(p.project_name)}</td>
+            <td>${p.type_count}</td>
+            <td><button class="btn btn-danger" onclick="DocTypeManager.deleteProjectById('${escapeAttr(p.project_id)}')">删除</button></td>
+        </tr>`).join('') || '<tr><td colspan="4" style="color:#999;">暂无项目</td></tr>';
+    },
+    async createProjectFromForm() {
+        const id = (document.getElementById('project-new-id').value || '').trim();
+        const name = (document.getElementById('project-new-name').value || '').trim();
+        if (!id || !name) { Toast.error('项目 ID 和名称都是必填'); return; }
+        if (!/^[a-zA-Z0-9_-]+$/.test(id)) { Toast.error('项目 ID 只能含英文/数字/_/-'); return; }
+        try {
+            await API.saveProject({ project_id: id, project_name: name });
+            document.getElementById('project-new-id').value = '';
+            document.getElementById('project-new-name').value = '';
+            Toast.success('项目已保存');
+            await this.renderProjectTable();
+        } catch (e) { Toast.error('保存失败: ' + e.message); }
+    },
+    async deleteProjectById(projectId) {
+        if (!confirm(`删除项目 "${projectId}"？其下类型将变为未分组（类型本身不删）。`)) return;
+        try {
+            await API.deleteProject(projectId);
+            Toast.success('项目已删除');
+            await this.renderProjectTable();
+            await this.loadManage();
+        } catch (e) { Toast.error('删除失败: ' + e.message); }
     },
 
     closeManageDialog() {
@@ -115,9 +307,13 @@ const DocTypeManager = {
         }
         try {
             await API.saveDocType({ type_id, type_name, enabled: 1 });
+            const pid = document.getElementById('doctype-new-project')?.value || null;
+            if (pid) { try { await API.batchAssignProject([type_id], pid); } catch (e) {} }
             idEl.value = '';
             nameEl.value = '';
             Toast.success('类型已创建');
+            await this.loadProjectsIntoFilters();
+            await this.loadManage();
             await this.refresh();
         } catch (e) {
             Toast.error('创建失败: ' + e.message);
@@ -125,7 +321,7 @@ const DocTypeManager = {
     },
 
     async deleteType(typeId) {
-        const t = this.types.find(x => x.type_id === typeId);
+        const t = this.manage.items.find(x => x.type_id === typeId);
         if (!t) return;
         const hasData = (t.file_count || 0) + (t.field_count || 0) + (t.rule_count || 0) > 0;
         let force = false;
@@ -144,9 +340,9 @@ const DocTypeManager = {
             if (API.getCurrentTypeId() === typeId) {
                 API.setCurrentTypeId('default');
             }
+            this.manage.selected.delete(typeId);
+            await this.loadManage();
             await this.refresh();
-            // 刷新主页面
-            this.onSelectorChange();
         } catch (e) {
             Toast.error('删除失败: ' + e.message);
         }
