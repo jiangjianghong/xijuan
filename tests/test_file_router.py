@@ -8,10 +8,9 @@ from httpx import AsyncClient
 
 @pytest.mark.anyio
 async def test_get_file_status_not_found(client: AsyncClient):
-    """测试获取不存在的文件状态。"""
+    """不存在的文件应返回 404。"""
     resp = await client.get("/file/nonexistent/status")
-    # 路由可达即可，具体逻辑待实现
-    assert resp.status_code == 200
+    assert resp.status_code == 404
 
 
 @pytest.mark.anyio
