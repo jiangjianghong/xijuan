@@ -1084,6 +1084,22 @@ h1, h2, h3, h4, h5, h6,
     display: flex;
     gap: 4px;
     margin-left: 32px;
+    position: relative;
+}
+
+/* ── 导航滑动指示器 ── */
+.nav-indicator {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    background: var(--bio-dark);
+    border-radius: 9999px;
+    pointer-events: none;
+    z-index: 0;
+    /* ease-in-out: 先加速后减速 */
+    transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+                width 0.45s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .nav-btn {
@@ -1095,19 +1111,20 @@ h1, h2, h3, h4, h5, h6,
     font-weight: 500;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: var(--transition);
+    transition: color var(--transition);
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    position: relative;
+    z-index: 1;
 }
 
-.nav-btn:hover {
+.nav-btn:hover:not(.active) {
     background: var(--bio-pale);
     color: var(--bio-dark);
 }
 
 .nav-btn.active {
-    background: var(--bio-dark);
     color: white;
 }
 

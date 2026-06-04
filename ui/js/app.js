@@ -26,6 +26,13 @@ const App = {
         this.loadFileList();
         this.startPolling();
         if (typeof lucide !== 'undefined') lucide.createIcons();
+
+        // 初始化导航滑动指示器位置
+        const activeBtn = document.querySelector('.nav-btn.active');
+        if (activeBtn) {
+            // 延迟一帧，确保布局已计算完成
+            requestAnimationFrame(() => this.updateNavIndicator(activeBtn));
+        }
     },
 
     cacheElements() {
@@ -688,9 +695,15 @@ const App = {
 
     switchPage(page) {
         // 切换导航按钮
+        let targetBtn = null;
         document.querySelectorAll('.nav-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.page === page);
+            const match = btn.dataset.page === page;
+            btn.classList.toggle('active', match);
+            if (match) targetBtn = btn;
         });
+
+        // 滑动指示器
+        if (targetBtn) this.updateNavIndicator(targetBtn);
 
         // 切换页面容器
         document.querySelectorAll('.page-container').forEach(el => {
@@ -711,6 +724,17 @@ const App = {
                 LogViewer.deactivate();
             }
         }
+    },
+
+    updateNavIndicator(btn) {
+        const indicator = document.querySelector('.nav-indicator');
+        const nav = document.querySelector('.header-nav');
+        if (!indicator || !nav || !btn) return;
+        const navRect = nav.getBoundingClientRect();
+        const btnRect = btn.getBoundingClientRect();
+        const left = btnRect.left - navRect.left;
+        indicator.style.width = btnRect.width + 'px';
+        indicator.style.transform = `translateX(${left}px)`;
     },
 
     // ─────────────────────────────────────────────────────────
