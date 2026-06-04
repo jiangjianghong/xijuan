@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 
 import yaml
 from pydantic import BaseModel
@@ -75,7 +75,7 @@ class ExtractionConfig(BaseModel):
     llm_timeout: int = 60
     llm_retry_count: int = 3
     max_context_length: int = 4096
-    enable_thinking: bool = False
+    llm_extra_body: Dict[str, Any] = {}
 
 
 class TableNameValidationConfig(BaseModel):
@@ -87,7 +87,7 @@ class TableNameValidationConfig(BaseModel):
     max_context_length: int | None = None
     max_context_lines: int | None = None
     max_concurrency: int | None = None
-    enable_thinking: bool | None = None
+    llm_extra_body: Dict[str, Any] | None = None
 
 
 class AnalysisConfig(BaseModel):
@@ -102,7 +102,7 @@ class VLModelConfig(BaseModel):
     temperature: float = 0.1
     max_tokens: int = 4096
     timeout: int = 180
-    enable_thinking: bool = False
+    extra_body: Dict[str, Any] = {}
     global_max_concurrency: int = 8
     default_max_pixels: int = 4_000_000
     pdf_storage_dir: str = "uploads"

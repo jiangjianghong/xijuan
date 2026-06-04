@@ -39,9 +39,26 @@ llm:
 extraction:
   max_concurrency: 5
   vector_search_top_k: 5
+  # LLM 额外请求参数，直接写入请求体的 extra_body 字段
+  # 自部署模型（vLLM / Ollama 等）关闭思考链示例：
+  #   llm_extra_body: {chat_template_kwargs: {enable_thinking: false}}
+  # 阿里 DashScope 等托管模型关闭思考链示例：
+  #   llm_extra_body: {enable_thinking: false}
+  # 不需要额外参数时留空：
+  llm_extra_body: {}
 
 analysis:
   max_concurrency: 5
 
 table_name_validation:
   max_concurrency: 5
+  # 同 extraction.llm_extra_body，为 null 时回退到 extraction 的配置
+  llm_extra_body: null
+
+# VL（视觉模型）抽取配置
+vl_model:
+  # base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  # api_key: "your-api-key"
+  # model: "qwen-vl-max"
+  # VL 模型额外请求参数，格式同上
+  extra_body: {}

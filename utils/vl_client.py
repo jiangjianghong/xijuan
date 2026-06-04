@@ -50,9 +50,8 @@ async def vl_chat(
     """
     cfg = get_config().vl_model
 
-    body_extras: dict[str, Any] = {
-        "chat_template_kwargs": {"enable_thinking": cfg.enable_thinking}
-    }
+    # 合并配置的 extra_body 与调用方传入的 extra_body（参数优先）
+    body_extras: dict[str, Any] = dict(cfg.extra_body)
     if extra_body:
         body_extras.update(extra_body)
 
@@ -61,8 +60,9 @@ async def vl_chat(
         "messages": messages,
         "temperature": cfg.temperature,
         "max_tokens": max_tokens or cfg.max_tokens,
-        "extra_body": body_extras,
     }
+    if body_extras:
+        payload["extra_body"] = body_extras
 
     headers = {"Content-Type": "application/json"}
     if cfg.api_key:

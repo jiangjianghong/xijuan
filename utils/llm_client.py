@@ -20,7 +20,7 @@ async def chat_completion(
     timeout: Optional[int] = None,
     messages: Optional[List[Dict[str, str]]] = None,
     max_retries: Optional[int] = None,
-    enable_thinking: Optional[bool] = None,
+    extra_body: Optional[Dict[str, Any]] = None,
 ) -> str:
     """调用 OpenAI 兼容 chat/completions 接口。
 
@@ -32,7 +32,7 @@ async def chat_completion(
         timeout: 超时秒数，默认从配置读取。
         messages: 自定义 messages 列表，优先于 prompt。
         max_retries: 最大重试次数，默认从配置读取。
-        enable_thinking: 是否启用思考链，None 时回退到 extraction.enable_thinking。
+        extra_body: 额外请求参数，与配置中的 llm_extra_body 合并（参数优先）。
 
     Returns:
         LLM 返回的文本内容。
@@ -43,8 +43,6 @@ async def chat_completion(
     api_key = api_key or cfg.llm_api_key or "EMPTY"
     timeout = timeout or cfg.llm_timeout
     retry_count = max_retries or cfg.llm_retry_count or 1
-    if enable_thinking is None:
-        enable_thinking = cfg.enable_thinking
 
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
@@ -53,13 +51,17 @@ async def chat_completion(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    # 合并配置的 llm_extra_body 与调用方传入的 extra_body（参数优先）
+    merged_extra: Dict[str, Any] = dict(cfg.llm_extra_body)
+    if extra_body:
+        merged_extra.update(extra_body)
+
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "extra_body": {
-            "chat_template_kwargs": {"enable_thinking": enable_thinking}
-        },
     }
+    if merged_extra:
+        payload["extra_body"] = merged_extra
 
     url = f"{base_url.rstrip('/')}/chat/completions"
 

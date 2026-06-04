@@ -1,5 +1,5 @@
 """临时探针：用 config.yaml 里的配置发一个最小请求，验证
-extra_body.chat_template_kwargs.enable_thinking 能否被服务端接受并正常返回。"""
+extra_body 能否被服务端接受并正常返回。"""
 
 from __future__ import annotations
 
@@ -69,15 +69,15 @@ async def main() -> None:
     vl = cfg.vl_model
 
     print("配置摘要:")
-    print(f"  extraction.base_url = {ex.llm_base_url}")
-    print(f"  extraction.model    = {ex.llm_model}")
-    print(f"  extraction.thinking = {ex.enable_thinking}")
-    print(f"  table_name.base_url = {tn.llm_base_url}")
-    print(f"  table_name.model    = {tn.llm_model}")
-    print(f"  table_name.thinking = {tn.enable_thinking}")
-    print(f"  vl_model.base_url   = {vl.base_url}")
-    print(f"  vl_model.model      = {vl.model}")
-    print(f"  vl_model.thinking   = {vl.enable_thinking}")
+    print(f"  extraction.base_url   = {ex.llm_base_url}")
+    print(f"  extraction.model      = {ex.llm_model}")
+    print(f"  extraction.extra_body = {ex.llm_extra_body}")
+    print(f"  table_name.base_url   = {tn.llm_base_url}")
+    print(f"  table_name.model      = {tn.llm_model}")
+    print(f"  table_name.extra_body = {tn.llm_extra_body}")
+    print(f"  vl_model.base_url     = {vl.base_url}")
+    print(f"  vl_model.model        = {vl.model}")
+    print(f"  vl_model.extra_body   = {vl.extra_body}")
 
     await via_chat_completion("extraction(默认)")
 
