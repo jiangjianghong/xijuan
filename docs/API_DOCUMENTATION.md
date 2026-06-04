@@ -214,7 +214,7 @@
 
 ### 3.4 复制配置（同实例跨类型）
 
-从源类型复制字段+规则到目标类型，**生成全新 ID** 的独立副本（编辑互不影响）。
+从源类型复制字段+规则到目标类型，**生成全新 ID** 的独立副本（编辑互不影响）。复制时字段名 / 规则名保持不变，新 `field_id` / `rule_id` 基于源 ID 自动编号，例如 `amount` → `amount_0002`；再次复制为 `amount_0003`。
 
 - **URL**: `POST /doctype/{type_id}/copy_from`
 - **Content-Type**: `application/json`
@@ -224,9 +224,9 @@
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `source_type_id` | `string` | 是 | - | 源类型 ID（不能等于目标 `type_id`） |
-| `field_ids` | `string[]` | 否 | `null`（全部） | 仅复制指定字段 |
-| `rule_ids` | `string[]` | 否 | `null`（全部） | 仅复制指定规则 |
-| `on_conflict` | `string` | 否 | `"rename"` | 同名冲突策略：`skip` / `rename`（自动加“ (副本)”后缀） |
+| `field_ids` | `string[] \| null` | 否 | `null`（全部） | 仅复制指定字段；不传 / `null` 表示全部，空数组 `[]` 表示不复制字段 |
+| `rule_ids` | `string[] \| null` | 否 | `null`（全部） | 仅复制指定规则；不传 / `null` 表示全部，空数组 `[]` 表示不复制规则 |
+| `on_conflict` | `string` | 否 | `"rename"` | 同源 ID 副本冲突策略：`rename` 自动取下一个 `_000N`；`skip` 在目标类型已有该源 ID 的副本时跳过 |
 
 **响应示例**
 
@@ -239,12 +239,12 @@
     "skipped_fields": 0,
     "copied_rules": 3,
     "skipped_rules": 0,
-    "missing_dependencies": ["利润率检查::净利润"]
+    "missing_dependencies": ["利润率检查::net_profit"]
   }
 }
 ```
 
-`missing_dependencies` 列出**规则 depend_fields** 在目标类型中找不到同名字段的位置（格式 `规则名::字段名`），不会自动跳过规则，调用方需自行处理。
+`missing_dependencies` 列出**规则 depend_fields** 中未随本次复制一起复制的源字段 ID（格式 `规则名::源field_id`），不会自动跳过规则，调用方需自行处理。规则依赖按源 `field_id` 精确重映射到本次生成的新 `field_id`，不再按字段名猜测。
 
 **副作用（自动记录血缘）**：复制成功后，若目标类型不是默认类型，则记录 `parent_type_id = source_type_id`（血缘来源）。
 

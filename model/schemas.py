@@ -46,8 +46,8 @@ class DocTypeResponse(BaseModel):
 class CopyConfigsRequest(BaseModel):
     """从源类型复制配置到目标类型。
 
-    field_ids / rule_ids 留空表示全部复制；
-    on_conflict 决定目标类型已有同名字段/规则时的行为。
+    field_ids / rule_ids 不传或为 null 表示全部复制；空数组表示不复制；
+    on_conflict 决定目标类型已有同源 field_id/rule_id 副本时的行为。
     """
     source_type_id: str
     field_ids: Optional[List[str]] = None

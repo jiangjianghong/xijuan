@@ -52,6 +52,41 @@ def _new_id(prefix: str = "") -> str:
     return (prefix + raw)[:32] if prefix else raw[:32]
 
 
+def _copy_id_base(source_id: str, max_length: int = 100) -> str:
+    base = source_id
+    head, sep, suffix = source_id.rpartition("_")
+    if sep and head and len(suffix) == 4 and suffix.isdigit():
+        base = head
+    return base[: max_length - 5]
+
+
+def _copy_id(source_id: str, existing_ids: set[str], max_length: int = 100) -> str:
+    """基于源 ID 生成副本 ID，例如 A -> A_0002 -> A_0003。"""
+    base = _copy_id_base(source_id, max_length)
+
+    index = 2
+    while True:
+        copy_suffix = f"_{index:04d}"
+        candidate = f"{base[: max_length - len(copy_suffix)]}{copy_suffix}"
+        if candidate not in existing_ids:
+            existing_ids.add(candidate)
+            return candidate
+        index += 1
+
+
+def _has_copy_id(source_id: str, existing_ids: set[str], max_length: int = 100) -> bool:
+    """判断集合里是否已有某个源 ID 的副本 ID。"""
+    base = _copy_id_base(source_id, max_length)
+    prefix = f"{base}_"
+    for existing_id in existing_ids:
+        if not existing_id.startswith(prefix):
+            continue
+        suffix = existing_id[len(prefix):]
+        if len(suffix) == 4 and suffix.isdigit():
+            return True
+    return False
+
+
 # ─────────────────────────────────────────────────────────────
 # 类型 CRUD
 # ─────────────────────────────────────────────────────────────
@@ -404,11 +439,12 @@ async def copy_configs(
 ):
     """从 source_type_id 复制字段/规则到当前 type_id（独立副本）。
 
-    - field_ids/rule_ids 为空表示复制全部
-    - on_conflict=skip：目标已有同 field_name/rule_name 时跳过
-    - on_conflict=rename：自动改名加" (副本)"
-    - 规则的 depend_fields 按 field_name 重映射到目标类型对应的新 field_id；
-      若目标类型缺少同名字段，记入 missing_dependencies 返回。
+    - field_ids/rule_ids 不传或为 null 表示复制全部；空数组表示不复制
+    - on_conflict=skip：目标已有同源 field_id/rule_id 的副本时跳过
+    - on_conflict=rename：自动生成下一个副本 ID（如 A_0002 / A_0003）
+    - field_name/rule_name 保持不变；
+    - 规则的 depend_fields 按源 field_id 精确重映射到本次复制生成的新 field_id；
+      若依赖字段未一起复制，记入 missing_dependencies 返回。
     """
     if type_id == req.source_type_id:
         raise HTTPException(status_code=400, detail="源类型与目标类型不能相同")
@@ -425,40 +461,40 @@ async def copy_configs(
 
     # ── 1. 复制字段 ──
     field_stmt = select(ExtractionField).where(ExtractionField.type_id == req.source_type_id)
-    if req.field_ids:
+    if req.field_ids is not None:
         field_stmt = field_stmt.where(ExtractionField.field_id.in_(req.field_ids))
     src_fields = (await db.execute(field_stmt)).scalars().all()
 
-    target_field_names = set(
+    existing_field_ids = set(
         row[0]
         for row in (
             await db.execute(
-                select(ExtractionField.field_name).where(ExtractionField.type_id == type_id)
+                select(ExtractionField.field_id)
+            )
+        ).fetchall()
+    )
+    target_field_ids = set(
+        row[0]
+        for row in (
+            await db.execute(
+                select(ExtractionField.field_id).where(ExtractionField.type_id == type_id)
             )
         ).fetchall()
     )
 
-    # field_name -> new field_id 映射，用于规则的 depend_fields 重映射
-    name_to_new_field_id: dict = {}
+    # 源 field_id -> 新 field_id 映射，用于规则的 depend_fields 重映射
+    source_to_new_field_id: dict = {}
 
     for src in src_fields:
-        new_name = src.field_name
-        if new_name in target_field_names:
-            if on_conflict == "skip":
-                resp.skipped_fields += 1
-                continue
-            new_name = f"{new_name} (副本)"
-            # 防多次复制重名
-            suffix = 2
-            while new_name in target_field_names:
-                new_name = f"{src.field_name} (副本{suffix})"
-                suffix += 1
+        if on_conflict == "skip" and _has_copy_id(src.field_id, target_field_ids):
+            resp.skipped_fields += 1
+            continue
 
-        new_field_id = _new_id()
+        new_field_id = _copy_id(src.field_id, existing_field_ids)
         new_field = ExtractionField(
             field_id=new_field_id,
             type_id=type_id,
-            field_name=new_name,
+            field_name=src.field_name,
             source_type=src.source_type,
             enabled=src.enabled,
             priority=src.priority,
@@ -478,45 +514,29 @@ async def copy_configs(
             vl_extract_prompt=src.vl_extract_prompt,
         )
         db.add(new_field)
-        target_field_names.add(new_name)
-        # 记录原字段名 -> 目标新 field_id（用于规则重映射）
-        name_to_new_field_id[src.field_name] = new_field_id
+        target_field_ids.add(new_field_id)
+        source_to_new_field_id[src.field_id] = new_field_id
         resp.copied_fields += 1
-
-    # 也加入目标类型已有的同名字段（若复制规则时依赖了已存在字段）
-    if not name_to_new_field_id:
-        # 仅当未复制任何字段时才查全表回填，减少开销
-        pass
-    target_existing_fields = (
-        await db.execute(
-            select(ExtractionField.field_id, ExtractionField.field_name)
-            .where(ExtractionField.type_id == type_id)
-        )
-    ).fetchall()
-    name_to_target_field_id = {r[1]: r[0] for r in target_existing_fields}
-    # 新增的优先于已有的（覆盖映射）
-    name_to_target_field_id.update(name_to_new_field_id)
-
-    # 源类型 field_id -> field_name（解析 depend_fields）
-    src_all_fields = (
-        await db.execute(
-            select(ExtractionField.field_id, ExtractionField.field_name)
-            .where(ExtractionField.type_id == req.source_type_id)
-        )
-    ).fetchall()
-    src_field_id_to_name = {r[0]: r[1] for r in src_all_fields}
 
     # ── 2. 复制规则 ──
     rule_stmt = select(AnalysisRule).where(AnalysisRule.type_id == req.source_type_id)
-    if req.rule_ids:
+    if req.rule_ids is not None:
         rule_stmt = rule_stmt.where(AnalysisRule.rule_id.in_(req.rule_ids))
     src_rules = (await db.execute(rule_stmt)).scalars().all()
 
-    target_rule_names = set(
+    existing_rule_ids = set(
         row[0]
         for row in (
             await db.execute(
-                select(AnalysisRule.rule_name).where(AnalysisRule.type_id == type_id)
+                select(AnalysisRule.rule_id)
+            )
+        ).fetchall()
+    )
+    target_rule_ids = set(
+        row[0]
+        for row in (
+            await db.execute(
+                select(AnalysisRule.rule_id).where(AnalysisRule.type_id == type_id)
             )
         ).fetchall()
     )
@@ -524,30 +544,22 @@ async def copy_configs(
     missing_deps: List[str] = []
 
     for src in src_rules:
-        new_name = src.rule_name
-        if new_name in target_rule_names:
-            if on_conflict == "skip":
-                resp.skipped_rules += 1
-                continue
-            new_name = f"{new_name} (副本)"
-            suffix = 2
-            while new_name in target_rule_names:
-                new_name = f"{src.rule_name} (副本{suffix})"
-                suffix += 1
+        if on_conflict == "skip" and _has_copy_id(src.rule_id, target_rule_ids):
+            resp.skipped_rules += 1
+            continue
 
-        # 重映射 depend_fields：源 field_id -> 源 field_name -> 目标 field_id
+        # 重映射 depend_fields：源 field_id -> 本次复制生成的新 field_id
         new_depend_fields: List[str] = []
         for src_fid in (src.depend_fields or []):
-            fname = src_field_id_to_name.get(src_fid)
-            if fname and fname in name_to_target_field_id:
-                new_depend_fields.append(name_to_target_field_id[fname])
+            if src_fid in source_to_new_field_id:
+                new_depend_fields.append(source_to_new_field_id[src_fid])
             else:
-                missing_deps.append(f"{src.rule_name}::{fname or src_fid}")
+                missing_deps.append(f"{src.rule_name}::{src_fid}")
 
         new_rule = AnalysisRule(
-            rule_id=_new_id(),
+            rule_id=_copy_id(src.rule_id, existing_rule_ids),
             type_id=type_id,
-            rule_name=new_name,
+            rule_name=src.rule_name,
             rule_type=src.rule_type,
             expression=src.expression,
             system_prompt=src.system_prompt,
@@ -556,7 +568,7 @@ async def copy_configs(
             priority=src.priority,
         )
         db.add(new_rule)
-        target_rule_names.add(new_name)
+        target_rule_ids.add(new_rule.rule_id)
         resp.copied_rules += 1
 
     resp.missing_dependencies = missing_deps

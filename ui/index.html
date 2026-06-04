@@ -669,10 +669,10 @@
                     </div>
                 </div>
                 <div style="margin-bottom:12px;">
-                    <label style="font-size:12px; color:#4F775D;">同名冲突处理</label>
+                    <label style="font-size:12px; color:#4F775D;">同源 ID 副本处理</label>
                     <select id="copy-conflict" class="form-select" style="width:100%;">
-                        <option value="rename">自动改名（追加" (副本)"）</option>
-                        <option value="skip">跳过同名</option>
+                        <option value="rename">自动编号（追加 _0002）</option>
+                        <option value="skip">已有副本则跳过</option>
                     </select>
                 </div>
                 <div id="copy-source-summary" style="font-size:12px; color:#4F775D; margin-top:8px;"></div>
@@ -746,10 +746,10 @@
                 </div>
                 <!-- 冲突策略（派生 / 导入） -->
                 <div id="typeform-conflict-block" style="display:none; margin-bottom:12px;">
-                    <label class="dt-form-label">同名冲突处理</label>
+                    <label id="typeform-conflict-label" class="dt-form-label">同源 ID 副本处理</label>
                     <select id="typeform-conflict" class="form-select" style="width:100%;">
-                        <option value="rename">自动改名（追加" (副本)"）</option>
-                        <option value="skip">跳过同名</option>
+                        <option id="typeform-conflict-rename" value="rename">自动编号（追加 _0002）</option>
+                        <option id="typeform-conflict-skip" value="skip">已有副本则跳过</option>
                     </select>
                 </div>
             </div>

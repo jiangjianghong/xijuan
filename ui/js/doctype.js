@@ -458,6 +458,18 @@ const DocTypeManager = {
         document.getElementById('typeform-derive-block').style.display = mode === 'derive' ? '' : 'none';
         document.getElementById('typeform-import-block').style.display = mode === 'import' ? '' : 'none';
         document.getElementById('typeform-conflict-block').style.display = (mode === 'derive' || mode === 'import') ? '' : 'none';
+        const conflictLabel = document.getElementById('typeform-conflict-label');
+        const renameOption = document.getElementById('typeform-conflict-rename');
+        const skipOption = document.getElementById('typeform-conflict-skip');
+        if (mode === 'derive') {
+            conflictLabel.textContent = '同源 ID 副本处理';
+            renameOption.textContent = '自动编号（追加 _0002）';
+            skipOption.textContent = '已有副本则跳过';
+        } else if (mode === 'import') {
+            conflictLabel.textContent = '同名冲突处理';
+            renameOption.textContent = '自动改名（追加" (副本)"）';
+            skipOption.textContent = '跳过同名';
+        }
     },
 
     async submitTypeForm() {

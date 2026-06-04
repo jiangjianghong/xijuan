@@ -184,11 +184,14 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "description": (
                 "把源类型（`source_type_id`）的字段+规则复制到当前 `type_id`，生成全新 ID 的**独立副本**"
                 "（复制后两份互不影响）。\n\n"
-                "- `field_ids` / `rule_ids` 留空表示该类目全部复制\n"
-                "- `on_conflict=skip`：目标已有同 `field_name` / `rule_name` 时跳过\n"
-                "- `on_conflict=rename`（默认）：自动加 ` (副本)`（再冲突则 ` (副本2)`…）后缀\n"
-                "- 规则的 `depend_fields` 按 **field_name** 在目标类型重映射到新的 `field_id`；"
-                "找不到同名字段的依赖记入 `missing_dependencies` 返回，规则仍照常创建（仅丢失该依赖）\n\n"
+                "- `field_ids` / `rule_ids` 不传或为 `null` 表示该类目全部复制；空数组 `[]` 表示不复制\n"
+                "- 字段名 / 规则名保持不变；新的 `field_id` / `rule_id` 基于源 ID 自动编号，"
+                "例如 `amount` → `amount_0002`，再次复制为 `amount_0003`\n"
+                "- `on_conflict=skip`：目标类型已有同源 `field_id` / `rule_id` 副本时跳过\n"
+                "- `on_conflict=rename`（默认）：自动取下一个可用 `_000N` 副本 ID\n"
+                "- 规则的 `depend_fields` 按源 `field_id` 精确重映射到本次复制生成的新 `field_id`；"
+                "依赖字段未随本次复制一起复制时记入 `missing_dependencies`（格式 `规则名::源field_id`），"
+                "规则仍照常创建（仅丢失该依赖）\n\n"
                 "**血缘副作用**（目标非默认类型时）：把目标 `parent_type_id` 记为 `source_type_id`。\n\n"
                 "**错误码**：400（源=目标）/ 404（源或目标不存在）。\n\n"
                 "返回 `data=CopyConfigsResponse{copied_fields, skipped_fields, copied_rules, "
@@ -215,8 +218,8 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "- `target_type_id` 为空时使用 `payload.type_id`（都为空 → 400）\n"
                 "- 目标类型不存在且 `create_type_if_missing=true` → 自动创建；为 false → 404\n"
                 "- 字段始终生成**新 `field_id`**，避免与全局唯一约束冲突\n"
-                "- `on_conflict` 同 `copy_from`（skip / rename）\n"
-                "- 规则按 `depend_field_names` 在目标类型重映射；缺失依赖进 `missing_dependencies`\n\n"
+                "- `on_conflict` 是导入时的同名策略：`rename`（默认，加 ` (副本)` 后缀）或 `skip`\n"
+                "- 规则按 `depend_field_names` 在目标类型按字段名重映射；缺失依赖进 `missing_dependencies`\n\n"
                 "返回 `data=ImportConfigsResponse{target_type_id, created_type, copied_fields, "
                 "skipped_fields, copied_rules, skipped_rules, missing_dependencies}`。"
             ),
@@ -729,9 +732,9 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         "description": "从源类型复制字段/规则到目标类型（独立副本）。",
         "properties": {
             "source_type_id": "源类型 ID（必填，须 ≠ 目标 `type_id`）。",
-            "field_ids": "要复制的字段 ID 列表；留空表示全部字段。",
-            "rule_ids": "要复制的规则 ID 列表；留空表示全部规则。",
-            "on_conflict": "目标已有同名时的策略：`rename`（默认，加 ` (副本)` 后缀）或 `skip`（跳过）。",
+            "field_ids": "要复制的字段 ID 列表；不传或 `null` 表示全部字段，空数组 `[]` 表示不复制字段。",
+            "rule_ids": "要复制的规则 ID 列表；不传或 `null` 表示全部规则，空数组 `[]` 表示不复制规则。",
+            "on_conflict": "目标类型已有同源 ID 副本时的策略：`rename`（默认，生成下一个 `_000N` 副本 ID）或 `skip`（跳过）。字段名/规则名保持不变。",
         },
         "examples": [{"source_type_id": "financial_report", "field_ids": None, "rule_ids": None, "on_conflict": "rename"}],
     },

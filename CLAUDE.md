@@ -111,7 +111,7 @@ The **tableing** stage runs after parsing. `parse_tables()` extracts all `<table
 
 ### Document Type Isolation (`blue_print/doctype_router.py`)
 Multi-type configuration support: each file is bound to one `type_id` (default `'default'`). Extraction fields and analysis rules are isolated per type — `extraction_service` / `analysis_service` look up `file.type_id` and filter `extraction_field` / `analysis_rule` by it. Configurations are NOT shared across types; sharing is done via explicit copy:
-- `POST /doctype/{type_id}/copy_from` clones fields/rules from a source type into the target type. New `field_id`/`rule_id` are UUIDs; `depend_fields` are remapped by `field_name` to the new IDs in the target type. Missing dependencies are returned to the caller (not silently dropped).
+- `POST /doctype/{type_id}/copy_from` clones fields/rules from a source type into the target type. New `field_id`/`rule_id` are source-ID-based copy IDs (`A -> A_0002 -> A_0003`); `field_name`/`rule_name` stay unchanged. Rule `depend_fields` are remapped directly by source `field_id` to the new copied `field_id`; dependencies whose fields were not copied are returned to the caller (not silently dropped).
 - After copy, the two copies are fully independent — editing one does not affect the other.
 - Default type (`is_default=1`) cannot be deleted. Deleting a non-default type with files/configs requires `force=true` (cascades file content + Milvus + configs).
 - 类型只有**血缘**这一个附加维度:`is_template`(模板标记) + `parent_type_id`(复制来源,`copy_from`/`import` 自动记录),`POST /doctype/{id}/promote|demote` 切换模板标记。**「项目」维度已彻底移除**(无 `project_id` 列、无 `project` 表、无相关接口)。
