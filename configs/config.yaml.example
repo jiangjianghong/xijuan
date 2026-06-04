@@ -1,0 +1,47 @@
+server:
+  host: "0.0.0.0"
+  port: 5019
+  reload: true
+
+mineru:
+  base_url: "http://your-mineru-server:8888"
+  timeout: 300
+
+chunking:
+  max_chunk_size: 1000
+  chunk_overlap: 200
+
+embedding:
+  model: "text-embedding-v4"
+  api_key: "your-dashscope-api-key"
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  batch_size: 10
+
+milvus:
+  host: "localhost"
+  port: 19530
+  collection_name: "wanz_chunks"
+  dimension: 1024
+
+mysql:
+  host: "localhost"
+  port: 3306
+  user: "your-mysql-user"
+  password: "your-mysql-password"
+  database: "wanz_prase"
+
+llm:
+  model: "qwen-plus"
+  api_key: "your-dashscope-api-key"
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  temperature: 0.1
+
+extraction:
+  max_concurrency: 5
+  vector_search_top_k: 5
+
+analysis:
+  max_concurrency: 5
+
+table_name_validation:
+  max_concurrency: 5

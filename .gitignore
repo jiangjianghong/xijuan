@@ -19,6 +19,8 @@ env/
 
 # Config (contains sensitive data)
 configs/config.yaml
+configs/config1.yaml
+configs/config2.yaml
 
 # IDE
 .idea/
