@@ -24,8 +24,5 @@ RUN uv sync --frozen --no-dev --no-install-project
 # 复制应用代码
 COPY . .
 
-# 暴露端口（与 config.yaml 中的端口一致）
-EXPOSE 5019
-
-# 启动命令
-CMD ["uv", "run", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5019"]
+# 启动命令（端口从 config.yaml 读取）
+CMD ["uv", "run", "python", "app.py"]

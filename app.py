@@ -65,4 +65,4 @@ async def _favicon():
 
 if __name__ == "__main__":
     cfg = get_config().server
-    uvicorn.run("app:app", host=cfg.host, port=cfg.port, reload=True)
+    uvicorn.run("app:app", host=cfg.host, port=cfg.port)

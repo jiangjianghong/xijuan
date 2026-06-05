@@ -1,44 +1,68 @@
+# ============================================================
+# 析卷 AI 配置文件示例
+# 复制为 config.yaml 后修改为实际值
+# 字段名与 utils/config.py 中的 Pydantic 模型一一对应
+# ============================================================
+
+# 服务器配置
 server:
   host: "0.0.0.0"
   port: 5019
-  reload: true
 
+# MinerU PDF 解析服务配置
 mineru:
-  base_url: "http://your-mineru-server:8888"
-  timeout: 300
+  base_url: "http://your-mineru-server:7078"
+  backend: "vllm-async-engine"
+  queue_width: 1
+  parse_timeout: 1200        # 解析超时（秒）
+  max_file_size: 104857600   # 最大文件大小（字节），默认 100MB
 
+# 文本分块配置
 chunking:
-  max_chunk_size: 1000
-  chunk_overlap: 200
+  chunk_size: 512            # 目标块大小（字符数）
+  chunk_overlap: 50          # 块间重叠字符数
+  max_chunk_size: 2048       # 最大块大小
+  separators: ["\n\n", "\n", "。", " "]  # 分割符优先级
 
+# 向量化（Embedding）配置
 embedding:
-  model: "text-embedding-v4"
-  api_key: "your-dashscope-api-key"
-  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-  batch_size: 10
+  base_url: "http://your-embedding-server:8119/v1"
+  model_name: "your-embedding-model"
+  api_key: "your-api-key"
+  embedding_dim: 4096        # 向量维度
+  batch_size: 10             # 批量请求数
+  timeout: 60                # 请求超时（秒）
+  retry_count: 3             # 重试次数
 
+# Milvus 向量数据库配置
 milvus:
-  host: "localhost"
+  host: "your-milvus-host"
   port: 19530
-  collection_name: "wanz_chunks"
-  dimension: 1024
+  user: ""
+  password: ""
+  collection_name: "your_collection_name"
+  index_type: "IVF_FLAT"
+  metric_type: "L2"
+  nlist: 4096
+  search_topk: 10
 
+# MySQL 数据库配置
 mysql:
-  host: "localhost"
+  host: "127.0.0.1"
   port: 3306
-  user: "your-mysql-user"
-  password: "your-mysql-password"
-  database: "wanz_prase"
+  database: "your_database"
+  username: "your_username"
+  password: "your_password"
+  pool_size: 10
 
-llm:
-  model: "qwen-plus"
-  api_key: "your-dashscope-api-key"
-  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-  temperature: 0.1
-
+# 字段提取配置（LLM 相关）
 extraction:
-  max_concurrency: 5
-  vector_search_top_k: 5
+  llm_base_url: "http://your-llm-server:8119/v1"
+  llm_model: "your-llm-model"
+  llm_api_key: "your-api-key"
+  llm_timeout: 60            # LLM 请求超时（秒）
+  llm_retry_count: 3         # LLM 重试次数
+  max_context_length: 4096   # 最大上下文长度
   # LLM 额外请求参数，直接写入请求体的 extra_body 字段
   # 自部署模型（vLLM / Ollama 等）关闭思考链示例：
   #   llm_extra_body: {chat_template_kwargs: {enable_thinking: false}}
@@ -47,18 +71,33 @@ extraction:
   # 不需要额外参数时留空：
   llm_extra_body: {}
 
-analysis:
-  max_concurrency: 5
-
+# 表格名校验配置（独立于 extraction，字段含义相同）
+# 未配置的字段会回退到 extraction 的对应值
 table_name_validation:
-  max_concurrency: 5
-  # 同 extraction.llm_extra_body，为 null 时回退到 extraction 的配置
+  llm_base_url: null
+  llm_model: null
+  llm_api_key: null
+  llm_timeout: null
+  llm_retry_count: null
+  max_context_length: null
+  max_context_lines: 3       # 表格名提取时参考的最大行数
+  max_concurrency: 20        # 并发 LLM 请求数
   llm_extra_body: null
+
+# 逻辑分析配置
+analysis:
+  calc_precision: 2          # 计算结果小数精度
+  judge_timeout: 30          # 判定超时（秒）
 
 # VL（视觉模型）抽取配置
 vl_model:
-  # base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-  # api_key: "your-api-key"
-  # model: "qwen-vl-max"
-  # VL 模型额外请求参数，格式同上
+  base_url: "http://your-vl-server:8119/v1"
+  api_key: "your-api-key"
+  model: "your-vl-model"
+  temperature: 0.1
+  max_tokens: 4096
+  timeout: 180               # VL 请求超时（秒）
   extra_body: {}
+  global_max_concurrency: 8  # 全局最大并发数
+  default_max_pixels: 4000000 # 默认最大像素数（4MP）
+  pdf_storage_dir: "uploads" # PDF 文件存储目录
