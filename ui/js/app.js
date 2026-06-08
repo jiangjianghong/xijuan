@@ -587,9 +587,11 @@ const App = {
                         html = '<div class="tab-content-empty">暂无提取结果</div>';
                     } else {
                         data.forEach(item => {
+                            const title = item.field_name || item.field_id;
+                            const subtitle = item.field_name ? item.field_id : '';
                             html += `
                                 <div class="data-card">
-                                    <div class="data-card-title">${item.field_id}</div>
+                                    <div class="data-card-title">${this.escapeHtml(title)}${subtitle ? `<span class="data-card-subtitle">${this.escapeHtml(subtitle)}</span>` : ''}</div>
                                     <div class="data-card-field">
                                         <span class="data-card-field-label">值:</span>
                                         <span class="data-card-field-value">${this.escapeHtml(item.extracted_value) || '-'}</span>
@@ -612,9 +614,11 @@ const App = {
                         html = '<div class="tab-content-empty">暂无分析结果</div>';
                     } else {
                         data.forEach(item => {
+                            const title = item.rule_name || item.rule_id;
+                            const subtitle = item.rule_name ? item.rule_id : '';
                             html += `
                                 <div class="data-card">
-                                    <div class="data-card-title">${item.rule_id}</div>
+                                    <div class="data-card-title">${this.escapeHtml(title)}${subtitle ? `<span class="data-card-subtitle">${this.escapeHtml(subtitle)}</span>` : ''}</div>
                                     <div class="data-card-field">
                                         <span class="data-card-field-label">结果:</span>
                                         <span class="data-card-field-value">${this.escapeHtml(item.result_value) || '-'}</span>

@@ -734,6 +734,7 @@
     {
       "file_id": "a1b2...",
       "field_id": "company_name",
+      "field_name": "公司名称",
       "extracted_value": "某某科技有限公司",
       "reason": "从文档第一段提取"
     }
@@ -741,6 +742,7 @@
 }
 ```
 
+> `field_name` 来自 `extraction_field` 表的 `field_name` 列（LEFT JOIN），若字段配置已被删除则为 `null`。
 > `source_refs`（参考块/VL 元数据）存在 `extraction_result.source_refs` 列里，但本接口当前**不返回**该字段（如需可走 `/extraction/test`）。
 
 ---
@@ -759,6 +761,7 @@
     {
       "file_id": "a1b2...",
       "rule_id": "revenue_check",
+      "rule_name": "营收达标检查",
       "result_value": "true",
       "input_values": {"total_revenue": "1500000"},
       "reason": "营业总收入1500000大于阈值1000000"
@@ -766,6 +769,8 @@
   ]
 }
 ```
+
+> `rule_name` 来自 `analysis_rule` 表的 `rule_name` 列（LEFT JOIN），若规则配置已被删除则为 `null`。
 
 ---
 

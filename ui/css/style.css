@@ -855,6 +855,13 @@ h1, h2, h3, h4, h5, h6,
     color: var(--bio-dark);
 }
 
+.data-card-subtitle {
+    font-weight: 400;
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-left: 6px;
+}
+
 .data-card-content {
     font-size: 12px;
     color: var(--text-secondary);

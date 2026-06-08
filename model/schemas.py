@@ -343,6 +343,7 @@ class AnalysisRuleResponse(AnalysisRuleCreate):
 class ExtractionResultItem(BaseModel):
     file_id: str
     field_id: str
+    field_name: Optional[str] = None
     extracted_value: str
     reason: Optional[str] = None
 
@@ -350,6 +351,7 @@ class ExtractionResultItem(BaseModel):
 class AnalysisResultItem(BaseModel):
     file_id: str
     rule_id: str
+    rule_name: Optional[str] = None
     result_value: str
     input_values: Optional[Dict[str, str]] = None
     reason: Optional[str] = None

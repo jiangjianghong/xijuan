@@ -397,7 +397,9 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "get": {
             "summary": "字段提取结果",
             "description": (
-                "返回 `extraction_result` 全表行：`data=[{file_id, field_id, extracted_value, reason}]`。\n\n"
+                "返回 `extraction_result` 全表行（LEFT JOIN `extraction_field` 获取字段名称）：\n"
+                "`data=[{file_id, field_id, field_name, extracted_value, reason}]`。\n\n"
+                "`field_name` 来自字段配置表，若配置已被删除则为 `null`。\n\n"
                 "注意：`source_refs`（参考块 / VL 元数据）虽存在数据库里，但本接口当前**不返回**该字段；"
                 "如需调试细节请走 `/extraction/test` 或 `/extraction/test/stream`。"
             ),
@@ -407,8 +409,10 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "get": {
             "summary": "逻辑分析结果",
             "description": (
-                "返回 `analysis_result` 全表行：`data=[{file_id, rule_id, result_value, input_values, reason}]`"
-                "（含 `input_values` 字典，但不含 `source_refs`）。"
+                "返回 `analysis_result` 全表行（LEFT JOIN `analysis_rule` 获取规则名称）：\n"
+                "`data=[{file_id, rule_id, rule_name, result_value, input_values, reason}]`"
+                "（含 `input_values` 字典，但不含 `source_refs`）。\n\n"
+                "`rule_name` 来自规则配置表，若配置已被删除则为 `null`。"
             ),
         }
     },

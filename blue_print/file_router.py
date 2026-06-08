@@ -28,6 +28,8 @@ from model.schemas import (
 )
 from model.tables import (
     AnalysisResult,
+    AnalysisRule,
+    ExtractionField,
     ExtractionResult,
     File as FileModel,
     FileChunk,
@@ -531,41 +533,57 @@ async def get_file_outline(file_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/{file_id}/extraction", response_model=ResponseWrapper)
 async def get_extraction_results(file_id: str, db: AsyncSession = Depends(get_db)):
-    """获取文件字段提取结果。"""
-    stmt = select(ExtractionResult).where(ExtractionResult.file_id == file_id)
+    """获取文件字段提取结果（含字段名称）。"""
+    stmt = (
+        select(ExtractionResult, ExtractionField.field_name)
+        .outerjoin(
+            ExtractionField,
+            ExtractionResult.field_id == ExtractionField.field_id,
+        )
+        .where(ExtractionResult.file_id == file_id)
+    )
     result = await db.execute(stmt)
-    extraction_results = result.scalars().all()
+    rows = result.all()
 
     return ResponseWrapper(
         data=[
             ExtractionResultItem(
                 file_id=r.file_id,
                 field_id=r.field_id,
+                field_name=field_name,
                 extracted_value=r.extracted_value,
                 reason=r.reason,
             ).model_dump()
-            for r in extraction_results
+            for r, field_name in rows
         ]
     )
 
 
 @router.get("/{file_id}/analysis", response_model=ResponseWrapper)
 async def get_analysis_results(file_id: str, db: AsyncSession = Depends(get_db)):
-    """获取文件逻辑分析结果。"""
-    stmt = select(AnalysisResult).where(AnalysisResult.file_id == file_id)
+    """获取文件逻辑分析结果（含规则名称）。"""
+    stmt = (
+        select(AnalysisResult, AnalysisRule.rule_name)
+        .outerjoin(
+            AnalysisRule,
+            AnalysisResult.rule_id == AnalysisRule.rule_id,
+        )
+        .where(AnalysisResult.file_id == file_id)
+    )
     result = await db.execute(stmt)
-    analysis_results = result.scalars().all()
+    rows = result.all()
 
     return ResponseWrapper(
         data=[
             AnalysisResultItem(
                 file_id=r.file_id,
                 rule_id=r.rule_id,
+                rule_name=rule_name,
                 result_value=r.result_value,
                 input_values=r.input_values,
                 reason=r.reason,
             ).model_dump()
-            for r in analysis_results
+            for r, rule_name in rows
         ]
     )
 
