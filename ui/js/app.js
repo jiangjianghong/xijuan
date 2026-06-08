@@ -24,6 +24,7 @@ const App = {
         Toast.init();
         RuleConfig.init();
         this.loadFileList();
+        this.restoreProcessingQueue();
         this.startPolling();
         if (typeof lucide !== 'undefined') lucide.createIcons();
 
@@ -33,6 +34,21 @@ const App = {
             // 延迟一帧，确保布局已计算完成
             requestAnimationFrame(() => this.updateNavIndicator(activeBtn));
         }
+    },
+
+    /**
+     * 页面加载时恢复正在处理中的文件到队列
+     */
+    async restoreProcessingQueue() {
+        try {
+            const data = await API.getFileList(1, 100);
+            data.items.forEach(item => {
+                if (Utils.isProcessing(item.progress)) {
+                    this.addToQueue(item.file_id, item.file_name, item.progress,
+                        Utils.getStageProgress(item.progress));
+                }
+            });
+        } catch (e) { /* 静默失败 */ }
     },
 
     cacheElements() {
