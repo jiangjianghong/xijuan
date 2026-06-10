@@ -935,48 +935,165 @@ git commit -m "feat: 规则 API 与分析结果透出 web_search/source_refs"
 
 ---
 
-### Task 7: 类型复制 / 导出 / 导入携带 web_search
+### Task 7: 类型复制 / 导出 / 导入携带 web_search + copy_from 占位符重映射
+
+**背景：** 存量缺口——`copy_from` 重映射 `depend_fields`（源 field_id → 新 field_id），但 `expression` 原样照抄，里面的 `<field_result>旧field_id</field_result>` 占位符运行时查不到提取结果。本任务在 copy_from 路径顺手修复：expression 与 `web_search.query` 的占位符随 `depend_fields` 同步重映射。**import 路径不修**（导出格式只存字段名、丢失源 field_id，expression 原样照抄是既有行为，保持不变）。
 
 **Files:**
-- Modify: `blue_print/doctype_router.py`（copy_from 约 559-567 行、export 约 650-660 行、import 约 800-808 行三处 `AnalysisRule` / `ExportRuleItem` 构造）
+- Modify: `blue_print/doctype_router.py`（顶部导入；copy_from 约 546-572 行规则循环；export 约 650-660 行、import 约 800-810 行构造）
+- Test: `tests/test_analysis_web_search.py`（追加）
 
-- [ ] **Step 1: copy_from 透传**
+- [ ] **Step 1: 写失败测试**
 
-`copy_from` 中 `new_rule = AnalysisRule(...)` 构造（约第 559 行起），`system_prompt=src.system_prompt,` 之后加：
+`tests/test_analysis_web_search.py` 末尾追加：
 
 ```python
-            system_prompt=src.system_prompt,
-            web_search=src.web_search,
+# ── copy_from 占位符重映射 ──────────────────────────────────
+
+@pytest.mark.anyio
+async def test_copy_from_remaps_placeholders(client: AsyncClient):
+    """copy_from 重映射 expression 与 web_search.query 中的 <field_result> 占位符。"""
+    src_type, dst_type = "ws_src_type", "ws_dst_type"
+    field_id, rule_id = "ws_src_field", "ws_src_rule"
+
+    # 建源/目标类型
+    for tid in (src_type, dst_type):
+        resp = await client.post("/doctype", json={"type_id": tid, "type_name": tid})
+        assert resp.status_code == 200, resp.text
+
+    try:
+        # 源类型建字段 + 带搜索的规则
+        resp = await client.post("/extraction/fields", json={
+            "field_id": field_id,
+            "type_id": src_type,
+            "field_name": "公司名称",
+            "source_type": "text",
+            "search_type": "context",
+            "search_config": {"keywords": ["公司"]},
+            "text_extract_prompt": "从<search_result>公司</search_result>提取公司名称",
+        })
+        assert resp.status_code == 200, resp.text
+
+        resp = await client.post("/analysis/rules", json={
+            "rule_id": rule_id,
+            "type_id": src_type,
+            "rule_name": "搜索重映射测试",
+            "rule_type": "judge",
+            "expression": "结合<web_search_result/>判断<field_result>ws_src_field</field_result>是否被处罚",
+            "depend_fields": [field_id],
+            "web_search": {"enabled": True, "query": "<field_result>ws_src_field</field_result> 行政处罚"},
+        })
+        assert resp.status_code == 200, resp.text
+
+        # 复制到目标类型
+        resp = await client.post(f"/doctype/{dst_type}/copy_from", json={"source_type_id": src_type})
+        assert resp.status_code == 200, resp.text
+
+        # 读回目标类型的字段/规则
+        resp = await client.get(f"/extraction/fields?type_id={dst_type}")
+        new_field_id = resp.json()["data"][0]["field_id"]
+        assert new_field_id != field_id
+
+        resp = await client.get(f"/analysis/rules?type_id={dst_type}")
+        rule = resp.json()["data"][0]
+        assert rule["depend_fields"] == [new_field_id]
+        # expression 占位符已重映射
+        assert f"<field_result>{new_field_id}</field_result>" in rule["expression"]
+        assert f"<field_result>{field_id}</field_result>" not in rule["expression"]
+        # web_search.query 占位符已重映射，其余键原样保留
+        assert rule["web_search"]["enabled"] is True
+        assert f"<field_result>{new_field_id}</field_result>" in rule["web_search"]["query"]
+    finally:
+        # 级联清理（带配置的类型需 force）
+        await client.delete(f"/doctype/{src_type}?force=true")
+        await client.delete(f"/doctype/{dst_type}?force=true")
 ```
 
-- [ ] **Step 2: export 透传**
+- [ ] **Step 2: 运行确认失败**
 
-export 中 `ExportRuleItem(...)` 构造（约第 650 行起），`system_prompt=r.system_prompt,` 之后加：
+Run: `uv run pytest tests/test_analysis_web_search.py::test_copy_from_remaps_placeholders -v`
+Expected: FAIL——复制出的规则 `web_search` 为 None（copy_from 未透传），且 expression 仍含旧 field_id
+
+- [ ] **Step 3: 实现重映射 helper + copy_from 修改**
+
+3a. `blue_print/doctype_router.py` 顶部导入区（`import uuid` 之后）加：
+
+```python
+import re
+import uuid
+```
+
+3b. `copy_configs`（`@router.post("/{type_id}/copy_from")`）函数定义之前加模块级 helper：
+
+```python
+def _remap_field_placeholders(text: Optional[str], mapping: dict) -> Optional[str]:
+    """把文本中 <field_result>旧field_id</field_result> 占位符重写为新 field_id。
+
+    未在映射表中的 field_id 原样保留（与 depend_fields 缺失依赖的处理一致，
+    通过 missing_dependencies 提示调用方）。
+    """
+    if not text:
+        return text
+
+    def replacer(m: re.Match) -> str:
+        fid = m.group(1).strip()
+        return f"<field_result>{mapping.get(fid, fid)}</field_result>"
+
+    return re.sub(r"<field_result>(.+?)</field_result>", replacer, text)
+```
+
+3c. copy_from 规则循环中，`new_rule = AnalysisRule(...)` 构造（约第 559 行）改为：
+
+```python
+        # 重映射 expression / web_search.query 中的占位符（与 depend_fields 同步）
+        new_expression = _remap_field_placeholders(src.expression, source_to_new_field_id)
+        new_web_search = src.web_search
+        if new_web_search and new_web_search.get("query"):
+            new_web_search = dict(new_web_search)
+            new_web_search["query"] = _remap_field_placeholders(
+                new_web_search["query"], source_to_new_field_id
+            )
+
+        new_rule = AnalysisRule(
+            rule_id=_copy_id(src.rule_id, existing_rule_ids),
+            type_id=type_id,
+            rule_name=src.rule_name,
+            rule_type=src.rule_type,
+            expression=new_expression,
+            system_prompt=src.system_prompt,
+            web_search=new_web_search,
+            depend_fields=new_depend_fields if new_depend_fields else None,
+            enabled=src.enabled,
+            priority=src.priority,
+        )
+```
+
+- [ ] **Step 4: export / import 透传（原样携带，不重映射）**
+
+4a. export 中 `ExportRuleItem(...)` 构造（约第 650 行起），`system_prompt=r.system_prompt,` 之后加：
 
 ```python
                 system_prompt=r.system_prompt,
                 web_search=r.web_search,
 ```
 
-- [ ] **Step 3: import 透传**
-
-import 中 `new_rule = AnalysisRule(...)` 构造（约第 800 行起），`system_prompt=src.system_prompt,` 之后加：
+4b. import 中 `new_rule = AnalysisRule(...)` 构造（约第 800 行起），`system_prompt=src.system_prompt,` 之后加：
 
 ```python
             system_prompt=src.system_prompt,
             web_search=src.web_search,
 ```
 
-- [ ] **Step 4: 运行回归**
+- [ ] **Step 5: 运行确认通过 + 回归**
 
-Run: `uv run pytest tests/test_doctype_management.py -v`
-Expected: PASS（存量复制/导入导出回归不受影响）
+Run: `uv run pytest tests/test_analysis_web_search.py tests/test_doctype_management.py -v`
+Expected: 全部 PASS（含存量复制/导入导出回归）
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add blue_print/doctype_router.py
-git commit -m "feat: 类型复制/导出/导入携带规则 web_search 配置"
+git add blue_print/doctype_router.py tests/test_analysis_web_search.py
+git commit -m "feat: 类型复制携带 web_search 并重映射占位符;导出导入透传"
 ```
 
 ---
@@ -1290,6 +1407,6 @@ git commit -m "docs: 同步逻辑分析网络搜索功能文档与 openapi"
 
 ## 自检记录
 
-- **覆盖核对**：开关（web_search.enabled）✓、搜索词拼接依赖字段（query 占位符 + resolve_expression）✓、结果拼接提示词（`<web_search_result/>` 替换）✓、配置进 config.yaml ✓、三条执行路径 + 调试 ✓、溯源/回调/UI ✓、复制/导入导出 ✓
+- **覆盖核对**：开关（web_search.enabled）✓、搜索词拼接依赖字段（query 占位符 + resolve_expression）✓、结果拼接提示词（`<web_search_result/>` 替换）✓、配置进 config.yaml ✓、三条执行路径 + 调试 ✓、溯源/回调/UI ✓、复制/导入导出 ✓（copy_from 顺手修复 expression/query 占位符不重映射的存量缺口；import 因导出格式丢失源 field_id 保持原样照抄）
 - **类型一致性**：`apply_web_search(expression, web_search, field_values) -> Tuple[str, Optional[Dict]]` 在 Task 5（定义）、Task 6（路由调用）一致；`bocha_web_search(query, *, count, freshness) -> Tuple[str, List[Dict]]` 在 Task 2（定义）、Task 5（mock 签名）一致；占位符字面量 `<web_search_result/>` 全计划统一
 - **无占位符**：所有步骤含完整代码/命令
