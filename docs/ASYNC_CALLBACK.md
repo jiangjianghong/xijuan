@@ -220,9 +220,22 @@
     "field_name": "项目总投资",
     "value": "12345.67 万元",
     "reason": "依据第 3 章投资估算表小计行",
-    "source_refs": [
-      { "type": "table", "table_index": 1, "page_num": "12" }
-    ],
+    "source_refs": {
+      "_tables": [
+        {
+          "type": "table",
+          "table_index": 1,
+          "table_name": "投资估算表",
+          "start_pos": 5120,
+          "end_pos": 6890,
+          "page_num": "12",
+          "text": "表格名称: 投资估算表\n<table>...</table>"
+        }
+      ],
+      "_texts": {
+        "投资估算表": "表格名称: 投资估算表\n<table>...</table>"
+      }
+    },
     "success": true,
     "index": 5,
     "total": 12
@@ -241,8 +254,19 @@
 
 ##### `source_refs` 形状随 `source_type` 不同
 
-- **table / text 字段**：`source_refs` 是**数组**，元素描述检索/匹配命中（上例所示）。
-- **VL 字段（source_type=vl）**：`source_refs` 是 **dict**，形如 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, batches_with_info?}}`。消费者应按 `source_refs` 是否为 `null`、是 dict 还是 array 分类处理；建议先判 `isinstance(refs, dict) and "_vl" in refs` 走 VL 分支。
+- **table / text 字段**：`source_refs` 是 **dict**，按占位符 label 分组——table 类固定用 `_tables` 键，text 类按检索关键词分组（page 检索固定为 `page_content`），每个 label 对应一个命中数组（上例所示）。
+- **VL 字段（source_type=vl）**：`source_refs` 是 dict，形如 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, batches_with_info?}}`，**无检索文本**（不含 `text`/`_texts`）。消费者应按 `source_refs` 是否为 `null` 以及是否含 `_vl` 键分类处理；建议先判 `isinstance(refs, dict) and "_vl" in refs` 走 VL 分支。
+
+##### 检索原文：每条 ref 的 `text` 与顶层 `_texts`
+
+table / text 字段的 `source_refs` 携带模型实际看到的检索原文：
+
+- 每条 ref 含 `text` = 该条命中注入 prompt 的原始片段（table 类含 `表格名称: xxx\n` 前缀）；
+- 顶层 `_texts` 键 = `{label: 拼接后实际注入占位符的完整文本}`（多条命中以 `\n---\n` 拼接，与替换进 `<search_result>label</search_result>` 占位符的内容完全一致）。
+
+`GET /file/{id}/extraction` 与回调 `field_done` / `stage_done` 均透出完整 `source_refs`。
+
+> **老数据容错**：存量历史数据的 `source_refs` 无 `text` / `_texts` 键，消费方读取时需容错（取不到时按缺省处理，勿强制解包）。
 
 **VL 字段的 field_done 示例（vl_locate 方法）：**
 
