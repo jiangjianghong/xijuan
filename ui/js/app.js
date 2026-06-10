@@ -618,6 +618,7 @@ const App = {
                                             <span class="data-card-field-value">${this.escapeHtml(item.reason)}</span>
                                         </div>
                                     ` : ''}
+                                    ${this.renderSourceRefs(item.source_refs)}
                                 </div>
                             `;
                         });
@@ -707,6 +708,38 @@ const App = {
 
     escapeHtml(text) {
         return Utils.escapeHtml(text);
+    },
+
+    // 渲染 source_refs 的「检索原文」折叠区块（老数据无 text/_texts 时返回空串）
+    renderSourceRefs(sourceRefs) {
+        if (!sourceRefs || typeof sourceRefs !== 'object') return '';
+        const segs = [];
+        for (const [label, refs] of Object.entries(sourceRefs)) {
+            if (label === '_texts' || label === '_vl' || !Array.isArray(refs)) continue;
+            refs.forEach(ref => {
+                if (!ref || !ref.text) return;
+                segs.push({ label, type: ref.type || '', page: ref.page_num || '', text: ref.text });
+            });
+        }
+        if (segs.length === 0) return '';
+        let inner = '';
+        segs.forEach(seg => {
+            const labelText = seg.label && seg.label !== '_tables' ? seg.label : '';
+            const meta = [labelText, seg.type, seg.page ? `第 ${seg.page} 页` : '']
+                .filter(Boolean).map(m => this.escapeHtml(m)).join(' · ');
+            inner += `
+                <div class="source-ref-seg">
+                    <div class="source-ref-meta">${meta}</div>
+                    <div class="source-ref-text">${this.escapeHtml(seg.text)}</div>
+                </div>
+            `;
+        });
+        return `
+            <details class="source-refs">
+                <summary>检索原文（${segs.length} 段）</summary>
+                ${inner}
+            </details>
+        `;
     },
 
     // ─────────────────────────────────────────────────────────

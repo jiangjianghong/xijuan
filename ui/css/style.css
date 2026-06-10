@@ -921,6 +921,39 @@ h1, h2, h3, h4, h5, h6,
     word-break: break-all;
 }
 
+.source-refs {
+    margin-top: 8px;
+    font-size: 12px;
+}
+
+.source-refs summary {
+    cursor: pointer;
+    color: var(--bio-med);
+    font-weight: 500;
+    user-select: none;
+}
+
+.source-ref-seg {
+    margin-top: 8px;
+    padding: 8px;
+    background: var(--bg-primary, #fff);
+    border-radius: 4px;
+}
+
+.source-ref-meta {
+    font-size: 11px;
+    color: var(--bio-light);
+    margin-bottom: 4px;
+}
+
+.source-ref-text {
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 160px;
+    overflow-y: auto;
+}
+
 /* ── Toast ── */
 .toast-container {
     position: fixed;
