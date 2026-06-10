@@ -165,8 +165,10 @@ async def test_extract_page_field_happy(monkeypatch):
                 "length": 9,
                 "truncated": False,
                 "page_num": "3",
+                "text": "PAGE3_CCC",
             }
-        ]
+        ],
+        "_texts": {"page_content": "PAGE3_CCC"},
     }
     sent = captured["prompt"] or (captured["messages"] and captured["messages"][-1]["content"])
     assert "PAGE3_CCC" in sent
@@ -187,6 +189,8 @@ async def test_extract_page_field_truncated(monkeypatch):
     assert value == "v"
     assert refs["page_content"][0]["truncated"] is True
     assert refs["page_content"][0]["length"] == 10
+    assert refs["page_content"][0]["text"] == refs["_texts"]["page_content"]
+    assert len(refs["_texts"]["page_content"]) == 10
 
 
 @pytest.mark.asyncio

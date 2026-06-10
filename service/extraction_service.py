@@ -616,8 +616,10 @@ async def _extract_page_field(
                 "length": sliced["length"],
                 "truncated": sliced["truncated"],
                 "page_num": page_range_raw,
+                "text": sliced["text"],
             }
-        ]
+        ],
+        "_texts": {"page_content": sliced["text"]},
     }
 
     prompt_template = field.text_extract_prompt or ""
