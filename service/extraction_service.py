@@ -782,6 +782,72 @@ async def extract_table_field(
         return "", "", None
 
 
+# 各检索类型结果中"原文片段"的字段名
+_SEGMENT_TEXT_KEY = {
+    "context": "context",
+    "section": "content",
+    "rule": "extracted_text",
+    "chunk_db": "chunk_content",
+    "vector_db": "chunk_content",
+}
+
+
+def _build_text_source_refs(
+    search_type: str,
+    search_results: List[Dict[str, Any]],
+    page_mapping: List[Dict[str, Any]],
+) -> Tuple[Dict[str, List[Dict]], Dict[str, str]]:
+    """构建带检索原文的 source_refs 与按 label 拼接的检索文本。
+
+    每条 ref 携带 text（该条命中注入 prompt 的原始片段）；
+    source_refs["_texts"] = {label: 拼接后实际注入占位符的完整文本}。
+
+    Returns:
+        (source_refs, results_text_by_label) 元组。
+    """
+    text_key = _SEGMENT_TEXT_KEY.get(search_type, "context")
+
+    # 按关键词分组收集 source_refs
+    source_refs: Dict[str, List[Dict]] = {}
+    for r in search_results:
+        keyword = r.get("keyword", "")
+        # section 类型没有 keyword，用 section_title 作为 key
+        if not keyword and "section_title" in r:
+            keyword = r.get("section_title", "")
+
+        ref: Dict[str, Any] = {
+            "type": search_type,
+            "start_pos": r.get("start_pos"),
+            "end_pos": r.get("end_pos"),
+            "text": r.get(text_key, ""),
+        }
+        if "chunk_id" in r:
+            ref["chunk_id"] = r["chunk_id"]
+            ref["chunk_index"] = r["chunk_index"]
+
+        # 页码：chunk_db/vector_db 结果自带 page_num，其他类型通过 page_mapping 查找
+        if "page_num" in r:
+            ref["page_num"] = r["page_num"]
+        elif r.get("start_pos") is not None and r.get("end_pos") is not None:
+            ref["page_num"] = lookup_page_num(page_mapping, r["start_pos"], r["end_pos"])
+
+        source_refs.setdefault(keyword, []).append(ref)
+
+    # 按关键词分组拼接检索文本（与注入 prompt 的内容完全一致）
+    results_by_keyword: Dict[str, List[Dict]] = {}
+    for r in search_results:
+        kw = r.get("keyword", "")
+        if kw:
+            results_by_keyword.setdefault(kw, []).append(r)
+
+    results_text_by_label: Dict[str, str] = {
+        kw: "\n---\n".join(r.get(text_key, "") for r in items)
+        for kw, items in results_by_keyword.items()
+    }
+    source_refs["_texts"] = results_text_by_label
+    return source_refs, results_text_by_label
+
+
 async def extract_text_field(
     file_id: str, field: ExtractionField, session: AsyncSession
 ) -> Tuple[str, str, Optional[Dict]]:
@@ -828,53 +894,9 @@ async def extract_text_field(
     if not search_results:
         return "", "", None
 
-    # 按关键词分组收集 source_refs
-    source_refs: Dict[str, List[Dict]] = {}
-    for r in search_results:
-        keyword = r.get("keyword", "")
-        # section 类型没有 keyword，用 section_title 作为 key
-        if not keyword and "section_title" in r:
-            keyword = r.get("section_title", "")
-
-        ref: Dict[str, Any] = {
-            "type": search_type,
-            "start_pos": r.get("start_pos"),
-            "end_pos": r.get("end_pos"),
-        }
-        if "chunk_id" in r:
-            ref["chunk_id"] = r["chunk_id"]
-            ref["chunk_index"] = r["chunk_index"]
-
-        # 页码：chunk_db/vector_db 结果自带 page_num，其他类型通过 page_mapping 查找
-        if "page_num" in r:
-            ref["page_num"] = r["page_num"]
-        elif r.get("start_pos") is not None and r.get("end_pos") is not None:
-            ref["page_num"] = lookup_page_num(page_mapping, r["start_pos"], r["end_pos"])
-
-        if keyword not in source_refs:
-            source_refs[keyword] = []
-        source_refs[keyword].append(ref)
-
-    # 按关键词分组搜索结果
-    results_by_keyword: Dict[str, List[Dict]] = {}
-    for r in search_results:
-        kw = r.get("keyword", "")
-        if kw:
-            if kw not in results_by_keyword:
-                results_by_keyword[kw] = []
-            results_by_keyword[kw].append(r)
-
-    # 将分组结果转换为文本
-    results_text_by_label: Dict[str, str] = {}
-    for keyword, items in results_by_keyword.items():
-        if search_type == "context":
-            results_text_by_label[keyword] = "\n---\n".join([r["context"] for r in items])
-        elif search_type == "section":
-            results_text_by_label[keyword] = "\n---\n".join([r["content"] for r in items])
-        elif search_type == "rule":
-            results_text_by_label[keyword] = "\n---\n".join([r["extracted_text"] for r in items])
-        elif search_type in ("chunk_db", "vector_db"):
-            results_text_by_label[keyword] = "\n---\n".join([r["chunk_content"] for r in items])
+    source_refs, results_text_by_label = _build_text_source_refs(
+        search_type, search_results, page_mapping
+    )
 
     # 构建 LLM 输入
     prompt_template = field.text_extract_prompt or ""
