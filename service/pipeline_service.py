@@ -447,6 +447,8 @@ async def run_pipeline(
     """
     logger.info("开始处理管线: {}", file_id)
 
+    current_stage = "parsing"
+
     try:
         # ── 阶段 1: 解析 ──────────────────────────────────────────
         await notify_callback(callback_url, file_id, "parsing")
@@ -467,6 +469,7 @@ async def run_pipeline(
         )
 
         # ── 阶段 2: AI 校验表格名称 ───────────────────────────────
+        current_stage = "tableing"
         stmt = (
             update(File)
             .where(File.file_id == file_id)
@@ -506,6 +509,7 @@ async def run_pipeline(
         )
 
         # ── 阶段 3: 分块 ──────────────────────────────────────────
+        current_stage = "chunking"
         stmt = (
             update(File)
             .where(File.file_id == file_id)
@@ -545,6 +549,7 @@ async def run_pipeline(
         )
 
         # ── 阶段 4: 向量化 ────────────────────────────────────────
+        current_stage = "embedding"
         type_cfg = await get_file_type_runtime_config(file_id, session)
         stmt = (
             update(File)
@@ -595,6 +600,7 @@ async def run_pipeline(
         await notify_callback(callback_url, file_id, "embedding", event="stage_done")
 
         # ── 阶段 5: 字段提取 ──────────────────────────────────────
+        current_stage = "extracting"
         stmt = (
             update(File)
             .where(File.file_id == file_id)
@@ -625,6 +631,7 @@ async def run_pipeline(
             raise
 
         # ── 阶段 6: 逻辑分析 ──────────────────────────────────────
+        current_stage = "analyzing"
         stmt = (
             update(File)
             .where(File.file_id == file_id)
@@ -659,6 +666,13 @@ async def run_pipeline(
 
     except Exception as e:
         logger.error("处理管线失败: {}, error={}", file_id, e)
+        await notify_callback(
+            callback_url,
+            file_id,
+            f"{current_stage}_failed",
+            event="stage_failed",
+            data={"stage": current_stage, "error": _format_exception(e)},
+        )
         raise
 
 
