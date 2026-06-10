@@ -553,6 +553,7 @@ async def get_extraction_results(file_id: str, db: AsyncSession = Depends(get_db
                 field_name=field_name,
                 extracted_value=r.extracted_value,
                 reason=r.reason,
+                source_refs=r.source_refs,
             ).model_dump()
             for r, field_name in rows
         ]

@@ -346,6 +346,7 @@ class ExtractionResultItem(BaseModel):
     field_name: Optional[str] = None
     extracted_value: str
     reason: Optional[str] = None
+    source_refs: Optional[Dict[str, Any]] = None
 
 
 class AnalysisResultItem(BaseModel):

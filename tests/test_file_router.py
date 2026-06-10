@@ -27,3 +27,37 @@ async def test_get_file_outline_route(client: AsyncClient):
     assert resp.status_code == 200
     body = resp.json()
     assert body["data"] == []
+
+
+@pytest.mark.anyio
+async def test_get_extraction_results_with_source_refs(client: AsyncClient):
+    """提取结果应透出 source_refs（含检索原文）。"""
+    from model.database import get_session_factory
+    from model.tables import ExtractionResult
+
+    file_id = "test_src_refs_file"
+    refs = {
+        "_texts": {"金额": "合同金额为100万元"},
+        "金额": [{"type": "context", "start_pos": 1, "end_pos": 9,
+                  "page_num": "1", "text": "合同金额为100万元"}],
+    }
+    factory = get_session_factory()
+    async with factory() as session:
+        session.add(ExtractionResult(
+            file_id=file_id, field_id="f_amount",
+            extracted_value="100万元", reason="r", source_refs=refs,
+        ))
+        await session.commit()
+
+    try:
+        resp = await client.get(f"/file/{file_id}/extraction")
+        assert resp.status_code == 200
+        items = resp.json()["data"]
+        assert len(items) == 1
+        assert items[0]["source_refs"] == refs
+    finally:
+        async with factory() as session:
+            obj = await session.get(ExtractionResult, (file_id, "f_amount"))
+            if obj:
+                await session.delete(obj)
+                await session.commit()
