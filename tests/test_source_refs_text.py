@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from service.extraction_service import _build_text_source_refs
+from unittest.mock import MagicMock
+
+from service.extraction_service import (
+    _build_table_source_refs,
+    _build_text_source_refs,
+)
 
 _MAPPING = [
     {"page_num": "1", "start_pos": 0},
@@ -61,3 +66,40 @@ def test_section_without_keyword_keeps_legacy_behavior():
     assert refs["付款方式"][0]["text"] == "按月支付"
     assert texts == {}
     assert refs["_texts"] == {}
+
+
+def _make_table(index, name, content, start=0, end=10, page="1"):
+    t = MagicMock()
+    t.table_index = index
+    t.table_name = name
+    t.table_content = content
+    t.start_pos = start
+    t.end_pos = end
+    t.page_num = page
+    return t
+
+
+def test_table_refs_carry_text_and_joined():
+    tables = [
+        _make_table(0, "报价表", "<table>A</table>", 0, 20, "2"),
+        _make_table(1, "明细表", "<table>B</table>", 30, 60, "3"),
+    ]
+    refs, texts = _build_table_source_refs(tables, "报价")
+
+    assert refs["_tables"][0]["text"] == "表格名称: 报价表\n<table>A</table>"
+    assert refs["_tables"][1]["text"] == "表格名称: 明细表\n<table>B</table>"
+    assert refs["_tables"][0]["table_name"] == "报价表"
+    assert refs["_tables"][0]["page_num"] == "2"
+    assert texts == {
+        "报价": "表格名称: 报价表\n<table>A</table>\n---\n表格名称: 明细表\n<table>B</table>"
+    }
+    assert refs["_texts"] == texts
+
+
+def test_table_refs_unnamed_table_fallback():
+    tables = [_make_table(2, "", "<table>C</table>", page="")]
+    refs, texts = _build_table_source_refs(tables, "表格")
+
+    assert refs["_tables"][0]["text"] == "表格名称: 表格2\n<table>C</table>"
+    assert refs["_tables"][0]["page_num"] == ""
+    assert texts == {"表格": "表格名称: 表格2\n<table>C</table>"}

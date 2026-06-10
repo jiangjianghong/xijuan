@@ -647,6 +647,41 @@ async def _extract_page_field(
         return "", "", None
 
 
+def _build_table_source_refs(
+    matched_tables: List[FileTable], label: str
+) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    """构建带表格原文的 source_refs 与拼接后的检索文本。
+
+    每条 ref 的 text 含模型实际看到的 "表格名称: xxx\\n" 前缀；
+    source_refs["_texts"] = {label: 拼接后实际注入占位符的完整文本}。
+
+    Returns:
+        (source_refs, results_text_by_label) 元组。
+    """
+    table_refs = []
+    parts = []
+    for table in matched_tables:
+        table_name = table.table_name or f"表格{table.table_index}"
+        text = f"表格名称: {table_name}\n{table.table_content}"
+        table_refs.append({
+            "type": "table",
+            "table_index": table.table_index,
+            "table_name": table.table_name,
+            "start_pos": table.start_pos,
+            "end_pos": table.end_pos,
+            "page_num": table.page_num or "",
+            "text": text,
+        })
+        parts.append(text)
+
+    results_text_by_label: Dict[str, str] = {label: "\n---\n".join(parts)} if parts else {}
+    source_refs: Dict[str, Any] = {
+        "_tables": table_refs,
+        "_texts": results_text_by_label,
+    }
+    return source_refs, results_text_by_label
+
+
 async def extract_table_field(
     file_id: str, field: ExtractionField, session: AsyncSession
 ) -> Tuple[str, str, Optional[Dict]]:
@@ -732,30 +767,9 @@ async def extract_table_field(
     if not matched_tables:
         return "", "", None
 
-    # 构建 source_refs（表格类使用 _tables 键）
-    source_refs: Dict[str, List[Dict]] = {}
-    table_refs = []
-    for table in matched_tables:
-        table_refs.append({
-            "type": "table",
-            "table_index": table.table_index,
-            "table_name": table.table_name,
-            "start_pos": table.start_pos,
-            "end_pos": table.end_pos,
-            "page_num": table.page_num or "",
-        })
-    source_refs["_tables"] = table_refs
-
     # 使用用户指定的表名作为统一 label
     label = field.table_name_pattern or "表格"
-    results_text_by_label: Dict[str, str] = {}
-    parts = []
-    for table in matched_tables:
-        table_name = table.table_name or f"表格{table.table_index}"
-        content = f"表格名称: {table_name}\n{table.table_content}"
-        parts.append(content)
-    if parts:
-        results_text_by_label[label] = "\n---\n".join(parts)
+    source_refs, results_text_by_label = _build_table_source_refs(matched_tables, label)
 
     # 构建 LLM 输入
     prompt_template = field.table_extract_prompt or ""
@@ -798,7 +812,7 @@ def _build_text_source_refs(
     search_type: str,
     search_results: List[Dict[str, Any]],
     page_mapping: List[Dict[str, Any]],
-) -> Tuple[Dict[str, List[Dict]], Dict[str, str]]:
+) -> Tuple[Dict[str, Any], Dict[str, str]]:
     """构建带检索原文的 source_refs 与按 label 拼接的检索文本。
 
     每条 ref 携带 text（该条命中注入 prompt 的原始片段）；
@@ -835,7 +849,7 @@ def _build_text_source_refs(
 
         source_refs.setdefault(keyword, []).append(ref)
 
-    # 按关键词分组拼接检索文本（与注入 prompt 的内容完全一致）
+    # 按关键词分组拼接检索文本（与注入 prompt 的内容完全一致；section/vector_db 无 keyword 时刻意不进 _texts，维持现状）
     results_by_keyword: Dict[str, List[Dict]] = {}
     for r in search_results:
         kw = r.get("keyword", "")
