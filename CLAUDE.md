@@ -136,7 +136,7 @@ Three source types:
   - VL 直接产出 `{value, reason}` JSON，**不**走文本 LLM 二次抽取；`source_refs` 存为 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, ...}}`。
   - 全局并发 `vl_model.global_max_concurrency`（默认 8）通过 `utils/vl_client.py` 的 asyncio.Semaphore 治理。
   - PDF 字节由 `blue_print/file_router.py` 在上传时持久化到 `uploads/{file_id}.pdf`，由 DELETE / 批量删除 / 文档类型级联删除联动清理；启动时 `cleanup_orphan_pdfs` 兜底。
-- `source_refs` 落库时携带检索原文：每条 ref 含 `text`（该条命中注入 prompt 的原始片段，table 类含 `表格名称: xxx\n` 前缀），顶层 `_texts` 键为 `{label: 拼接后实际注入占位符的完整文本}`。vl 类（`_vl`）无检索文本不受影响。`GET /file/{id}/extraction` 与回调 `field_done`/`stage_done` 均透出完整 `source_refs`。存量老数据无 `text`/`_texts`，消费方需容错。
+- `source_refs` 落库时携带检索原文：每条 ref 含 `text`（该条命中注入 prompt 的原始片段，table 类含 `表格名称: xxx\n` 前缀），顶层 `_texts` 键为 `{label: 拼接后实际注入占位符的完整文本}`。text/table 类 ref 另携带 `bboxes: [{page_num, bbox: [x0,y0,x1,y1], page_size: [w,h]}]`（MinerU 块级框，来自 page_mapping，供前端 PDF 高亮定位；page 类整页切片不挂）。vl 类（`_vl`）无检索文本/bbox 不受影响。`GET /file/{id}/extraction` 与回调 `field_done`/`stage_done` 均透出完整 `source_refs`。存量老数据无 `text`/`_texts`/`bboxes`（老文件 page_mapping 无 bbox，重新解析后才有），消费方需容错。
 
 ### Analysis System (`service/analysis_service.py`)
 Two rule types:

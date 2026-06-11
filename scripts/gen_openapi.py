@@ -401,8 +401,10 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "`data=[{file_id, field_id, field_name, extracted_value, reason, source_refs}]`。\n\n"
                 "`field_name` 来自字段配置表，若配置已被删除则为 `null`。\n\n"
                 "`source_refs` 为参考块字典：每条 ref 含 `text`（该条命中注入 prompt 的原始片段），"
+                "text/table 类 ref 另含 `bboxes`（`[{page_num, bbox, page_size}]` 块级 PDF 框，供前端高亮定位）；"
                 "顶层 `_texts` 键为 `{label: 拼接后实际注入占位符的完整文本}`；"
-                "vl 类为 `{_vl: {...}}` 元数据（无检索文本）。存量老数据无 `text`/`_texts`，消费方需容错。\n\n"
+                "vl 类为 `{_vl: {...}}` 元数据（无检索文本）。"
+                "存量老数据无 `text`/`_texts`/`bboxes`，消费方需容错。\n\n"
                 "如需调试细节请走 `/extraction/test` 或 `/extraction/test/stream`。"
             ),
         }
