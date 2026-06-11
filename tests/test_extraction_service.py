@@ -54,3 +54,39 @@ def test_build_text_source_refs_legacy_mapping_no_bboxes_key():
     results = [{"keyword": "金额", "context": "命中文本", "start_pos": 5, "end_pos": 15}]
     refs, _texts = _build_text_source_refs("context", results, mapping)
     assert "bboxes" not in refs["金额"][0]
+
+
+def test_build_table_source_refs_attaches_bboxes():
+    from model.tables import FileTable
+    from service.extraction_service import _build_table_source_refs
+
+    table = FileTable(
+        file_id="f1", table_index=0, total_table=1,
+        table_name="资产负债表", table_content="<table><tr><td>1</td></tr></table>",
+        start_pos=10, end_pos=50, page_num="2",
+    )
+    mapping = [
+        {"start_pos": 0, "end_pos": 20, "page_num": 2,
+         "bbox": [30, 40, 580, 700], "page_size": [612, 792]},
+    ]
+    refs, _texts = _build_table_source_refs([table], "资产负债表", mapping)
+    ref = refs["_tables"][0]
+    assert ref["bboxes"] == [
+        {"page_num": 2, "bbox": [30, 40, 580, 700], "page_size": [612, 792]},
+    ]
+    # 原有字段不受影响
+    assert ref["table_name"] == "资产负债表"
+    assert ref["text"].startswith("表格名称: 资产负债表\n")
+
+
+def test_build_table_source_refs_legacy_mapping_no_bboxes_key():
+    from model.tables import FileTable
+    from service.extraction_service import _build_table_source_refs
+
+    table = FileTable(
+        file_id="f1", table_index=0, total_table=1,
+        table_name="表A", table_content="<table></table>",
+        start_pos=10, end_pos=50, page_num="2",
+    )
+    refs, _texts = _build_table_source_refs([table], "表A", [])
+    assert "bboxes" not in refs["_tables"][0]

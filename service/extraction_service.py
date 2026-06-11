@@ -648,11 +648,14 @@ async def _extract_page_field(
 
 
 def _build_table_source_refs(
-    matched_tables: List[FileTable], label: str
+    matched_tables: List[FileTable],
+    label: str,
+    page_mapping: List[Dict[str, Any]],
 ) -> Tuple[Dict[str, Any], Dict[str, str]]:
     """构建带表格原文的 source_refs 与拼接后的检索文本。
 
     每条 ref 的 text 含模型实际看到的 "表格名称: xxx\\n" 前缀；
+    带全文坐标的 ref 另携带 bboxes（块级 PDF 框，老数据无 bbox 时不带该键）；
     source_refs["_texts"] = {label: 拼接后实际注入占位符的完整文本}。
 
     Returns:
@@ -663,7 +666,7 @@ def _build_table_source_refs(
     for table in matched_tables:
         table_name = table.table_name or f"表格{table.table_index}"
         text = f"表格名称: {table_name}\n{table.table_content}"
-        table_refs.append({
+        ref: Dict[str, Any] = {
             "type": "table",
             "table_index": table.table_index,
             "table_name": table.table_name,
@@ -671,7 +674,12 @@ def _build_table_source_refs(
             "end_pos": table.end_pos,
             "page_num": table.page_num or "",
             "text": text,
-        })
+        }
+        if table.start_pos is not None and table.end_pos is not None:
+            bboxes = lookup_bboxes(page_mapping, table.start_pos, table.end_pos)
+            if bboxes:
+                ref["bboxes"] = bboxes
+        table_refs.append(ref)
         parts.append(text)
 
     results_text_by_label: Dict[str, str] = {label: "\n---\n".join(parts)} if parts else {}
@@ -769,7 +777,18 @@ async def extract_table_field(
 
     # 使用用户指定的表名作为统一 label
     label = field.table_name_pattern or "表格"
-    source_refs, results_text_by_label = _build_table_source_refs(matched_tables, label)
+
+    # 查 page_mapping 用于 bbox 定位（无 file_content 时为空列表，ref 不挂 bboxes）
+    content_row = (
+        await session.execute(
+            select(FileContent).where(FileContent.file_id == file_id)
+        )
+    ).scalar_one_or_none()
+    page_mapping = (content_row.page_mapping or []) if content_row else []
+
+    source_refs, results_text_by_label = _build_table_source_refs(
+        matched_tables, label, page_mapping
+    )
 
     # 构建 LLM 输入
     prompt_template = field.table_extract_prompt or ""
