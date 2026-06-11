@@ -88,7 +88,9 @@ def test_build_table_source_refs_legacy_mapping_no_bboxes_key():
         table_name="表A", table_content="<table></table>",
         start_pos=10, end_pos=50, page_num="2",
     )
-    refs, _texts = _build_table_source_refs([table], "表A", [])
+    refs, _texts = _build_table_source_refs(
+        [table], "表A", [{"start_pos": 0, "end_pos": 20, "page_num": 2}]
+    )
     assert "bboxes" not in refs["_tables"][0]
 
 

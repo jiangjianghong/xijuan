@@ -778,23 +778,22 @@ async def extract_table_field(
     # 使用用户指定的表名作为统一 label
     label = field.table_name_pattern or "表格"
 
-    # 查 page_mapping 用于 bbox 定位（无 file_content 时为空列表，ref 不挂 bboxes）
-    content_row = (
-        await session.execute(
-            select(FileContent).where(FileContent.file_id == file_id)
-        )
-    ).scalar_one_or_none()
-    page_mapping = (content_row.page_mapping or []) if content_row else []
-
-    source_refs, results_text_by_label = _build_table_source_refs(
-        matched_tables, label, page_mapping
-    )
-
     # 构建 LLM 输入
     prompt_template = field.table_extract_prompt or ""
     if not validate_prompt_has_placeholder(prompt_template):
         logger.warning("字段 {} 的 table_extract_prompt 缺少占位符", field.field_id)
         return "", "", None
+
+    # 查 page_mapping 用于 bbox 定位（无 file_content 时为空列表，ref 不挂 bboxes）
+    page_mapping = (
+        await session.execute(
+            select(FileContent.page_mapping).where(FileContent.file_id == file_id)
+        )
+    ).scalar_one_or_none() or []
+
+    source_refs, results_text_by_label = _build_table_source_refs(
+        matched_tables, label, page_mapping
+    )
 
     llm_input = replace_search_result_placeholders(prompt_template, results_text_by_label)
     llm_input += JSON_OUTPUT_INSTRUCTION
