@@ -93,6 +93,7 @@ class ExportRuleItem(BaseModel):
     rule_type: str
     expression: str
     system_prompt: Optional[str] = None
+    web_search: Optional[Dict[str, Any]] = None
     depend_field_names: List[str] = []
     enabled: int = 1
     priority: int = 0
@@ -322,6 +323,7 @@ class AnalysisRuleCreate(BaseModel):
     expression: str
     system_prompt: Optional[str] = None
     depend_fields: Optional[List[str]] = None
+    web_search: Optional[Dict[str, Any]] = None
     enabled: int = 1
     priority: int = 0
 
@@ -331,6 +333,19 @@ class AnalysisRuleCreate(BaseModel):
         if v and not re.search(r"<field_result>.+?</field_result>", v):
             raise ValueError("expression 必须包含至少一个 <field_result>字段标识</field_result> 占位符")
         return v
+
+    @model_validator(mode="after")
+    def validate_web_search(self):
+        """启用网络搜索时校验：仅 judge 类型、query 非空、expression 含占位符。"""
+        ws = self.web_search
+        if ws and ws.get("enabled"):
+            if self.rule_type != RuleTypeEnum.judge:
+                raise ValueError("仅 judge 类型规则支持网络搜索")
+            if not (ws.get("query") or "").strip():
+                raise ValueError("启用网络搜索时 query 不能为空")
+            if "<web_search_result/>" not in self.expression:
+                raise ValueError("启用网络搜索时 expression 必须包含 <web_search_result/> 占位符")
+        return self
 
 
 class AnalysisRuleResponse(AnalysisRuleCreate):
@@ -356,6 +371,7 @@ class AnalysisResultItem(BaseModel):
     result_value: str
     input_values: Optional[Dict[str, str]] = None
     reason: Optional[str] = None
+    source_refs: Optional[Dict[str, Any]] = None
 
 
 # ── 调试接口 ────────────────────────────────────────────────
