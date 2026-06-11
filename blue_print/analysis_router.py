@@ -21,7 +21,7 @@ from model.schemas import (
     ResponseWrapper,
 )
 from model.tables import AnalysisRule, ExtractionResult
-from service.analysis_service import execute_calc, execute_judge, resolve_expression, test_rule_analysis_stream
+from service.analysis_service import apply_web_search, execute_calc, execute_judge, resolve_expression, test_rule_analysis_stream
 from utils.config import get_config
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -46,6 +46,7 @@ async def list_rules(type_id: str = "", db: AsyncSession = Depends(get_db)):
                 expression=r.expression,
                 system_prompt=r.system_prompt,
                 depend_fields=r.depend_fields,
+                web_search=r.web_search,
                 enabled=r.enabled,
                 priority=r.priority,
                 created_at=r.created_at,
@@ -86,6 +87,7 @@ async def upsert_rule(
         existing.expression = rule.expression
         existing.system_prompt = rule.system_prompt
         existing.depend_fields = rule.depend_fields
+        existing.web_search = rule.web_search
         existing.enabled = rule.enabled
         existing.priority = rule.priority
         await db.commit()
@@ -100,6 +102,7 @@ async def upsert_rule(
             expression=rule.expression,
             system_prompt=rule.system_prompt,
             depend_fields=rule.depend_fields,
+            web_search=rule.web_search,
             enabled=rule.enabled,
             priority=rule.priority,
         )
@@ -161,6 +164,7 @@ async def test_analysis(
         expression = rule.expression
         system_prompt = rule.system_prompt or ""
         depend_fields = rule.depend_fields or []
+        web_search = rule.web_search
     elif req.config:
         # 模式 2: 使用临时配置
         config = req.config
@@ -168,6 +172,7 @@ async def test_analysis(
         expression = config.get("expression", "")
         system_prompt = config.get("system_prompt", "")
         depend_fields = config.get("depend_fields", [])
+        web_search = config.get("web_search")
     else:
         raise HTTPException(status_code=400, detail="必须提供 rule_id 或 config")
 
@@ -190,6 +195,9 @@ async def test_analysis(
         # 执行计算/判断
         cfg = get_config().analysis
         if rule_type == "judge":
+            expression_resolved, _ws_ref = await apply_web_search(
+                expression_resolved, web_search, field_values
+            )
             result_value, reason = await execute_judge(expression_resolved, system_prompt=system_prompt)
         elif rule_type == "calc":
             result_value, reason = await execute_calc(expression_resolved, cfg.calc_precision)
@@ -237,18 +245,21 @@ async def test_analysis_stream(
         expression = rule.expression
         system_prompt = rule.system_prompt or ""
         depend_fields = rule.depend_fields or []
+        web_search = rule.web_search
     elif req.config:
         config = req.config
         rule_type = config.get("rule_type", "judge")
         expression = config.get("expression", "")
         system_prompt = config.get("system_prompt", "")
         depend_fields = config.get("depend_fields", [])
+        web_search = config.get("web_search")
     else:
         raise HTTPException(status_code=400, detail="必须提供 rule_id 或 config")
 
     async def event_generator():
         async for item in test_rule_analysis_stream(
-            file_id, rule_type, expression, depend_fields, system_prompt, db
+            file_id, rule_type, expression, depend_fields, system_prompt, db,
+            web_search=web_search,
         ):
             yield _sse_event(item["event"], item["data"])
 

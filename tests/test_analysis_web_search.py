@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from httpx import AsyncClient
 from pydantic import ValidationError
 
 from model.schemas import AnalysisRuleCreate
@@ -108,3 +109,48 @@ async def test_apply_web_search_failure_not_fatal(monkeypatch):
     assert "网络搜索失败" in out
     assert ref["error"] == "接口超时"
     assert ref["results"] == []
+
+
+# ── API 透传 ────────────────────────────────────────────────
+
+_API_RULE = {
+    "rule_id": "ws_api_test_rule",
+    "rule_name": "搜索透传测试",
+    "rule_type": "judge",
+    "expression": "结合<web_search_result/>判断<field_result>a</field_result>",
+    "depend_fields": ["a"],
+    "web_search": {"enabled": True, "query": "<field_result>a</field_result> 资讯", "count": 3, "freshness": "oneYear"},
+}
+
+
+@pytest.mark.anyio
+async def test_upsert_and_list_rule_with_web_search(client: AsyncClient):
+    """upsert 透传 web_search 并能在列表读回。"""
+    resp = await client.post("/analysis/rules", json=_API_RULE)
+    assert resp.status_code == 200, resp.text
+
+    try:
+        resp = await client.get("/analysis/rules")
+        rules = resp.json()["data"]
+        rule = next(r for r in rules if r["rule_id"] == "ws_api_test_rule")
+        assert rule["web_search"]["enabled"] is True
+        assert rule["web_search"]["count"] == 3
+
+        # 更新为关闭
+        updated = dict(_API_RULE, web_search={"enabled": False})
+        resp = await client.post("/analysis/rules", json=updated)
+        assert resp.status_code == 200
+
+        resp = await client.get("/analysis/rules")
+        rule = next(r for r in resp.json()["data"] if r["rule_id"] == "ws_api_test_rule")
+        assert rule["web_search"] == {"enabled": False}
+    finally:
+        await client.delete("/analysis/rules/ws_api_test_rule")
+
+
+@pytest.mark.anyio
+async def test_upsert_rule_web_search_validation(client: AsyncClient):
+    """开启搜索但缺占位符 → 422。"""
+    bad = dict(_API_RULE, rule_id="ws_bad_rule", expression="判断<field_result>a</field_result>")
+    resp = await client.post("/analysis/rules", json=bad)
+    assert resp.status_code == 422

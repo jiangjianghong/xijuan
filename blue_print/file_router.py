@@ -583,6 +583,7 @@ async def get_analysis_results(file_id: str, db: AsyncSession = Depends(get_db))
                 result_value=r.result_value,
                 input_values=r.input_values,
                 reason=r.reason,
+                source_refs=r.source_refs,
             ).model_dump()
             for r, rule_name in rows
         ]
