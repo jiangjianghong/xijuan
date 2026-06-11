@@ -85,7 +85,7 @@ class WebSearchConfig(BaseModel):
 # 网络搜索配置（博查 Bocha AI，逻辑分析 judge 规则使用）
 web_search:
   base_url: "https://api.bochaai.com/v1/web-search"
-  api_key: "<你的博查 API Key>"
+  api_key: "<你的博查 API Key>"  # 真实 key 只写入 gitignored 的 configs/config.yaml
   count: 5              # 默认返回条数
   summary: true         # 返回长摘要
   freshness: "noLimit"  # 默认时间范围 noLimit/oneDay/oneWeek/oneMonth/oneYear
