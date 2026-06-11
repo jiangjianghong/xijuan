@@ -1175,6 +1175,9 @@ async def run_from_stage(
     if stage == "parsing":
         raise ValueError("parsing 阶段需要原始文件内容，请使用 /file/parse 重新提交文件")
 
+    if stage not in ("tableing", "chunking", "embedding", "extracting", "analyzing"):
+        raise ValueError(f"无效的阶段: {stage}")
+
     # 失败回调归因用的阶段跟踪,新增阶段时同步更新
     current_stage = stage
     try:
@@ -1222,9 +1225,6 @@ async def run_from_stage(
             # 仅清理分析结果
             await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
             await session.commit()
-
-        else:
-            raise ValueError(f"无效的阶段: {stage}")
 
         # 获取文件内容（用于后续阶段）
         stmt = select(FileContent).where(FileContent.file_id == file_id)

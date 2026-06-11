@@ -144,3 +144,44 @@ async def test_run_from_stage_parsing_guard_no_callback(monkeypatch):
         )
 
     assert recorder.calls == []
+
+
+@pytest.mark.anyio
+async def test_run_from_stage_mid_stage_failure_attribution(monkeypatch):
+    """retry 从 tableing 进入、chunking 阶段失败时,归因到 chunking。"""
+    recorder = CallbackRecorder()
+    monkeypatch.setattr(pipeline_service, "notify_callback", recorder)
+    monkeypatch.setattr(pipeline_service, "MilvusClient", FakeMilvusClient)
+
+    class _ContentResult(_FakeResult):
+        def scalar_one_or_none(self):
+            class _FC:
+                file_content = "# md 内容"
+                page_mapping = []
+            return _FC()
+
+    class _ContentSession(FakeSession):
+        async def execute(self, *args, **kwargs):
+            return _ContentResult()
+
+    async def _fake_parse_tables(*args, **kwargs):
+        return []
+
+    async def _fake_save_tables(*args, **kwargs):
+        pass
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("分块失败")
+
+    monkeypatch.setattr(pipeline_service, "parse_tables", _fake_parse_tables)
+    monkeypatch.setattr(pipeline_service, "save_tables", _fake_save_tables)
+    monkeypatch.setattr(pipeline_service, "chunk_content", _boom)
+
+    with pytest.raises(RuntimeError):
+        await pipeline_service.run_from_stage(
+            "f_mid_fail", "tableing", _ContentSession(), callback_url="http://cb"
+        )
+
+    last = recorder.calls[-1]
+    assert last["status"] == "chunking_failed"
+    assert last["data"]["stage"] == "chunking"
