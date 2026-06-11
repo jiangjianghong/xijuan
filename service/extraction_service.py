@@ -19,7 +19,7 @@ from utils.callback import notify_callback
 from utils.config import get_config
 from utils.llm_client import chat_completion, get_embeddings
 from utils.milvus_client import MilvusClient
-from utils.page_mapping import lookup_page_num
+from utils.page_mapping import lookup_bboxes, lookup_page_num
 
 
 # ── JSON 解析辅助 ────────────────────────────────────────────
@@ -816,6 +816,7 @@ def _build_text_source_refs(
     """构建带检索原文的 source_refs 与按 label 拼接的检索文本。
 
     每条 ref 携带 text（该条命中注入 prompt 的原始片段）；
+    带全文坐标的 ref 另携带 bboxes（块级 PDF 框，老数据无 bbox 时不带该键）；
     source_refs["_texts"] = {label: 拼接后实际注入占位符的完整文本}。
 
     Returns:
@@ -846,6 +847,13 @@ def _build_text_source_refs(
             ref["page_num"] = r["page_num"]
         elif r.get("start_pos") is not None and r.get("end_pos") is not None:
             ref["page_num"] = lookup_page_num(page_mapping, r["start_pos"], r["end_pos"])
+
+        # 块级 bbox：所有带全文坐标的结果（含 chunk_db/vector_db）统一查 page_mapping；
+        # 存量老 mapping 无 bbox 时返回空，不挂键（消费方容错）
+        if r.get("start_pos") is not None and r.get("end_pos") is not None:
+            bboxes = lookup_bboxes(page_mapping, r["start_pos"], r["end_pos"])
+            if bboxes:
+                ref["bboxes"] = bboxes
 
         source_refs.setdefault(keyword, []).append(ref)
 
