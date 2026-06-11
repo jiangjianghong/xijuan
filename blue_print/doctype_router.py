@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import List, Optional
 
@@ -431,6 +432,22 @@ async def batch_delete_types(
 # ─────────────────────────────────────────────────────────────
 
 
+def _remap_field_placeholders(text: Optional[str], mapping: dict) -> Optional[str]:
+    """把文本中 <field_result>旧field_id</field_result> 占位符重写为新 field_id。
+
+    未在映射表中的 field_id 原样保留（与 depend_fields 缺失依赖的处理一致，
+    通过 missing_dependencies 提示调用方）。
+    """
+    if not text:
+        return text
+
+    def replacer(m: re.Match) -> str:
+        fid = m.group(1).strip()
+        return f"<field_result>{mapping.get(fid, fid)}</field_result>"
+
+    return re.sub(r"<field_result>(.+?)</field_result>", replacer, text)
+
+
 @router.post("/{type_id}/copy_from", response_model=ResponseWrapper)
 async def copy_configs(
     type_id: str,
@@ -556,13 +573,23 @@ async def copy_configs(
             else:
                 missing_deps.append(f"{src.rule_name}::{src_fid}")
 
+        # 重映射 expression / web_search.query 中的占位符（与 depend_fields 同步）
+        new_expression = _remap_field_placeholders(src.expression, source_to_new_field_id)
+        new_web_search = src.web_search
+        if new_web_search and new_web_search.get("query"):
+            new_web_search = dict(new_web_search)
+            new_web_search["query"] = _remap_field_placeholders(
+                new_web_search["query"], source_to_new_field_id
+            )
+
         new_rule = AnalysisRule(
             rule_id=_copy_id(src.rule_id, existing_rule_ids),
             type_id=type_id,
             rule_name=src.rule_name,
             rule_type=src.rule_type,
-            expression=src.expression,
+            expression=new_expression,
             system_prompt=src.system_prompt,
+            web_search=new_web_search,
             depend_fields=new_depend_fields if new_depend_fields else None,
             enabled=src.enabled,
             priority=src.priority,
@@ -654,6 +681,7 @@ async def export_configs(type_id: str, db: AsyncSession = Depends(get_db)):
                 rule_type=r.rule_type,
                 expression=r.expression,
                 system_prompt=r.system_prompt,
+                web_search=r.web_search,
                 depend_field_names=[
                     field_id_to_name[fid]
                     for fid in (r.depend_fields or [])
@@ -804,6 +832,7 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
             rule_type=src.rule_type,
             expression=src.expression,
             system_prompt=src.system_prompt,
+            web_search=src.web_search,
             depend_fields=new_depend_fields if new_depend_fields else None,
             enabled=src.enabled,
             priority=src.priority,

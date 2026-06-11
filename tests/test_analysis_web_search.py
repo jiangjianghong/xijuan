@@ -154,3 +154,64 @@ async def test_upsert_rule_web_search_validation(client: AsyncClient):
     bad = dict(_API_RULE, rule_id="ws_bad_rule", expression="判断<field_result>a</field_result>")
     resp = await client.post("/analysis/rules", json=bad)
     assert resp.status_code == 422
+
+
+# ── copy_from 占位符重映射 ──────────────────────────────────
+
+@pytest.mark.anyio
+async def test_copy_from_remaps_placeholders(client: AsyncClient):
+    """copy_from 重映射 expression 与 web_search.query 中的 <field_result> 占位符。"""
+    src_type, dst_type = "ws_src_type", "ws_dst_type"
+    field_id, rule_id = "ws_src_field", "ws_src_rule"
+
+    # 建源/目标类型
+    for tid in (src_type, dst_type):
+        resp = await client.post("/doctype", json={"type_id": tid, "type_name": tid})
+        assert resp.status_code == 200, resp.text
+
+    try:
+        # 源类型建字段 + 带搜索的规则
+        resp = await client.post("/extraction/fields", json={
+            "field_id": field_id,
+            "type_id": src_type,
+            "field_name": "公司名称",
+            "source_type": "text",
+            "search_type": "context",
+            "search_config": {"keywords": ["公司"]},
+            "text_extract_prompt": "从<search_result>公司</search_result>提取公司名称",
+        })
+        assert resp.status_code == 200, resp.text
+
+        resp = await client.post("/analysis/rules", json={
+            "rule_id": rule_id,
+            "type_id": src_type,
+            "rule_name": "搜索重映射测试",
+            "rule_type": "judge",
+            "expression": "结合<web_search_result/>判断<field_result>ws_src_field</field_result>是否被处罚",
+            "depend_fields": [field_id],
+            "web_search": {"enabled": True, "query": "<field_result>ws_src_field</field_result> 行政处罚"},
+        })
+        assert resp.status_code == 200, resp.text
+
+        # 复制到目标类型
+        resp = await client.post(f"/doctype/{dst_type}/copy_from", json={"source_type_id": src_type})
+        assert resp.status_code == 200, resp.text
+
+        # 读回目标类型的字段/规则
+        resp = await client.get(f"/extraction/fields?type_id={dst_type}")
+        new_field_id = resp.json()["data"][0]["field_id"]
+        assert new_field_id != field_id
+
+        resp = await client.get(f"/analysis/rules?type_id={dst_type}")
+        rule = resp.json()["data"][0]
+        assert rule["depend_fields"] == [new_field_id]
+        # expression 占位符已重映射
+        assert f"<field_result>{new_field_id}</field_result>" in rule["expression"]
+        assert f"<field_result>{field_id}</field_result>" not in rule["expression"]
+        # web_search.query 占位符已重映射，其余键原样保留
+        assert rule["web_search"]["enabled"] is True
+        assert f"<field_result>{new_field_id}</field_result>" in rule["web_search"]["query"]
+    finally:
+        # 级联清理（带配置的类型需 force）
+        await client.delete(f"/doctype/{src_type}?force=true")
+        await client.delete(f"/doctype/{dst_type}?force=true")
