@@ -130,3 +130,103 @@ async def test_bocha_web_search_empty_query():
 
     with pytest.raises(ValueError):
         await bocha_web_search("  ")
+
+
+# ── 重试 / 失败路径 ─────────────────────────────────────────
+
+def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
+    """构造指定状态码的 HTTPStatusError。"""
+    request = httpx.Request("POST", "https://x")
+    return httpx.HTTPStatusError(
+        "err", request=request, response=httpx.Response(status_code, request=request)
+    )
+
+
+def _make_flaky_client(errors, payload=None):
+    """构造前几次 post 抛指定异常、之后返回固定响应的假客户端类。
+
+    Args:
+        errors: 依次抛出的异常列表，耗尽后返回正常响应。
+        payload: 正常响应体，缺省用 _BOCHA_RESPONSE。
+    """
+
+    class _FlakyClient:
+        call_count = 0
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            idx = _FlakyClient.call_count
+            _FlakyClient.call_count += 1
+            if idx < len(errors):
+                raise errors[idx]
+            return _FakeResponse(payload or _BOCHA_RESPONSE)
+
+    return _FlakyClient
+
+
+async def _noop_sleep(_seconds):
+    pass
+
+
+async def test_bocha_web_search_retries_on_5xx(monkeypatch):
+    """首次 5xx，重试后成功。"""
+    from utils import web_search
+
+    client_cls = _make_flaky_client([_http_status_error(500)])
+    monkeypatch.setattr(web_search.httpx, "AsyncClient", client_cls)
+    monkeypatch.setattr(web_search.asyncio, "sleep", _noop_sleep)
+
+    formatted, results = await web_search.bocha_web_search("万科 处罚")
+
+    assert client_cls.call_count == 2
+    assert "[1] 标题一" in formatted
+    assert len(results) == 2
+
+
+async def test_bocha_web_search_4xx_no_retry(monkeypatch):
+    """403 鉴权错误立即抛出，不重试。"""
+    from utils import web_search
+
+    client_cls = _make_flaky_client([_http_status_error(403), _http_status_error(403)])
+    monkeypatch.setattr(web_search.httpx, "AsyncClient", client_cls)
+    monkeypatch.setattr(web_search.asyncio, "sleep", _noop_sleep)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await web_search.bocha_web_search("万科 处罚")
+    assert client_cls.call_count == 1
+
+
+async def test_bocha_web_search_retry_exhausted(monkeypatch):
+    """持续 5xx 重试耗尽后抛出最后一次异常。"""
+    from utils import web_search
+    from utils.config import get_config
+
+    retry_count = get_config().web_search.retry_count or 1
+    client_cls = _make_flaky_client([_http_status_error(500)] * (retry_count + 1))
+    monkeypatch.setattr(web_search.httpx, "AsyncClient", client_cls)
+    monkeypatch.setattr(web_search.asyncio, "sleep", _noop_sleep)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await web_search.bocha_web_search("万科 处罚")
+    assert client_cls.call_count == retry_count
+
+
+async def test_bocha_web_search_webpages_null(monkeypatch):
+    """响应 webPages 为 null 时返回空结果而非崩溃。"""
+    from utils import web_search
+
+    client_cls = _make_flaky_client([], payload={"code": 200, "data": {"webPages": None}})
+    monkeypatch.setattr(web_search.httpx, "AsyncClient", client_cls)
+
+    formatted, results = await web_search.bocha_web_search("万科 处罚")
+
+    assert formatted == "（未搜索到相关结果）"
+    assert results == []

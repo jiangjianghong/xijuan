@@ -78,21 +78,23 @@ async def bocha_web_search(
         "Content-Type": "application/json",
     }
 
+    # retry_count 配置为 0 时至少尝试一次（与 llm_client 保持一致）
+    retry_count = cfg.retry_count or 1
     last_exc: Optional[Exception] = None
     async with httpx.AsyncClient(timeout=cfg.timeout) as client:
-        for attempt in range(cfg.retry_count):
+        for attempt in range(retry_count):
             try:
                 resp = await client.post(cfg.base_url, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
-                pages = (data.get("data") or data).get("webPages", {}).get("value", []) or []
+                pages = ((data.get("data") or data).get("webPages") or {}).get("value") or []
                 results = [
                     {
-                        "name": p.get("name", ""),
-                        "url": p.get("url", ""),
-                        "siteName": p.get("siteName", ""),
-                        "datePublished": p.get("datePublished", ""),
-                        "summary": p.get("summary") or p.get("snippet", ""),
+                        "name": p.get("name") or "",
+                        "url": p.get("url") or "",
+                        "siteName": p.get("siteName") or "",
+                        "datePublished": p.get("datePublished") or "",
+                        "summary": p.get("summary") or p.get("snippet") or "",
                     }
                     for p in pages
                 ]
@@ -105,8 +107,8 @@ async def bocha_web_search(
                 last_exc = e
             except httpx.HTTPError as e:
                 last_exc = e
-            if attempt < cfg.retry_count - 1:
-                logger.warning("博查搜索重试 {}/{}: {}", attempt + 1, cfg.retry_count, last_exc)
+            if attempt < retry_count - 1:
+                logger.warning("博查搜索重试 {}/{}: {}", attempt + 1, retry_count, last_exc)
                 await asyncio.sleep(2 ** attempt)
 
     assert last_exc is not None
