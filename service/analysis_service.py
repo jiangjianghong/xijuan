@@ -15,6 +15,7 @@ from model.tables import AnalysisResult, AnalysisRule, ExtractionResult, File
 from utils.callback import notify_callback
 from utils.config import get_config
 from utils.llm_client import chat_completion
+from utils.web_search import bocha_web_search
 
 
 def resolve_expression(
@@ -41,6 +42,44 @@ def resolve_expression(
         return no_result_hint.format(field_id)
 
     return re.sub(pattern, replacer, expression)
+
+
+WEB_SEARCH_PLACEHOLDER = "<web_search_result/>"
+
+
+async def apply_web_search(
+    expression: str,
+    web_search: Optional[dict],
+    field_values: Dict[str, str],
+) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """若规则启用网络搜索，执行博查搜索并替换表达式中的占位符。
+
+    Args:
+        expression: 已完成 <field_result> 替换的表达式。
+        web_search: 规则的 web_search 配置（{"enabled", "query", "count", "freshness"}）。
+        field_values: {field_id: extracted_value}，用于解析搜索词中的占位符。
+
+    Returns:
+        (替换占位符后的表达式, _web_search 溯源数据或 None) 元组。
+        搜索失败时占位符替换为失败提示并继续（溯源数据带 error 键），不抛异常。
+    """
+    if not web_search or not web_search.get("enabled"):
+        return expression, None
+
+    query = resolve_expression(web_search.get("query", ""), field_values).strip()
+    try:
+        formatted, results = await bocha_web_search(
+            query,
+            count=web_search.get("count"),
+            freshness=web_search.get("freshness"),
+        )
+        ws_ref: Dict[str, Any] = {"query": query, "results": results}
+    except Exception as e:
+        logger.warning("网络搜索失败: query={}, error={}", query, e)
+        formatted = f"（网络搜索失败: {e}）"
+        ws_ref = {"query": query, "results": [], "error": str(e)}
+
+    return expression.replace(WEB_SEARCH_PLACEHOLDER, formatted), ws_ref
 
 
 def validate_expression_has_placeholder(expression: str) -> bool:
@@ -368,6 +407,12 @@ async def run_analysis(
 
             # 根据规则类型执行
             if rule.rule_type == "judge":
+                # 网络搜索：替换 <web_search_result/> 占位符并记录溯源
+                resolved_expression, ws_ref = await apply_web_search(
+                    resolved_expression, rule.web_search, field_values
+                )
+                if ws_ref:
+                    source_refs["_web_search"] = ws_ref
                 result_value, reason = await execute_judge(resolved_expression, system_prompt=rule.system_prompt or "")
             elif rule.rule_type == "calc":
                 result_value, reason = await execute_calc(resolved_expression, cfg.calc_precision)
@@ -612,6 +657,12 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
 
             # 根据规则类型执行
             if rule.rule_type == "judge":
+                # 网络搜索：替换 <web_search_result/> 占位符并记录溯源
+                resolved_expression, ws_ref = await apply_web_search(
+                    resolved_expression, rule.web_search, field_values
+                )
+                if ws_ref:
+                    source_refs["_web_search"] = ws_ref
                 result_value, reason = await execute_judge(resolved_expression, system_prompt=rule.system_prompt or "")
             elif rule.rule_type == "calc":
                 result_value, reason = await execute_calc(resolved_expression, cfg.calc_precision)
@@ -724,10 +775,11 @@ async def test_rule_analysis_stream(
     depend_fields: List[str],
     system_prompt: str,
     session: AsyncSession,
+    web_search: Optional[dict] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """单条规则调试流式接口，分步 yield 各阶段结果。
 
-    Judge 类型事件序列：input_values → resolved_expression → prompt → llm_response → result → done
+    Judge 类型事件序列：input_values → resolved_expression → [web_search] → prompt → llm_response → result → done
     Calc 类型事件序列：input_values → resolved_expression → result → done
 
     Args:
@@ -737,6 +789,7 @@ async def test_rule_analysis_stream(
         depend_fields: 依赖的字段 ID 列表。
         system_prompt: 系统提示词（仅 judge 使用）。
         session: 数据库会话。
+        web_search: 可选的网络搜索配置（仅 judge 使用）。
 
     Yields:
         Dict: {"event": str, "data": dict}
@@ -796,6 +849,11 @@ async def test_rule_analysis_stream(
 
     # ── Judge 类型：LLM 调用 ──
     if rule_type == "judge":
+        # Step 2.5: 网络搜索（启用时）
+        if web_search and web_search.get("enabled"):
+            resolved, ws_ref = await apply_web_search(resolved, web_search, field_values)
+            yield {"event": "web_search", "data": ws_ref or {}}
+
         # Step 3: 组装 prompt
         try:
             user_prompt = f"""{resolved}

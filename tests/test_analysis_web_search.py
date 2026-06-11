@@ -59,3 +59,52 @@ def test_web_search_judge_only():
             expression="<field_result>a</field_result>*2",
             web_search={"enabled": True, "query": "处罚"},
         ))
+
+
+# ── apply_web_search ────────────────────────────────────────
+
+async def test_apply_web_search_disabled():
+    from service.analysis_service import apply_web_search
+
+    expr = "背景:<web_search_result/> 判断"
+    out, ref = await apply_web_search(expr, None, {})
+    assert out == expr
+    assert ref is None
+
+    out, ref = await apply_web_search(expr, {"enabled": False, "query": "x"}, {})
+    assert out == expr
+    assert ref is None
+
+
+async def test_apply_web_search_replaces(monkeypatch):
+    from service import analysis_service
+
+    async def fake_search(query, *, count=None, freshness=None):
+        assert count == 3
+        return "[1] 搜索结果文本", [{"name": "搜索结果文本", "url": "https://a.com"}]
+
+    monkeypatch.setattr(analysis_service, "bocha_web_search", fake_search)
+
+    ws = {"enabled": True, "query": "<field_result>company</field_result> 行政处罚", "count": 3}
+    out, ref = await analysis_service.apply_web_search(
+        "背景:<web_search_result/>\n判断万科是否被处罚", ws, {"company": "万科"}
+    )
+    assert "[1] 搜索结果文本" in out
+    assert "<web_search_result/>" not in out
+    assert ref["query"] == "万科 行政处罚"
+    assert ref["results"][0]["url"] == "https://a.com"
+
+
+async def test_apply_web_search_failure_not_fatal(monkeypatch):
+    from service import analysis_service
+
+    async def fake_search(query, *, count=None, freshness=None):
+        raise RuntimeError("接口超时")
+
+    monkeypatch.setattr(analysis_service, "bocha_web_search", fake_search)
+
+    ws = {"enabled": True, "query": "万科 处罚"}
+    out, ref = await analysis_service.apply_web_search("背景:<web_search_result/>", ws, {})
+    assert "网络搜索失败" in out
+    assert ref["error"] == "接口超时"
+    assert ref["results"] == []
