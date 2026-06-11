@@ -12,6 +12,7 @@ def test_web_search_config_defaults():
     """WebSearchConfig 默认值。"""
     cfg = AppConfig().web_search
     assert cfg.base_url == "https://api.bochaai.com/v1/web-search"
+    assert cfg.api_key == ""
     assert cfg.count == 5
     assert cfg.summary is True
     assert cfg.freshness == "noLimit"
