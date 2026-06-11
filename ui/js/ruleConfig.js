@@ -292,7 +292,7 @@ const RuleConfig = {
             } else {
                 labels = this.getKeywordTags('fm-sc-keywords');
             }
-        } else if (textareaId === 'fm-expression' || textareaId === 'fm-expression-calc') {
+        } else if (textareaId === 'fm-expression' || textareaId === 'fm-expression-calc' || textareaId === 'fm-ws-query') {
             const raw = (document.getElementById('fm-depend-fields') || {}).value || '';
             labels = raw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
         }
@@ -923,6 +923,7 @@ const RuleConfig = {
         const isEdit = !!rule.rule_id;
         const ruleType = rule.rule_type || 'judge';
         const dependFields = (rule.depend_fields || []).join(', ');
+        const ws = rule.web_search || {};
 
         return `
             <div class="form-row">
@@ -974,6 +975,43 @@ const RuleConfig = {
                     <textarea class="form-textarea" id="fm-expression" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(rule.expression || '')}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，LLM 返回 true/false 及原因</div>
                 </div>
+                <div class="form-group">
+                    <div class="form-label-row">
+                        <label class="form-label">网络搜索</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="fm-ws-enabled" ${ws.enabled ? 'checked' : ''} onchange="RuleConfig.onWebSearchToggle(this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-hint">开启后执行判断前先联网搜索（博查），结果替换提示词中的 &lt;web_search_result/&gt; 占位符</div>
+                </div>
+                <div id="fm-ws-config" style="display:${ws.enabled ? 'block' : 'none'}">
+                    <div class="form-group">
+                        <div class="form-label-row">
+                            <label class="form-label">搜索词</label>
+                            <div class="insert-tag-wrap">
+                                <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-ws-query','field_result',this)" title="插入占位符">{x}</button>
+                            </div>
+                        </div>
+                        <textarea class="form-textarea" id="fm-ws-query" rows="2" placeholder="可用 <field_result>字段ID</field_result> 拼接依赖字段的提取值">${Utils.escapeHtml(ws.query || '')}</textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">返回条数</label>
+                            <input class="form-input" id="fm-ws-count" type="number" value="${ws.count ?? 5}" min="1" max="50">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">时间范围</label>
+                            <select class="form-select" id="fm-ws-freshness">
+                                <option value="noLimit" ${(ws.freshness || 'noLimit') === 'noLimit' ? 'selected' : ''}>不限</option>
+                                <option value="oneDay" ${ws.freshness === 'oneDay' ? 'selected' : ''}>一天内</option>
+                                <option value="oneWeek" ${ws.freshness === 'oneWeek' ? 'selected' : ''}>一周内</option>
+                                <option value="oneMonth" ${ws.freshness === 'oneMonth' ? 'selected' : ''}>一月内</option>
+                                <option value="oneYear" ${ws.freshness === 'oneYear' ? 'selected' : ''}>一年内</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- 计算型配置区 -->
@@ -1001,6 +1039,19 @@ const RuleConfig = {
 
         judgeSection.style.display = type === 'judge' ? 'block' : 'none';
         calcSection.style.display = type === 'calc' ? 'block' : 'none';
+    },
+
+    onWebSearchToggle(checked) {
+        const area = document.getElementById('fm-ws-config');
+        if (area) area.style.display = checked ? 'block' : 'none';
+
+        // 开启时若用户提示词缺少占位符，自动追加
+        if (checked) {
+            const expr = document.getElementById('fm-expression');
+            if (expr && !expr.value.includes('<web_search_result/>')) {
+                expr.value = expr.value ? expr.value + '\n<web_search_result/>' : '<web_search_result/>';
+            }
+        }
     },
 
     // ─────────────────────────────────────────────────────────
@@ -1130,6 +1181,21 @@ const RuleConfig = {
             ? document.getElementById('fm-expression-calc').value.trim()
             : document.getElementById('fm-expression').value.trim();
 
+        // 网络搜索配置（仅 judge）
+        let webSearch = null;
+        const wsEnabledEl = document.getElementById('fm-ws-enabled');
+        if (ruleType === 'judge' && wsEnabledEl && wsEnabledEl.checked) {
+            const wsQueryEl = document.getElementById('fm-ws-query');
+            const wsCountEl = document.getElementById('fm-ws-count');
+            const wsFreshnessEl = document.getElementById('fm-ws-freshness');
+            webSearch = {
+                enabled: true,
+                query: wsQueryEl ? wsQueryEl.value.trim() : '',
+                count: wsCountEl ? (parseInt(wsCountEl.value) || 5) : 5,
+                freshness: wsFreshnessEl ? (wsFreshnessEl.value || 'noLimit') : 'noLimit',
+            };
+        }
+
         return {
             rule_id: document.getElementById('fm-rule-id').value.trim(),
             rule_name: document.getElementById('fm-rule-name').value.trim(),
@@ -1139,6 +1205,7 @@ const RuleConfig = {
                 ? (document.getElementById('fm-system-prompt').value.trim() || null)
                 : null,
             depend_fields: dependFieldsStr ? dependFieldsStr.split(/[,，]/).map(s => s.trim()).filter(Boolean) : [],
+            web_search: webSearch,
             enabled: existingRule ? existingRule.enabled : 1,
             priority: parseInt(document.getElementById('fm-rule-priority').value) || 0,
         };
@@ -1241,6 +1308,16 @@ const RuleConfig = {
             const label = data.rule_type === 'judge' ? '用户提示词' : '计算表达式';
             Toast.error(label + '须包含 <field_result>...</field_result> 占位符');
             return false;
+        }
+        if (data.web_search && data.web_search.enabled) {
+            if (!data.web_search.query) {
+                Toast.error('开启网络搜索时搜索词不能为空');
+                return false;
+            }
+            if (!data.expression.includes('<web_search_result/>')) {
+                Toast.error('开启网络搜索时用户提示词须包含 <web_search_result/> 占位符');
+                return false;
+            }
         }
 
         return true;
@@ -1400,6 +1477,13 @@ const RuleConfig = {
             this.onRuleTypeChange(ruleType.value);
         }
 
+        // 恢复网络搜索配置区显隐
+        const wsEnabled = document.getElementById('fm-ws-enabled');
+        if (wsEnabled) {
+            const wsArea = document.getElementById('fm-ws-config');
+            if (wsArea) wsArea.style.display = wsEnabled.checked ? 'block' : 'none';
+        }
+
         // 加载已完成文件列表
         this.loadDebugFileList();
     },
@@ -1449,6 +1533,13 @@ const RuleConfig = {
         const ruleType = document.getElementById('fm-rule-type');
         if (ruleType) {
             this.onRuleTypeChange(ruleType.value);
+        }
+
+        // 恢复网络搜索配置区显隐
+        const wsEnabled = document.getElementById('fm-ws-enabled');
+        if (wsEnabled) {
+            const wsArea = document.getElementById('fm-ws-config');
+            if (wsArea) wsArea.style.display = wsEnabled.checked ? 'block' : 'none';
         }
     },
 
@@ -1940,6 +2031,11 @@ const RuleConfig = {
                     <div class="debug-section-body" id="debug-resolved-content"></div>
                 </div>
 
+                <div class="debug-section" id="debug-sec-web-search" style="display:none;">
+                    <div class="debug-section-header">网络搜索</div>
+                    <div class="debug-section-body" id="debug-web-search-content"></div>
+                </div>
+
                 <div class="debug-section" id="debug-sec-prompt" style="display:none;">
                     <div class="debug-section-header">LLM 提示词</div>
                     <div class="debug-section-body" id="debug-prompt-content"></div>
@@ -2042,6 +2138,11 @@ const RuleConfig = {
                 this._showDebugLoading('正在执行分析...');
                 this.renderRuleResolvedExpression(data);
                 break;
+            case 'web_search':
+                this._hideDebugLoading();
+                this._showDebugLoading('正在调用 LLM...');
+                this.renderRuleWebSearch(data);
+                break;
             case 'prompt':
                 this._hideDebugLoading();
                 this._showDebugLoading('正在调用 LLM...');
@@ -2114,6 +2215,34 @@ const RuleConfig = {
         section.style.display = '';
     },
 
+    renderRuleWebSearch(data) {
+        const section = document.getElementById('debug-sec-web-search');
+        const container = document.getElementById('debug-web-search-content');
+        if (!section || !container) return;
+
+        let html = `<div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">搜索词: ${Utils.escapeHtml(data.query || '')}</div>`;
+        if (data.error) {
+            html += `<div style="color: #e74c3c; font-size: 12px;">搜索失败: ${Utils.escapeHtml(data.error)}</div>`;
+        } else {
+            const results = data.results || [];
+            if (results.length === 0) {
+                html += '<div style="color: var(--text-secondary); font-size: 13px;">无搜索结果</div>';
+            }
+            results.forEach((r, i) => {
+                const date = (r.datePublished || '').slice(0, 10);
+                const meta = [r.siteName, date].filter(Boolean).join(' · ');
+                html += `
+                    <div class="debug-result-group">
+                        <div class="debug-result-group-header">[${i + 1}] ${Utils.escapeHtml(r.name || '')}${meta ? ` <span style="font-weight: normal; color: var(--text-secondary);">${Utils.escapeHtml(meta)}</span>` : ''}</div>
+                        <div class="debug-result-item-content" style="font-size: 12px;">${Utils.escapeHtml(r.summary || '')}</div>
+                    </div>
+                `;
+            });
+        }
+        container.innerHTML = html;
+        section.style.display = '';
+    },
+
     renderRuleDebugResult(data) {
         const section = document.getElementById('debug-sec-result');
         const container = document.getElementById('debug-result-content');
@@ -2135,7 +2264,7 @@ const RuleConfig = {
     },
 
     resetRuleDebugResults() {
-        ['debug-sec-input-values', 'debug-sec-resolved', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
+        ['debug-sec-input-values', 'debug-sec-resolved', 'debug-sec-web-search', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
         });

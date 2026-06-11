@@ -652,6 +652,7 @@ const App = {
                                             <span class="data-card-field-value">${this.escapeHtml(item.reason)}</span>
                                         </div>
                                     ` : ''}
+                                    ${this.renderWebSearchRefs(item.source_refs)}
                                 </div>
                             `;
                         });
@@ -737,6 +738,37 @@ const App = {
         return `
             <details class="source-refs">
                 <summary>检索原文（${segs.length} 段）</summary>
+                ${inner}
+            </details>
+        `;
+    },
+
+    // 渲染分析结果 source_refs._web_search 的「网络搜索」折叠区块（无搜索数据返回空串）
+    renderWebSearchRefs(sourceRefs) {
+        if (!sourceRefs || typeof sourceRefs !== 'object') return '';
+        const ws = sourceRefs._web_search;
+        if (!ws || !ws.query) return '';
+        const results = ws.results || [];
+        let inner = `
+            <div class="source-ref-seg">
+                <div class="source-ref-meta">搜索词${ws.error ? ' · 搜索失败' : ''}</div>
+                <div class="source-ref-text">${this.escapeHtml(ws.query)}</div>
+            </div>
+        `;
+        results.forEach((r, i) => {
+            const date = (r.datePublished || '').slice(0, 10);
+            const meta = [`[${i + 1}] ${r.name || ''}`, r.siteName || '', date]
+                .filter(Boolean).map(m => this.escapeHtml(m)).join(' · ');
+            inner += `
+                <div class="source-ref-seg">
+                    <div class="source-ref-meta">${meta}</div>
+                    <div class="source-ref-text">${this.escapeHtml(r.summary || '')}</div>
+                </div>
+            `;
+        });
+        return `
+            <details class="source-refs">
+                <summary>网络搜索（${results.length} 条）</summary>
                 ${inner}
             </details>
         `;
