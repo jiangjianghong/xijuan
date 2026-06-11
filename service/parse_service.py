@@ -13,14 +13,7 @@ from model.tables import File, FileContent
 from service.mineru_client import parse_pdf
 from service.type_config_service import get_file_type_runtime_config
 from utils.config import get_config
-
-
-def _format_exception(exc: BaseException) -> str:
-    """统一异常文案，避免 str(exc) 为空导致丢失关键信息。"""
-    msg = str(exc).strip()
-    if msg:
-        return f"{type(exc).__name__}: {msg}"
-    return f"{type(exc).__name__}: {repr(exc)}"
+from utils.errors import format_exception as _format_exception
 
 
 async def parse_file(

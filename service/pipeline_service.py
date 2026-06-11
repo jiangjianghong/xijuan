@@ -26,6 +26,7 @@ from service.parse_service import parse_file, save_file_content
 from service.table_service import parse_tables, save_tables
 from service.type_config_service import get_file_type_runtime_config
 from utils.callback import notify_callback
+from utils.errors import format_exception as _format_exception
 from utils.milvus_client import MilvusClient
 from utils.page_mapping import build_page_mapping
 
@@ -35,14 +36,6 @@ EMBEDDING_DISABLED_MESSAGE = "配置已关闭此文件的向量化，直接进�
 def _sse_event(event: str, data: Dict[str, Any]) -> str:
     """格式化 SSE 事件。"""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def _format_exception(exc: BaseException) -> str:
-    """统一异常文案，避免 str(exc) 为空导致丢失关键信息。"""
-    msg = str(exc).strip()
-    if msg:
-        return f"{type(exc).__name__}: {msg}"
-    return f"{type(exc).__name__}: {repr(exc)}"
 
 
 async def run_pipeline_stream(
@@ -666,7 +659,7 @@ async def run_pipeline(
         logger.info("处理管线完成: {}", file_id)
 
     except Exception as e:
-        logger.error("处理管线失败: {}, error={}", file_id, e)
+        logger.error("处理管线失败: {}, error={}", file_id, _format_exception(e))
         await notify_callback(
             callback_url,
             file_id,

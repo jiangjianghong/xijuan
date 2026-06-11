@@ -40,6 +40,11 @@ class FakeSession:
         pass
 
 
+def _stage_failed_count(recorder: CallbackRecorder) -> int:
+    """统计 stage_failed 事件条数(契约:失败时恰好 1 条)。"""
+    return sum(1 for c in recorder.calls if c["event"] == "stage_failed")
+
+
 @pytest.mark.anyio
 async def test_run_pipeline_parsing_failure_pushes_stage_failed(monkeypatch):
     """parsing 阶段抛异常时,推送 parsing_failed + event=stage_failed。"""
@@ -65,6 +70,7 @@ async def test_run_pipeline_parsing_failure_pushes_stage_failed(monkeypatch):
     assert last["data"]["stage"] == "parsing"
     assert "TimeoutError" in last["data"]["error"]
     assert "MinerU 连接超时" in last["data"]["error"]
+    assert _stage_failed_count(recorder) == 1
 
 
 @pytest.mark.anyio
@@ -99,6 +105,7 @@ async def test_run_pipeline_tableing_failure_pushes_stage_failed(monkeypatch):
     # 失败后不应再有 complete
     statuses = [c["status"] for c in recorder.calls]
     assert "complete" not in statuses
+    assert _stage_failed_count(recorder) == 1
 
 
 class FakeMilvusClient:
@@ -129,6 +136,7 @@ async def test_run_from_stage_failure_pushes_stage_failed(monkeypatch):
     assert last["event"] == "stage_failed"
     assert last["data"]["stage"] == "tableing"
     assert "缺少文件内容" in last["data"]["error"]
+    assert _stage_failed_count(recorder) == 1
 
 
 @pytest.mark.anyio
@@ -185,3 +193,4 @@ async def test_run_from_stage_mid_stage_failure_attribution(monkeypatch):
     last = recorder.calls[-1]
     assert last["status"] == "chunking_failed"
     assert last["data"]["stage"] == "chunking"
+    assert _stage_failed_count(recorder) == 1
