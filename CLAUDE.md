@@ -74,6 +74,10 @@ When `callback_url` is supplied to `run_pipeline` / `run_from_stage`, the orches
 
 // 阶段完整数据（每个阶段结束时各 1 次）
 {"file_id": "...", "status": "<stage>", "event": "stage_done", "data": {...}}
+
+// 阶段失败（失败时 1 次，替代 stage_done 与后续事件）
+{"file_id": "...", "status": "<stage>_failed", "event": "stage_failed",
+ "data": {"stage": "<stage>", "error": "TimeoutError: ..."}}
 ```
 
 **`stage_done.data` per stage:**
@@ -96,9 +100,10 @@ embedding                  → embedding + stage_done（无 data）
 extracting + field_done×N  → extracting + stage_done（完整 results）
 analyzing  + rule_done×N   → analyzing  + stage_done（完整 results）
 complete
+（任一阶段失败 → 该阶段 stage_failed,序列终止,无 complete）
 ```
 
-**实现位置：** stage_done 事件由 `pipeline_service.run_pipeline` / `run_from_stage` 在每阶段 commit 之后触发；`extracting` / `analyzing` 的 stage_done 与 per-item 事件由 `run_extraction` / `run_analysis` 内部触发，pipeline 层只透传 `callback_url`。老消费者只读 `status` 不受影响（新事件靠 `event` 字段区分）。
+**实现位置：** stage_done 事件由 `pipeline_service.run_pipeline` / `run_from_stage` 在每阶段 commit 之后触发；`extracting` / `analyzing` 的 stage_done 与 per-item 事件由 `run_extraction` / `run_analysis` 内部触发，pipeline 层只透传 `callback_url`。老消费者只读 `status` 不受影响（新事件靠 `event` 字段区分）。失败回调（stage_failed）由 `run_pipeline` / `run_from_stage` 最外层 except 统一触发，用 `current_stage` 局部变量跟踪当前阶段，覆盖含 parsing 在内的全部阶段；stream 模式不受影响（SSE 已有 error 事件）。
 
 ### Table Name Validation (`service/table_service.py`)
 The **tableing** stage runs after parsing. `parse_tables()` extracts all `<table>` HTML blocks from the Markdown content, then concurrently calls LLM (`_extract_table_name_with_llm`) to identify each table's name from preceding context. Falls back to the last line before the table if LLM fails. Table names are truncated to 30 characters. Concurrency controlled by `table_name_validation.max_concurrency` config. Results stored in `file_table` with position and page info.

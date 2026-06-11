@@ -61,7 +61,7 @@
 
 ---
 
-## 3. Payload 三种基础形态
+## 3. Payload 四种基础形态
 
 ```jsonc
 // 形态 A：阶段入口（每个阶段开始时各 1 次）
@@ -72,9 +72,13 @@
 
 // 形态 C：阶段完整结果（每个阶段结束时各 1 次）
 { "file_id": "...", "status": "<stage>", "event": "stage_done", "data": { ... } }
+
+// 形态 D：阶段失败（失败时 1 次，替代该阶段的 stage_done 与后续所有事件）
+{ "file_id": "...", "status": "<stage>_failed", "event": "stage_failed",
+  "data": { "stage": "<stage>", "error": "TimeoutError: LLM 请求超时" } }
 ```
 
-`status` 取值集合：`parsing`、`tableing`、`chunking`、`embedding`、`extracting`、`analyzing`、`complete`。
+`status` 取值集合：`parsing`、`tableing`、`chunking`、`embedding`、`extracting`、`analyzing`、`complete`，以及失败态 `parsing_failed`、`tableing_failed`、`chunking_failed`、`embedding_failed`、`extracting_failed`、`analyzing_failed`（仅形态 D 出现）。
 
 ---
 
@@ -102,7 +106,7 @@
 
 **重试场景**（`/file/{id}/retry/{stage}`）只会从指定阶段开始推送对应及之后阶段的事件，不会回放已完成阶段。
 
-**失败场景**：阶段抛出异常时**不会**推送 `stage_done` 与 `complete`；接收方应配合轮询 `/file/{id}` 查 `progress`（会变成 `<stage>_failed`）与 `error` 字段。
+**失败场景**：阶段抛出异常时**不会**推送该阶段的 `stage_done` 与 `complete`，而是推送 1 条**形态 D** 失败回调：`{"file_id", "status": "<stage>_failed", "event": "stage_failed", "data": {"stage": "<stage>", "error": "<异常文本>"}}`。`error` 文案与 `GET /file/{id}` 的 `error` 字段一致；接收方仍可轮询 `/file/{id}` 兜底（`progress` 会变成 `<stage>_failed`）。
 
 ---
 
@@ -392,6 +396,7 @@ table / text 字段的 `source_refs` 携带模型实际看到的检索原文：
 ## 6. 失败行为速查
 
 - 任一阶段抛错 → 数据库 `files.progress` 写为 `<stage>_failed`，`files.error` 写异常文本，**不再发送 `stage_done` 与 `complete`**。
+- 失败时额外推送 1 条形态 D 回调（`status=<stage>_failed` + `event=stage_failed` + `data={stage, error}`），由 `run_pipeline` / `run_from_stage` 最外层统一触发，覆盖全部阶段（含 parsing 与 retry 前置校验失败）；retry 入参本身非法（如 `stage=parsing`）属于接口层错误，不推回调。
 - 阶段入口包（形态 A）已发出 → 接收方据此可判断"该阶段已开始但未到 stage_done"。
 - 接收方应通过 `GET /file/{file_id}` 拉取 `progress` 与 `error` 兜底。
 - `callback_url` 接收端的任何超时 / 5xx / 网络错误，主管线**不感知、不重试**。
@@ -441,3 +446,4 @@ curl -X POST "http://localhost:5019/file/parse?mode=async&callback_url=http://12
 - 旧消费者只读 `status` 不受影响；新事件靠 `event` 字段区分，未识别的 `event` 应直接忽略而不是报错。
 - 历史状态名 `table_name_validating` 已统一为 `tableing`，回调 `status` 不会再出现旧名。
 - `embedding` 阶段的 `stage_done` **永不携带 `data`**，请勿对 `data` 做强制解包。
+- 新增的 `stage_failed` 事件同样靠 `event` 字段区分；只读 `status` 的旧消费者会看到 `<stage>_failed` 状态值，与轮询 `/file/{id}` 看到的 `progress` 取值一致。
