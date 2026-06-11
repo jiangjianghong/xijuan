@@ -90,3 +90,24 @@ def test_build_table_source_refs_legacy_mapping_no_bboxes_key():
     )
     refs, _texts = _build_table_source_refs([table], "表A", [])
     assert "bboxes" not in refs["_tables"][0]
+
+
+def test_build_text_source_refs_chunk_result_with_own_page_num_gets_bboxes():
+    """chunk_db/vector_db 形态结果自带 page_num，bbox 仍统一查 page_mapping。"""
+    from service.extraction_service import _build_text_source_refs
+
+    mapping = [
+        {"start_pos": 0, "end_pos": 20, "page_num": 1,
+         "bbox": [10, 20, 300, 60], "page_size": [612, 792]},
+    ]
+    results = [{
+        "keyword": "金额", "chunk_content": "命中文本",
+        "start_pos": 5, "end_pos": 15,
+        "page_num": "1", "chunk_id": "c1", "chunk_index": 0,
+    }]
+    refs, _texts = _build_text_source_refs("chunk_db", results, mapping)
+    ref = refs["金额"][0]
+    assert ref["page_num"] == "1"  # 用自带页码，不走 page_mapping 查页
+    assert ref["bboxes"] == [
+        {"page_num": 1, "bbox": [10, 20, 300, 60], "page_size": [612, 792]},
+    ]
