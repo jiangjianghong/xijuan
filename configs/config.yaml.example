@@ -101,3 +101,14 @@ vl_model:
   global_max_concurrency: 8  # 全局最大并发数
   default_max_pixels: 4000000 # 默认最大像素数（4MP）
   pdf_storage_dir: "uploads" # PDF 文件存储目录
+
+# 网络搜索配置（博查 Bocha AI，逻辑分析 judge 规则使用）
+web_search:
+  base_url: "https://api.bochaai.com/v1/web-search"
+  api_key: "your-api-key"
+  count: 5              # 默认返回条数
+  summary: true         # 返回长摘要
+  freshness: "noLimit"  # 默认时间范围 noLimit/oneDay/oneWeek/oneMonth/oneYear
+  timeout: 10
+  retry_count: 2
+  max_result_length: 4000  # 注入 prompt 的搜索文本最大字符数（末尾截断）

@@ -108,6 +108,17 @@ class VLModelConfig(BaseModel):
     pdf_storage_dir: str = "uploads"
 
 
+class WebSearchConfig(BaseModel):
+    base_url: str = "https://api.bochaai.com/v1/web-search"
+    api_key: str = ""
+    count: int = 5
+    summary: bool = True
+    freshness: str = "noLimit"
+    timeout: int = 10
+    retry_count: int = 2
+    max_result_length: int = 4000
+
+
 # ── 顶层配置 ────────────────────────────────────────────────
 
 class AppConfig(BaseSettings):
@@ -123,6 +134,7 @@ class AppConfig(BaseSettings):
     table_name_validation: TableNameValidationConfig = TableNameValidationConfig()
     analysis: AnalysisConfig = AnalysisConfig()
     vl_model: VLModelConfig = VLModelConfig()
+    web_search: WebSearchConfig = WebSearchConfig()
 
 
 def _load_yaml(path: Path) -> dict:
