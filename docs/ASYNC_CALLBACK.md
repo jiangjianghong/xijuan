@@ -266,11 +266,12 @@
 table / text 字段的 `source_refs` 携带模型实际看到的检索原文：
 
 - 每条 ref 含 `text` = 该条命中注入 prompt 的原始片段（table 类含 `表格名称: xxx\n` 前缀）；
-- 顶层 `_texts` 键 = `{label: 拼接后实际注入占位符的完整文本}`（多条命中以 `\n---\n` 拼接，与替换进 `<search_result>label</search_result>` 占位符的内容完全一致）。
+- 顶层 `_texts` 键 = `{label: 拼接后实际注入占位符的完整文本}`（多条命中以 `\n---\n` 拼接，与替换进 `<search_result>label</search_result>` 占位符的内容完全一致）；
+- text/table 类 ref 另携带 `bboxes` = `[{page_num, bbox: [x0, y0, x1, y1], page_size: [w, h]}]`（MinerU 块级框，来自 page_mapping，供前端 PDF 高亮定位；page 检索整页切片不挂，VL 类无；命中无 bbox 时不带该键）。
 
 `GET /file/{id}/extraction` 与回调 `field_done` / `stage_done` 均透出完整 `source_refs`。
 
-> **老数据容错**：存量历史数据的 `source_refs` 无 `text` / `_texts` 键，消费方读取时需容错（取不到时按缺省处理，勿强制解包）。
+> **老数据容错**：存量历史数据的 `source_refs` 无 `text` / `_texts` / `bboxes` 键（老文件 page_mapping 无 bbox，重新解析后才有），消费方读取时需容错（取不到时按缺省处理，勿强制解包）。
 
 **VL 字段的 field_done 示例（vl_locate 方法）：**
 
