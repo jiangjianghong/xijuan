@@ -397,7 +397,7 @@ async def run_pipeline_stream(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="analyzing_failed", error=str(e))
+                .values(progress="analyzing_failed", error=_format_exception(e))
             )
             await session.execute(stmt)
             await session.commit()
@@ -447,6 +447,7 @@ async def run_pipeline(
     """
     logger.info("开始处理管线: {}", file_id)
 
+    # 失败回调归因用的阶段跟踪,新增阶段时同步更新
     current_stage = "parsing"
 
     try:
@@ -655,7 +656,7 @@ async def run_pipeline(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="analyzing_failed", error=str(e))
+                .values(progress="analyzing_failed", error=_format_exception(e))
             )
             await session.execute(stmt)
             await session.commit()
@@ -1127,7 +1128,7 @@ async def run_from_stage_stream(
                 stmt = (
                     update(File)
                     .where(File.file_id == file_id)
-                    .values(progress="analyzing_failed", error=str(e))
+                    .values(progress="analyzing_failed", error=_format_exception(e))
                 )
                 await session.execute(stmt)
                 await session.commit()
@@ -1174,222 +1175,104 @@ async def run_from_stage(
     if stage == "parsing":
         raise ValueError("parsing 阶段需要原始文件内容，请使用 /file/parse 重新提交文件")
 
-    # 根据阶段清理数据
-    if stage == "tableing":
-        # 清理表格及后续数据
-        await session.execute(delete(FileTable).where(FileTable.file_id == file_id))
-        await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
-        await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
-        await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
-        try:
-            milvus_client.delete_by_file_id(file_id)
-        except Exception as e:
-            logger.warning("Milvus 删除失败: {}", e)
-        await session.commit()
-
-    elif stage == "chunking":
-        # 清理分块及后续数据
-        await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
-        await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
-        await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
-        try:
-            milvus_client.delete_by_file_id(file_id)
-        except Exception as e:
-            logger.warning("Milvus 删除失败: {}", e)
-        await session.commit()
-
-    elif stage == "embedding":
-        # 清理 Milvus 及后续数据
-        await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
-        await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
-        try:
-            milvus_client.delete_by_file_id(file_id)
-        except Exception as e:
-            logger.warning("Milvus 删除失败: {}", e)
-        await session.commit()
-
-    elif stage == "extracting":
-        # 清理提取及分析结果
-        await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
-        await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
-        await session.commit()
-
-    elif stage == "analyzing":
-        # 仅清理分析结果
-        await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
-        await session.commit()
-
-    else:
-        raise ValueError(f"无效的阶段: {stage}")
-
-    # 获取文件内容（用于后续阶段）
-    stmt = select(FileContent).where(FileContent.file_id == file_id)
-    result = await session.execute(stmt)
-    file_content = result.scalar_one_or_none()
-    page_mapping = file_content.page_mapping if file_content else []
-
-    # 获取表格信息
-    stmt = select(FileTable).where(FileTable.file_id == file_id)
-    result = await session.execute(stmt)
-    tables_orm = result.scalars().all()
-    tables = [
-        {
-            "file_id": t.file_id,
-            "table_index": t.table_index,
-            "total_table": t.total_table,
-            "table_name": t.table_name,
-            "table_content": t.table_content,
-            "page_num": t.page_num or "",
-        }
-        for t in tables_orm
-    ]
-
-    # 从指定阶段开始执行
-    if stage in ("tableing",):
-        if not file_content:
-            raise ValueError("缺少文件内容，无法从 tableing 阶段开始")
-
-        content = file_content.file_content
-
-        stmt = (
-            update(File)
-            .where(File.file_id == file_id)
-            .values(progress="tableing", start_tableing_time=datetime.now(), error=None)
-        )
-        await session.execute(stmt)
-        await session.commit()
-
-        await notify_callback(callback_url, file_id, "tableing")
-        try:
-            tables = await parse_tables(content, file_id, page_mapping=page_mapping)
-            await save_tables(tables, session)
-
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(end_tableing_time=datetime.now())
-            )
-            await session.execute(stmt)
+    # 失败回调归因用的阶段跟踪,新增阶段时同步更新
+    current_stage = stage
+    try:
+        # 根据阶段清理数据
+        if stage == "tableing":
+            # 清理表格及后续数据
+            await session.execute(delete(FileTable).where(FileTable.file_id == file_id))
+            await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
+            await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
+            await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+            try:
+                milvus_client.delete_by_file_id(file_id)
+            except Exception as e:
+                logger.warning("Milvus 删除失败: {}", e)
             await session.commit()
-        except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="tableing_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
+
+        elif stage == "chunking":
+            # 清理分块及后续数据
+            await session.execute(delete(FileChunk).where(FileChunk.file_id == file_id))
+            await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
+            await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+            try:
+                milvus_client.delete_by_file_id(file_id)
+            except Exception as e:
+                logger.warning("Milvus 删除失败: {}", e)
             await session.commit()
-            raise
 
-        await notify_callback(
-            callback_url,
-            file_id,
-            "tableing",
-            event="stage_done",
-            data={"total": len(tables), "tables": tables},
-        )
-
-        stage = "chunking"
-
-    if stage in ("chunking",):
-        if not file_content:
-            raise ValueError("缺少文件内容，无法从 chunking 阶段开始")
-
-        content = file_content.file_content
-
-        # 分块
-        stmt = (
-            update(File)
-            .where(File.file_id == file_id)
-            .values(progress="chunking", start_chunking_time=datetime.now(), error=None)
-        )
-        await session.execute(stmt)
-        await session.commit()
-
-        await notify_callback(callback_url, file_id, "chunking")
-        try:
-            chunks = await chunk_content(file_id, content, tables, session, page_mapping=page_mapping)
-            await save_chunks(chunks, session)
-
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(end_chunking_time=datetime.now())
-            )
-            await session.execute(stmt)
+        elif stage == "embedding":
+            # 清理 Milvus 及后续数据
+            await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
+            await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+            try:
+                milvus_client.delete_by_file_id(file_id)
+            except Exception as e:
+                logger.warning("Milvus 删除失败: {}", e)
             await session.commit()
-        except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="chunking_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
+
+        elif stage == "extracting":
+            # 清理提取及分析结果
+            await session.execute(delete(ExtractionResult).where(ExtractionResult.file_id == file_id))
+            await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
             await session.commit()
-            raise
 
-        await notify_callback(
-            callback_url,
-            file_id,
-            "chunking",
-            event="stage_done",
-            data={"total": len(chunks), "chunks": chunks},
-        )
+        elif stage == "analyzing":
+            # 仅清理分析结果
+            await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
+            await session.commit()
 
-        stage = "embedding"
+        else:
+            raise ValueError(f"无效的阶段: {stage}")
 
-    if stage in ("embedding",):
-        # 获取分块
-        stmt = select(FileChunk).where(FileChunk.file_id == file_id).order_by(FileChunk.chunk_index)
+        # 获取文件内容（用于后续阶段）
+        stmt = select(FileContent).where(FileContent.file_id == file_id)
         result = await session.execute(stmt)
-        chunks_orm = result.scalars().all()
-        chunks = [
+        file_content = result.scalar_one_or_none()
+        page_mapping = file_content.page_mapping if file_content else []
+
+        # 获取表格信息
+        stmt = select(FileTable).where(FileTable.file_id == file_id)
+        result = await session.execute(stmt)
+        tables_orm = result.scalars().all()
+        tables = [
             {
-                "file_id": c.file_id,
-                "chunk_id": c.chunk_id,
-                "chunk_index": c.chunk_index,
-                "total_chunks": c.total_chunks,
-                "chunk_content": c.chunk_content,
+                "file_id": t.file_id,
+                "table_index": t.table_index,
+                "total_table": t.total_table,
+                "table_name": t.table_name,
+                "table_content": t.table_content,
+                "page_num": t.page_num or "",
             }
-            for c in chunks_orm
+            for t in tables_orm
         ]
 
-        if not chunks:
-            raise ValueError("缺少分块数据，无法从 embedding 阶段开始")
+        # 从指定阶段开始执行
+        if stage in ("tableing",):
+            current_stage = "tableing"
+            if not file_content:
+                raise ValueError("缺少文件内容，无法从 tableing 阶段开始")
 
-        type_cfg = await get_file_type_runtime_config(file_id, session)
-        stmt = (
-            update(File)
-            .where(File.file_id == file_id)
-            .values(progress="embedding", start_embedding_time=datetime.now(), error=None)
-        )
-        await session.execute(stmt)
-        await session.commit()
+            content = file_content.file_content
 
-        await notify_callback(callback_url, file_id, "embedding")
-        if not type_cfg.enable_embedding:
-            logger.info(
-                "{}: file_id={}, type_id={}",
-                EMBEDDING_DISABLED_MESSAGE,
-                file_id,
-                type_cfg.type_id,
-            )
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(end_embedding_time=datetime.now())
+                .values(progress="tableing", start_tableing_time=datetime.now(), error=None)
             )
             await session.execute(stmt)
             await session.commit()
-        else:
+
+            await notify_callback(callback_url, file_id, "tableing")
             try:
-                embeddings = await embed_chunks(chunks)
-                await submit_to_milvus(chunks, embeddings)
+                tables = await parse_tables(content, file_id, page_mapping=page_mapping)
+                await save_tables(tables, session)
 
                 stmt = (
                     update(File)
                     .where(File.file_id == file_id)
-                    .values(end_embedding_time=datetime.now())
+                    .values(end_tableing_time=datetime.now())
                 )
                 await session.execute(stmt)
                 await session.commit()
@@ -1397,78 +1280,217 @@ async def run_from_stage(
                 stmt = (
                     update(File)
                     .where(File.file_id == file_id)
-                    .values(progress="embedding_failed", error=_format_exception(e))
+                    .values(progress="tableing_failed", error=_format_exception(e))
                 )
                 await session.execute(stmt)
                 await session.commit()
                 raise
 
-        # embedding stage_done 不携带数据，仅作完成信号
-        await notify_callback(callback_url, file_id, "embedding", event="stage_done")
+            await notify_callback(
+                callback_url,
+                file_id,
+                "tableing",
+                event="stage_done",
+                data={"total": len(tables), "tables": tables},
+            )
 
-        stage = "extracting"
+            stage = "chunking"
 
-    if stage in ("extracting",):
-        stmt = (
-            update(File)
-            .where(File.file_id == file_id)
-            .values(progress="extracting", error=None)
+        if stage in ("chunking",):
+            current_stage = "chunking"
+            if not file_content:
+                raise ValueError("缺少文件内容，无法从 chunking 阶段开始")
+
+            content = file_content.file_content
+
+            # 分块
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(progress="chunking", start_chunking_time=datetime.now(), error=None)
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+            await notify_callback(callback_url, file_id, "chunking")
+            try:
+                chunks = await chunk_content(file_id, content, tables, session, page_mapping=page_mapping)
+                await save_chunks(chunks, session)
+
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(end_chunking_time=datetime.now())
+                )
+                await session.execute(stmt)
+                await session.commit()
+            except Exception as e:
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="chunking_failed", error=_format_exception(e))
+                )
+                await session.execute(stmt)
+                await session.commit()
+                raise
+
+            await notify_callback(
+                callback_url,
+                file_id,
+                "chunking",
+                event="stage_done",
+                data={"total": len(chunks), "chunks": chunks},
+            )
+
+            stage = "embedding"
+
+        if stage in ("embedding",):
+            current_stage = "embedding"
+            # 获取分块
+            stmt = select(FileChunk).where(FileChunk.file_id == file_id).order_by(FileChunk.chunk_index)
+            result = await session.execute(stmt)
+            chunks_orm = result.scalars().all()
+            chunks = [
+                {
+                    "file_id": c.file_id,
+                    "chunk_id": c.chunk_id,
+                    "chunk_index": c.chunk_index,
+                    "total_chunks": c.total_chunks,
+                    "chunk_content": c.chunk_content,
+                }
+                for c in chunks_orm
+            ]
+
+            if not chunks:
+                raise ValueError("缺少分块数据，无法从 embedding 阶段开始")
+
+            type_cfg = await get_file_type_runtime_config(file_id, session)
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(progress="embedding", start_embedding_time=datetime.now(), error=None)
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+            await notify_callback(callback_url, file_id, "embedding")
+            if not type_cfg.enable_embedding:
+                logger.info(
+                    "{}: file_id={}, type_id={}",
+                    EMBEDDING_DISABLED_MESSAGE,
+                    file_id,
+                    type_cfg.type_id,
+                )
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(end_embedding_time=datetime.now())
+                )
+                await session.execute(stmt)
+                await session.commit()
+            else:
+                try:
+                    embeddings = await embed_chunks(chunks)
+                    await submit_to_milvus(chunks, embeddings)
+
+                    stmt = (
+                        update(File)
+                        .where(File.file_id == file_id)
+                        .values(end_embedding_time=datetime.now())
+                    )
+                    await session.execute(stmt)
+                    await session.commit()
+                except Exception as e:
+                    stmt = (
+                        update(File)
+                        .where(File.file_id == file_id)
+                        .values(progress="embedding_failed", error=_format_exception(e))
+                    )
+                    await session.execute(stmt)
+                    await session.commit()
+                    raise
+
+            # embedding stage_done 不携带数据，仅作完成信号
+            await notify_callback(callback_url, file_id, "embedding", event="stage_done")
+
+            stage = "extracting"
+
+        if stage in ("extracting",):
+            current_stage = "extracting"
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(progress="extracting", error=None)
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+            await notify_callback(callback_url, file_id, "extracting")
+            try:
+                await run_extraction(file_id, session, callback_url=callback_url)
+
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(end_extracting_time=datetime.now())
+                )
+                await session.execute(stmt)
+                await session.commit()
+            except Exception as e:
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="extracting_failed", error=_format_exception(e))
+                )
+                await session.execute(stmt)
+                await session.commit()
+                raise
+
+            stage = "analyzing"
+
+        if stage in ("analyzing",):
+            current_stage = "analyzing"
+            stmt = (
+                update(File)
+                .where(File.file_id == file_id)
+                .values(progress="analyzing", error=None)
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+            await notify_callback(callback_url, file_id, "analyzing")
+            try:
+                await run_analysis(file_id, session, callback_url=callback_url)
+
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="complete", end_analyzing_time=datetime.now())
+                )
+                await session.execute(stmt)
+                await session.commit()
+            except Exception as e:
+                stmt = (
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress="analyzing_failed", error=_format_exception(e))
+                )
+                await session.execute(stmt)
+                await session.commit()
+                raise
+
+        await notify_callback(callback_url, file_id, "complete")
+        logger.info("从 {} 阶段重新开始完成: {}", stage, file_id)
+    except Exception as e:
+        logger.error(
+            "从阶段重试失败: {}, stage={}, error={}",
+            file_id, current_stage, _format_exception(e),
         )
-        await session.execute(stmt)
-        await session.commit()
-
-        await notify_callback(callback_url, file_id, "extracting")
-        try:
-            await run_extraction(file_id, session, callback_url=callback_url)
-
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(end_extracting_time=datetime.now())
-            )
-            await session.execute(stmt)
-            await session.commit()
-        except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="extracting_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
-            raise
-
-        stage = "analyzing"
-
-    if stage in ("analyzing",):
-        stmt = (
-            update(File)
-            .where(File.file_id == file_id)
-            .values(progress="analyzing", error=None)
+        await notify_callback(
+            callback_url,
+            file_id,
+            f"{current_stage}_failed",
+            event="stage_failed",
+            data={"stage": current_stage, "error": _format_exception(e)},
         )
-        await session.execute(stmt)
-        await session.commit()
-
-        await notify_callback(callback_url, file_id, "analyzing")
-        try:
-            await run_analysis(file_id, session, callback_url=callback_url)
-
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="complete", end_analyzing_time=datetime.now())
-            )
-            await session.execute(stmt)
-            await session.commit()
-        except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="analyzing_failed", error=str(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
-            raise
-
-    await notify_callback(callback_url, file_id, "complete")
-    logger.info("从 {} 阶段重新开始完成: {}", stage, file_id)
+        raise

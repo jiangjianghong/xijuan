@@ -99,3 +99,48 @@ async def test_run_pipeline_tableing_failure_pushes_stage_failed(monkeypatch):
     # 失败后不应再有 complete
     statuses = [c["status"] for c in recorder.calls]
     assert "complete" not in statuses
+
+
+class FakeMilvusClient:
+    """Milvus 桩:connect / delete 空操作。"""
+
+    def connect(self):
+        pass
+
+    def delete_by_file_id(self, file_id):
+        pass
+
+
+@pytest.mark.anyio
+async def test_run_from_stage_failure_pushes_stage_failed(monkeypatch):
+    """retry 路径失败(缺文件内容)时,推送 <stage>_failed + event=stage_failed。"""
+    recorder = CallbackRecorder()
+    monkeypatch.setattr(pipeline_service, "notify_callback", recorder)
+    monkeypatch.setattr(pipeline_service, "MilvusClient", FakeMilvusClient)
+
+    # FakeSession 的 scalar_one_or_none 返回 None → 触发"缺少文件内容" ValueError
+    with pytest.raises(ValueError):
+        await pipeline_service.run_from_stage(
+            "f_retry_fail", "tableing", FakeSession(), callback_url="http://cb"
+        )
+
+    last = recorder.calls[-1]
+    assert last["status"] == "tableing_failed"
+    assert last["event"] == "stage_failed"
+    assert last["data"]["stage"] == "tableing"
+    assert "缺少文件内容" in last["data"]["error"]
+
+
+@pytest.mark.anyio
+async def test_run_from_stage_parsing_guard_no_callback(monkeypatch):
+    """stage=parsing 的入参校验错误直接抛出,不推失败回调。"""
+    recorder = CallbackRecorder()
+    monkeypatch.setattr(pipeline_service, "notify_callback", recorder)
+    monkeypatch.setattr(pipeline_service, "MilvusClient", FakeMilvusClient)
+
+    with pytest.raises(ValueError):
+        await pipeline_service.run_from_stage(
+            "f_guard", "parsing", FakeSession(), callback_url="http://cb"
+        )
+
+    assert recorder.calls == []

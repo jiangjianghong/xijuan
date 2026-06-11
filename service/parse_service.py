@@ -15,6 +15,14 @@ from service.type_config_service import get_file_type_runtime_config
 from utils.config import get_config
 
 
+def _format_exception(exc: BaseException) -> str:
+    """统一异常文案，避免 str(exc) 为空导致丢失关键信息。"""
+    msg = str(exc).strip()
+    if msg:
+        return f"{type(exc).__name__}: {msg}"
+    return f"{type(exc).__name__}: {repr(exc)}"
+
+
 async def parse_file(
     file_path: str, file_content_bytes: bytes, file_id: str, session: AsyncSession
 ) -> Tuple[str, str]:
@@ -65,7 +73,7 @@ async def parse_file(
         stmt = (
             update(File)
             .where(File.file_id == file_id)
-            .values(progress="parsing_failed", error=str(e))
+            .values(progress="parsing_failed", error=_format_exception(e))
         )
         await session.execute(stmt)
         await session.commit()
