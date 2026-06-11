@@ -84,7 +84,7 @@ def test_table_refs_carry_text_and_joined():
         _make_table(0, "报价表", "<table>A</table>", 0, 20, "2"),
         _make_table(1, "明细表", "<table>B</table>", 30, 60, "3"),
     ]
-    refs, texts = _build_table_source_refs(tables, "报价")
+    refs, texts = _build_table_source_refs(tables, "报价", [])
 
     assert refs["_tables"][0]["text"] == "表格名称: 报价表\n<table>A</table>"
     assert refs["_tables"][1]["text"] == "表格名称: 明细表\n<table>B</table>"
@@ -98,7 +98,7 @@ def test_table_refs_carry_text_and_joined():
 
 def test_table_refs_unnamed_table_fallback():
     tables = [_make_table(2, "", "<table>C</table>", page="")]
-    refs, texts = _build_table_source_refs(tables, "表格")
+    refs, texts = _build_table_source_refs(tables, "表格", [])
 
     assert refs["_tables"][0]["text"] == "表格名称: 表格2\n<table>C</table>"
     assert refs["_tables"][0]["page_num"] == ""
