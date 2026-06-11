@@ -185,6 +185,7 @@ class AnalysisRule(Base):
     expression: Mapped[str] = mapped_column(Text, nullable=False)
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     depend_fields: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    web_search: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     enabled: Mapped[int] = mapped_column(TINYINT, default=1)
     priority: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
