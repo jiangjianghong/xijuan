@@ -998,7 +998,7 @@ const RuleConfig = {
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">返回条数</label>
-                            <input class="form-input" id="fm-ws-count" type="number" value="${ws.count ?? 5}" min="1" max="50">
+                            <input class="form-input" id="fm-ws-count" type="number" value="${Utils.escapeHtml(String(ws.count ?? 5))}" min="1" max="50">
                         </div>
                         <div class="form-group">
                             <label class="form-label">时间范围</label>
