@@ -10,10 +10,11 @@
 
 1. [表关系总览](#1-表关系总览)
 2. [文件处理相关表](#2-文件处理相关表)
-   - [2.1 files - 文件主表](#21-files---文件主表)
-   - [2.2 file_content - 文件内容表](#22-file_content---文件内容表)
-   - [2.3 file_table - 文件表格表](#23-file_table---文件表格表)
-   - [2.4 file_chunk - 文件分块表](#24-file_chunk---文件分块表)
+   - [2.1 doc_type - 文档类型表](#21-doc_type---文档类型表)
+   - [2.2 files - 文件主表](#22-files---文件主表)
+   - [2.3 file_content - 文件内容表](#23-file_content---文件内容表)
+   - [2.4 file_table - 文件表格表](#24-file_table---文件表格表)
+   - [2.5 file_chunk - 文件分块表](#25-file_chunk---文件分块表)
 3. [配置相关表](#3-配置相关表)
    - [3.1 extraction_field - 字段提取配置表](#31-extraction_field---字段提取配置表)
    - [3.2 analysis_rule - 逻辑分析规则表](#32-analysis_rule---逻辑分析规则表)
@@ -31,55 +32,76 @@
 
 ```
 ┌─────────────────┐
-│     files       │ ─────────────────────────────────────────────┐
-│   (文件主表)     │                                              │
-└────────┬────────┘                                              │
-         │ 1:1                                                   │
-         ▼                                                       │
-┌─────────────────┐                                              │
-│  file_content   │                                              │
-│  (文件全文内容)  │                                              │
-└─────────────────┘                                              │
-         │                                                       │
-         │ 1:N                                                   │
-         ▼                                                       │
-┌─────────────────┐     ┌─────────────────┐                     │
-│   file_table    │     │   file_chunk    │                     │
-│  (解析出的表格)  │     │  (文本分块)      │                     │
-└─────────────────┘     └─────────────────┘                     │
-                                                                 │
-                                                                 │
-┌─────────────────┐                        ┌─────────────────┐   │
-│extraction_field │ ───────────────────▶   │extraction_result│◀──┤
-│  (字段提取配置)  │      根据配置提取      │   (提取结果)     │   │
-└─────────────────┘                        └────────┬────────┘   │
-                                                    │            │
-                                                    │ 被引用     │
-                                                    ▼            │
-┌─────────────────┐                        ┌─────────────────┐   │
-│  analysis_rule  │ ───────────────────▶   │ analysis_result │◀──┘
-│  (逻辑分析配置)  │      根据配置分析      │   (分析结果)     │
-└─────────────────┘                        └─────────────────┘
+│    doc_type     │ 1:N（type_id 作用域隔离）
+│  (文档类型表)    │ ──────────┬──────────────────┬─────────────────┐
+└─────────────────┘           ▼                  ▼                 ▼
+                     ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+                     │     files       │ │extraction_field │ │  analysis_rule  │
+                     │   (文件主表)     │ │  (字段提取配置)  │ │  (逻辑分析配置)  │
+                     └────────┬────────┘ └────────┬────────┘ └────────┬────────┘
+                              │ 1:1               │ 根据配置提取       │ 根据配置分析
+                              ▼                   ▼                   ▼
+                     ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+                     │  file_content   │ │extraction_result│ │ analysis_result │
+                     │ (全文/页码映射)  │ │   (提取结果)     │◀┤   (分析结果)     │
+                     └────────┬────────┘ └─────────────────┘ └─────────────────┘
+                              │ 1:N                 ▲ 被 analysis 引用
+                  ┌───────────┴───────────┐
+                  ▼                       ▼
+         ┌─────────────────┐     ┌─────────────────┐
+         │   file_table    │     │   file_chunk    │
+         │  (解析出的表格)  │     │  (文本分块)      │
+         └─────────────────┘     └─────────────────┘
 ```
 
 ### 1.2 表清单
 
 | 序号 | 表名 | 说明 | 主键 |
 |------|------|------|------|
-| 1 | `files` | 文件主表，记录文件基本信息和处理状态 | `file_id` |
-| 2 | `file_content` | 文件解析后的全文内容 | `file_id` |
-| 3 | `file_table` | 文件中提取的表格数据 | `file_id` + `table_index` |
-| 4 | `file_chunk` | 文件文本分块 | `file_id` + `chunk_id` |
-| 5 | `extraction_field` | 字段提取配置 | `field_id` |
-| 6 | `analysis_rule` | 逻辑分析规则配置 | `rule_id` |
-| 7 | `extraction_result` | 字段提取结果 | `file_id` + `field_id` |
-| 8 | `analysis_result` | 逻辑分析结果 | `file_id` + `rule_id` |
+| 1 | `doc_type` | 文档类型定义（配置作用域 + 模板/血缘标记） | `type_id` |
+| 2 | `files` | 文件主表，记录文件基本信息和处理状态 | `file_id` |
+| 3 | `file_content` | 文件解析后的全文内容 + middle_json + 页码映射 | `file_id` |
+| 4 | `file_table` | 文件中提取的表格数据（含原文位置/页码） | `file_id` + `table_index` |
+| 5 | `file_chunk` | 文件文本分块（含原文位置/页码） | `file_id` + `chunk_id` |
+| 6 | `extraction_field` | 字段提取配置（按 type_id 隔离） | `field_id` |
+| 7 | `analysis_rule` | 逻辑分析规则配置（按 type_id 隔离） | `rule_id` |
+| 8 | `extraction_result` | 字段提取结果 | `file_id` + `field_id` |
+| 9 | `analysis_result` | 逻辑分析结果 | `file_id` + `rule_id` |
+
+> **权威来源**：所有表结构以 `model/tables.py` ORM 定义为准，启动时 `service/init_service.py:run_init` 自动建库建表并对旧库做增量 ALTER 迁移。本文档为同步说明。
 
 ---
 
 ## 2. 文件处理相关表
 
-### 2.1 files - 文件主表
+### 2.1 doc_type - 文档类型表
+
+文档类型定义。每个文件、字段配置、规则配置都绑定一个 `type_id`，实现多类型配置隔离（配置不跨类型共享，共享靠 `POST /doctype/{id}/copy_from` 显式复制）。
+
+#### 表结构
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| `type_id` | VARCHAR(64) | PK, NOT NULL | - | 类型唯一标识（默认类型固定为 `default`） |
+| `type_name` | VARCHAR(200) | NOT NULL | - | 类型显示名称 |
+| `description` | TEXT | NULLABLE | NULL | 类型描述 |
+| `max_parse_pages` | INT | NULLABLE | NULL | 解析页数上限（NULL=不限制） |
+| `enable_embedding` | TINYINT | NOT NULL | 1 | 是否执行 embedding 阶段（0=跳过向量化） |
+| `is_default` | TINYINT | - | 0 | 默认类型标记（默认类型不可删除） |
+| `is_template` | TINYINT | - | 0 | 模板标记（`POST /doctype/{id}/promote|demote` 切换；顶部选择器只展示模板+默认+当前） |
+| `parent_type_id` | VARCHAR(64) | NULLABLE | NULL | 复制来源类型（`copy_from`/`import` 自动记录的血缘） |
+| `enabled` | TINYINT | - | 1 | 是否启用 |
+| `created_at` | DATETIME | - | CURRENT_TIMESTAMP | 创建时间 |
+| `updated_at` | DATETIME | - | CURRENT_TIMESTAMP | 更新时间（自动更新） |
+
+#### 说明
+
+- 与 `files` / `extraction_field` / `analysis_rule` 均为 **1:N**（通过各表 `type_id` 列关联，无外键约束）
+- 删除非默认类型且其下有文件/配置时需 `force=true`（级联清理文件内容 + Milvus 向量 + 配置）
+
+---
+
+### 2.2 files - 文件主表
 
 记录上传文件的基本信息和处理进度状态。
 
@@ -87,12 +109,15 @@
 
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 |--------|------|------|--------|------|
-| `file_id` | VARCHAR(64) | PK, NOT NULL | - | 文件唯一标识（UUID 或哈希值） |
+| `file_id` | VARCHAR(64) | PK, NOT NULL | - | 文件唯一标识（`SHA256(type_id|file_name|纳秒时间戳|随机盐)[:32]`，每次上传必产新 ID，同名重传不去重） |
+| `type_id` | VARCHAR(64) | NOT NULL | 'default' | 所属文档类型（决定字段/规则配置作用域） |
 | `file_name` | VARCHAR(512) | NOT NULL | - | 原始文件名 |
 | `file_size` | BIGINT | - | 0 | 文件大小（字节） |
 | `create_time` | DATETIME | - | CURRENT_TIMESTAMP | 文件上传时间 |
 | `start_parsing_time` | DATETIME | NULLABLE | NULL | 开始解析时间 |
 | `end_parsing_time` | DATETIME | NULLABLE | NULL | 解析完成时间 |
+| `start_tableing_time` | DATETIME | NULLABLE | NULL | 开始表格名识别时间 |
+| `end_tableing_time` | DATETIME | NULLABLE | NULL | 表格名识别完成时间 |
 | `start_chunking_time` | DATETIME | NULLABLE | NULL | 开始分块时间 |
 | `end_chunking_time` | DATETIME | NULLABLE | NULL | 分块完成时间 |
 | `start_embedding_time` | DATETIME | NULLABLE | NULL | 开始向量化时间 |
@@ -102,6 +127,12 @@
 | `progress` | VARCHAR(32) | - | 'parsing' | 当前处理进度状态 |
 | `error` | TEXT | NULLABLE | NULL | 错误信息（失败时记录） |
 | `updated_at` | DATETIME | - | CURRENT_TIMESTAMP | 最后更新时间（自动更新） |
+
+#### 索引
+
+| 索引名 | 字段 | 类型 |
+|--------|------|------|
+| `ix_files_type_id` | `type_id` | 普通索引 |
 
 #### progress 字段枚举值
 
@@ -136,12 +167,15 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 ```json
 {
   "file_id": "a1b2c3d4e5f6",
+  "type_id": "default",
   "file_name": "2024年度财务报告.pdf",
   "file_size": 2048576,
   "create_time": "2025-01-15 10:30:00",
   "start_parsing_time": "2025-01-15 10:30:01",
   "end_parsing_time": "2025-01-15 10:31:15",
-  "start_chunking_time": "2025-01-15 10:31:15",
+  "start_tableing_time": "2025-01-15 10:31:15",
+  "end_tableing_time": "2025-01-15 10:31:18",
+  "start_chunking_time": "2025-01-15 10:31:18",
   "end_chunking_time": "2025-01-15 10:31:20",
   "start_embedding_time": "2025-01-15 10:31:20",
   "end_embedding_time": "2025-01-15 10:32:00",
@@ -155,7 +189,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 
 ---
 
-### 2.2 file_content - 文件内容表
+### 2.3 file_content - 文件内容表
 
 存储文件解析后的完整 Markdown 格式文本内容、MinerU 原始布局 JSON 以及位置→页码/bbox 映射。
 
@@ -203,9 +237,9 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 
 ---
 
-### 2.3 file_table - 文件表格表
+### 2.4 file_table - 文件表格表
 
-存储从文件中提取的表格数据。
+存储从文件中提取的表格数据（tableing 阶段写入，表名由 LLM 从表格前文识别）。
 
 #### 表结构
 
@@ -214,8 +248,11 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 | `file_id` | VARCHAR(64) | PK, NOT NULL | - | 文件 ID |
 | `table_index` | INT | PK, NOT NULL | - | 表格序号（从 0 开始） |
 | `total_table` | INT | - | 0 | 该文件的表格总数 |
-| `table_name` | VARCHAR(500) | - | '' | 表格名称（从表头或上下文提取） |
-| `table_content` | LONGTEXT | NOT NULL | - | 表格内容（Markdown 格式） |
+| `table_name` | VARCHAR(500) | - | '' | 表格名称（LLM 从前文识别，截断至 30 字符；失败回退表格前最后一行） |
+| `table_content` | LONGTEXT | NOT NULL | - | 表格内容（`<table>...</table>` HTML，MinerU 原样输出） |
+| `start_pos` | INT | - | 0 | 表格 HTML 在 markdown 全文中的起始位置 |
+| `end_pos` | INT | - | 0 | 表格 HTML 在 markdown 全文中的结束位置 |
+| `page_num` | VARCHAR(20) | NULLABLE | '' | 所在 PDF 页码（`"3"` 或跨页 `"3-5"`，经 page_mapping 查得） |
 
 #### 索引
 
@@ -227,7 +264,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 
 - 与 `files` 表是 **1:N** 关系（一个文件可有多个表格）
 - 复合主键：`file_id` + `table_index`
-- `table_content` 为 Markdown 表格格式
+- `table_content` 为 **HTML `<table>` 片段**（非 Markdown 表格）；`start_pos`/`end_pos` 是 table 类字段抽取时 `source_refs.bboxes` 定位的坐标来源
 
 #### 示例数据
 
@@ -237,13 +274,16 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
   "table_index": 0,
   "total_table": 3,
   "table_name": "合并资产负债表",
-  "table_content": "| 项目 | 期末余额 | 期初余额 |\n|------|----------|----------|\n| 货币资金 | 1,234,567 | 987,654 |\n| 应收账款 | 456,789 | 321,456 |"
+  "table_content": "<table><tr><td>项目</td><td>期末余额</td><td>期初余额</td></tr><tr><td>货币资金</td><td>1,234,567</td><td>987,654</td></tr></table>",
+  "start_pos": 5120,
+  "end_pos": 6890,
+  "page_num": "12"
 }
 ```
 
 ---
 
-### 2.4 file_chunk - 文件分块表
+### 2.5 file_chunk - 文件分块表
 
 存储文件文本分块，用于检索和向量化。
 
@@ -252,10 +292,13 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 |--------|------|------|--------|------|
 | `file_id` | VARCHAR(64) | PK, NOT NULL | - | 文件 ID |
-| `chunk_id` | VARCHAR(64) | PK, NOT NULL | - | 分块唯一 ID |
+| `chunk_id` | VARCHAR(64) | PK, NOT NULL | - | 分块唯一 ID（`SHA256(file_id + chunk_index)[:32]`，确定性可重算） |
 | `chunk_index` | INT | - | 0 | 分块序号（从 0 开始） |
 | `total_chunks` | INT | - | 0 | 该文件的分块总数 |
 | `chunk_content` | TEXT | NOT NULL | - | 分块文本内容 |
+| `start_pos` | INT | - | 0 | 在 markdown 全文中的起始位置 |
+| `end_pos` | INT | - | 0 | 在 markdown 全文中的结束位置 |
+| `page_num` | VARCHAR(20) | NULLABLE | '' | 所在 PDF 页码（`"3"` 或跨页 `"3-5"`） |
 
 #### 索引
 
@@ -267,18 +310,22 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 
 - 与 `files` 表是 **1:N** 关系
 - 复合主键：`file_id` + `chunk_id`
-- 分块大小通常为 500-1000 字符，有重叠
-- `chunk_id` 格式通常为 `{file_id}_{chunk_index}`
+- 分块参数由 `configs/config.yaml` 的 `chunking` 节决定（默认 `chunk_size: 512`、`chunk_overlap: 50`，递归分隔符 `["\n\n", "\n", "。", " "]`）
+- **表格作为独立 chunk 保留**（不参与递归切分），`chunk_content` 含 `table_name\n<table>...` 前缀；超过 8192 字符的超长表格按 `</tr>` / `</td>` / `\n` 边界拆分
+- `start_pos`/`end_pos` 是 `chunk_db`/`vector_db` 检索结果做 bbox 定位的坐标来源
 
 #### 示例数据
 
 ```json
 {
   "file_id": "a1b2c3d4e5f6",
-  "chunk_id": "a1b2c3d4e5f6_0",
+  "chunk_id": "9f86d081884c7d659a2feaa0c55ad015",
   "chunk_index": 0,
   "total_chunks": 15,
-  "chunk_content": "# 1 公司简介\n\n某某科技有限公司（以下简称"公司"）成立于2010年，是一家专注于人工智能技术研发的高新技术企业..."
+  "chunk_content": "# 1 公司简介\n\n某某科技有限公司（以下简称"公司"）成立于2010年，是一家专注于人工智能技术研发的高新技术企业...",
+  "start_pos": 0,
+  "end_pos": 512,
+  "page_num": "1"
 }
 ```
 
@@ -295,22 +342,33 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 |--------|------|------|--------|------|
 | `field_id` | VARCHAR(100) | PK, NOT NULL | - | 字段唯一标识 |
+| `type_id` | VARCHAR(64) | NOT NULL | 'default' | 所属文档类型（抽取时按 `file.type_id` 过滤） |
 | `field_name` | VARCHAR(200) | NOT NULL | - | 字段显示名称 |
 | `source_type` | ENUM | NOT NULL | - | 数据源类型 |
 | `enabled` | TINYINT | - | 1 | 是否启用（1=启用, 0=禁用） |
 | `priority` | INT | - | 0 | 执行优先级（越小越优先） |
 | `created_at` | DATETIME | - | CURRENT_TIMESTAMP | 创建时间 |
 | `updated_at` | DATETIME | - | CURRENT_TIMESTAMP | 更新时间（自动更新） |
-| `table_name_pattern` | VARCHAR(500) | NULLABLE | NULL | 【表格类】表格名称匹配模式 |
+| `table_name_pattern` | VARCHAR(500) | NULLABLE | NULL | 【表格类】表格名称匹配模式（兼容旧配置；也作为占位符 label） |
 | `table_match_type` | ENUM | NULLABLE | NULL | 【表格类】表格匹配方式 |
+| `table_match_keywords` | JSON | NULLABLE | NULL | 【表格类】匹配关键词数组（优先于 table_name_pattern） |
+| `table_match_max_results` | INT | NULLABLE | NULL | 【表格类】最多匹配的表格数（0/NULL=不限） |
+| `table_system_prompt` | TEXT | NULLABLE | NULL | 【表格类】LLM system 提示词（可选） |
 | `table_extract_prompt` | TEXT | NULLABLE | NULL | 【表格类】LLM 提取提示词 |
 | `search_type` | ENUM | NULLABLE | NULL | 【文本类】检索方式 |
 | `search_config` | JSON | NULLABLE | NULL | 【文本类】检索配置参数 |
+| `text_system_prompt` | TEXT | NULLABLE | NULL | 【文本类】LLM system 提示词（可选） |
 | `text_extract_prompt` | TEXT | NULLABLE | NULL | 【文本类】LLM 提取提示词 |
 | `vl_method` | ENUM | NULLABLE | NULL | 【VL 类】VL 抽取方法 |
 | `vl_config` | JSON | NULLABLE | NULL | 【VL 类】VL 方法参数（按 vl_method 不同） |
 | `vl_system_prompt` | TEXT | NULLABLE | NULL | 【VL 类】VL 系统提示词（可选） |
 | `vl_extract_prompt` | TEXT | NULLABLE | NULL | 【VL 类】VL 最终提取提示词（vl 类必填，含 `value`/`reason` 关键字） |
+
+#### 索引
+
+| 索引名 | 字段 | 类型 |
+|--------|------|------|
+| `ix_extraction_field_type_id` | `type_id` | 普通索引 |
 
 > 上述 4 列与 `source_type` ENUM 加入 `'vl'` 的扩展由 `service/init_service.py` 启动时自动 ALTER TABLE 迁移（ADD COLUMN + MODIFY COLUMN），不需要手工迁移脚本。
 
@@ -337,11 +395,12 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 
 | 值 | 说明 |
 |----|------|
-| `context` | 上下文检索 |
-| `section` | 章节检索 |
-| `rule` | 规则检索 |
-| `chunk_db` | 数据库分块检索 |
-| `vector_db` | 向量数据库检索 |
+| `context` | 上下文检索（关键词 + 前后文窗口） |
+| `section` | 章节检索（按 `# 编号 标题` 匹配） |
+| `rule` | 规则检索（关键词 + 停止词边界） |
+| `chunk_db` | 数据库分块检索（file_chunk LIKE） |
+| `vector_db` | 向量数据库检索（Milvus 语义） |
+| `page` | 按页码直接切 markdown 喂 LLM（占位符固定 `page_content`） |
 
 **vl_method（VL 抽取方法）**
 
@@ -406,6 +465,16 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 }
 ```
 
+**page 模式**
+```json
+{
+  "page_range": "3-5",
+  "max_length": 30000
+}
+```
+- `page_range`：`"3"` / `"3-5"`，按 page_mapping 切出对应页的 markdown
+- `max_length`：注入 prompt 的最大字符数，超出从末尾截断（默认 30000）
+
 #### vl_config JSON 结构
 
 根据 `vl_method` 不同，结构差异较大：
@@ -462,6 +531,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 ```json
 {
   "field_id": "total_revenue",
+  "type_id": "default",
   "field_name": "营业总收入",
   "source_type": "table",
   "enabled": 1,
@@ -479,6 +549,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 ```json
 {
   "field_id": "company_name",
+  "type_id": "default",
   "field_name": "公司名称",
   "source_type": "text",
   "enabled": 1,
@@ -500,6 +571,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 ```json
 {
   "field_id": "total_assets",
+  "type_id": "default",
   "field_name": "资产总额",
   "source_type": "vl",
   "enabled": 1,
@@ -537,14 +609,23 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 | 字段名 | 类型 | 约束 | 默认值 | 说明 |
 |--------|------|------|--------|------|
 | `rule_id` | VARCHAR(100) | PK, NOT NULL | - | 规则唯一标识 |
+| `type_id` | VARCHAR(64) | NOT NULL | 'default' | 所属文档类型（分析时按 `file.type_id` 过滤） |
 | `rule_name` | VARCHAR(200) | NOT NULL | - | 规则显示名称 |
 | `rule_type` | ENUM | NOT NULL | - | 规则类型 |
 | `expression` | TEXT | NOT NULL | - | 表达式/提示词 |
+| `system_prompt` | TEXT | NULLABLE | NULL | LLM system 提示词（judge 类可选） |
 | `depend_fields` | JSON | NULLABLE | NULL | 依赖的字段 ID 列表 |
+| `web_search` | JSON | NULLABLE | NULL | 网络搜索配置（judge 类可选，见下） |
 | `enabled` | TINYINT | - | 1 | 是否启用 |
 | `priority` | INT | - | 0 | 执行优先级 |
 | `created_at` | DATETIME | - | CURRENT_TIMESTAMP | 创建时间 |
 | `updated_at` | DATETIME | - | CURRENT_TIMESTAMP | 更新时间 |
+
+#### 索引
+
+| 索引名 | 字段 | 类型 |
+|--------|------|------|
+| `ix_analysis_rule_type_id` | `type_id` | 普通索引 |
 
 #### 枚举值说明
 
@@ -563,12 +644,30 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 ["total_revenue", "net_profit", "total_assets"]
 ```
 
+#### web_search JSON 结构
+
+judge 类规则可选的联网检索增强（`service/analysis_service.py:apply_web_search`，博查 API）：
+
+```json
+{
+  "enabled": true,
+  "query": "<field_result>company_name</field_result> 最新行政处罚",
+  "count": 5,
+  "freshness": "oneYear"
+}
+```
+
+- `query` 支持 `<field_result>field_id</field_result>` 占位符，先用提取结果解析再搜索
+- 搜索结果替换 `expression` 中的 `<web_search_result/>` 占位符后送 LLM
+- 溯源数据写入 `analysis_result.source_refs` 的 `_web_search` 键
+
 #### 示例数据
 
 **判断类规则**
 ```json
 {
   "rule_id": "is_profitable",
+  "type_id": "default",
   "rule_name": "是否盈利",
   "rule_type": "judge",
   "expression": "公司净利润为 <field_result>net_profit</field_result> 元。\n\n请判断该公司是否处于盈利状态？",
@@ -582,6 +681,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 ```json
 {
   "rule_id": "profit_margin",
+  "type_id": "default",
   "rule_name": "净利润率",
   "rule_type": "calc",
   "expression": "<field_result>net_profit</field_result> / <field_result>total_revenue</field_result> * 100",
@@ -703,7 +803,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 | `result_value` | VARCHAR(500) | - | '' | 分析结果值 |
 | `input_values` | JSON | NULLABLE | NULL | 输入字段值快照 |
 | `reason` | TEXT | NULLABLE | NULL | 分析理由/依据 |
-| `source_refs` | JSON | NULLABLE | NULL | 依赖字段的参考块，`{field_id: 该字段的 extraction_result.source_refs}`，无依赖参考时为 NULL |
+| `source_refs` | JSON | NULLABLE | NULL | 依赖字段的参考块，`{field_id: 该字段的 extraction_result.source_refs}`；启用网络搜索的规则另含 `_web_search` 键（query/结果列表溯源）。无依赖参考时为 NULL |
 
 #### 索引
 
@@ -760,46 +860,75 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 
 ## 5. 向量数据库 (Milvus)
 
-除 MySQL 外，系统还使用 Milvus 存储文本分块的向量表示。
+除 MySQL 外，系统还使用 Milvus 存储文本分块的向量表示（embedding 阶段写入；`doc_type.enable_embedding=0` 的类型跳过）。
 
 ### 5.1 Collection 结构
 
-**Collection 名称**: `file_chunks`（可配置）
+**Collection 名称**: 由 `configs/config.yaml` 的 `milvus.collection_name` 配置，启动时自动创建（`utils/milvus_client.py:ensure_collection`）。
 
 | 字段名 | 类型 | 说明 |
 |--------|------|------|
-| `id` | INT64 | 自增主键 |
+| `chunk_id` | VARCHAR(64) | 主键（与 `file_chunk.chunk_id` 一致） |
 | `file_id` | VARCHAR(64) | 文件 ID |
-| `chunk_id` | VARCHAR(64) | 分块 ID |
-| `chunk_index` | INT32 | 分块序号 |
-| `embedding` | FLOAT_VECTOR(1536) | 向量表示（维度取决于嵌入模型） |
+| `chunk_index` | INT64 | 分块序号 |
+| `total_chunks` | INT64 | 分块总数 |
+| `chunk_content` | VARCHAR(65535) | 分块文本（冗余存储，检索结果直接可用） |
+| `start_pos` | INT64 | 在 markdown 全文中的起始位置 |
+| `end_pos` | INT64 | 在 markdown 全文中的结束位置 |
+| `page_num` | VARCHAR(20) | 所在 PDF 页码 |
+| `embedding` | FLOAT_VECTOR | 向量（维度 = `embedding.embedding_dim` 配置，须与所用嵌入模型输出维度一致） |
 
 ### 5.2 索引配置
 
-- **索引类型**: IVF_FLAT / HNSW
-- **度量方式**: L2（欧氏距离）
-- **nlist**: 1024（IVF_FLAT）
+由 `milvus` 配置节决定（默认值见 `utils/config.py`）：
+
+- **索引类型**: `index_type`（默认 IVF_FLAT）
+- **度量方式**: `metric_type`（默认 L2 欧氏距离）
+- **nlist**: `nlist` 配置项
+- **检索 topK**: `search_topk` 配置项
+
+> `vector_db` 检索返回的 `chunk_content`/`start_pos`/`end_pos`/`page_num` 直接来自 Milvus 冗余字段，无需回查 MySQL；`start_pos`/`end_pos` 同样用于 `source_refs.bboxes` 定位。
 
 ---
 
 ## 6. 建表 SQL
 
+> 实际建库建表由启动时 `service/init_service.py:run_init` 按 `model/tables.py` ORM 自动完成（含旧库增量 ALTER 迁移），库名取 `configs/config.yaml` 的 `mysql.database`。以下 SQL 仅作参考。
+
 ```sql
--- 创建数据库
+-- 创建数据库（库名以 mysql.database 配置为准）
 CREATE DATABASE IF NOT EXISTS wanz_parse
   DEFAULT CHARACTER SET utf8mb4
   DEFAULT COLLATE utf8mb4_unicode_ci;
 
 USE wanz_parse;
 
+-- 0. doc_type 表
+CREATE TABLE IF NOT EXISTS doc_type (
+  type_id VARCHAR(64) PRIMARY KEY,
+  type_name VARCHAR(200) NOT NULL,
+  description TEXT NULL,
+  max_parse_pages INT NULL,
+  enable_embedding TINYINT NOT NULL DEFAULT 1,
+  is_default TINYINT DEFAULT 0,
+  is_template TINYINT DEFAULT 0,
+  parent_type_id VARCHAR(64) NULL,
+  enabled TINYINT DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 1. files 表
 CREATE TABLE IF NOT EXISTS files (
   file_id VARCHAR(64) PRIMARY KEY,
+  type_id VARCHAR(64) NOT NULL DEFAULT 'default',
   file_name VARCHAR(512) NOT NULL,
   file_size BIGINT DEFAULT 0,
   create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
   start_parsing_time DATETIME NULL,
   end_parsing_time DATETIME NULL,
+  start_tableing_time DATETIME NULL,
+  end_tableing_time DATETIME NULL,
   start_chunking_time DATETIME NULL,
   end_chunking_time DATETIME NULL,
   start_embedding_time DATETIME NULL,
@@ -808,7 +937,8 @@ CREATE TABLE IF NOT EXISTS files (
   end_analyzing_time DATETIME NULL,
   progress VARCHAR(32) DEFAULT 'parsing',
   error TEXT NULL,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX ix_files_type_id (type_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 2. file_content 表
@@ -826,6 +956,9 @@ CREATE TABLE IF NOT EXISTS file_table (
   total_table INT DEFAULT 0,
   table_name VARCHAR(500) DEFAULT '',
   table_content LONGTEXT NOT NULL,
+  start_pos INT DEFAULT 0,
+  end_pos INT DEFAULT 0,
+  page_num VARCHAR(20) NULL DEFAULT '',
   PRIMARY KEY (file_id, table_index),
   INDEX ix_file_table_file_id (file_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -837,6 +970,9 @@ CREATE TABLE IF NOT EXISTS file_chunk (
   chunk_index INT DEFAULT 0,
   total_chunks INT DEFAULT 0,
   chunk_content TEXT NOT NULL,
+  start_pos INT DEFAULT 0,
+  end_pos INT DEFAULT 0,
+  page_num VARCHAR(20) NULL DEFAULT '',
   PRIMARY KEY (file_id, chunk_id),
   INDEX ix_file_chunk_file_id (file_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -844,6 +980,7 @@ CREATE TABLE IF NOT EXISTS file_chunk (
 -- 5. extraction_field 表
 CREATE TABLE IF NOT EXISTS extraction_field (
   field_id VARCHAR(100) PRIMARY KEY,
+  type_id VARCHAR(64) NOT NULL DEFAULT 'default',
   field_name VARCHAR(200) NOT NULL,
   source_type ENUM('table', 'text', 'vl') NOT NULL,
   enabled TINYINT DEFAULT 1,
@@ -852,14 +989,19 @@ CREATE TABLE IF NOT EXISTS extraction_field (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   table_name_pattern VARCHAR(500) NULL,
   table_match_type ENUM('exact', 'fuzzy', 'contains', 'llm') NULL,
+  table_match_keywords JSON NULL,
+  table_match_max_results INT NULL,
+  table_system_prompt TEXT NULL,
   table_extract_prompt TEXT NULL,
-  search_type ENUM('context', 'section', 'rule', 'chunk_db', 'vector_db') NULL,
+  search_type ENUM('context', 'section', 'rule', 'chunk_db', 'vector_db', 'page') NULL,
   search_config JSON NULL,
+  text_system_prompt TEXT NULL,
   text_extract_prompt TEXT NULL,
   vl_method VARCHAR(32) NULL,        -- 应用层 enum：vl_model/vl_progressive/vl_locate
   vl_config JSON NULL,
   vl_system_prompt TEXT NULL,
-  vl_extract_prompt TEXT NULL
+  vl_extract_prompt TEXT NULL,
+  INDEX ix_extraction_field_type_id (type_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 注：vl_method 在 ORM (model/tables.py) 层用 ENUM('vl_model','vl_progressive','vl_locate')；
@@ -868,14 +1010,18 @@ CREATE TABLE IF NOT EXISTS extraction_field (
 -- 6. analysis_rule 表
 CREATE TABLE IF NOT EXISTS analysis_rule (
   rule_id VARCHAR(100) PRIMARY KEY,
+  type_id VARCHAR(64) NOT NULL DEFAULT 'default',
   rule_name VARCHAR(200) NOT NULL,
   rule_type ENUM('judge', 'calc') NOT NULL,
   expression TEXT NOT NULL,
+  system_prompt TEXT NULL,
   depend_fields JSON NULL,
+  web_search JSON NULL,
   enabled TINYINT DEFAULT 1,
   priority INT DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX ix_analysis_rule_type_id (type_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 7. extraction_result 表
@@ -924,4 +1070,4 @@ CREATE TABLE IF NOT EXISTS analysis_result (
 
 ---
 
-*文档版本: 1.0.0 | 最后更新: 2025-01*
+*文档版本: 2.0.0 | 最后更新: 2026-06 | 以 model/tables.py 为权威来源*
