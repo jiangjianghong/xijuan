@@ -151,3 +151,32 @@ async def test_search_vector_db_attaches_query_text_as_keyword(monkeypatch):
     )
     assert len(results) == 2
     assert all(r["keyword"] == "合同总金额" for r in results)
+
+
+def test_build_text_source_refs_section_enters_texts():
+    """section 结果无 keyword，用 section_title 兜底进 _texts（正式路径注入修复）。"""
+    from service.extraction_service import _build_text_source_refs
+
+    results = [{
+        "section_number": "1", "section_title": "概述", "section_index": 0,
+        "content": "概述内容", "start_pos": 0, "end_pos": 10,
+    }]
+    refs, texts = _build_text_source_refs("section", results, [])
+    assert texts == {"概述": "概述内容"}
+    assert refs["_texts"] == {"概述": "概述内容"}
+    assert refs["概述"][0]["text"] == "概述内容"
+
+
+def test_build_text_source_refs_vector_db_enters_texts():
+    """vector_db 结果带 keyword=query_text 后，按 query_text 分组拼接进 _texts。"""
+    from service.extraction_service import _build_text_source_refs
+
+    results = [
+        {"keyword": "合同总金额", "chunk_content": "块1", "start_pos": 0,
+         "end_pos": 2, "page_num": "1", "chunk_id": "c1", "chunk_index": 0},
+        {"keyword": "合同总金额", "chunk_content": "块2", "start_pos": 5,
+         "end_pos": 7, "page_num": "2", "chunk_id": "c2", "chunk_index": 1},
+    ]
+    refs, texts = _build_text_source_refs("vector_db", results, [])
+    assert texts == {"合同总金额": "块1\n---\n块2"}
+    assert refs["合同总金额"][0]["chunk_id"] == "c1"

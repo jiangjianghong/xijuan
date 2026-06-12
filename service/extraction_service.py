@@ -879,10 +879,11 @@ def _build_text_source_refs(
 
         source_refs.setdefault(keyword, []).append(ref)
 
-    # 按关键词分组拼接检索文本（与注入 prompt 的内容完全一致；section/vector_db 无 keyword 时刻意不进 _texts，维持现状）
+    # 按关键词分组拼接检索文本（与注入 prompt 的内容完全一致；
+    # section 无 keyword 用 section_title 兜底，vector_db 的 keyword 为 query_text）
     results_by_keyword: Dict[str, List[Dict]] = {}
     for r in search_results:
-        kw = r.get("keyword", "")
+        kw = r.get("keyword", "") or r.get("section_title", "")
         if kw:
             results_by_keyword.setdefault(kw, []).append(r)
 
