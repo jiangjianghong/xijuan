@@ -1027,13 +1027,13 @@ const RuleConfig = {
                 <div class="form-label-row">
                     <label class="form-label">依赖字段</label>
                     <div class="insert-tag-wrap">
-                        <button type="button" class="insert-tag-btn" onclick="RuleConfig.showDependFieldDropdown(this)">+ 选择字段</button>
+                        <button type="button" class="insert-tag-btn" onclick="RuleConfig.showDependFieldDropdown(this)" title="选择依赖字段">{x}</button>
                     </div>
                 </div>
                 <div class="keyword-tags-container" id="fm-depend-fields-box">
                     <div class="keyword-tags-list" id="fm-depend-fields-list">${dependTagsHtml}</div>
                 </div>
-                <div class="form-hint">此规则依赖的提取字段，点击「+ 选择字段」从当前类型的字段中选择</div>
+                <div class="form-hint">此规则依赖的提取字段，点击右上角 {x} 从当前类型的字段中选择</div>
             </div>
 
             <!-- 判断型配置区 -->
