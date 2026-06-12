@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
@@ -307,10 +308,19 @@ async def get_file_pdf(file_id: str):
     """
     from utils import vl_client
 
+    # file_id 为 SHA256 hex；白名单校验防止路径穿越（Windows 下 ..%5C 可逃出存储目录）
+    if not re.fullmatch(r"[\w-]+", file_id):
+        raise HTTPException(status_code=404, detail="原始 PDF 不存在")
+
     pdf = vl_client.pdf_path(file_id)
     if not pdf.is_file():
         raise HTTPException(status_code=404, detail="原始 PDF 不存在")
-    return FileResponse(pdf, media_type="application/pdf", filename=f"{file_id}.pdf")
+    return FileResponse(
+        pdf,
+        media_type="application/pdf",
+        filename=f"{file_id}.pdf",
+        content_disposition_type="inline",
+    )
 
 
 def _cleanup_file_artifacts(file_id: str, type_id: str = "default") -> None:

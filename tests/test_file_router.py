@@ -86,3 +86,10 @@ async def test_get_file_pdf_404(client: AsyncClient):
     """PDF 不存在时应 404。"""
     resp = await client.get("/file/nonexistent_pdf_file/pdf")
     assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_get_file_pdf_path_traversal_blocked(client: AsyncClient):
+    """file_id 含路径穿越字符时应 404（Windows 反斜杠穿越防护）。"""
+    resp = await client.get("/file/..%5C..%5Csecret/pdf")
+    assert resp.status_code == 404
