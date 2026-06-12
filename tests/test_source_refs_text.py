@@ -56,16 +56,16 @@ def test_rule_refs_carry_text():
     assert texts == {"工期": "工期为90天"}
 
 
-def test_section_without_keyword_keeps_legacy_behavior():
-    """section 结果无 keyword：refs 按 section_title 分组、_texts 为空（与现状一致）。"""
+def test_section_without_keyword_enters_texts_via_section_title():
+    """section 无 keyword 用 section_title 兜底进 _texts（2026-06-12 修复）。"""
     search_results = [
         {"section_number": "3", "section_title": "付款方式", "section_index": 2,
          "content": "按月支付", "start_pos": 0, "end_pos": 10},
     ]
     refs, texts = _build_text_source_refs("section", search_results, [])
     assert refs["付款方式"][0]["text"] == "按月支付"
-    assert texts == {}
-    assert refs["_texts"] == {}
+    assert texts == {"付款方式": "按月支付"}
+    assert refs["_texts"] == texts
 
 
 def _make_table(index, name, content, start=0, end=10, page="1"):
