@@ -57,10 +57,11 @@ async def test_delete_schedules_cleanup_via_background_task(client, fresh_upload
     from model.tables import File as FileModel
     from sqlalchemy import delete as sql_delete
 
-    captured = {"file_ids": []}
+    captured = {"file_ids": [], "type_ids": []}
 
-    def fake_cleanup(file_id: str) -> None:
+    def fake_cleanup(file_id: str, type_id: str = "default") -> None:
         captured["file_ids"].append(file_id)
+        captured["type_ids"].append(type_id)
 
     monkeypatch.setattr(_file_router_module(), "_cleanup_file_artifacts", fake_cleanup)
 
@@ -78,6 +79,7 @@ async def test_delete_schedules_cleanup_via_background_task(client, fresh_upload
         assert resp.status_code == 200
         # BackgroundTask 在 ASGITransport 下 await 前会跑完
         assert captured["file_ids"] == [fake_id]
+        assert captured["type_ids"] == ["default"]
 
         # MySQL 行已删
         async with session_factory() as s:
@@ -105,7 +107,7 @@ async def test_batch_delete_schedules_cleanup_per_file(client, fresh_uploads, mo
 
     captured = {"file_ids": []}
 
-    def fake_cleanup(file_id: str) -> None:
+    def fake_cleanup(file_id: str, type_id: str = "default") -> None:
         captured["file_ids"].append(file_id)
 
     monkeypatch.setattr(_file_router_module(), "_cleanup_file_artifacts", fake_cleanup)
