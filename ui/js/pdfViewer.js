@@ -21,8 +21,7 @@ const PdfViewer = {
 
     init(container) {
         this.container = container;
-        this._gen++;
-        this._destroyDoc();
+        this._gen++;  // 使任何在途加载/渲染作废
         this.hits = {};
         this._showMessage('点击字段的「定位」按钮在 PDF 中查看命中位置');
     },
