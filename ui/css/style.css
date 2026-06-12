@@ -1893,6 +1893,19 @@ h1, h2, h3, h4, h5, h6,
     animation: fadeIn 0.2s ease-out;
 }
 
+/* 依赖字段标签：对应字段不存在/已删除时标灰提示 */
+.keyword-tag.depend-field-missing {
+    opacity: 0.55;
+    text-decoration: line-through;
+}
+
+/* 依赖字段列表空态占位 */
+#fm-depend-fields-list:empty::before {
+    content: "尚未选择依赖字段";
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
 .keyword-tag-remove {
     display: inline-flex;
     align-items: center;

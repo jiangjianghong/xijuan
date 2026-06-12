@@ -293,8 +293,7 @@ const RuleConfig = {
                 labels = this.getKeywordTags('fm-sc-keywords');
             }
         } else if (textareaId === 'fm-expression' || textareaId === 'fm-expression-calc' || textareaId === 'fm-ws-query') {
-            const raw = (document.getElementById('fm-depend-fields') || {}).value || '';
-            labels = raw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+            labels = this.getDependFields();
         }
 
         // 创建 dropdown
@@ -359,6 +358,68 @@ const RuleConfig = {
             }
             dropdown.remove();
         }
+    },
+
+    // ─────────────────────────────────────────────────────────
+    // 依赖字段下拉多选
+    // ─────────────────────────────────────────────────────────
+
+    buildDependFieldTag(fid, name) {
+        const missing = !name;
+        const title = missing ? `${fid}（字段不存在或已删除）` : fid;
+        return `<span class="keyword-tag${missing ? ' depend-field-missing' : ''}" data-fid="${Utils.escapeHtml(fid)}" title="${Utils.escapeHtml(title)}">${Utils.escapeHtml(name || fid)}<button type="button" class="keyword-tag-remove" onclick="RuleConfig.removeKeywordTag(this)">&times;</button></span>`;
+    },
+
+    getDependFields() {
+        const list = document.getElementById('fm-depend-fields-list');
+        if (!list) return [];
+        return Array.from(list.querySelectorAll('.keyword-tag[data-fid]')).map(t => t.dataset.fid);
+    },
+
+    addDependFieldTag(fid, name) {
+        const list = document.getElementById('fm-depend-fields-list');
+        if (!list || this.getDependFields().includes(fid)) return;
+        const temp = document.createElement('div');
+        temp.innerHTML = this.buildDependFieldTag(fid, name);
+        list.appendChild(temp.firstChild);
+    },
+
+    showDependFieldDropdown(btnEl) {
+        this.closeInsertTagDropdown();
+
+        const selected = new Set(this.getDependFields());
+        const available = (this.state.fields || []).filter(f => !selected.has(f.field_id));
+
+        const dropdown = document.createElement('div');
+        dropdown.className = 'insert-tag-dropdown';
+        dropdown.id = '_insert-tag-dropdown';
+
+        if (available.length === 0) {
+            dropdown.innerHTML = '<div class="dropdown-empty">暂无可选字段</div>';
+        } else {
+            available.forEach(f => {
+                const item = document.createElement('div');
+                item.className = 'dropdown-item';
+                item.textContent = `${f.field_name} (${f.field_id})`;
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    RuleConfig.addDependFieldTag(f.field_id, f.field_name);
+                    RuleConfig.closeInsertTagDropdown();
+                });
+                dropdown.appendChild(item);
+            });
+        }
+
+        const wrap = btnEl.closest('.insert-tag-wrap');
+        if (wrap) wrap.appendChild(dropdown);
+
+        const closeHandler = (e) => {
+            if (!dropdown.contains(e.target) && e.target !== btnEl) {
+                RuleConfig.closeInsertTagDropdown();
+            }
+        };
+        document.addEventListener('click', closeHandler, true);
+        dropdown._closeHandler = closeHandler;
     },
 
     // ─────────────────────────────────────────────────────────
@@ -906,10 +967,15 @@ const RuleConfig = {
     // 规则表单
     // ─────────────────────────────────────────────────────────
 
-    openRuleForm(rule) {
+    async openRuleForm(rule) {
         this.state.modalType = 'rule';
         this.state.editingRule = rule || null;
         const isEdit = !!rule;
+
+        // 依赖字段下拉需要字段列表，未加载时先拉取
+        if (!this.state.loaded.fields) {
+            await this.loadFields();
+        }
 
         this.els.modalTitle.textContent = isEdit ? '编辑规则配置' : '新增规则配置';
         this.els.modalBody.innerHTML = this.buildRuleForm(rule || {});
@@ -922,8 +988,15 @@ const RuleConfig = {
     buildRuleForm(rule) {
         const isEdit = !!rule.rule_id;
         const ruleType = rule.rule_type || 'judge';
-        const dependFields = (rule.depend_fields || []).join(', ');
         const ws = rule.web_search || {};
+
+        // 依赖字段标签：按 field_id 映射字段名，已删除的字段标灰提示
+        const fieldNameMap = {};
+        (this.state.fields || []).forEach(f => { fieldNameMap[f.field_id] = f.field_name; });
+        let dependTagsHtml = '';
+        (rule.depend_fields || []).forEach(fid => {
+            dependTagsHtml += this.buildDependFieldTag(fid, fieldNameMap[fid]);
+        });
 
         return `
             <div class="form-row">
@@ -951,9 +1024,16 @@ const RuleConfig = {
                 </div>
             </div>
             <div class="form-group">
-                <label class="form-label">依赖字段</label>
-                <input class="form-input" id="fm-depend-fields" value="${Utils.escapeHtml(dependFields)}" placeholder="多个 field_id 用逗号分隔">
-                <div class="form-hint">此规则依赖的提取字段 ID 列表</div>
+                <div class="form-label-row">
+                    <label class="form-label">依赖字段</label>
+                    <div class="insert-tag-wrap">
+                        <button type="button" class="insert-tag-btn" onclick="RuleConfig.showDependFieldDropdown(this)">+ 选择字段</button>
+                    </div>
+                </div>
+                <div class="keyword-tags-container" id="fm-depend-fields-box">
+                    <div class="keyword-tags-list" id="fm-depend-fields-list">${dependTagsHtml}</div>
+                </div>
+                <div class="form-hint">此规则依赖的提取字段，点击「+ 选择字段」从当前类型的字段中选择</div>
             </div>
 
             <!-- 判断型配置区 -->
@@ -1172,7 +1252,6 @@ const RuleConfig = {
     },
 
     collectRuleFormData() {
-        const dependFieldsStr = document.getElementById('fm-depend-fields').value.trim();
         const existingRule = this.state.editingRule;
         const ruleType = document.getElementById('fm-rule-type').value;
 
@@ -1204,7 +1283,7 @@ const RuleConfig = {
             system_prompt: ruleType === 'judge'
                 ? (document.getElementById('fm-system-prompt').value.trim() || null)
                 : null,
-            depend_fields: dependFieldsStr ? dependFieldsStr.split(/[,，]/).map(s => s.trim()).filter(Boolean) : [],
+            depend_fields: this.getDependFields(),
             web_search: webSearch,
             enabled: existingRule ? existingRule.enabled : 1,
             priority: parseInt(document.getElementById('fm-rule-priority').value) || 0,
@@ -1581,6 +1660,9 @@ const RuleConfig = {
         const state = {};
         const containers = this.els.modalBody.querySelectorAll('.keyword-tags-container[id]');
         containers.forEach(c => {
+            // 依赖字段组件的标签带 data-fid，随 innerHTML 复制天然保留，
+            // 走通用恢复（纯文本重建）反而会丢失属性，故跳过
+            if (c.id === 'fm-depend-fields-box') return;
             state[c.id] = this.getKeywordTags(c.id);
         });
         return state;
