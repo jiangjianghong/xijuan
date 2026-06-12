@@ -113,3 +113,41 @@ def test_build_text_source_refs_chunk_result_with_own_page_num_gets_bboxes():
     assert ref["bboxes"] == [
         {"page_num": 1, "bbox": [10, 20, 300, 60], "page_size": [612, 792]},
     ]
+
+
+async def test_search_vector_db_attaches_query_text_as_keyword(monkeypatch):
+    """vector_db 检索结果每条挂 keyword=query_text，作为占位符标签。"""
+    from service import extraction_service
+
+    async def fake_get_embeddings(texts):
+        return [[0.1, 0.2]]
+
+    class FakeMilvusClient:
+        def connect(self):
+            pass
+
+        def ensure_collection(self):
+            pass
+
+        def search(self, query_vector, top_k, file_id, score_threshold):
+            return [
+                {
+                    "chunk_id": "c1", "file_id": file_id, "chunk_index": 0,
+                    "total_chunks": 2, "chunk_content": "块1",
+                    "start_pos": 0, "end_pos": 2, "page_num": "1", "score": 0.1,
+                },
+                {
+                    "chunk_id": "c2", "file_id": file_id, "chunk_index": 1,
+                    "total_chunks": 2, "chunk_content": "块2",
+                    "start_pos": 5, "end_pos": 7, "page_num": "2", "score": 0.2,
+                },
+            ]
+
+    monkeypatch.setattr(extraction_service, "get_embeddings", fake_get_embeddings)
+    monkeypatch.setattr(extraction_service, "MilvusClient", FakeMilvusClient)
+
+    results = await extraction_service.search_vector_db(
+        "f1", {"query_text": "合同总金额", "top_k": 5}
+    )
+    assert len(results) == 2
+    assert all(r["keyword"] == "合同总金额" for r in results)

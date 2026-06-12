@@ -539,7 +539,7 @@ async def search_vector_db(
             - score_threshold: 分数阈值（可选）
 
     Returns:
-        检索结果列表，每项包含 chunk_id, chunk_index, chunk_content, start_pos, end_pos, score。
+        检索结果列表，每项包含 keyword(=query_text), chunk_id, chunk_index, chunk_content, start_pos, end_pos, score。
     """
     query_text = config.get("query_text", "")
     top_k = config.get("top_k", 5)
@@ -566,6 +566,10 @@ async def search_vector_db(
         file_id=file_id,
         score_threshold=score_threshold,
     )
+
+    # query_text 作为占位符标签：下游按 keyword 分组注入 <search_result>query_text</search_result>
+    for r in results:
+        r["keyword"] = query_text
 
     return results
 
