@@ -17,13 +17,22 @@ const PdfViewer = {
     totalPages: 0,
     hits: {},
     _rendering: false,
+    _gen: 0,
 
     init(container) {
         this.container = container;
-        this.pdfDoc = null;
-        this.url = null;
+        this._gen++;
+        this._destroyDoc();
         this.hits = {};
         this._showMessage('点击字段的「定位」按钮在 PDF 中查看命中位置');
+    },
+
+    _destroyDoc() {
+        if (this.pdfDoc) {
+            try { this.pdfDoc.destroy(); } catch (e) { /* 忽略销毁异常 */ }
+        }
+        this.pdfDoc = null;
+        this.url = null;
     },
 
     async openAndLocate(url, hits) {
@@ -31,25 +40,33 @@ const PdfViewer = {
             this._showMessage('pdf.js 未加载，无法预览');
             return;
         }
+        const gen = ++this._gen;
         this.hits = hits || {};
         try {
             if (!this.pdfDoc || this.url !== url) {
+                this._destroyDoc();
                 this._showMessage('PDF 加载中...');
-                this.pdfDoc = await pdfjsLib.getDocument({ url }).promise;
+                const doc = await pdfjsLib.getDocument({ url }).promise;
+                if (gen !== this._gen) {
+                    try { doc.destroy(); } catch (e) { /* 忽略 */ }
+                    return;
+                }
+                this.pdfDoc = doc;
                 this.url = url;
-                this.totalPages = this.pdfDoc.numPages;
+                this.totalPages = doc.numPages;
             }
+            if (gen !== this._gen) return;
             const pages = Object.keys(this.hits).map(Number).sort((a, b) => a - b);
             this._buildSkeleton();
             await this.gotoPage(pages.length > 0 ? pages[0] : 1);
         } catch (err) {
+            if (gen !== this._gen) return;
             console.error('PDF 加载失败:', err);
             const msg = err && err.name === 'MissingPDFException'
                 ? '原始 PDF 不存在（历史文件），重新上传后可使用定位'
                 : 'PDF 加载失败: ' + (err && err.message ? err.message : err);
             this._showMessage(msg);
-            this.pdfDoc = null;
-            this.url = null;
+            this._destroyDoc();
         }
     },
 
