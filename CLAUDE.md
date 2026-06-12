@@ -142,6 +142,7 @@ Three source types:
 Two rule types:
 - **judge** - LLM-based true/false determination. Uses `<field_result>field_id</field_result>` placeholders resolved with extraction results.
 - **calc** - Mathematical expressions evaluated with `numexpr`. Same placeholder resolution.
+- **judge 网络搜索**：规则可配置 `web_search` JSON（`{"enabled", "query", "count", "freshness"}`，仅 judge 类型）。启用时执行判断前先调博查 Bocha AI 搜索（`utils/web_search.py`），搜索词支持 `<field_result>field_id</field_result>` 占位符拼接提取结果，搜索文本替换 expression 中的 `<web_search_result/>` 占位符（schema 层强制要求存在）。搜索失败不致命（占位符替换为失败提示继续判断）。溯源数据存 `source_refs._web_search`（`{query, results: [{name,url,siteName,datePublished,summary}], error?}`），`GET /file/{id}/analysis` 与回调 `rule_done` 透出。调试流新增 `web_search` 事件。`copy_from` 复制时 expression 与 `web_search.query` 中的 `<field_result>` 占位符随 depend_fields 重映射；导出/导入原样携带。全局参数在 `configs/config.yaml` 的 `web_search` 节。
 
 ### External Dependencies
 - **MinerU** (`service/mineru_client.py`) - External PDF parsing service. Polled async via httpx.
@@ -168,4 +169,4 @@ Two rule types:
 
 ## Configuration
 
-Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`, `vl_model`. Each maps to a Pydantic model in `utils/config.py`.
+Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`. Each maps to a Pydantic model in `utils/config.py`.

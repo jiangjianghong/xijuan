@@ -414,9 +414,12 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "summary": "逻辑分析结果",
             "description": (
                 "返回 `analysis_result` 全表行（LEFT JOIN `analysis_rule` 获取规则名称）：\n"
-                "`data=[{file_id, rule_id, rule_name, result_value, input_values, reason}]`"
-                "（含 `input_values` 字典，但不含 `source_refs`）。\n\n"
-                "`rule_name` 来自规则配置表，若配置已被删除则为 `null`。"
+                "`data=[{file_id, rule_id, rule_name, result_value, input_values, reason, source_refs}]`"
+                "（含 `input_values` 字典）。\n\n"
+                "`rule_name` 来自规则配置表，若配置已被删除则为 `null`。\n\n"
+                "`source_refs` 目前仅 judge 规则启用网络搜索时携带 `_web_search` 键："
+                "`{query, results: [{name, url, siteName, datePublished, summary}], error?}`；"
+                "未启用搜索的规则与存量老数据为 `null`，消费方需容错。"
             ),
         }
     },
@@ -521,8 +524,10 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "summary": "新增/更新分析规则（upsert）",
             "description": (
                 "按 `rule_id` **全局唯一** upsert。`rule_id` 已被其它 `type_id` 占用时返回 **409**。\n\n"
-                "**校验（Pydantic 层，违反返回 422）**：`expression` 必须包含至少一个 "
-                "`<field_result>字段ID</field_result>` 占位符。\n\n"
+                "**校验（Pydantic 层，违反返回 422）**\n"
+                "- `expression` 必须包含至少一个 `<field_result>字段ID</field_result>` 占位符\n"
+                "- `web_search.enabled=true` 时：仅 `judge` 类型可启用、`web_search.query` 不能为空、"
+                "`expression` 必须包含 `<web_search_result/>` 占位符\n\n"
                 "`system_prompt` 仅 `judge` 类型生效；`calc` 类型直接用 `numexpr` 计算，结果按 "
                 "`analysis.calc_precision`（默认 2 位）保留小数。返回 `data={rule_id}`。"
             ),
@@ -570,8 +575,10 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "summary": "逻辑分析流式调试（SSE）",
             "description": (
                 "SSE 分步推送：`input_values` → `resolved_expression` → "
-                "（judge：`prompt` → `llm_response`）→ `result` → `done`。calc 类型无 "
-                "`prompt` / `llm_response` 步骤。入参与 `/analysis/test` 相同。\n\n"
+                "（judge：[启用网络搜索时 `web_search`] → `prompt` → `llm_response`）→ `result` → `done`。"
+                "calc 类型无 `prompt` / `llm_response` 步骤。入参与 `/analysis/test` 相同。\n\n"
+                "`web_search` 事件 data 即溯源结构 `{query, results: [{name, url, siteName, "
+                "datePublished, summary}], error?}`（搜索失败不中断流，error 字段说明原因）。\n\n"
                 "**状态码**：200（SSE 流）/ 400 / 404。"
             ),
         }
@@ -778,6 +785,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "rule_type": "规则类型：`judge` / `calc`。",
             "expression": "表达式，含 `<field_result>字段ID</field_result>` 占位符。",
             "system_prompt": "[judge] LLM system prompt。",
+            "web_search": "[judge] 网络搜索配置（`{enabled, query, count, freshness}`），导出/导入原样携带（占位符不重映射）。",
             "depend_field_names": "依赖字段的**名称**列表（导入时按名重映射到目标类型的 `field_id`）。",
             "enabled": "是否启用（1/0）。",
             "priority": "执行优先级（升序）。",
@@ -893,6 +901,12 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "expression": "表达式，须含至少一个 `<field_result>字段ID</field_result>` 占位符（渲染时替换为字段提取值）。",
             "system_prompt": "[judge] 调控 LLM 判断的 system prompt；`calc` 类型忽略。",
             "depend_fields": "依赖的字段 ID 列表（用于取值并填充占位符）。",
+            "web_search": (
+                "[judge] 网络搜索配置（自由 JSON）：`{enabled: bool, query: str, count?: int, freshness?: str}`。"
+                "启用时判断前先调博查搜索，`query` 支持 `<field_result>字段ID</field_result>` 占位符，"
+                "搜索结果文本替换 `expression` 中的 `<web_search_result/>` 占位符（启用时必须存在）。"
+                "搜索失败不致命（占位符替换为失败提示继续判断）。"
+            ),
             "enabled": "是否启用（1/0）。",
             "priority": "执行优先级（升序）。",
         },
