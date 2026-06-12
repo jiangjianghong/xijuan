@@ -736,14 +736,32 @@
       "field_id": "company_name",
       "field_name": "公司名称",
       "extracted_value": "某某科技有限公司",
-      "reason": "从文档第一段提取"
+      "reason": "从文档第一段提取",
+      "source_refs": {
+        "公司名称": [
+          {
+            "type": "context",
+            "start_pos": 120,
+            "end_pos": 420,
+            "page_num": "1",
+            "text": "……公司名称：某某科技有限公司……",
+            "bboxes": [
+              {"page_num": 1, "bbox": [88.0, 72.5, 507.3, 96.1], "page_size": [595.0, 842.0]}
+            ]
+          }
+        ],
+        "_texts": {"公司名称": "……拼接后实际注入占位符的完整文本……"}
+      }
     }
   ]
 }
 ```
 
 > `field_name` 来自 `extraction_field` 表的 `field_name` 列（LEFT JOIN），若字段配置已被删除则为 `null`。
-> `source_refs`（参考块/VL 元数据）存在 `extraction_result.source_refs` 列里，但本接口当前**不返回**该字段（如需可走 `/extraction/test`）。
+>
+> `source_refs` 返回完整参考块（与回调 `field_done` / `stage_done` 透出的内容一致）：按占位符 label 分组——table 类固定 `_tables` 键、text 类按检索关键词分组（section 用 section_title，page 检索固定 `page_content`）、VL 类形如 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, ...}}`。每条 ref 含 `type` / `start_pos` / `end_pos` / `page_num`（字符串，可能为 `"3-5"` 范围）/ `text`（该条命中注入 prompt 的原始片段，table 类含 `表格名称: xxx\n` 前缀）；text 5 种检索（context/section/rule/chunk_db/vector_db）与 table 类的 ref 另带 `bboxes = [{page_num, bbox, page_size}]`（MinerU 块级框，左上原点、与 `page_size` 同单位，供前端 pdf.js 跳页画框；**非空才挂键**），page 检索与 VL 类不挂；顶层 `_texts` = `{label: 拼接后实际注入占位符的完整文本}`。
+>
+> **容错**：提取失败字段的 `source_refs` 为 `null`；存量老数据无 `text` / `_texts` / `bboxes` 键（老文件 page_mapping 无 bbox，重新解析后才有），消费方读取时需容错。
 
 ---
 
@@ -771,6 +789,31 @@
 ```
 
 > `rule_name` 来自 `analysis_rule` 表的 `rule_name` 列（LEFT JOIN），若规则配置已被删除则为 `null`。
+
+---
+
+### 4.14 原始 PDF 下载
+
+下发上传时持久化的 `uploads/{file_id}.pdf` 原始字节，供管理 UI 提取结果 tab 的 pdf.js 定位预览（配合 `source_refs.bboxes` 跳页画框）。
+
+- **URL**: `GET /file/{file_id}/pdf`
+
+**路径参数**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `file_id` | `string` | 文件 ID，须完整匹配白名单正则 `[\w-]+` |
+
+**响应**
+
+- 成功：PDF 原始字节，`Content-Type: application/pdf`，`Content-Disposition: inline; filename="{file_id}.pdf"`（浏览器内联预览）。
+
+**404 情形**（均返回 `{"detail": "原始 PDF 不存在"}`）
+
+- `file_id` 不匹配白名单正则；
+- `uploads/{file_id}.pdf` 不存在——包括**历史文件**（VL PDF 持久化机制上线前上传的文件没有落盘 PDF）。
+
+**安全约束**：`file_id` 经 `re.fullmatch(r"[\w-]+")` 白名单校验后才拼接路径，防止路径穿越（Windows 下 `..%5C` 反斜杠可逃出存储目录）。PDF 文件由上传接口落盘，随文件删除/批量删除/文档类型级联删除联动清理，启动时 `cleanup_orphan_pdfs` 兜底。
 
 ---
 
@@ -868,7 +911,7 @@
 | 表格类标签 | 通常对应 `table_name_pattern` 匹配出的表格名 |
 | 无匹配结果 | 替换为 `（未找到 '标签' 的相关内容）` |
 
-VL 类字段**不**使用 `<search_result>` 占位符 —— 直接读 `uploads/{file_id}.pdf`，由视觉模型一次输出 `{value, reason}` JSON，不再走文本 LLM 二次抽取；`source_refs` 形如 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, batches_with_info}}`。
+VL 类字段**不**使用 `<search_result>` 占位符 —— 直接读 `uploads/{file_id}.pdf`，由视觉模型一次输出 `{value, reason}` JSON，不再走文本 LLM 二次抽取；`source_refs` 形如 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, batches_with_info}}`，**无**检索原文（`text`/`_texts`）也**无** `bboxes`（不可画框）——前端定位仅靠 `_vl.key_pages` 跳页（`vl_progressive` 的 `key_pages` 为 `null`，不可定位）。
 
 **请求示例（表格类）**
 
@@ -1400,7 +1443,7 @@ data: <json>
 | `file_id` | VARCHAR(64) PK | |
 | `file_content` | LONGTEXT NOT NULL | MinerU 输出的完整 Markdown |
 | `middle_json` | LONGTEXT | MinerU 中间 JSON |
-| `page_mapping` | JSON | MD 偏移量→PDF 页号映射 |
+| `page_mapping` | JSON | MD 偏移量→PDF 页号/bbox 映射，每项 `{start_pos, end_pos, page_num, bbox, page_size}`（bbox/page_size 老数据不带），是 `source_refs.bboxes` 的来源 |
 
 ### 10.4 `file_table`
 
@@ -1467,7 +1510,7 @@ data: <json>
 | `file_id`, `field_id` | 复合 PK | |
 | `extracted_value` | TEXT | |
 | `reason` | TEXT | LLM 给出的理由 |
-| `source_refs` | JSON | 参考块/页码/VL 元数据 |
+| `source_refs` | JSON | 参考块/页码/检索原文（`text`/`_texts`）/`bboxes`（块级 PDF 框）/VL 元数据（`_vl`）；失败时 NULL |
 
 ### 10.9 `analysis_result`
 
@@ -1616,16 +1659,17 @@ data: <json>
 | 21 | GET | `/file/{file_id}/outline` | 章节大纲 |
 | 22 | GET | `/file/{file_id}/extraction` | 字段提取结果 |
 | 23 | GET | `/file/{file_id}/analysis` | 逻辑分析结果 |
-| 24 | GET | `/extraction/fields` | 字段配置列表（可 `type_id` 过滤） |
-| 25 | POST | `/extraction/fields` | 新增/更新字段配置 |
-| 26 | DELETE | `/extraction/fields/{field_id}` | 删除字段配置（硬删） |
-| 27 | GET | `/extraction/fields/{field_id}/check` | 检查 ID 是否存在 |
-| 28 | POST | `/extraction/test` | 字段提取调试 |
-| 29 | POST | `/extraction/test/stream` | 字段提取流式调试（SSE） |
-| 30 | GET | `/analysis/rules` | 规则配置列表（可 `type_id` 过滤） |
-| 31 | POST | `/analysis/rules` | 新增/更新规则 |
-| 32 | DELETE | `/analysis/rules/{rule_id}` | 删除规则（硬删） |
-| 33 | GET | `/analysis/rules/{rule_id}/check` | 检查 ID 是否存在 |
-| 34 | POST | `/analysis/test` | 逻辑分析调试 |
-| 35 | POST | `/analysis/test/stream` | 逻辑分析流式调试（SSE） |
-| 36 | POST | `/search` | 向量相似度检索 |
+| 24 | GET | `/file/{file_id}/pdf` | 原始 PDF 下载（定位预览用） |
+| 25 | GET | `/extraction/fields` | 字段配置列表（可 `type_id` 过滤） |
+| 26 | POST | `/extraction/fields` | 新增/更新字段配置 |
+| 27 | DELETE | `/extraction/fields/{field_id}` | 删除字段配置（硬删） |
+| 28 | GET | `/extraction/fields/{field_id}/check` | 检查 ID 是否存在 |
+| 29 | POST | `/extraction/test` | 字段提取调试 |
+| 30 | POST | `/extraction/test/stream` | 字段提取流式调试（SSE） |
+| 31 | GET | `/analysis/rules` | 规则配置列表（可 `type_id` 过滤） |
+| 32 | POST | `/analysis/rules` | 新增/更新规则 |
+| 33 | DELETE | `/analysis/rules/{rule_id}` | 删除规则（硬删） |
+| 34 | GET | `/analysis/rules/{rule_id}/check` | 检查 ID 是否存在 |
+| 35 | POST | `/analysis/test` | 逻辑分析调试 |
+| 36 | POST | `/analysis/test/stream` | 逻辑分析流式调试（SSE） |
+| 37 | POST | `/search` | 向量相似度检索 |

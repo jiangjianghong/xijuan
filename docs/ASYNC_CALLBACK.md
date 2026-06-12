@@ -233,7 +233,10 @@
           "start_pos": 5120,
           "end_pos": 6890,
           "page_num": "12",
-          "text": "表格名称: 投资估算表\n<table>...</table>"
+          "text": "表格名称: 投资估算表\n<table>...</table>",
+          "bboxes": [
+            {"page_num": 12, "bbox": [88.0, 120.5, 507.3, 680.2], "page_size": [595.0, 842.0]}
+          ]
         }
       ],
       "_texts": {
@@ -267,7 +270,20 @@ table / text 字段的 `source_refs` 携带模型实际看到的检索原文：
 
 - 每条 ref 含 `text` = 该条命中注入 prompt 的原始片段（table 类含 `表格名称: xxx\n` 前缀）；
 - 顶层 `_texts` 键 = `{label: 拼接后实际注入占位符的完整文本}`（多条命中以 `\n---\n` 拼接，与替换进 `<search_result>label</search_result>` 占位符的内容完全一致）；
-- text/table 类 ref 另携带 `bboxes` = `[{page_num, bbox: [x0, y0, x1, y1], page_size: [w, h]}]`（MinerU 块级框，来自 page_mapping，供前端 PDF 高亮定位；page 检索整页切片不挂，VL 类无；命中无 bbox 时不带该键）。
+- text 5 种检索（context/section/rule/chunk_db/vector_db）与 table 类的 ref 另携带 `bboxes` = `[{page_num, bbox: [x0, y0, x1, y1], page_size: [w, h]}]`（MinerU 块级框，由 `lookup_bboxes` 从 `file_content.page_mapping` 查得，供前端 PDF 高亮定位；命中范围无 bbox 时不带该键）。
+  - **坐标系**：`bbox` 为左上原点坐标，与 `page_size` 同一单位（MinerU 输出原值），前端按 `canvas尺寸 / page_size` 线性缩放画框；
+  - **table 类**的 bboxes 为**整表框**（page_mapping 表格块锚点以 `<table` 字面量定位、挂整表 bbox；该锚点机制上线前解析的旧数据框会落在表名附近文本块上，重新解析后才是整表框）；
+  - **page 检索不挂**（整页切片没有块级粒度，定位仅靠 `page_num` 跳页）；**VL 类不挂**（不经过 markdown 全文，没有 start/end_pos 坐标，定位仅靠 `_vl.key_pages` 跳页）。
+
+**前端定位能力矩阵**（管理 UI 提取结果 tab，`GET /file/{id}/pdf` + pdf.js）：
+
+| source_refs 形态 | 定位能力 |
+|---|---|
+| text 5 种检索 / table 类（带 `bboxes`） | 跳页 + 画框 |
+| page 检索（`page_num` 取 `page_range`） | 仅跳页无框 |
+| vl_model / vl_locate（读 `_vl.key_pages`） | 仅跳页无框 |
+| 存量老数据（仅 `page_num`，无 `bboxes`） | 仅跳页无框 |
+| vl_progressive（`key_pages` 为 `null`）/ 失败字段（`source_refs=null`） | 不可定位（按钮置灰） |
 
 `GET /file/{id}/extraction` 与回调 `field_done` / `stage_done` 均透出完整 `source_refs`。
 

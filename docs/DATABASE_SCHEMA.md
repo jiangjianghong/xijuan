@@ -107,8 +107,10 @@
 
 | 值 | 说明 | 下一状态 |
 |----|------|----------|
-| `parsing` | 正在解析文件 | `chunking` / `parsing_failed` |
+| `parsing` | 正在解析文件 | `tableing` / `parsing_failed` |
 | `parsing_failed` | 文件解析失败 | - |
+| `tableing` | 正在识别表格名称（LLM） | `chunking` / `tableing_failed` |
+| `tableing_failed` | 表格名称识别失败 | - |
 | `chunking` | 正在分块 | `embedding` / `chunking_failed` |
 | `chunking_failed` | 分块失败 | - |
 | `embedding` | 正在向量化 | `extracting` / `embedding_failed` |
@@ -122,11 +124,11 @@
 #### 状态流转图
 
 ```
-parsing ──▶ chunking ──▶ embedding ──▶ extracting ──▶ analyzing ──▶ complete
-    │           │            │              │              │
-    ▼           ▼            ▼              ▼              ▼
-parsing_   chunking_   embedding_    extracting_    analyzing_
- failed     failed       failed        failed         failed
+parsing ──▶ tableing ──▶ chunking ──▶ embedding ──▶ extracting ──▶ analyzing ──▶ complete
+    │           │            │            │              │              │
+    ▼           ▼            ▼            ▼              ▼              ▼
+parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
+ failed     failed       failed       failed        failed         failed
 ```
 
 #### 示例数据
@@ -155,7 +157,7 @@ parsing_   chunking_   embedding_    extracting_    analyzing_
 
 ### 2.2 file_content - 文件内容表
 
-存储文件解析后的完整 Markdown 格式文本内容。
+存储文件解析后的完整 Markdown 格式文本内容、MinerU 原始布局 JSON 以及位置→页码/bbox 映射。
 
 #### 表结构
 
@@ -163,6 +165,8 @@ parsing_   chunking_   embedding_    extracting_    analyzing_
 |--------|------|------|--------|------|
 | `file_id` | VARCHAR(64) | PK, NOT NULL | - | 文件 ID（关联 files 表） |
 | `file_content` | LONGTEXT | NOT NULL | - | 解析后的全文内容（Markdown 格式） |
+| `middle_json` | LONGTEXT | NULLABLE | NULL | MinerU 原始布局 JSON（`pdf_info[].para_blocks` 结构，page_mapping 的构建来源） |
+| `page_mapping` | JSON | NULLABLE | NULL | Markdown 位置 → PDF 页码/bbox 映射（parsing 阶段由 `utils/page_mapping.py:build_page_mapping` 构建） |
 
 #### 说明
 
@@ -178,6 +182,24 @@ parsing_   chunking_   embedding_    extracting_    analyzing_
   "file_content": "# 1 公司简介\n\n某某科技有限公司成立于2010年...\n\n# 2 财务报表\n\n## 2.1 资产负债表\n\n..."
 }
 ```
+
+#### page_mapping 结构
+
+按 `start_pos` 排序的数组，每项把 markdown 中一个锚点位置映射到 PDF 页码与块级框：
+
+```json
+[
+  {"start_pos": 0,    "end_pos": 50,   "page_num": 1, "bbox": [88.0, 72.5, 507.3, 96.1],   "page_size": [595.0, 842.0]},
+  {"start_pos": 1208, "end_pos": 1214, "page_num": 2, "bbox": [90.2, 110.0, 505.8, 396.4], "page_size": [595.0, 842.0]}
+]
+```
+
+- **构建方式**（parsing 阶段，`build_page_mapping(md_content, middle_json)`）有两种锚点：
+  - **文本块**：取块文本前缀（依次尝试 50/30/20/10 字符）在 markdown 中前向扫描定位，`bbox` 为该段落块的框；
+  - **表格块**（middle_json 中 `type == "table"`，无 lines/spans 文本）：改在 markdown 中前向找 `<table` 字面量定位，`bbox` 为整表框；找不到 `<table` 或块无 bbox 时不产锚点。
+- **坐标系**：`page_num` 为 1-indexed 页码；`bbox = [x0, y0, x1, y1]` 为左上原点坐标，与 `page_size = [w, h]` 同一单位（MinerU 输出）；前端按 `canvas尺寸 / page_size` 线性缩放画框。
+- **容错**：`bbox` / `page_size` 在 middle_json 缺失时不带该键（存量老数据全部不带 bbox）；`middle_json` 为空时 `page_mapping` 为 `[]`，下游页码/高亮功能降级。
+- page_mapping 是表格页码、分块页码、抽取结果 `source_refs.bboxes` 高亮的**唯一来源**。查询入口：`lookup_page_num(mapping, start, end)` 返回页码字符串（`"3"` 或跨页 `"3-5"`）；`lookup_bboxes(mapping, start, end)` 返回命中范围内 `[{page_num, bbox, page_size}]`（无 bbox 条目跳过）。
 
 ---
 
@@ -585,6 +607,7 @@ parsing_   chunking_   embedding_    extracting_    analyzing_
 | `field_id` | VARCHAR(100) | PK, NOT NULL | - | 字段 ID（关联 extraction_field） |
 | `extracted_value` | TEXT | - | '' | 提取的值 |
 | `reason` | TEXT | NULLABLE | NULL | 提取理由/依据（LLM 返回） |
+| `source_refs` | JSON | NULLABLE | NULL | 参考块（检索来源/页码/检索原文/bboxes/VL 元数据），提取失败时为 NULL |
 
 #### 索引
 
@@ -596,7 +619,63 @@ parsing_   chunking_   embedding_    extracting_    analyzing_
 
 - 复合主键：`file_id` + `field_id`
 - 每个文件的每个字段只有一条记录
-- 提取失败时 `extracted_value` 为空字符串
+- 提取失败时 `extracted_value` 为空字符串，`source_refs` 为 NULL
+
+#### source_refs JSON 结构
+
+按占位符 label 分组的 dict，形态随字段的 `source_type` 不同（生成位置：`service/extraction_service.py` 的 `_build_table_source_refs` / `_build_text_source_refs`）。
+
+**table 类**（固定 `_tables` 键）：
+
+```json
+{
+  "_tables": [
+    {
+      "type": "table",
+      "table_index": 1,
+      "table_name": "投资估算表",
+      "start_pos": 5120,
+      "end_pos": 6890,
+      "page_num": "12",
+      "text": "表格名称: 投资估算表\n<table>...</table>",
+      "bboxes": [{"page_num": 12, "bbox": [88.0, 120.5, 507.3, 680.2], "page_size": [595.0, 842.0]}]
+    }
+  ],
+  "_texts": {"投资估算表": "表格名称: 投资估算表\n<table>...</table>"}
+}
+```
+
+**text 类**（按检索关键词分组；section 检索无 keyword 时用 section_title 兜底，page 检索固定用 `page_content`）：
+
+```json
+{
+  "公司名称": [
+    {
+      "type": "context",
+      "start_pos": 120,
+      "end_pos": 420,
+      "page_num": "1",
+      "text": "……公司名称：某某科技有限公司……",
+      "bboxes": [{"page_num": 1, "bbox": [88.0, 72.5, 507.3, 96.1], "page_size": [595.0, 842.0]}]
+    }
+  ],
+  "_texts": {"公司名称": "……拼接后实际注入占位符的完整文本……"}
+}
+```
+
+**vl 类**（整个 source_refs 仅含 `_vl` 一个键，无检索文本）：
+
+```json
+{"_vl": {"method": "vl_locate", "total_pages": 48, "key_pages": [12, 13, 15], "vl_total_tokens": 8421}}
+```
+
+字段说明：
+
+- 每条 ref 通用字段：`type`、`start_pos`、`end_pos`、`page_num`（字符串，可能为范围如 `"3-5"`）、`text`（该条命中注入 prompt 的原始片段，table 类含 `表格名称: xxx\n` 前缀）。
+- `chunk_db` / `vector_db` 检索的 ref 另带 `chunk_id` / `chunk_index`；table 类另带 `table_index` / `table_name`；page 检索 ref 为 `{type:"page", page_range, start_pos, end_pos, length, truncated, page_num, text}`。
+- 顶层 `_texts` 键 = `{label: 拼接后实际注入 <search_result> 占位符的完整文本}`（多条命中以 `\n---\n` 拼接）。
+- `bboxes` = `[{page_num(int), bbox, page_size}]`，由 `lookup_bboxes` 从 `file_content.page_mapping` 查得，text 5 种检索（context/section/rule/chunk_db/vector_db）与 table 类携带（**非空才挂键**）；page 检索（整页切片）与 vl 类不挂。
+- **容错**：提取失败时整个 `source_refs` 为 NULL；存量老数据无 `text` / `_texts` / `bboxes` 键（老文件 page_mapping 无 bbox，重新解析后才有），消费方读取时需容错。
 
 #### 示例数据
 
@@ -624,6 +703,7 @@ parsing_   chunking_   embedding_    extracting_    analyzing_
 | `result_value` | VARCHAR(500) | - | '' | 分析结果值 |
 | `input_values` | JSON | NULLABLE | NULL | 输入字段值快照 |
 | `reason` | TEXT | NULLABLE | NULL | 分析理由/依据 |
+| `source_refs` | JSON | NULLABLE | NULL | 依赖字段的参考块，`{field_id: 该字段的 extraction_result.source_refs}`，无依赖参考时为 NULL |
 
 #### 索引
 
@@ -734,7 +814,9 @@ CREATE TABLE IF NOT EXISTS files (
 -- 2. file_content 表
 CREATE TABLE IF NOT EXISTS file_content (
   file_id VARCHAR(64) PRIMARY KEY,
-  file_content LONGTEXT NOT NULL
+  file_content LONGTEXT NOT NULL,
+  middle_json LONGTEXT NULL,
+  page_mapping JSON NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 3. file_table 表
@@ -802,6 +884,7 @@ CREATE TABLE IF NOT EXISTS extraction_result (
   field_id VARCHAR(100) NOT NULL,
   extracted_value TEXT DEFAULT '',
   reason TEXT NULL,
+  source_refs JSON NULL,
   PRIMARY KEY (file_id, field_id),
   INDEX ix_extraction_result_file_id (file_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -813,6 +896,7 @@ CREATE TABLE IF NOT EXISTS analysis_result (
   result_value VARCHAR(500) DEFAULT '',
   input_values JSON NULL,
   reason TEXT NULL,
+  source_refs JSON NULL,
   PRIMARY KEY (file_id, rule_id),
   INDEX ix_analysis_result_file_id (file_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
