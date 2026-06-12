@@ -73,3 +73,58 @@ def test_lookup_bboxes_legacy_mapping_without_bbox():
 
 def test_lookup_bboxes_empty_mapping():
     assert lookup_bboxes([], 0, 100) == []
+
+
+def test_build_page_mapping_table_block_anchor():
+    """表格块（type=table，无 lines 文本）应锚定 markdown 中 <table 位置并携带整表 bbox。"""
+    md = (
+        "前文段落内容用于定位测试的文本\n\n"
+        "<table><tr><td>1</td></tr></table>\n\n"
+        "后文段落内容也用于定位测试啊"
+    )
+    middle = {
+        "pdf_info": [{
+            "page_idx": 0,
+            "page_size": [612, 792],
+            "para_blocks": [
+                {"bbox": [40, 60, 560, 100],
+                 "lines": [{"spans": [{"content": "前文段落内容用于定位测试的文本"}]}]},
+                {"type": "table", "bbox": [40, 120, 560, 400]},
+                {"bbox": [40, 420, 560, 460],
+                 "lines": [{"spans": [{"content": "后文段落内容也用于定位测试啊"}]}]},
+            ],
+        }],
+    }
+    mapping = build_page_mapping(md, middle)
+    assert len(mapping) == 3
+    table_entry = mapping[1]
+    assert table_entry["start_pos"] == md.find("<table")
+    assert table_entry["bbox"] == [40, 120, 560, 400]
+    assert table_entry["page_size"] == [612, 792]
+    assert table_entry["page_num"] == 1
+
+
+def test_build_page_mapping_table_block_without_bbox_no_anchor():
+    """表格块无 bbox 时不产生锚点（无文本前缀可退化，直接跳过）。"""
+    md = "<table><tr><td>1</td></tr></table>"
+    middle = {"pdf_info": [{"page_idx": 0, "para_blocks": [{"type": "table"}]}]}
+    assert build_page_mapping(md, middle) == []
+
+
+def test_build_page_mapping_table_block_no_table_in_md():
+    """markdown 中找不到 <table（如表格未转出 HTML）时不产生锚点、不影响后续块。"""
+    md = "只有文本段落内容用于定位测试"
+    middle = {
+        "pdf_info": [{
+            "page_idx": 0,
+            "page_size": [612, 792],
+            "para_blocks": [
+                {"type": "table", "bbox": [1, 2, 3, 4]},
+                {"bbox": [40, 60, 560, 100],
+                 "lines": [{"spans": [{"content": "只有文本段落内容用于定位测试"}]}]},
+            ],
+        }],
+    }
+    mapping = build_page_mapping(md, middle)
+    assert len(mapping) == 1  # 仅文本块锚点
+    assert "bbox" in mapping[0] and mapping[0]["bbox"] == [40, 60, 560, 100]

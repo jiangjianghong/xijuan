@@ -31,8 +31,9 @@ def build_page_mapping(
 ) -> List[Dict[str, Any]]:
     """构建 markdown 文本位置 → 页码的映射表。
 
-    算法：遍历 middle_json 中每页的每个 para_block，提取其文本前缀，
-    在 md_content 中前向扫描定位，记录 (start_pos, page_num)。
+    算法：遍历 middle_json 中每页的每个 para_block。文本块提取文本前缀在
+    md_content 中前向扫描定位；表格块（type=table）改以 <table 字面量定位，
+    挂整表 bbox。记录 (start_pos, page_num)。
 
     Args:
         md_content: MinerU 返回的 markdown 全文。
@@ -59,9 +60,6 @@ def build_page_mapping(
         blocks = page.get("para_blocks", [])
 
         for block in blocks:
-            block_text = _extract_block_text(block)
-            if not block_text or len(block_text.strip()) < 3:
-                continue
             bbox = block.get("bbox")
 
             def _make_entry(pos: int, length: int) -> Dict[str, Any]:
@@ -75,6 +73,20 @@ def build_page_mapping(
                 if page_size:
                     entry["page_size"] = page_size
                 return entry
+
+            # 表格块：无 lines/spans 文本（提不出前缀），改在 markdown 中前向找
+            # <table 字面量作锚点，挂整表 bbox；找不到或无 bbox 时不产锚点（容错）
+            if block.get("type") == "table":
+                if bbox:
+                    pos = md_content.find("<table", cursor)
+                    if pos != -1:
+                        mapping.append(_make_entry(pos, len("<table")))
+                        cursor = pos + 1
+                continue
+
+            block_text = _extract_block_text(block)
+            if not block_text or len(block_text.strip()) < 3:
+                continue
 
             # 用不同长度的前缀尝试定位
             found = False
