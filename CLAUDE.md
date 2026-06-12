@@ -45,7 +45,7 @@ uv sync
 - **`service/`** - Business logic. Each service module corresponds to a pipeline stage.
 - **`model/`** - SQLAlchemy async ORM (`tables.py`), Pydantic response schemas (`schemas.py`), database session management (`database.py`).
 - **`utils/`** - Shared clients: `llm_client.py` (OpenAI-compatible chat/embeddings), `milvus_client.py` (Milvus vector DB), `config.py`, `file_utils.py`, `callback.py`, `page_mapping.py`.
-- **`ui/`** - Static HTML/JS/CSS frontend, served at `/ui`. File detail view uses a centered modal with timeline, error display, and tabbed data views. Tables tab has a left sidebar (table names with page numbers) + right content (table preview) split layout. Header has a doctype selector that scopes file list / field config / rule config to the current type.
+- **`ui/`** - Static HTML/JS/CSS frontend, served at `/ui`. File detail view uses a centered modal with timeline, error display, and tabbed data views. Tables tab has a left sidebar (table names with page numbers) + right content (table preview) split layout. Header has a doctype selector that scopes file list / field config / rule config to the current type. Extraction tab is a left/right split: field cards (with 📍 locate buttons) + pdf.js viewer that jumps to hit pages and draws `source_refs.bboxes` highlight boxes (`ui/js/pdfViewer.js`, served via `GET /file/{id}/pdf`).
 
 ### Pipeline Flow (`service/pipeline_service.py`)
 The core orchestrator. Six stages: parsing → tableing → chunking → embedding → extracting → analyzing. Three execution modes:

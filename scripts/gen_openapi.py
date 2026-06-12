@@ -409,6 +409,16 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             ),
         }
     },
+    "/file/{file_id}/pdf": {
+        "get": {
+            "summary": "下载原始 PDF",
+            "description": (
+                "下发 `uploads/{file_id}.pdf` 原始字节（`application/pdf`，Content-Disposition inline），"
+                "供前端 PDF 定位预览。`file_id` 仅允许 `[\\w-]` 字符。\n\n"
+                "历史文件（vl 持久化机制上线前上传）可能无落盘 PDF，此时 404。"
+            ),
+        }
+    },
     "/file/{file_id}/analysis": {
         "get": {
             "summary": "逻辑分析结果",

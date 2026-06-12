@@ -256,6 +256,48 @@
         }
       }
     },
+    "/file/{file_id}/pdf": {
+      "get": {
+        "tags": [
+          "file"
+        ],
+        "summary": "下载原始 PDF",
+        "description": "下发 `uploads/{file_id}.pdf` 原始字节（`application/pdf`，Content-Disposition inline），供前端 PDF 定位预览。`file_id` 仅允许 `[\\w-]` 字符。\n\n历史文件（vl 持久化机制上线前上传）可能无落盘 PDF，此时 404。",
+        "operationId": "get_file_pdf_file__file_id__pdf_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            },
+            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/file/{file_id}": {
       "delete": {
         "tags": [
