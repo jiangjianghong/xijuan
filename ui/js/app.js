@@ -602,12 +602,15 @@ const App = {
                     if (data.length === 0) {
                         html = '<div class="tab-content-empty">暂无提取结果</div>';
                     } else {
-                        data.forEach(item => {
+                        let cards = '';
+                        data.forEach((item, idx) => {
                             const title = item.field_name || item.field_id;
                             const subtitle = item.field_name ? item.field_id : '';
-                            html += `
+                            const hasHits = Object.keys(this.collectLocateHits(item.source_refs)).length > 0;
+                            const locateBtn = `<button class="pdf-locate-btn" data-fidx="${idx}"${hasHits ? '' : ' disabled title="该字段无定位信息"'}>📍 定位</button>`;
+                            cards += `
                                 <div class="data-card">
-                                    <div class="data-card-title">${this.escapeHtml(title)}${subtitle ? `<span class="data-card-subtitle">${this.escapeHtml(subtitle)}</span>` : ''}</div>
+                                    <div class="data-card-title">${this.escapeHtml(title)}${subtitle ? `<span class="data-card-subtitle">${this.escapeHtml(subtitle)}</span>` : ''}${locateBtn}</div>
                                     <div class="data-card-field">
                                         <span class="data-card-field-label">值:</span>
                                         <span class="data-card-field-value">${this.escapeHtml(item.extracted_value) || '-'}</span>
@@ -622,6 +625,13 @@ const App = {
                                 </div>
                             `;
                         });
+                        html = `
+                            <div class="pdf-split">
+                                <div class="pdf-split-left">${cards}</div>
+                                <div class="pdf-split-right" id="pdf-panel"></div>
+                            </div>
+                        `;
+                        this._extractionData = data;
                     }
                     break;
 
@@ -679,6 +689,20 @@ const App = {
                                 <div class="data-card-content table-rendered">${Utils.sanitizeTableHtml(item.table_content)}</div>
                             </div>
                         `;
+                    });
+                });
+            }
+
+            // Bind extraction locate buttons
+            if (tab === 'extraction' && this._extractionData && this._extractionData.length > 0) {
+                const panel = this.els.tabContent.querySelector('#pdf-panel');
+                if (panel) PdfViewer.init(panel);
+                this.els.tabContent.querySelectorAll('.pdf-locate-btn:not([disabled])').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const item = this._extractionData[parseInt(btn.dataset.fidx)];
+                        if (!item || !panel) return;
+                        const hits = this.collectLocateHits(item.source_refs);
+                        PdfViewer.openAndLocate(`/file/${fileId}/pdf`, hits);
                     });
                 });
             }
@@ -741,6 +765,32 @@ const App = {
                 ${inner}
             </details>
         `;
+    },
+
+    // 从 source_refs 收集定位命中：{页码int: [{bbox, page_size}...]}
+    // 有 bboxes 的 ref 进框列表；仅有 page_num 的老数据 ref 只登记页码（空数组=跳页无框）
+    collectLocateHits(sourceRefs) {
+        const hits = {};
+        if (!sourceRefs || typeof sourceRefs !== 'object') return hits;
+        for (const [label, refs] of Object.entries(sourceRefs)) {
+            if (label === '_texts' || label === '_vl' || !Array.isArray(refs)) continue;
+            refs.forEach(ref => {
+                if (!ref) return;
+                if (Array.isArray(ref.bboxes) && ref.bboxes.length > 0) {
+                    ref.bboxes.forEach(b => {
+                        if (!b || !Array.isArray(b.bbox)) return;
+                        (hits[b.page_num] = hits[b.page_num] || []).push({ bbox: b.bbox, page_size: b.page_size });
+                    });
+                } else if (ref.page_num) {
+                    const m = String(ref.page_num).match(/^(\d+)/);
+                    if (m) {
+                        const p = parseInt(m[1]);
+                        hits[p] = hits[p] || [];
+                    }
+                }
+            });
+        }
+        return hits;
     },
 
     // 渲染分析结果 source_refs._web_search 的「网络搜索」折叠区块（无搜索数据返回空串）

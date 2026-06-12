@@ -3635,3 +3635,9 @@ input[type="checkbox"] {
 .pdf-locate-btn:hover:not([disabled]) { background: rgba(245, 158, 11, 0.15); }
 
 .pdf-locate-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+
+.pdf-split-left .data-card-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
