@@ -768,12 +768,21 @@ const App = {
     },
 
     // 从 source_refs 收集定位命中：{页码int: [{bbox, page_size}...]}
-    // 有 bboxes 的 ref 进框列表；仅有 page_num 的老数据 ref 只登记页码（空数组=跳页无框）
+    // 有 bboxes 的 ref 进框列表；仅有 page_num 的老数据 ref 只登记页码（空数组=跳页无框）；
+    // vl 类读 _vl.key_pages 登记跳页（vl_progressive 无 key_pages 仍不可定位）
     collectLocateHits(sourceRefs) {
         const hits = {};
         if (!sourceRefs || typeof sourceRefs !== 'object') return hits;
         for (const [label, refs] of Object.entries(sourceRefs)) {
-            if (label === '_texts' || label === '_vl' || !Array.isArray(refs)) continue;
+            if (label === '_vl') {
+                const keyPages = refs && Array.isArray(refs.key_pages) ? refs.key_pages : [];
+                keyPages.forEach(p => {
+                    const n = parseInt(p);
+                    if (n >= 1) hits[n] = hits[n] || [];
+                });
+                continue;
+            }
+            if (label === '_texts' || !Array.isArray(refs)) continue;
             refs.forEach(ref => {
                 if (!ref) return;
                 if (Array.isArray(ref.bboxes) && ref.bboxes.length > 0) {
