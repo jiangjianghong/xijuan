@@ -541,7 +541,8 @@ async def search_vector_db(
     Returns:
         检索结果列表，每项包含 keyword(=query_text), chunk_id, chunk_index, chunk_content, start_pos, end_pos, score。
     """
-    query_text = config.get("query_text", "")
+    # 去首尾空白：占位符 label 匹配时会 strip，keyword 带空格会永远对不上
+    query_text = (config.get("query_text", "") or "").strip()
     top_k = config.get("top_k", 5)
     score_threshold = config.get("score_threshold")
 

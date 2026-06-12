@@ -147,7 +147,7 @@ async def test_search_vector_db_attaches_query_text_as_keyword(monkeypatch):
     monkeypatch.setattr(extraction_service, "MilvusClient", FakeMilvusClient)
 
     results = await extraction_service.search_vector_db(
-        "f1", {"query_text": "合同总金额", "top_k": 5}
+        "f1", {"query_text": " 合同总金额 ", "top_k": 5}
     )
     assert len(results) == 2
     assert all(r["keyword"] == "合同总金额" for r in results)

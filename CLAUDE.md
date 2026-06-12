@@ -128,7 +128,7 @@ Multi-type configuration support: each file is bound to one `type_id` (default `
 ### Extraction System (`service/extraction_service.py`)
 Three source types:
 - **table** - Matches tables by name (exact/fuzzy/contains/llm), extracts via LLM with `<search_result>label</search_result>` placeholder system in prompts.
-- **text** - 6 search methods: `context` (keyword+surrounding text), `section` (chapter matching), `rule` (keyword+stopword boundary), `chunk_db` (MySQL chunk search), `vector_db` (Milvus semantic search), `page` (按 `page_range` 直接切 markdown 喂 LLM；占位符固定为 `<search_result>page_content</search_result>`，可配 `max_length` 末尾截断). Results injected into prompt via same placeholder system.
+- **text** - 6 search methods: `context` (keyword+surrounding text), `section` (chapter matching), `rule` (keyword+stopword boundary), `chunk_db` (MySQL chunk search), `vector_db` (Milvus semantic search；`query_text` 同时作为占位符标签，结果以 `<search_result>query_text</search_result>` 注入), `page` (按 `page_range` 直接切 markdown 喂 LLM；占位符固定为 `<search_result>page_content</search_result>`，可配 `max_length` 末尾截断). Results injected into prompt via same placeholder system.
 - **vl** - 三种基于 VL 视觉模型的端到端 PDF 抽取。直接读 `uploads/{file_id}.pdf`，跳过 MinerU 解析的 Markdown：
   - `vl_model`：指定页全部塞 VL 一次出 JSON。配置 `page_range`。
   - `vl_progressive`：分批扫描 + 伪历史累积 + 最后文本聚合。配置 `field_hints`、`batch_size`，可自定义 `batch_prompt_template`。
