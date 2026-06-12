@@ -289,6 +289,9 @@ const RuleConfig = {
             } else if (searchType === 'section') {
                 const val = (document.getElementById('fm-sc-section-pattern') || {}).value;
                 if (val && val.trim()) labels = [val.trim()];
+            } else if (searchType === 'vector_db') {
+                const val = (document.getElementById('fm-sc-query-text') || {}).value;
+                if (val && val.trim()) labels = [val.trim()];
             } else {
                 labels = this.getKeywordTags('fm-sc-keywords');
             }
@@ -724,6 +727,7 @@ const RuleConfig = {
                     <div class="form-group">
                         <label class="form-label">查询文本</label>
                         <input class="form-input" id="fm-sc-query-text" value="${Utils.escapeHtml(config.query_text || '')}" placeholder="用于向量检索的查询文本">
+                        <div class="form-hint">查询文本同时作为 &lt;search_result&gt; 占位符的标签，检索结果会填充到该标签中</div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
