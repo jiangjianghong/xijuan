@@ -309,7 +309,7 @@ async def search_section(
             - sort_order: 排序方式 asc/desc（默认 asc，按章节顺序）
 
     Returns:
-        检索结果列表，每项包含 section_number, section_title, content。
+        检索结果列表，每项包含 keyword(=section_pattern), section_number, section_title, content。
     """
     section_pattern = config.get("section_pattern", "")
     # 兼容两种字段名：section_match_type（设计文档）和 match_type
@@ -377,6 +377,11 @@ async def search_section(
 
     # 按章节索引排序
     results.sort(key=lambda x: x["section_index"], reverse=(sort_order == "desc"))
+
+    # section_pattern 作为占位符标签（与前端下拉插入的标签一致，contains/fuzzy/llm
+    # 命中标题 ≠ pattern 时也能对上）；空 pattern 时下游回退 section_title
+    for r in results:
+        r["keyword"] = section_pattern
 
     # 限制返回条数
     return results[:max_results]

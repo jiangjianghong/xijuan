@@ -180,3 +180,42 @@ def test_build_text_source_refs_vector_db_enters_texts():
     refs, texts = _build_text_source_refs("vector_db", results, [])
     assert texts == {"合同总金额": "块1\n---\n块2"}
     assert refs["合同总金额"][0]["chunk_id"] == "c1"
+
+
+async def test_search_section_attaches_pattern_as_keyword():
+    """section 结果挂 keyword=section_pattern，作为占位符标签（与前端下拉插入的标签一致）。"""
+    from service.extraction_service import search_section
+
+    content = """# 1 概述
+
+概述内容。
+
+# 2 付款方式
+
+按月支付。
+
+# 3 付款期限
+
+合同签订后 30 日内。
+"""
+    results = await search_section(
+        content, {"section_pattern": "付款", "match_type": "contains"}
+    )
+    assert len(results) == 2
+    assert all(r["keyword"] == "付款" for r in results)
+    assert results[0]["section_title"] == "付款方式"
+
+
+def test_build_text_source_refs_section_groups_by_pattern_keyword():
+    """section 结果带 keyword=pattern 时按 pattern 分组（contains/fuzzy/llm 多命中合并到同一标签）。"""
+    from service.extraction_service import _build_text_source_refs
+
+    results = [
+        {"keyword": "付款", "section_title": "付款方式", "section_index": 0,
+         "content": "按月支付", "start_pos": 0, "end_pos": 10},
+        {"keyword": "付款", "section_title": "付款期限", "section_index": 1,
+         "content": "30 日内", "start_pos": 20, "end_pos": 30},
+    ]
+    refs, texts = _build_text_source_refs("section", results, [])
+    assert texts == {"付款": "按月支付\n---\n30 日内"}
+    assert len(refs["付款"]) == 2
