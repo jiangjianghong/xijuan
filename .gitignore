@@ -7,6 +7,8 @@ __pycache__/
 *.egg
 dist/
 build/
+.superpowers
+.claude/
 
 # Virtual environment
 .venv/
@@ -34,6 +36,10 @@ logs/*.log
 # Data
 data/*
 !data/.gitkeep
+
+# doc
+docs/superpowers/plans/*.md
+docs/superpowers/specs/*.md
 
 # OS
 .DS_Store
