@@ -61,3 +61,28 @@ async def test_get_extraction_results_with_source_refs(client: AsyncClient):
             if obj:
                 await session.delete(obj)
                 await session.commit()
+
+
+@pytest.mark.anyio
+async def test_get_file_pdf_200(client: AsyncClient):
+    """uploads 下存在 PDF 时应 200 并返回 application/pdf 原始字节。"""
+    from utils import vl_client
+
+    file_id = "test_pdf_endpoint_file"
+    pdf = vl_client.pdf_path(file_id)
+    pdf.parent.mkdir(parents=True, exist_ok=True)
+    pdf.write_bytes(b"%PDF-1.4 minimal")
+    try:
+        resp = await client.get(f"/file/{file_id}/pdf")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/pdf")
+        assert resp.content == b"%PDF-1.4 minimal"
+    finally:
+        pdf.unlink(missing_ok=True)
+
+
+@pytest.mark.anyio
+async def test_get_file_pdf_404(client: AsyncClient):
+    """PDF 不存在时应 404。"""
+    resp = await client.get("/file/nonexistent_pdf_file/pdf")
+    assert resp.status_code == 404

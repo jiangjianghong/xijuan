@@ -6,7 +6,7 @@ import asyncio
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from loguru import logger
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -297,6 +297,20 @@ async def get_file_status(file_id: str, db: AsyncSession = Depends(get_db)):
             updated_at=file_record.updated_at,
         ).model_dump()
     )
+
+
+@router.get("/{file_id}/pdf")
+async def get_file_pdf(file_id: str):
+    """下发原始 PDF（uploads/{file_id}.pdf 原始字节），供前端定位预览。
+
+    历史文件可能未持久化 PDF（vl 持久化机制上线前上传），此时 404。
+    """
+    from utils import vl_client
+
+    pdf = vl_client.pdf_path(file_id)
+    if not pdf.is_file():
+        raise HTTPException(status_code=404, detail="原始 PDF 不存在")
+    return FileResponse(pdf, media_type="application/pdf", filename=f"{file_id}.pdf")
 
 
 def _cleanup_file_artifacts(file_id: str, type_id: str = "default") -> None:
