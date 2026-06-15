@@ -106,6 +106,7 @@ async def test_update_doctype_renames_type_id_and_cascades(client: AsyncClient):
                 "priority": 0,
                 "search_type": "context",
                 "search_config": {},
+                "text_extract_prompt": "从<search_result>金额</search_result>提取金额",
             },
         )
         assert r.status_code == 200

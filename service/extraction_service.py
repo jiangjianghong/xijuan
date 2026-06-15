@@ -109,6 +109,22 @@ def validate_prompt_has_placeholder(prompt: str) -> bool:
     return bool(re.search(pattern, prompt))
 
 
+def _is_extraction_success(value: Any, source_refs: Optional[Dict]) -> bool:
+    """正式抽取成功至少需要有值或可追溯来源。"""
+    return bool(source_refs) or bool(str(value or "").strip())
+
+
+def _ensure_valid_extraction_result(
+    field: ExtractionField,
+    extracted_value: Any,
+    reason: str,
+    source_refs: Optional[Dict],
+) -> None:
+    if _is_extraction_success(extracted_value, source_refs):
+        return
+    raise ValueError(reason or f"字段 {field.field_name} 未提取到有效结果或来源引用")
+
+
 # ── 页码区间解析（page 检索方式） ─────────────────────────────
 
 
@@ -1209,6 +1225,8 @@ async def run_extraction(
             else:
                 extracted_value, reason, source_refs = await extract_text_field(file_id, field, session)
 
+            _ensure_valid_extraction_result(field, extracted_value, reason, source_refs)
+
             # 保存结果
             stmt = select(ExtractionResult).where(
                 ExtractionResult.file_id == file_id,
@@ -1249,6 +1267,7 @@ async def run_extraction(
 
         except Exception as e:
             logger.error("字段提取失败: field_id={}, error={}", field.field_id, e)
+            failure_reason = str(e)
             # 保存空值
             stmt = select(ExtractionResult).where(
                 ExtractionResult.file_id == file_id,
@@ -1258,14 +1277,14 @@ async def run_extraction(
 
             if existing:
                 existing.extracted_value = ""
-                existing.reason = ""
+                existing.reason = failure_reason
                 existing.source_refs = None
             else:
                 extraction_result = ExtractionResult(
                     file_id=file_id,
                     field_id=field.field_id,
                     extracted_value="",
-                    reason="",
+                    reason=failure_reason,
                     source_refs=None,
                 )
                 session.add(extraction_result)
@@ -1277,7 +1296,7 @@ async def run_extraction(
                 "field_id": field.field_id,
                 "field_name": field.field_name,
                 "value": "",
-                "reason": str(e),
+                "reason": failure_reason,
                 "source_refs": None,
                 "success": False,
                 "index": idx + 1,
@@ -1343,6 +1362,8 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
             else:
                 extracted_value, reason, source_refs = await extract_text_field(file_id, field, session)
 
+            _ensure_valid_extraction_result(field, extracted_value, reason, source_refs)
+
             # 保存结果
             stmt = select(ExtractionResult).where(
                 ExtractionResult.file_id == file_id,
@@ -1381,6 +1402,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
 
         except Exception as e:
             logger.error("字段提取失败: field_id={}, error={}", field.field_id, e)
+            failure_reason = str(e)
             # 保存空值
             stmt = select(ExtractionResult).where(
                 ExtractionResult.file_id == file_id,
@@ -1390,14 +1412,14 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
 
             if existing:
                 existing.extracted_value = ""
-                existing.reason = ""
+                existing.reason = failure_reason
                 existing.source_refs = None
             else:
                 extraction_result = ExtractionResult(
                     file_id=file_id,
                     field_id=field.field_id,
                     extracted_value="",
-                    reason="",
+                    reason=failure_reason,
                     source_refs=None,
                 )
                 session.add(extraction_result)
@@ -1409,7 +1431,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
                 "field_id": field.field_id,
                 "field_name": field.field_name,
                 "extracted_value": "",
-                "reason": str(e),
+                "reason": failure_reason,
                 "source_refs": None,
                 "success": False,
                 "current": idx + 1,

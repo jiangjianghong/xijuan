@@ -227,6 +227,8 @@ class ExtractionFieldCreate(BaseModel):
     @field_validator("text_extract_prompt")
     @classmethod
     def validate_text_prompt(cls, v, info):
+        if cls.__name__ != "ExtractionFieldCreate":
+            return v
         if info.data.get("source_type") == SourceTypeEnum.text and v:
             if not re.search(r"<search_result>.+?</search_result>", v):
                 raise ValueError("text_extract_prompt 必须包含至少一个 <search_result>标签</search_result> 占位符")
@@ -235,6 +237,8 @@ class ExtractionFieldCreate(BaseModel):
     @field_validator("table_extract_prompt")
     @classmethod
     def validate_table_prompt(cls, v, info):
+        if cls.__name__ != "ExtractionFieldCreate":
+            return v
         if info.data.get("source_type") == SourceTypeEnum.table and v:
             if not re.search(r"<search_result>.+?</search_result>", v):
                 raise ValueError("table_extract_prompt 必须包含至少一个 <search_result>标签</search_result> 占位符")
@@ -243,6 +247,8 @@ class ExtractionFieldCreate(BaseModel):
     @field_validator("vl_method")
     @classmethod
     def validate_vl_method_required(cls, v, info):
+        if cls.__name__ != "ExtractionFieldCreate":
+            return v
         if info.data.get("source_type") == SourceTypeEnum.vl and not v:
             raise ValueError("source_type='vl' 时 vl_method 必填")
         return v
@@ -250,6 +256,8 @@ class ExtractionFieldCreate(BaseModel):
     @field_validator("vl_extract_prompt")
     @classmethod
     def validate_vl_extract_prompt(cls, v, info):
+        if cls.__name__ != "ExtractionFieldCreate":
+            return v
         if info.data.get("source_type") == SourceTypeEnum.vl:
             if not v:
                 raise ValueError("source_type='vl' 时 vl_extract_prompt 必填")
@@ -264,6 +272,8 @@ class ExtractionFieldCreate(BaseModel):
     @field_validator("vl_config")
     @classmethod
     def validate_vl_config_templates(cls, v, info):
+        if cls.__name__ != "ExtractionFieldCreate":
+            return v
         if v is None:
             return v
         method = info.data.get("vl_method")
@@ -290,12 +300,26 @@ class ExtractionFieldCreate(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_vl_required_when_source_is_vl(self):
-        """source_type='vl' 时强校验 vl_method / vl_extract_prompt 存在。
+    def validate_required_prompt_by_source_type(self):
+        """按 source_type 补齐字段级校验。
 
         field_validator 默认不在字段未提供时触发，所以补一道 model 层校验。
         """
-        if self.source_type == SourceTypeEnum.vl:
+        if self.__class__.__name__ != "ExtractionFieldCreate":
+            return self
+        if self.source_type == SourceTypeEnum.table:
+            prompt = (self.table_extract_prompt or "").strip()
+            if not prompt:
+                raise ValueError("source_type='table' 时 table_extract_prompt 必填")
+            if not re.search(r"<search_result>.+?</search_result>", prompt):
+                raise ValueError("table_extract_prompt 必须包含至少一个 <search_result>标签</search_result> 占位符")
+        elif self.source_type == SourceTypeEnum.text:
+            prompt = (self.text_extract_prompt or "").strip()
+            if not prompt:
+                raise ValueError("source_type='text' 时 text_extract_prompt 必填")
+            if not re.search(r"<search_result>.+?</search_result>", prompt):
+                raise ValueError("text_extract_prompt 必须包含至少一个 <search_result>标签</search_result> 占位符")
+        elif self.source_type == SourceTypeEnum.vl:
             if not self.vl_method:
                 raise ValueError("source_type='vl' 时 vl_method 必填")
             if not self.vl_extract_prompt:

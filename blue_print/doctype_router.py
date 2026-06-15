@@ -742,6 +742,7 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
     )
 
     name_to_new_field_id: dict = {}
+    source_to_new_field_id: dict = {}
 
     for src in payload.fields:
         new_name = src.field_name
@@ -754,6 +755,21 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
             while new_name in target_field_names:
                 new_name = f"{src.field_name} (副本{suffix})"
                 suffix += 1
+
+        if src.source_type == "table":
+            prompt = (src.table_extract_prompt or "").strip()
+            if not prompt or not re.search(r"<search_result>.+?</search_result>", prompt):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"字段 {src.field_name} 的 table_extract_prompt 必须包含 <search_result>标签</search_result> 占位符",
+                )
+        elif src.source_type == "text":
+            prompt = (src.text_extract_prompt or "").strip()
+            if not prompt or not re.search(r"<search_result>.+?</search_result>", prompt):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"字段 {src.field_name} 的 text_extract_prompt 必须包含 <search_result>标签</search_result> 占位符",
+                )
 
         new_field_id = _new_id()
         new_field = ExtractionField(
@@ -782,6 +798,7 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
         target_field_names.add(new_name)
         # 用源字段名做映射键（导出时已是源端原名）
         name_to_new_field_id[src.field_name] = new_field_id
+        source_to_new_field_id[src.field_id] = new_field_id
         resp.copied_fields += 1
 
     # 把目标类型已存在的同名字段也纳入映射（用于规则依赖回退）
@@ -793,6 +810,9 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
     ).fetchall()
     name_to_target_field_id = {r[1]: r[0] for r in target_existing}
     name_to_target_field_id.update(name_to_new_field_id)
+    for src in payload.fields:
+        if src.field_id not in source_to_new_field_id and src.field_name in name_to_target_field_id:
+            source_to_new_field_id[src.field_id] = name_to_target_field_id[src.field_name]
 
     # 3. 复制规则
     target_rule_names = set(
@@ -825,14 +845,22 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
             else:
                 missing_deps.append(f"{src.rule_name}::{fname}")
 
+        new_expression = _remap_field_placeholders(src.expression, source_to_new_field_id)
+        new_web_search = src.web_search
+        if new_web_search and new_web_search.get("query"):
+            new_web_search = dict(new_web_search)
+            new_web_search["query"] = _remap_field_placeholders(
+                new_web_search["query"], source_to_new_field_id
+            )
+
         new_rule = AnalysisRule(
             rule_id=_new_id(),
             type_id=target_type_id,
             rule_name=new_name,
             rule_type=src.rule_type,
-            expression=src.expression,
+            expression=new_expression,
             system_prompt=src.system_prompt,
-            web_search=src.web_search,
+            web_search=new_web_search,
             depend_fields=new_depend_fields if new_depend_fields else None,
             enabled=src.enabled,
             priority=src.priority,

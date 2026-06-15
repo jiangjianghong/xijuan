@@ -215,3 +215,60 @@ async def test_copy_from_remaps_placeholders(client: AsyncClient):
         # 级联清理（带配置的类型需 force）
         await client.delete(f"/doctype/{src_type}?force=true")
         await client.delete(f"/doctype/{dst_type}?force=true")
+
+
+@pytest.mark.anyio
+async def test_import_remaps_rule_placeholders(client: AsyncClient):
+    """doctype/import 生成新 field_id 后，同步重映射规则占位符。"""
+    target_type = "ws_import_dst_type"
+    source_field_id = "ws_import_src_field"
+
+    payload = {
+        "type_id": "ws_import_src_type",
+        "type_name": "导入源类型",
+        "version": 1,
+        "fields": [
+            {
+                "field_id": source_field_id,
+                "field_name": "公司名称",
+                "source_type": "text",
+                "search_type": "context",
+                "search_config": {"keywords": ["公司"]},
+                "text_extract_prompt": "从<search_result>公司</search_result>提取公司名称",
+            }
+        ],
+        "rules": [
+            {
+                "rule_id": "ws_import_src_rule",
+                "rule_name": "导入重映射测试",
+                "rule_type": "judge",
+                "expression": "结合<web_search_result/>判断<field_result>ws_import_src_field</field_result>是否被处罚",
+                "depend_field_names": ["公司名称"],
+                "web_search": {
+                    "enabled": True,
+                    "query": "<field_result>ws_import_src_field</field_result> 行政处罚",
+                },
+            }
+        ],
+    }
+
+    try:
+        resp = await client.post(
+            "/doctype/import",
+            json={"target_type_id": target_type, "payload": payload},
+        )
+        assert resp.status_code == 200, resp.text
+
+        resp = await client.get(f"/extraction/fields?type_id={target_type}")
+        new_field_id = resp.json()["data"][0]["field_id"]
+        assert new_field_id != source_field_id
+
+        resp = await client.get(f"/analysis/rules?type_id={target_type}")
+        rule = resp.json()["data"][0]
+        assert rule["depend_fields"] == [new_field_id]
+        assert f"<field_result>{new_field_id}</field_result>" in rule["expression"]
+        assert f"<field_result>{source_field_id}</field_result>" not in rule["expression"]
+        assert f"<field_result>{new_field_id}</field_result>" in rule["web_search"]["query"]
+        assert f"<field_result>{source_field_id}</field_result>" not in rule["web_search"]["query"]
+    finally:
+        await client.delete(f"/doctype/{target_type}?force=true")

@@ -56,6 +56,7 @@ async def list_fields(type_id: str = "", db: AsyncSession = Depends(get_db)):
                 table_name_pattern=f.table_name_pattern,
                 table_match_type=f.table_match_type,
                 table_match_keywords=f.table_match_keywords,
+                table_match_max_results=f.table_match_max_results,
                 table_system_prompt=f.table_system_prompt,
                 table_extract_prompt=f.table_extract_prompt,
                 search_type=f.search_type,
@@ -106,6 +107,7 @@ async def upsert_field(
         existing.table_name_pattern = field.table_name_pattern
         existing.table_match_type = field.table_match_type
         existing.table_match_keywords = field.table_match_keywords
+        existing.table_match_max_results = field.table_match_max_results
         existing.table_system_prompt = field.table_system_prompt
         existing.table_extract_prompt = field.table_extract_prompt
         existing.search_type = field.search_type
@@ -130,6 +132,7 @@ async def upsert_field(
             table_name_pattern=field.table_name_pattern,
             table_match_type=field.table_match_type,
             table_match_keywords=field.table_match_keywords,
+            table_match_max_results=field.table_match_max_results,
             table_system_prompt=field.table_system_prompt,
             table_extract_prompt=field.table_extract_prompt,
             search_type=field.search_type,

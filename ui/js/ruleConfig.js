@@ -504,7 +504,7 @@ const RuleConfig = {
                 ${this.buildKeywordTagsHtml('fm-table-match-keywords', '表格匹配词', field.table_match_keywords || [], '输入匹配词后按回车或点击添加，支持多个匹配词检索表格')}
                 <div class="form-group">
                     <label class="form-label">最大返回数量</label>
-                    <input class="form-input" type="number" id="fm-table-match-max-results" min="0" placeholder="0 表示不限制" value="${field.table_match_max_results || ''}">
+                    <input class="form-input" type="number" id="fm-table-match-max-results" min="0" placeholder="0 表示不限制" value="${field.table_match_max_results ?? ''}">
                     <div class="form-hint">匹配后最多返回的表格数量，0 或空表示不限制</div>
                 </div>
                 <div class="form-group">
@@ -884,11 +884,45 @@ const RuleConfig = {
         area.innerHTML = this.buildVLConfigFields(method, config);
     },
 
+    _parseIntValue(value) {
+        const raw = String(value ?? '').trim();
+        if (raw === '') return null;
+        const parsed = Number.parseInt(raw, 10);
+        return Number.isFinite(parsed) ? parsed : null;
+    },
+
+    _parseFloatValue(value) {
+        const raw = String(value ?? '').trim();
+        if (raw === '') return null;
+        const parsed = Number.parseFloat(raw);
+        return Number.isFinite(parsed) ? parsed : null;
+    },
+
+    parseIntOrDefault(id, def) {
+        const el = document.getElementById(id);
+        if (!el) return def;
+        const parsed = this._parseIntValue(el.value);
+        return parsed === null ? def : parsed;
+    },
+
+    parseFloatOrDefault(id, def) {
+        const el = document.getElementById(id);
+        if (!el) return def;
+        const parsed = this._parseFloatValue(el.value);
+        return parsed === null ? def : parsed;
+    },
+
+    parseIntOrNull(id) {
+        const el = document.getElementById(id);
+        if (!el) return null;
+        return this._parseIntValue(el.value);
+    },
+
     collectVLConfig(method) {
         const config = {};
         const getVal = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
-        const getInt = (id, def) => { const el = document.getElementById(id); return el ? (parseInt(el.value) || def) : def; };
-        const getFloat = (id, def) => { const el = document.getElementById(id); return el ? (parseFloat(el.value) || def) : def; };
+        const getInt = (id, def) => this.parseIntOrDefault(id, def);
+        const getFloat = (id, def) => this.parseFloatOrDefault(id, def);
 
         switch (method) {
             case 'vl_model': {
@@ -897,8 +931,8 @@ const RuleConfig = {
                 if (!fromV && !toV) {
                     config.page_range = 'all';
                 } else {
-                    const from = parseInt(fromV) || 1;
-                    const to = toV ? (parseInt(toV) || from) : 9999;
+                    const from = this._parseIntValue(fromV) ?? 1;
+                    const to = toV ? (this._parseIntValue(toV) ?? from) : 9999;
                     config.page_range = `${from}-${to}`;
                 }
                 config.max_pixels = getInt('fm-vl-max-pixels', 4000000);
@@ -1150,7 +1184,7 @@ const RuleConfig = {
             field_name: document.getElementById('fm-field-name').value.trim(),
             source_type: sourceType,
             enabled: existingField ? existingField.enabled : 1,
-            priority: parseInt(document.getElementById('fm-priority').value) || 0,
+            priority: this.parseIntOrDefault('fm-priority', 0),
             table_name_pattern: null,
             table_match_type: null,
             table_match_keywords: null,
@@ -1171,7 +1205,7 @@ const RuleConfig = {
             data.table_name_pattern = document.getElementById('fm-table-name-pattern').value.trim() || null;
             data.table_match_type = document.getElementById('fm-table-match-type').value;
             data.table_match_keywords = this.getKeywordTags('fm-table-match-keywords');
-            data.table_match_max_results = parseInt(document.getElementById('fm-table-match-max-results').value) || null;
+            data.table_match_max_results = this.parseIntOrNull('fm-table-match-max-results');
             data.table_system_prompt = document.getElementById('fm-table-system-prompt').value.trim() || null;
             data.table_extract_prompt = document.getElementById('fm-table-extract-prompt').value.trim() || null;
         } else if (sourceType === 'vl') {
@@ -1197,14 +1231,8 @@ const RuleConfig = {
             const el = document.getElementById(id);
             return el ? el.value.trim() : '';
         };
-        const getInt = (id, def) => {
-            const el = document.getElementById(id);
-            return el ? (parseInt(el.value) || def) : def;
-        };
-        const getFloat = (id, def) => {
-            const el = document.getElementById(id);
-            return el ? (parseFloat(el.value) || def) : def;
-        };
+        const getInt = (id, def) => this.parseIntOrDefault(id, def);
+        const getFloat = (id, def) => this.parseFloatOrDefault(id, def);
         const getList = (id) => {
             const val = getVal(id);
             return val ? val.split(/[,，]/).map(s => s.trim()).filter(Boolean) : [];
@@ -1274,7 +1302,7 @@ const RuleConfig = {
             webSearch = {
                 enabled: true,
                 query: wsQueryEl ? wsQueryEl.value.trim() : '',
-                count: wsCountEl ? (parseInt(wsCountEl.value) || 5) : 5,
+                count: wsCountEl ? this.parseIntOrDefault('fm-ws-count', 5) : 5,
                 freshness: wsFreshnessEl ? (wsFreshnessEl.value || 'noLimit') : 'noLimit',
             };
         }
@@ -1290,7 +1318,7 @@ const RuleConfig = {
             depend_fields: this.getDependFields(),
             web_search: webSearch,
             enabled: existingRule ? existingRule.enabled : 1,
-            priority: parseInt(document.getElementById('fm-rule-priority').value) || 0,
+            priority: this.parseIntOrDefault('fm-rule-priority', 0),
         };
     },
 
@@ -1327,7 +1355,11 @@ const RuleConfig = {
         }
 
         if (data.source_type === 'table') {
-            if (data.table_extract_prompt && !data.table_extract_prompt.includes('<search_result>')) {
+            if (!data.table_extract_prompt) {
+                Toast.error('表格提取 Prompt 不能为空');
+                return false;
+            }
+            if (!/<search_result>[\s\S]+?<\/search_result>/.test(data.table_extract_prompt)) {
                 Toast.error('表格提取 Prompt 须包含 <search_result>...</search_result> 占位符');
                 return false;
             }
@@ -1346,7 +1378,11 @@ const RuleConfig = {
                 return false;
             }
         } else {
-            if (data.text_extract_prompt && !data.text_extract_prompt.includes('<search_result>')) {
+            if (!data.text_extract_prompt) {
+                Toast.error('文本提取 Prompt 不能为空');
+                return false;
+            }
+            if (!/<search_result>[\s\S]+?<\/search_result>/.test(data.text_extract_prompt)) {
                 Toast.error('文本提取 Prompt 须包含 <search_result>...</search_result> 占位符');
                 return false;
             }
@@ -1544,28 +1580,7 @@ const RuleConfig = {
         // 更新按钮文字
         if (this.els.debugBtn) this.els.debugBtn.textContent = '退出调试';
 
-        // 恢复表单动态区域显隐
-        const sourceType = document.getElementById('fm-source-type');
-        if (sourceType) {
-            this.onSourceTypeChange(sourceType.value);
-            if (sourceType.value === 'text') {
-                const searchType = document.getElementById('fm-search-type');
-                if (searchType) this.onSearchTypeChange(searchType.value);
-            }
-        }
-
-        // 恢复规则类型动态区域
-        const ruleType = document.getElementById('fm-rule-type');
-        if (ruleType) {
-            this.onRuleTypeChange(ruleType.value);
-        }
-
-        // 恢复网络搜索配置区显隐
-        const wsEnabled = document.getElementById('fm-ws-enabled');
-        if (wsEnabled) {
-            const wsArea = document.getElementById('fm-ws-config');
-            if (wsArea) wsArea.style.display = wsEnabled.checked ? 'block' : 'none';
-        }
+        this._restoreDynamicVisibilityOnly();
 
         // 加载已完成文件列表
         this.loadDebugFileList();
@@ -1602,23 +1617,25 @@ const RuleConfig = {
         // 更新按钮文字
         if (this.els.debugBtn) this.els.debugBtn.textContent = '调试';
 
-        // 恢复表单动态区域
+        this._restoreDynamicVisibilityOnly();
+    },
+
+    _restoreDynamicVisibilityOnly() {
         const sourceType = document.getElementById('fm-source-type');
         if (sourceType) {
             this.onSourceTypeChange(sourceType.value);
-            if (sourceType.value === 'text') {
-                const searchType = document.getElementById('fm-search-type');
-                if (searchType) this.onSearchTypeChange(searchType.value);
-            }
         }
 
-        // 恢复规则类型动态区域
+        const sectionMatchType = document.getElementById('fm-sc-section-match-type');
+        if (sectionMatchType) {
+            this.onSectionMatchTypeChange(sectionMatchType.value);
+        }
+
         const ruleType = document.getElementById('fm-rule-type');
         if (ruleType) {
             this.onRuleTypeChange(ruleType.value);
         }
 
-        // 恢复网络搜索配置区显隐
         const wsEnabled = document.getElementById('fm-ws-enabled');
         if (wsEnabled) {
             const wsArea = document.getElementById('fm-ws-config');

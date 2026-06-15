@@ -126,13 +126,14 @@ def test_slice_by_page_range_empty_md():
 from unittest.mock import MagicMock
 
 import service.extraction_service as ext_svc
-from service.extraction_service import _extract_page_field
+from service.extraction_service import _ensure_valid_extraction_result, _extract_page_field
 
 
 def _make_field(prompt='提取问题: <search_result>page_content</search_result>', system=None):
     """构造一个简单的 ExtractionField stub。"""
     field = MagicMock()
     field.field_id = "fld_test"
+    field.field_name = "测试字段"
     field.text_extract_prompt = prompt
     field.text_system_prompt = system
     return field
@@ -254,5 +255,14 @@ async def test_extract_page_field_missing_placeholder(monkeypatch):
     )
     assert value == ""
     assert fake_chat_called is False
+
+
+def test_empty_extraction_without_source_refs_is_failure():
+    field = _make_field()
+
+    with pytest.raises(ValueError, match="未提取到有效结果"):
+        _ensure_valid_extraction_result(field, "", "", None)
+
+    _ensure_valid_extraction_result(field, "", "未找到明确值", {"page_content": [{"text": "原文"}]})
 
 
