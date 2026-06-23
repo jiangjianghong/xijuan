@@ -731,13 +731,20 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
         await db.flush()
         resp.created_type = True
 
-    # 2. 复制字段（始终生成新 field_id，避免与全局 field_id 冲突）
+    # 2. 复制字段（默认保留源 field_id，全局冲突时加 _copy 后缀）
     target_field_names = set(
         row[0]
         for row in (
             await db.execute(
                 select(ExtractionField.field_name).where(ExtractionField.type_id == target_type_id)
             )
+        ).fetchall()
+    )
+    # 查询全局已有 field_id，用于冲突检测
+    existing_field_ids = set(
+        row[0]
+        for row in (
+            await db.execute(select(ExtractionField.field_id))
         ).fetchall()
     )
 
@@ -771,7 +778,15 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
                     detail=f"字段 {src.field_name} 的 text_extract_prompt 必须包含 <search_result>标签</search_result> 占位符",
                 )
 
-        new_field_id = _new_id()
+        # 默认用源 field_id，全局冲突时加 _copy 后缀
+        new_field_id = src.field_id
+        if new_field_id in existing_field_ids:
+            new_field_id = f"{src.field_id}_copy"
+            suffix = 2
+            while new_field_id in existing_field_ids:
+                new_field_id = f"{src.field_id}_copy_{suffix}"
+                suffix += 1
+        existing_field_ids.add(new_field_id)
         new_field = ExtractionField(
             field_id=new_field_id,
             type_id=target_type_id,
@@ -825,6 +840,13 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
     )
 
     missing_deps: List[str] = []
+    # 查询全局已有 rule_id，用于冲突检测
+    existing_rule_ids = set(
+        row[0]
+        for row in (
+            await db.execute(select(AnalysisRule.rule_id))
+        ).fetchall()
+    )
 
     for src in payload.rules:
         new_name = src.rule_name
@@ -853,8 +875,18 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
                 new_web_search["query"], source_to_new_field_id
             )
 
+        # 默认用源 rule_id，全局冲突时加 _copy 后缀
+        new_rule_id = src.rule_id
+        if new_rule_id in existing_rule_ids:
+            new_rule_id = f"{src.rule_id}_copy"
+            suffix = 2
+            while new_rule_id in existing_rule_ids:
+                new_rule_id = f"{src.rule_id}_copy_{suffix}"
+                suffix += 1
+        existing_rule_ids.add(new_rule_id)
+
         new_rule = AnalysisRule(
-            rule_id=_new_id(),
+            rule_id=new_rule_id,
             type_id=target_type_id,
             rule_name=new_name,
             rule_type=src.rule_type,

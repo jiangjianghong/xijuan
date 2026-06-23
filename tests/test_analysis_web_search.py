@@ -218,8 +218,8 @@ async def test_copy_from_remaps_placeholders(client: AsyncClient):
 
 
 @pytest.mark.anyio
-async def test_import_remaps_rule_placeholders(client: AsyncClient):
-    """doctype/import 生成新 field_id 后，同步重映射规则占位符。"""
+async def test_import_keeps_original_field_id(client: AsyncClient):
+    """doctype/import 无冲突时保留源 field_id，占位符无需重映射。"""
     target_type = "ws_import_dst_type"
     source_field_id = "ws_import_src_field"
 
@@ -259,16 +259,15 @@ async def test_import_remaps_rule_placeholders(client: AsyncClient):
         )
         assert resp.status_code == 200, resp.text
 
+        # 无冲突时保留源 field_id
         resp = await client.get(f"/extraction/fields?type_id={target_type}")
         new_field_id = resp.json()["data"][0]["field_id"]
-        assert new_field_id != source_field_id
+        assert new_field_id == source_field_id
 
         resp = await client.get(f"/analysis/rules?type_id={target_type}")
         rule = resp.json()["data"][0]
         assert rule["depend_fields"] == [new_field_id]
-        assert f"<field_result>{new_field_id}</field_result>" in rule["expression"]
-        assert f"<field_result>{source_field_id}</field_result>" not in rule["expression"]
-        assert f"<field_result>{new_field_id}</field_result>" in rule["web_search"]["query"]
-        assert f"<field_result>{source_field_id}</field_result>" not in rule["web_search"]["query"]
+        assert f"<field_result>{source_field_id}</field_result>" in rule["expression"]
+        assert f"<field_result>{source_field_id}</field_result>" in rule["web_search"]["query"]
     finally:
         await client.delete(f"/doctype/{target_type}?force=true")
