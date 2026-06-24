@@ -23,6 +23,7 @@ env/
 configs/config.yaml
 configs/config1.yaml
 configs/config2.yaml
+configs/config3.yaml
 
 # IDE
 .idea/
