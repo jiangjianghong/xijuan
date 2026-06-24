@@ -65,7 +65,9 @@ class MySQLConfig(BaseModel):
     database: str = "file_parser"
     username: str = "root"
     password: str = ""
-    pool_size: int = 10
+    pool_size: int = 50
+    max_overflow: int = 10
+    pool_timeout: int = 10
 
 
 class ExtractionConfig(BaseModel):

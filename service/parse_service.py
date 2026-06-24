@@ -33,6 +33,10 @@ async def parse_file(
     try:
         cfg = get_config().mineru
         type_cfg = await get_file_type_runtime_config(file_id, session)
+        # 读完配置即释放连接:get_file_type_runtime_config 是纯 SELECT,留下的只读事务
+        # 会占着连接熬过下面 MinerU 的分钟级轮询。提前 rollback(无数据可丢)把连接还回池,
+        # 避免并发解析时连接池被空转事务占满(QueuePool timeout)。
+        await session.rollback()
         if type_cfg.max_parse_pages:
             logger.info(
                 "文件 {} 使用类型 {} 的最大解析页数: {}",

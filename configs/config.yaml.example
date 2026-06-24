@@ -53,7 +53,9 @@ mysql:
   database: "your_database"
   username: "your_username"
   password: "your_password"
-  pool_size: 10
+  pool_size: 50          # 常驻连接数(每个进程一份)
+  max_overflow: 10       # 突发可临时额外创建的连接数,峰值 = pool_size + max_overflow
+  pool_timeout: 10       # 连接池满时等待连接的秒数,超时抛 TimeoutError
 
 # 字段提取配置（LLM 相关）
 extraction:
