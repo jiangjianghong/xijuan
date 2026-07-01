@@ -169,6 +169,61 @@ class FileChunkItem(BaseModel):
     page_num: Optional[str] = None
 
 
+class FileContextQueryRequest(BaseModel):
+    """文件片段上下文查询请求。"""
+    file_id: str = Field(..., min_length=1)
+    query: str = Field(..., min_length=1)
+    query_type: str = Field("keyword", pattern=r"^(keyword|text_fragment)$")
+    context_before: int = Field(200, ge=0)
+    context_after: int = Field(200, ge=0)
+    case_sensitive: bool = False
+    include_all_chunks: bool = True
+
+    @field_validator("file_id", "query")
+    @classmethod
+    def _strip_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("不能为空")
+        return value
+
+
+class FileContextMatchItem(BaseModel):
+    match_index: int
+    keyword: str
+    position: int
+    match_start_pos: int
+    match_end_pos: int
+    context_start_pos: int
+    context_end_pos: int
+    context: str
+    page_num: str = ""
+    bboxes: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class FileContextChunkItem(BaseModel):
+    file_id: str
+    chunk_id: str
+    chunk_index: int
+    total_chunks: int
+    chunk_content: str
+    start_pos: int
+    end_pos: int
+    page_num: str = ""
+    hit: bool = False
+    hit_count: int = 0
+
+
+class FileContextQueryResponse(BaseModel):
+    file_id: str
+    query: str
+    query_type: str
+    matched: bool
+    match_count: int
+    matches: List[FileContextMatchItem] = Field(default_factory=list)
+    chunks: List[FileContextChunkItem] = Field(default_factory=list)
+
+
 # ── 字段提取配置 ────────────────────────────────────────────
 
 class SourceTypeEnum(str, Enum):
