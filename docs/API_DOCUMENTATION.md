@@ -691,6 +691,88 @@
 
 ---
 
+### 4.10.1 文件片段上下文查询
+
+按请求体中的 `file_id` 和关键词 / MinerU Markdown 片段查询命中上下文、片段页码，并返回该文件全部分块。该接口不把 `file_id` 放在 URL 中。
+
+- **URL**: `POST /file/context_query`
+
+**请求体**
+
+```json
+{
+  "file_id": "a1b2...",
+  "query": "合同金额",
+  "query_type": "keyword",
+  "context_before": 200,
+  "context_after": 200,
+  "case_sensitive": false,
+  "include_all_chunks": true
+}
+```
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|---|---:|---:|---:|---|
+| `file_id` | string | 是 | 无 | 文件 ID，项目内统一字段名 |
+| `query` | string | 是 | 无 | 关键词或 MinerU Markdown 中的文本片段 |
+| `query_type` | string | 否 | `keyword` | `keyword` / `text_fragment`，MVP 均按精确文本查找 |
+| `context_before` | int | 否 | `200` | 命中位置前返回的字符数 |
+| `context_after` | int | 否 | `200` | 命中位置后返回的字符数 |
+| `case_sensitive` | bool | 否 | `false` | 是否大小写敏感 |
+| `include_all_chunks` | bool | 否 | `true` | 是否返回该文件全部 `file_chunk` 分块 |
+
+**响应示例**
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "file_id": "a1b2...",
+    "query": "合同金额",
+    "query_type": "keyword",
+    "matched": true,
+    "match_count": 1,
+    "matches": [
+      {
+        "match_index": 1,
+        "keyword": "合同金额",
+        "position": 1234,
+        "match_start_pos": 1234,
+        "match_end_pos": 1238,
+        "context_start_pos": 1034,
+        "context_end_pos": 1438,
+        "context": "...合同金额...",
+        "page_num": "5",
+        "bboxes": []
+      }
+    ],
+    "chunks": [
+      {
+        "file_id": "a1b2...",
+        "chunk_id": "chunk_001",
+        "chunk_index": 0,
+        "total_chunks": 15,
+        "chunk_content": "...",
+        "start_pos": 0,
+        "end_pos": 512,
+        "page_num": "3-4",
+        "hit": false,
+        "hit_count": 0
+      }
+    ]
+  }
+}
+```
+
+说明：
+
+- `page_num` 按命中片段本身计算，不按上下文窗口计算。
+- `chunks` 默认返回该文件全部分块；每个分块通过 `hit/hit_count` 标记是否包含命中片段。
+- 文件内容不存在或尚未解析完成时返回 404。
+
+---
+
 ### 4.11 文件大纲（章节切片）
 
 正则解析 Markdown 章节标题（与抽取阶段 `search_type=section` 用同一套口径）。
@@ -1656,20 +1738,21 @@ data: <json>
 | 18 | POST | `/file/{file_id}/retry/analyzing` | 重试逻辑分析 |
 | 19 | GET | `/file/{file_id}/tables` | 表格列表 |
 | 20 | GET | `/file/{file_id}/chunks` | 分块列表 |
-| 21 | GET | `/file/{file_id}/outline` | 章节大纲 |
-| 22 | GET | `/file/{file_id}/extraction` | 字段提取结果 |
-| 23 | GET | `/file/{file_id}/analysis` | 逻辑分析结果 |
-| 24 | GET | `/file/{file_id}/pdf` | 原始 PDF 下载（定位预览用） |
-| 25 | GET | `/extraction/fields` | 字段配置列表（可 `type_id` 过滤） |
-| 26 | POST | `/extraction/fields` | 新增/更新字段配置 |
-| 27 | DELETE | `/extraction/fields/{field_id}` | 删除字段配置（硬删） |
-| 28 | GET | `/extraction/fields/{field_id}/check` | 检查 ID 是否存在 |
-| 29 | POST | `/extraction/test` | 字段提取调试 |
-| 30 | POST | `/extraction/test/stream` | 字段提取流式调试（SSE） |
-| 31 | GET | `/analysis/rules` | 规则配置列表（可 `type_id` 过滤） |
-| 32 | POST | `/analysis/rules` | 新增/更新规则 |
-| 33 | DELETE | `/analysis/rules/{rule_id}` | 删除规则（硬删） |
-| 34 | GET | `/analysis/rules/{rule_id}/check` | 检查 ID 是否存在 |
-| 35 | POST | `/analysis/test` | 逻辑分析调试 |
-| 36 | POST | `/analysis/test/stream` | 逻辑分析流式调试（SSE） |
-| 37 | POST | `/search` | 向量相似度检索 |
+| 21 | POST | `/file/context_query` | 文件片段上下文查询（请求体传 `file_id`） |
+| 22 | GET | `/file/{file_id}/outline` | 章节大纲 |
+| 23 | GET | `/file/{file_id}/extraction` | 字段提取结果 |
+| 24 | GET | `/file/{file_id}/analysis` | 逻辑分析结果 |
+| 25 | GET | `/file/{file_id}/pdf` | 原始 PDF 下载（定位预览用） |
+| 26 | GET | `/extraction/fields` | 字段配置列表（可 `type_id` 过滤） |
+| 27 | POST | `/extraction/fields` | 新增/更新字段配置 |
+| 28 | DELETE | `/extraction/fields/{field_id}` | 删除字段配置（硬删） |
+| 29 | GET | `/extraction/fields/{field_id}/check` | 检查 ID 是否存在 |
+| 30 | POST | `/extraction/test` | 字段提取调试 |
+| 31 | POST | `/extraction/test/stream` | 字段提取流式调试（SSE） |
+| 32 | GET | `/analysis/rules` | 规则配置列表（可 `type_id` 过滤） |
+| 33 | POST | `/analysis/rules` | 新增/更新规则 |
+| 34 | DELETE | `/analysis/rules/{rule_id}` | 删除规则（硬删） |
+| 35 | GET | `/analysis/rules/{rule_id}/check` | 检查 ID 是否存在 |
+| 36 | POST | `/analysis/test` | 逻辑分析调试 |
+| 37 | POST | `/analysis/test/stream` | 逻辑分析流式调试（SSE） |
+| 38 | POST | `/search` | 向量相似度检索 |

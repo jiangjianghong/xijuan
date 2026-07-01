@@ -20,6 +20,8 @@ from model.schemas import (
     BatchDeleteResponse,
     ExtractionResultItem,
     FileChunkItem,
+    FileContextQueryRequest,
+    FileContextQueryResponse,
     FileDetailResponse,
     FileListItem,
     FileListResponse,
@@ -37,6 +39,7 @@ from model.tables import (
     FileContent,
     FileTable,
 )
+from service.file_context_service import query_file_context
 from service.pipeline_service import run_from_stage, run_from_stage_stream, run_pipeline, run_pipeline_stream
 from service.extraction_service import parse_sections
 from utils.config import get_config
@@ -105,6 +108,16 @@ async def list_files(
             total_pages=total_pages,
         ).model_dump()
     )
+
+
+@router.post("/context_query", response_model=ResponseWrapper)
+async def query_context(
+    request: FileContextQueryRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """按请求体 file_id + 文本片段查询上下文、页码和全部分块。"""
+    data = await query_file_context(request, db)
+    return ResponseWrapper(data=FileContextQueryResponse(**data).model_dump())
 
 
 @router.delete("/batch", response_model=ResponseWrapper)
