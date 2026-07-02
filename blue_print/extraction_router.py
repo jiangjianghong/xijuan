@@ -53,6 +53,7 @@ async def list_fields(type_id: str = "", db: AsyncSession = Depends(get_db)):
                 source_type=f.source_type,
                 enabled=f.enabled,
                 priority=f.priority,
+                use_llm=f.use_llm if f.use_llm is not None else 1,
                 table_name_pattern=f.table_name_pattern,
                 table_match_type=f.table_match_type,
                 table_match_keywords=f.table_match_keywords,
@@ -104,6 +105,7 @@ async def upsert_field(
         existing.source_type = field.source_type
         existing.enabled = field.enabled
         existing.priority = field.priority
+        existing.use_llm = field.use_llm
         existing.table_name_pattern = field.table_name_pattern
         existing.table_match_type = field.table_match_type
         existing.table_match_keywords = field.table_match_keywords
@@ -129,6 +131,7 @@ async def upsert_field(
             source_type=field.source_type,
             enabled=field.enabled,
             priority=field.priority,
+            use_llm=field.use_llm,
             table_name_pattern=field.table_name_pattern,
             table_match_type=field.table_match_type,
             table_match_keywords=field.table_match_keywords,
@@ -206,6 +209,7 @@ async def test_extraction(
             field_id="__test__",
             field_name=config.get("field_name", "测试字段"),
             source_type=config.get("source_type", "text"),
+            use_llm=config.get("use_llm", 1),
             table_name_pattern=config.get("table_name_pattern"),
             table_match_type=config.get("table_match_type"),
             table_match_keywords=config.get("table_match_keywords"),
@@ -329,6 +333,7 @@ async def test_extraction_stream(
             field_id="__test__",
             field_name=config.get("field_name", "测试字段"),
             source_type=config.get("source_type", "text"),
+            use_llm=config.get("use_llm", 1),
             table_name_pattern=config.get("table_name_pattern"),
             table_match_type=config.get("table_match_type"),
             table_match_keywords=config.get("table_match_keywords"),

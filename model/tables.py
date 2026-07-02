@@ -135,6 +135,8 @@ class ExtractionField(Base):
     )
     enabled: Mapped[int] = mapped_column(TINYINT, default=1)
     priority: Mapped[int] = mapped_column(Integer, default=0)
+    # 是否走 LLM 二次抽取；0 表示跳过 LLM 直接返回检索原文（仅 text/table 生效，NULL/1 视为启用）
+    use_llm: Mapped[int] = mapped_column(TINYINT, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

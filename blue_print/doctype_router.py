@@ -515,6 +515,7 @@ async def copy_configs(
             source_type=src.source_type,
             enabled=src.enabled,
             priority=src.priority,
+            use_llm=getattr(src, "use_llm", 1) if getattr(src, "use_llm", 1) is not None else 1,
             table_name_pattern=src.table_name_pattern,
             table_match_type=src.table_match_type,
             table_match_keywords=src.table_match_keywords,
@@ -657,6 +658,7 @@ async def export_configs(type_id: str, db: AsyncSession = Depends(get_db)):
                 source_type=f.source_type,
                 enabled=f.enabled,
                 priority=f.priority,
+                use_llm=f.use_llm if f.use_llm is not None else 1,
                 table_name_pattern=f.table_name_pattern,
                 table_match_type=f.table_match_type,
                 table_match_keywords=f.table_match_keywords,
@@ -765,14 +767,18 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
 
         if src.source_type == "table":
             prompt = (src.table_extract_prompt or "").strip()
-            if not prompt or not re.search(r"<search_result>.+?</search_result>", prompt):
+            if getattr(src, "use_llm", 1) != 0 and (
+                not prompt or not re.search(r"<search_result>.+?</search_result>", prompt)
+            ):
                 raise HTTPException(
                     status_code=400,
                     detail=f"字段 {src.field_name} 的 table_extract_prompt 必须包含 <search_result>标签</search_result> 占位符",
                 )
         elif src.source_type == "text":
             prompt = (src.text_extract_prompt or "").strip()
-            if not prompt or not re.search(r"<search_result>.+?</search_result>", prompt):
+            if getattr(src, "use_llm", 1) != 0 and (
+                not prompt or not re.search(r"<search_result>.+?</search_result>", prompt)
+            ):
                 raise HTTPException(
                     status_code=400,
                     detail=f"字段 {src.field_name} 的 text_extract_prompt 必须包含 <search_result>标签</search_result> 占位符",
@@ -794,6 +800,7 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
             source_type=src.source_type,
             enabled=src.enabled,
             priority=src.priority,
+            use_llm=getattr(src, "use_llm", 1) if getattr(src, "use_llm", 1) is not None else 1,
             table_name_pattern=src.table_name_pattern,
             table_match_type=src.table_match_type,
             table_match_keywords=src.table_match_keywords,

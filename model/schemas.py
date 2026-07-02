@@ -70,6 +70,7 @@ class ExportFieldItem(BaseModel):
     source_type: str
     enabled: int = 1
     priority: int = 0
+    use_llm: int = 1
     table_name_pattern: Optional[str] = None
     table_match_type: Optional[str] = None
     table_match_keywords: Optional[List[str]] = None
@@ -261,6 +262,8 @@ class ExtractionFieldCreate(BaseModel):
     source_type: SourceTypeEnum
     enabled: int = 1
     priority: int = 0
+    # 0=跳过 LLM 直接返回检索原文（仅 text/table 生效）；须早于 *_extract_prompt 声明，供其校验器读取
+    use_llm: int = 1
     # 表格类
     table_name_pattern: Optional[str] = None
     table_match_type: Optional[TableMatchTypeEnum] = None
@@ -284,6 +287,8 @@ class ExtractionFieldCreate(BaseModel):
     def validate_text_prompt(cls, v, info):
         if cls.__name__ != "ExtractionFieldCreate":
             return v
+        if info.data.get("use_llm") == 0:
+            return v
         if info.data.get("source_type") == SourceTypeEnum.text and v:
             if not re.search(r"<search_result>.+?</search_result>", v):
                 raise ValueError("text_extract_prompt 必须包含至少一个 <search_result>标签</search_result> 占位符")
@@ -293,6 +298,8 @@ class ExtractionFieldCreate(BaseModel):
     @classmethod
     def validate_table_prompt(cls, v, info):
         if cls.__name__ != "ExtractionFieldCreate":
+            return v
+        if info.data.get("use_llm") == 0:
             return v
         if info.data.get("source_type") == SourceTypeEnum.table and v:
             if not re.search(r"<search_result>.+?</search_result>", v):
@@ -362,13 +369,19 @@ class ExtractionFieldCreate(BaseModel):
         """
         if self.__class__.__name__ != "ExtractionFieldCreate":
             return self
+        # use_llm=0：text/table 直接返回检索原文，不需要提取提示词（vl 不受影响，恒需 LLM）
+        skip_prompt = self.use_llm == 0
         if self.source_type == SourceTypeEnum.table:
+            if skip_prompt:
+                return self
             prompt = (self.table_extract_prompt or "").strip()
             if not prompt:
                 raise ValueError("source_type='table' 时 table_extract_prompt 必填")
             if not re.search(r"<search_result>.+?</search_result>", prompt):
                 raise ValueError("table_extract_prompt 必须包含至少一个 <search_result>标签</search_result> 占位符")
         elif self.source_type == SourceTypeEnum.text:
+            if skip_prompt:
+                return self
             prompt = (self.text_extract_prompt or "").strip()
             if not prompt:
                 raise ValueError("source_type='text' 时 text_extract_prompt 必填")

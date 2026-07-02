@@ -64,6 +64,7 @@ async def init_database() -> None:
             ("extraction_field", "vl_config", "JSON NULL"),
             ("extraction_field", "vl_system_prompt", "TEXT NULL"),
             ("extraction_field", "vl_extract_prompt", "TEXT NULL"),
+            ("extraction_field", "use_llm", "TINYINT NOT NULL DEFAULT 1"),
             ("doc_type", "is_template", "TINYINT NOT NULL DEFAULT 0"),
             ("doc_type", "parent_type_id", "VARCHAR(64) NULL"),
             ("doc_type", "max_parse_pages", "INT NULL"),

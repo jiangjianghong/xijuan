@@ -125,6 +125,27 @@ def _ensure_valid_extraction_result(
     raise ValueError(reason or f"字段 {field.field_name} 未提取到有效结果或来源引用")
 
 
+# ── LLM 开关（use_llm=0 直接返回检索原文，不走二次抽取） ──────────
+
+# 关闭 LLM 时写入的固定 reason
+NO_LLM_REASON = "未启用 LLM，直接返回检索原文"
+
+
+def _is_llm_disabled(field: ExtractionField) -> bool:
+    """字段是否关闭了 LLM 二次抽取。
+
+    use_llm 为 0 时关闭；NULL / 1 / 缺省（临时构建的对象）一律视为启用。
+    仅 text / table 生效，vl 路径不读该开关。
+    """
+    val = getattr(field, "use_llm", None)
+    return val is not None and int(val) == 0
+
+
+def _join_retrieved_text(results_text_by_label: Dict[str, str]) -> str:
+    """把各 label 的检索文本拼成一个字符串，等价于原本注入 prompt 的内容。"""
+    return "\n---\n".join(v for v in results_text_by_label.values() if v)
+
+
 # ── 页码区间解析（page 检索方式） ─────────────────────────────
 
 
@@ -648,6 +669,10 @@ async def _extract_page_field(
         "_texts": {"page_content": sliced["text"]},
     }
 
+    # use_llm 关闭：直接返回切片原文，不校验占位符 / 不调 LLM
+    if _is_llm_disabled(field):
+        return sliced["text"], NO_LLM_REASON, source_refs
+
     prompt_template = field.text_extract_prompt or ""
     if not validate_prompt_has_placeholder(prompt_template):
         logger.warning("字段 {} 的 text_extract_prompt 缺少占位符", field.field_id)
@@ -804,12 +829,6 @@ async def extract_table_field(
     # 使用用户指定的表名作为统一 label
     label = field.table_name_pattern or "表格"
 
-    # 构建 LLM 输入
-    prompt_template = field.table_extract_prompt or ""
-    if not validate_prompt_has_placeholder(prompt_template):
-        logger.warning("字段 {} 的 table_extract_prompt 缺少占位符", field.field_id)
-        return "", "", None
-
     # 查 page_mapping 用于 bbox 定位（无 file_content 时为空列表，ref 不挂 bboxes）
     page_mapping = (
         await session.execute(
@@ -820,6 +839,16 @@ async def extract_table_field(
     source_refs, results_text_by_label = _build_table_source_refs(
         matched_tables, label, page_mapping
     )
+
+    # use_llm 关闭：直接返回拼接的表格原文，不校验占位符 / 不调 LLM
+    if _is_llm_disabled(field):
+        return _join_retrieved_text(results_text_by_label), NO_LLM_REASON, source_refs
+
+    # 构建 LLM 输入
+    prompt_template = field.table_extract_prompt or ""
+    if not validate_prompt_has_placeholder(prompt_template):
+        logger.warning("字段 {} 的 table_extract_prompt 缺少占位符", field.field_id)
+        return "", "", None
 
     llm_input = replace_search_result_placeholders(prompt_template, results_text_by_label)
     llm_input += JSON_OUTPUT_INSTRUCTION
@@ -966,6 +995,10 @@ async def extract_text_field(
     source_refs, results_text_by_label = _build_text_source_refs(
         search_type, search_results, page_mapping
     )
+
+    # use_llm 关闭：直接返回拼接的检索原文，不校验占位符 / 不调 LLM
+    if _is_llm_disabled(field):
+        return _join_retrieved_text(results_text_by_label), NO_LLM_REASON, source_refs
 
     # 构建 LLM 输入
     prompt_template = field.text_extract_prompt or ""
@@ -1662,6 +1695,16 @@ async def test_field_extraction_stream(
         except Exception as e:
             logger.error("调试检索步骤失败: {}", e)
             yield {"event": "error", "data": {"message": f"检索失败: {str(e)}"}}
+            return
+
+        # ── use_llm 关闭：跳过提示词/LLM，直接返回拼接的检索原文 ──
+        if _is_llm_disabled(field):
+            value = "\n---\n".join(v for v in results_by_label.values() if v)
+            yield {
+                "event": "result",
+                "data": {"extracted_value": value, "reason": NO_LLM_REASON},
+            }
+            yield {"event": "done", "data": {}}
             return
 
         # ── Step 2: 构建提示词 ──────────────────────────────────

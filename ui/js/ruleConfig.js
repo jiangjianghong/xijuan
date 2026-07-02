@@ -453,6 +453,7 @@ const RuleConfig = {
         const isEdit = !!field.field_id;
         const sourceType = field.source_type || 'table';
         const searchType = field.search_type || 'context';
+        const useLlmChecked = field.use_llm === 0 ? '' : 'checked';
 
         return `
             <div class="form-row">
@@ -479,6 +480,15 @@ const RuleConfig = {
                     <label class="form-label">优先级</label>
                     <input class="form-input" id="fm-priority" type="number" value="${field.priority ?? 0}" min="0">
                 </div>
+            </div>
+
+            <!-- LLM 开关（仅表格 / 文本类生效） -->
+            <div class="form-group" id="fm-use-llm-group">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="fm-use-llm" ${useLlmChecked}>
+                    使用 LLM 提取
+                </label>
+                <div class="form-hint">关闭后跳过大模型，直接把检索/匹配到的原文作为字段值（此时无需填写提取提示词）</div>
             </div>
 
             <!-- 表格配置区 -->
@@ -980,6 +990,11 @@ const RuleConfig = {
         if (vlSection) {
             vlSection.style.display = type === 'vl' ? 'block' : 'none';
         }
+        // LLM 开关仅对表格 / 文本类有意义，VL 恒需模型
+        const useLlmGroup = document.getElementById('fm-use-llm-group');
+        if (useLlmGroup) {
+            useLlmGroup.style.display = type === 'vl' ? 'none' : 'block';
+        }
     },
 
     onSearchTypeChange(type) {
@@ -1185,6 +1200,7 @@ const RuleConfig = {
             source_type: sourceType,
             enabled: existingField ? existingField.enabled : 1,
             priority: this.parseIntOrDefault('fm-priority', 0),
+            use_llm: (sourceType === 'vl' || document.getElementById('fm-use-llm').checked) ? 1 : 0,
             table_name_pattern: null,
             table_match_type: null,
             table_match_keywords: null,
@@ -1355,13 +1371,15 @@ const RuleConfig = {
         }
 
         if (data.source_type === 'table') {
-            if (!data.table_extract_prompt) {
-                Toast.error('表格提取 Prompt 不能为空');
-                return false;
-            }
-            if (!/<search_result>[\s\S]+?<\/search_result>/.test(data.table_extract_prompt)) {
-                Toast.error('表格提取 Prompt 须包含 <search_result>...</search_result> 占位符');
-                return false;
+            if (data.use_llm !== 0) {
+                if (!data.table_extract_prompt) {
+                    Toast.error('表格提取 Prompt 不能为空');
+                    return false;
+                }
+                if (!/<search_result>[\s\S]+?<\/search_result>/.test(data.table_extract_prompt)) {
+                    Toast.error('表格提取 Prompt 须包含 <search_result>...</search_result> 占位符');
+                    return false;
+                }
             }
         } else if (data.source_type === 'vl') {
             if (!data.vl_method) {
@@ -1378,13 +1396,15 @@ const RuleConfig = {
                 return false;
             }
         } else {
-            if (!data.text_extract_prompt) {
-                Toast.error('文本提取 Prompt 不能为空');
-                return false;
-            }
-            if (!/<search_result>[\s\S]+?<\/search_result>/.test(data.text_extract_prompt)) {
-                Toast.error('文本提取 Prompt 须包含 <search_result>...</search_result> 占位符');
-                return false;
+            if (data.use_llm !== 0) {
+                if (!data.text_extract_prompt) {
+                    Toast.error('文本提取 Prompt 不能为空');
+                    return false;
+                }
+                if (!/<search_result>[\s\S]+?<\/search_result>/.test(data.text_extract_prompt)) {
+                    Toast.error('文本提取 Prompt 须包含 <search_result>...</search_result> 占位符');
+                    return false;
+                }
             }
         }
 
@@ -1842,6 +1862,9 @@ const RuleConfig = {
         // 构建精简的配置预览
         const displayConfig = {};
         displayConfig.source_type = config.source_type;
+        if (config.source_type !== 'vl') {
+            displayConfig.use_llm = config.use_llm === 0 ? 0 : 1;
+        }
         if (config.source_type === 'table') {
             displayConfig.table_name_pattern = config.table_name_pattern;
             displayConfig.table_match_type = config.table_match_type;
