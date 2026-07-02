@@ -70,6 +70,9 @@ const App = {
             errorSection: document.getElementById('error-section'),
             errorMessage: document.getElementById('error-message'),
             retryBtn: document.getElementById('retry-btn'),
+            rerunSection: document.getElementById('rerun-section'),
+            rerunExtractBtn: document.getElementById('rerun-extract-btn'),
+            rerunAnalyzeBtn: document.getElementById('rerun-analyze-btn'),
             tabContent: document.getElementById('tab-content'),
         };
     },
@@ -116,6 +119,10 @@ const App = {
 
         // 重试按钮
         this.els.retryBtn.addEventListener('click', () => this.retryCurrentFile());
+
+        // 重新执行按钮（已完成文件从抽取 / 分析阶段重跑）
+        this.els.rerunExtractBtn.addEventListener('click', () => this.rerunStage('extracting'));
+        this.els.rerunAnalyzeBtn.addEventListener('click', () => this.rerunStage('analyzing'));
 
         // Tab 切换
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -462,6 +469,7 @@ const App = {
             this.els.drawerFilesize.textContent = Utils.formatFileSize(detail.file_size);
             this.renderTimeline(detail);
             this.renderErrorSection(detail);
+            this.renderRerunSection(detail);
             this.switchTab('outline');
         } catch (error) {
             Toast.error('加载详情失败');
@@ -523,6 +531,36 @@ const App = {
             this.els.errorMessage.textContent = detail.error;
         } else {
             this.els.errorSection.style.display = 'none';
+        }
+    },
+
+    renderRerunSection(detail) {
+        // 仅对已完成文件提供重跑入口（失败文件走错误区的重试按钮）
+        this.els.rerunSection.style.display = detail.progress === 'complete' ? 'block' : 'none';
+    },
+
+    async rerunStage(stage) {
+        const fileId = this.state.currentFileId;
+        if (!fileId) return;
+
+        const isExtract = stage === 'extracting';
+        const label = isExtract ? '重新提取' : '重新分析';
+        const confirmMsg = isExtract
+            ? '重新提取会清空现有「提取结果」和「分析结果」，并重新执行提取 → 分析，确定继续？'
+            : '重新分析会清空现有「分析结果」并重新执行分析，确定继续？';
+        if (!confirm(confirmMsg)) return;
+
+        const fileName = this.els.drawerFilename.textContent || 'unknown';
+        this.closeDrawer();
+        this.addToQueue(fileId, fileName, stage, Utils.getStageProgress(stage));
+
+        try {
+            await API.retryFileAsync(fileId, stage);
+            Toast.info(`${fileName} 已开始${label}`);
+            this.loadFileList();
+        } catch (error) {
+            this.removeFromQueue(fileId);
+            Toast.error(`${label}失败: ${error.message}`);
         }
     },
 

@@ -345,6 +345,32 @@ h1, h2, h3, h4, h5, h6,
     filter: brightness(1.1);
 }
 
+.btn-secondary {
+    background: var(--bio-pale);
+    color: var(--bio-dark);
+    border: 1px solid var(--border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #dbe6d7;
+}
+
+/* ── Re-run section (drawer, completed files) ── */
+.rerun-section {
+    margin-top: 16px;
+}
+
+.rerun-btns {
+    display: flex;
+    gap: 8px;
+}
+
+.rerun-hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
 .btn-ghost {
     background: transparent;
     color: var(--text-secondary);
