@@ -1832,6 +1832,8 @@ const RuleConfig = {
 
         // 收集当前表单数据
         const formData = this.collectFieldFormData();
+        // 记录是否跳过 LLM，供调试事件渲染时避免误导性的「构建提示词/调用 LLM」提示
+        this.state.debugSkipLlm = formData.use_llm === 0;
 
         // 显示检索配置预览
         this.showDebugConfigPreview(formData);
@@ -1901,8 +1903,11 @@ const RuleConfig = {
         switch (event) {
             case 'search_results':
                 this._hideDebugLoading();
-                this._showDebugLoading('正在构建提示词...');
                 this.renderDebugSearchResults(data);
+                // 跳过 LLM 时后端会直接给 result，不再有提示词/LLM 步骤，避免误导性 loading
+                if (!this.state.debugSkipLlm) {
+                    this._showDebugLoading('正在构建提示词...');
+                }
                 break;
             case 'match_llm':
                 this.renderMatchLlm(data);
