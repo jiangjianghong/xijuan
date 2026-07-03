@@ -453,7 +453,7 @@ const RuleConfig = {
         const isEdit = !!field.field_id;
         const sourceType = field.source_type || 'table';
         const searchType = field.search_type || 'context';
-        const useLlmChecked = field.use_llm === 0 ? '' : 'checked';
+        const skipLlmChecked = field.use_llm === 0 ? 'checked' : '';
 
         return `
             <div class="form-row">
@@ -485,10 +485,10 @@ const RuleConfig = {
             <!-- LLM 开关（仅表格 / 文本类生效） -->
             <div class="form-group" id="fm-use-llm-group">
                 <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                    <input type="checkbox" id="fm-use-llm" ${useLlmChecked}>
-                    使用 LLM 提取
+                    <input type="checkbox" id="fm-skip-llm" ${skipLlmChecked} onchange="RuleConfig.onSkipLlmChange(this.checked)">
+                    跳过 LLM，直接返回检索原文
                 </label>
-                <div class="form-hint">关闭后跳过大模型，直接把检索/匹配到的原文作为字段值（此时无需填写提取提示词）</div>
+                <div class="form-hint">勾选后不调用大模型，直接把检索/匹配到的原文作为字段值（无需填写提示词）</div>
             </div>
 
             <!-- 表格配置区 -->
@@ -517,6 +517,7 @@ const RuleConfig = {
                     <input class="form-input" type="number" id="fm-table-match-max-results" min="0" placeholder="0 表示不限制" value="${field.table_match_max_results ?? ''}">
                     <div class="form-hint">匹配后最多返回的表格数量，0 或空表示不限制</div>
                 </div>
+                <div id="fm-table-prompt-wrap">
                 <div class="form-group">
                     <label class="form-label">系统提示词</label>
                     <textarea class="form-textarea" id="fm-table-system-prompt" rows="3" placeholder="可选，设置 LLM 的角色和行为约束">${Utils.escapeHtml(field.table_system_prompt || '')}</textarea>
@@ -531,6 +532,7 @@ const RuleConfig = {
                     </div>
                     <textarea class="form-textarea" id="fm-table-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.table_extract_prompt || '')}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
+                </div>
                 </div>
             </div>
 
@@ -552,6 +554,7 @@ const RuleConfig = {
                 <div id="fm-search-config-area">
                     ${this.buildSearchConfigFields(searchType, field.search_config || {})}
                 </div>
+                <div id="fm-text-prompt-wrap">
                 <div class="form-group">
                     <label class="form-label">系统提示词</label>
                     <textarea class="form-textarea" id="fm-text-system-prompt" rows="3" placeholder="可选，设置 LLM 的角色和行为约束">${Utils.escapeHtml(field.text_system_prompt || '')}</textarea>
@@ -566,6 +569,7 @@ const RuleConfig = {
                     </div>
                     <textarea class="form-textarea" id="fm-text-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.text_extract_prompt || '')}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
+                </div>
                 </div>
             </div>
 
@@ -995,6 +999,18 @@ const RuleConfig = {
         if (useLlmGroup) {
             useLlmGroup.style.display = type === 'vl' ? 'none' : 'block';
         }
+        // 同步「跳过 LLM」对提示词区的显隐
+        const skipLlm = document.getElementById('fm-skip-llm');
+        this.onSkipLlmChange(skipLlm ? skipLlm.checked : false);
+    },
+
+    onSkipLlmChange(skip) {
+        // 勾选「跳过 LLM」时隐藏系统/用户提示词区（表格 + 文本两处）
+        const display = skip ? 'none' : '';
+        ['fm-table-prompt-wrap', 'fm-text-prompt-wrap'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = display;
+        });
     },
 
     onSearchTypeChange(type) {
@@ -1200,7 +1216,7 @@ const RuleConfig = {
             source_type: sourceType,
             enabled: existingField ? existingField.enabled : 1,
             priority: this.parseIntOrDefault('fm-priority', 0),
-            use_llm: (sourceType === 'vl' || document.getElementById('fm-use-llm').checked) ? 1 : 0,
+            use_llm: (sourceType === 'vl' || !document.getElementById('fm-skip-llm').checked) ? 1 : 0,
             table_name_pattern: null,
             table_match_type: null,
             table_match_keywords: null,
