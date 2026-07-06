@@ -67,6 +67,9 @@ parsing → tableing → chunking → embedding → extracting → analyzing →
   `analysis_rule` 均按 `type_id` 隔离，**不跨类型共享**；共享靠显式复制 / 导入。
 - **类型的血缘维度**：`is_template`（模板标记，`promote` / `demote` 切换）+ `parent_type_id`
   （复制来源，`copy_from` / `import` 自动记录）。
+- **类型的项目维度**：`project_id`（可空=未分组）对「模板 + 其血缘下游」分类，一个类型属 ≤1 个
+  项目；`batch_assign_project` 归类会**级联血缘后代**，`copy_from`/派生的新类型继承源项目，
+  `default` 恒未分组。
 - **`file_id`** —— 由 `(type_id, file_name, time.time_ns(), secrets.token_hex(8))`
   取 `SHA256[:32]` 生成；**每次上传都是新 ID，不做去重**。
 - **`field_id` / `rule_id`** —— **全局唯一**（不只是类型内唯一）。upsert 时若 ID 已被
@@ -102,7 +105,8 @@ TAGS = [
     {
         "name": "doctype",
         "description": (
-            "文档类型管理：CRUD、跨类型复制、导出/导入、模板血缘（promote/demote）、批量删除。"
+            "文档类型管理：CRUD、跨类型复制、导出/导入、模板血缘（promote/demote）、"
+            "项目分类（projects CRUD + 级联归类）、批量删除。"
         ),
     },
     {"name": "file", "description": "文件解析（async/sync/stream）、进度查询、删除、按阶段重试、各阶段结果获取。"},
@@ -128,14 +132,15 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "**过滤**\n"
                 "- `q`：对 `type_id` / `type_name` 做 `LIKE %q%` 模糊匹配\n"
                 "- `scope`：`all`（全部）/ `template`（`is_template=1` 或默认类型）/ "
-                "`copy`（既非模板也非默认的副本）\n\n"
+                "`copy`（既非模板也非默认的副本）\n"
+                "- `project_id`：具体项目只返成员；`__ungrouped__` 只返未分组（含默认类型）\n\n"
                 "**排序**：默认类型恒置顶（`is_default DESC` 优先），其后按 `sort` —— "
                 "`created_at`（降序，默认）或 `type_name`（升序）。\n\n"
                 "**性能**：计数对当前结果集的 `type_id` 用 3 条 `GROUP BY` 聚合，避免 N+1。\n\n"
                 "**每项字段**：`type_id` / `type_name` / `description` / `is_default` / `enabled` / "
-                "`is_template` / `parent_type_id` / `created_at` / "
+                "`is_template` / `parent_type_id` / `project_id` / `project_name` / `created_at` / "
                 "`updated_at` / `file_count` / `field_count` / `rule_count`。\n\n"
-                "> 顶部类型选择器通常只取模板 + 默认 + 当前选中；副本的搜索/管理在「管理」弹窗里用本接口完成。"
+                "> 顶部导航两级：先选项目，类型下拉只显示该项目的类型；副本的搜索/管理在「管理」弹窗里用本接口完成。"
             ),
         }
     },
@@ -241,6 +246,45 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "description": (
                 "取消模板标记（`is_template=0`），不影响 `parent_type_id` 血缘。\n\n"
                 "**错误码**：400（默认类型不可操作）/ 404（类型不存在）。返回 `data={type_id}`。"
+            ),
+        }
+    },
+    "/doctype/projects": {
+        "get": {
+            "summary": "列出项目",
+            "description": (
+                "列出所有项目，每项附 `type_count`（该项目下类型数）。\n\n"
+                "返回 `data=[ProjectResponse{project_id, project_name, description, type_count, "
+                "created_at, updated_at}]`。"
+            ),
+        },
+        "post": {
+            "summary": "新增/改名项目（upsert）",
+            "description": (
+                "按 `project_id` upsert。已存在则更新 `project_name` / `description`；不存在则创建。\n\n"
+                "`project_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。返回 `data={project_id}`。"
+            ),
+        },
+    },
+    "/doctype/projects/{project_id}": {
+        "delete": {
+            "summary": "删除项目",
+            "description": (
+                "删除项目：先把成员类型的 `project_id` 置空（变未分组），再删项目本身——"
+                "**不删除任何类型**。\n\n"
+                "**错误码**：404（项目不存在）。返回 `data={project_id}`。"
+            ),
+        }
+    },
+    "/doctype/batch_assign_project": {
+        "post": {
+            "summary": "批量归类到项目（级联血缘）",
+            "description": (
+                "把 `type_ids` 归入 `project_id`（传 `null` 表示移出、变未分组）。\n\n"
+                "**归类级联血缘**：入参每个类型的所有 `parent_type_id` 传递后代一并归入同一项目"
+                "（抓模板即整条血缘进组）；**默认类型跳过**（恒未分组）。\n\n"
+                "**错误码**：404（`project_id` 非空但项目不存在）。\n\n"
+                "返回 `data={requested:<入参数>, affected:<实际写入数，含级联带入>, project_id}`。"
             ),
         }
     },
@@ -623,6 +667,7 @@ GLOBAL_PARAM_DOCS: Dict[str, str] = {
     "field_id": "字段配置 ID（全局唯一，匹配 `^[a-zA-Z0-9_]+$`，最长 100）。",
     "rule_id": "分析规则 ID（全局唯一，匹配 `^[a-zA-Z0-9_]+$`，最长 100）。",
     "type_id": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。",
+    "project_id": "项目 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。",
     "page": "页码，从 1 开始。",
     "page_size": "每页条数。",
     "callback_url": "可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时 2.5s，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。",
@@ -635,6 +680,7 @@ PARAM_OVERRIDES: Dict[tuple, Dict[str, Any]] = {
             "description": "范围过滤：`all` 全部 / `template` 模板（含默认类型）/ `copy` 副本（既非模板也非默认）。",
             "enum": ["all", "template", "copy"],
         },
+        "project_id": "项目过滤：具体 `project_id` 只返该项目成员；`__ungrouped__` 只返未分组（含默认类型）；省略不过滤。",
         "page": "页码（从 1 开始）。**与 `page_size` 同时传入才启用分页**，返回 `{items, total}`；否则返回数组。",
         "page_size": "每页条数（1–500）。**与 `page` 同时传入才启用分页**。",
         "sort": {
@@ -742,6 +788,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "type_name": "类型显示名（最长 200）。",
             "description": "类型描述（可空）。",
             "enabled": "是否启用，1 启用 / 0 停用。",
+            "project_id": "归属项目 ID；**仅新建时生效**（更新已存在类型时忽略，项目归属由 `batch_assign_project` 管理）。`null`=未分组。",
         },
         "examples": [{"type_id": "financial_report", "type_name": "财务报告", "description": "上市公司年度财报", "enabled": 1}],
     },
@@ -752,6 +799,23 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "force": "是否级联删除类型下的文件与配置；默认 `false`。",
         },
         "examples": [{"type_ids": ["tmp_a", "tmp_b"], "force": False}],
+    },
+    "ProjectCreate": {
+        "description": "创建/改名项目的请求体（按 `project_id` upsert）。项目对「模板 + 其血缘下游」分类。",
+        "properties": {
+            "project_id": "项目 ID，匹配 `^[a-zA-Z0-9_-]+$`（最长 64）；作为 upsert 主键。",
+            "project_name": "项目显示名（最长 200）。",
+            "description": "项目描述（可空）。",
+        },
+        "examples": [{"project_id": "annual_reports", "project_name": "年报项目", "description": "各类年度报告"}],
+    },
+    "BatchAssignProjectRequest": {
+        "description": "批量把类型归入项目；归类会级联到每个类型的血缘下游，默认类型跳过。",
+        "properties": {
+            "type_ids": "要归类的类型 ID 列表（各自的血缘后代会一并带入同一项目）。",
+            "project_id": "目标项目 ID；`null` 表示移出（变未分组）。",
+        },
+        "examples": [{"type_ids": ["annual_2023"], "project_id": "annual_reports"}],
     },
     "CopyConfigsRequest": {
         "description": "从源类型复制字段/规则到目标类型（独立副本）。",

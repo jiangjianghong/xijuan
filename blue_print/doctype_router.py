@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.database import get_db
 from model.schemas import (
+    BatchAssignProjectRequest,
     CopyConfigsRequest,
     CopyConfigsResponse,
     DocTypeBatchDeleteRequest,
@@ -29,6 +30,8 @@ from model.schemas import (
     ExportRuleItem,
     ImportConfigsRequest,
     ImportConfigsResponse,
+    ProjectCreate,
+    ProjectResponse,
     ResponseWrapper,
 )
 from model.tables import (
@@ -41,6 +44,7 @@ from model.tables import (
     FileChunk,
     FileContent,
     FileTable,
+    Project,
 )
 from utils.milvus_client import MilvusClient
 
@@ -97,6 +101,7 @@ def _has_copy_id(source_id: str, existing_ids: set[str], max_length: int = 100) 
 async def list_doctypes(
     q: Optional[str] = Query(None, description="模糊搜 type_id/type_name"),
     scope: str = Query("all", pattern=r"^(all|template|copy)$"),
+    project_id: Optional[str] = Query(None, description="项目过滤；__ungrouped__ 表示未分组"),
     page: Optional[int] = Query(None, ge=1),
     page_size: Optional[int] = Query(None, ge=1, le=500),
     sort: str = Query("created_at", pattern=r"^(created_at|type_name)$"),
@@ -106,7 +111,7 @@ async def list_doctypes(
 
     - 传齐 page+page_size：返回 {items, total}（分页）
     - 否则：原样返回数组（向后兼容；不传任何参数即旧行为）
-    - q/scope/sort 仅在传入时生效
+    - q/scope/project_id/sort 仅在传入时生效
     - 计数（file/field/rule）对结果集 type_id 用 3 条 GROUP BY 聚合，避免 N+1
     """
     base = select(DocType)
@@ -117,6 +122,10 @@ async def list_doctypes(
         base = base.where(or_(DocType.is_template == 1, DocType.is_default == 1))
     elif scope == "copy":
         base = base.where(DocType.is_template == 0, DocType.is_default == 0)
+    if project_id == "__ungrouped__":
+        base = base.where(DocType.project_id.is_(None))
+    elif project_id:
+        base = base.where(DocType.project_id == project_id)
 
     total = (
         await db.execute(select(func.count()).select_from(base.subquery()))
@@ -149,6 +158,19 @@ async def list_doctypes(
             ).fetchall()
             target.update({r[0]: r[1] for r in rows})
 
+    # 项目名映射：结果集里已分组 type 的 project_id -> project_name
+    proj_ids = [t.project_id for t in types if t.project_id]
+    proj_name_map: dict = {}
+    if proj_ids:
+        rows = (
+            await db.execute(
+                select(Project.project_id, Project.project_name).where(
+                    Project.project_id.in_(proj_ids)
+                )
+            )
+        ).fetchall()
+        proj_name_map = {r[0]: r[1] for r in rows}
+
     items = []
     for t in types:
         items.append(
@@ -163,6 +185,8 @@ async def list_doctypes(
                     enabled=t.enabled,
                     is_template=t.is_template,
                     parent_type_id=t.parent_type_id,
+                    project_id=t.project_id,
+                    project_name=proj_name_map.get(t.project_id),
                     created_at=t.created_at,
                     updated_at=t.updated_at,
                 ).model_dump(),
@@ -201,6 +225,7 @@ async def upsert_doctype(payload: DocTypeCreate, db: AsyncSession = Depends(get_
         enable_embedding=payload.enable_embedding,
         is_default=0,
         enabled=payload.enabled,
+        project_id=payload.project_id,
     )
     db.add(new_t)
     await db.commit()
@@ -604,6 +629,9 @@ async def copy_configs(
     # 记录血缘：目标由源复制而来（默认类型不 reparent）
     if target.is_default != 1:
         target.parent_type_id = req.source_type_id
+        # 目标未分组时继承源项目；已分组不覆盖（模板的副本自动进同一项目）
+        if target.project_id is None and source.project_id is not None:
+            target.project_id = source.project_id
 
     await db.commit()
 
@@ -912,6 +940,154 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
     await db.commit()
 
     return ResponseWrapper(message="配置导入完成", data=resp.model_dump())
+
+
+# ─────────────────────────────────────────────────────────────
+# 项目：对「模板 + 其血缘下游」分类（一个 type 只属一个项目）
+# ─────────────────────────────────────────────────────────────
+
+
+async def _lineage_closure(root_ids: List[str], db: AsyncSession) -> set[str]:
+    """root_ids + 其所有血缘后代（沿 parent_type_id 的传递闭包）。
+
+    归类某模板时用它把整条血缘一并带入项目。`new - result` 去重同时兜底防环，
+    闭包规模受类型总数上界约束。
+    """
+    result: set[str] = set(root_ids)
+    frontier: set[str] = set(root_ids)
+    while frontier:
+        rows = (
+            await db.execute(
+                select(DocType.type_id).where(DocType.parent_type_id.in_(frontier))
+            )
+        ).scalars().all()
+        new = set(rows) - result
+        if not new:
+            break
+        result |= new
+        frontier = new
+    return result
+
+
+@router.get("/projects", response_model=ResponseWrapper)
+async def list_projects(db: AsyncSession = Depends(get_db)):
+    """列出所有项目，附带每个项目下的 type 数。"""
+    projects = (
+        await db.execute(select(Project).order_by(Project.created_at))
+    ).scalars().all()
+
+    rows = (
+        await db.execute(
+            select(DocType.project_id, func.count(DocType.type_id))
+            .where(DocType.project_id.isnot(None))
+            .group_by(DocType.project_id)
+        )
+    ).fetchall()
+    count_map = {r[0]: r[1] for r in rows}
+
+    items = [
+        ProjectResponse(
+            project_id=p.project_id,
+            project_name=p.project_name,
+            description=p.description,
+            type_count=count_map.get(p.project_id, 0),
+            created_at=p.created_at,
+            updated_at=p.updated_at,
+        ).model_dump()
+        for p in projects
+    ]
+    return ResponseWrapper(data=items)
+
+
+@router.post("/projects", response_model=ResponseWrapper)
+async def upsert_project(payload: ProjectCreate, db: AsyncSession = Depends(get_db)):
+    """创建/改名项目（按 project_id upsert）。"""
+    existing = (
+        await db.execute(select(Project).where(Project.project_id == payload.project_id))
+    ).scalar_one_or_none()
+    if existing:
+        existing.project_name = payload.project_name
+        existing.description = payload.description
+        await db.commit()
+        return ResponseWrapper(message="项目已更新", data={"project_id": payload.project_id})
+
+    db.add(
+        Project(
+            project_id=payload.project_id,
+            project_name=payload.project_name,
+            description=payload.description,
+        )
+    )
+    await db.commit()
+    return ResponseWrapper(message="项目已创建", data={"project_id": payload.project_id})
+
+
+@router.delete("/projects/{project_id}", response_model=ResponseWrapper)
+async def delete_project(project_id: str, db: AsyncSession = Depends(get_db)):
+    """删除项目：成员 type 的 project_id 置空，再删项目本身（不删 type）。"""
+    existing = (
+        await db.execute(select(Project).where(Project.project_id == project_id))
+    ).scalar_one_or_none()
+    if not existing:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    await db.execute(
+        update(DocType).where(DocType.project_id == project_id).values(project_id=None)
+    )
+    await db.delete(existing)
+    await db.commit()
+    return ResponseWrapper(message="项目已删除", data={"project_id": project_id})
+
+
+@router.post("/batch_assign_project", response_model=ResponseWrapper)
+async def batch_assign_project(
+    req: BatchAssignProjectRequest, db: AsyncSession = Depends(get_db)
+):
+    """批量把 type 归入项目（project_id=None 表示移出/未分组）。
+
+    归类级联血缘：入参每个 type 的所有血缘后代一并写入同一项目；default 类型跳过、恒未分组。
+    返回 affected = 实际写入条数（含级联带入的后代）。
+    """
+    if req.project_id is not None:
+        exists = (
+            await db.execute(select(Project).where(Project.project_id == req.project_id))
+        ).scalar_one_or_none()
+        if not exists:
+            raise HTTPException(status_code=404, detail="项目不存在")
+
+    if not req.type_ids:
+        return ResponseWrapper(
+            message="批量归类完成",
+            data={"requested": 0, "affected": 0, "project_id": req.project_id},
+        )
+
+    # 级联：入参 type 的血缘后代一并归入
+    targets = await _lineage_closure(req.type_ids, db)
+    # 排除默认类型（保持全局未分组）
+    default_ids = set(
+        (
+            await db.execute(
+                select(DocType.type_id).where(
+                    DocType.type_id.in_(targets), DocType.is_default == 1
+                )
+            )
+        ).scalars().all()
+    )
+    targets -= default_ids
+
+    if targets:
+        await db.execute(
+            update(DocType).where(DocType.type_id.in_(targets)).values(project_id=req.project_id)
+        )
+    await db.commit()
+    return ResponseWrapper(
+        message="批量归类完成",
+        data={
+            "requested": len(req.type_ids),
+            "affected": len(targets),
+            "project_id": req.project_id,
+        },
+    )
 
 
 @router.post("/{type_id}/promote", response_model=ResponseWrapper)

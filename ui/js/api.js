@@ -17,6 +17,18 @@ const API = {
     },
 
     /**
+     * 当前选中的项目 ID（持久化在 localStorage）。
+     * '__ungrouped__' = 未分组（含 default 与所有未归类类型），为默认落地值。
+     */
+    getCurrentProjectId() {
+        return localStorage.getItem('currentProjectId') || '__ungrouped__';
+    },
+
+    setCurrentProjectId(projectId) {
+        localStorage.setItem('currentProjectId', projectId || '__ungrouped__');
+    },
+
+    /**
      * 通用请求方法
      */
     async request(url, options = {}) {
@@ -357,6 +369,7 @@ const API = {
         const qs = new URLSearchParams();
         if (params.q) qs.set('q', params.q);
         if (params.scope && params.scope !== 'all') qs.set('scope', params.scope);
+        if (params.projectId) qs.set('project_id', params.projectId);
         if (params.page) qs.set('page', params.page);
         if (params.pageSize) qs.set('page_size', params.pageSize);
         if (params.sort) qs.set('sort', params.sort);
@@ -377,6 +390,36 @@ const API = {
         const result = await this.request('/doctype/batch_delete', {
             method: 'POST',
             body: JSON.stringify({ type_ids: typeIds, force }),
+        });
+        return result.data;
+    },
+
+    // ─── 项目：对「模板 + 其血缘下游」分类 ───
+
+    async getProjects() {
+        const result = await this.request('/doctype/projects');
+        return result.data;
+    },
+
+    async saveProject(data) {
+        return this.request('/doctype/projects', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    },
+
+    async deleteProject(projectId) {
+        return this.request(`/doctype/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' });
+    },
+
+    /**
+     * 批量把类型归入项目（projectId 传 null 表示移出/未分组）。
+     * 服务端会级联到每个类型的血缘下游，返回 {requested, affected, project_id}。
+     */
+    async batchAssignProject(typeIds, projectId) {
+        const result = await this.request('/doctype/batch_assign_project', {
+            method: 'POST',
+            body: JSON.stringify({ type_ids: typeIds, project_id: projectId ?? null }),
         });
         return result.data;
     },

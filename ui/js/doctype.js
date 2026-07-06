@@ -7,11 +7,15 @@
  * 切换/选用类型后，刷新文件列表与字段/规则列表。
  */
 const DocTypeManager = {
-    selectorTypes: [],     // 选择器用（模板 + 默认）
+    selectorTypes: [],     // 类型选择器数据（当前项目下的类型）
+    projects: [],          // 所有项目（含 type_count）
     _currentName: '',      // 当前类型显示名（选用时记录，供选择器回显非模板类型）
+    _copyPool: null,       // 「从其他类型复制」弹窗的候选池（全部类型，不受项目过滤）
+    _editingProjectId: null,
+    _assignOneTypeId: null,
     manage: {
         items: [], total: 0, page: 1, pageSize: 20,
-        q: '', scope: 'all', selected: new Set(), menuOpenId: null,
+        q: '', scope: 'all', projectId: '', selected: new Set(), menuOpenId: null,
     },
     typeForm: { mode: 'create' },
     _importPayload: null,
@@ -27,13 +31,36 @@ const DocTypeManager = {
     },
 
     async refresh() {
+        const projectId = API.getCurrentProjectId();
         try {
-            this.selectorTypes = await API.listDocTypes({ scope: 'template' });
+            const [projects, types] = await Promise.all([
+                API.getProjects(),
+                API.listDocTypes({ projectId }),
+            ]);
+            this.projects = projects || [];
+            this.selectorTypes = types || [];
         } catch (e) {
-            console.error('加载文档类型失败:', e);
+            console.error('加载项目/文档类型失败:', e);
+            this.projects = this.projects || [];
             this.selectorTypes = [{ type_id: 'default', type_name: '默认类型', is_default: 1, file_count: 0 }];
         }
+        this.renderProjectSelector();
         this.renderSelector();
+    },
+
+    // 顶部项目下拉：未分组 + 各项目（带类型数）
+    renderProjectSelector() {
+        const sel = document.getElementById('project-selector');
+        if (!sel) return;
+        const current = API.getCurrentProjectId();
+        const opts = ['<option value="__ungrouped__">未分组</option>'];
+        (this.projects || []).forEach(p => {
+            opts.push(`<option value="${escapeAttr(p.project_id)}">${escapeHtml(p.project_name)} (${p.type_count || 0})</option>`);
+        });
+        sel.innerHTML = opts.join('');
+        const exists = current === '__ungrouped__' || (this.projects || []).some(p => p.project_id === current);
+        sel.value = exists ? current : '__ungrouped__';
+        if (!exists) API.setCurrentProjectId('__ungrouped__');
     },
 
     renderSelector() {
@@ -61,6 +88,28 @@ const DocTypeManager = {
         Toast.success('已切换文档类型: ' + sel.options[sel.selectedIndex].text);
     },
 
+    // 切换项目：拉该项目类型 → 重置当前类型为首个（未分组回退 default）→ 联动刷新
+    async onProjectChange() {
+        const sel = document.getElementById('project-selector');
+        if (!sel) return;
+        const projectId = sel.value;
+        API.setCurrentProjectId(projectId);
+        let types = [];
+        try {
+            types = await API.listDocTypes({ projectId }) || [];
+        } catch (e) { console.warn(e); }
+        this.selectorTypes = types;
+        let nextType;
+        if (types.some(t => t.type_id === 'default')) nextType = 'default';
+        else if (types.length) nextType = types[0].type_id;
+        else nextType = 'default';
+        API.setCurrentTypeId(nextType);
+        this._currentName = (types.find(t => t.type_id === nextType) || {}).type_name || nextType;
+        this.renderSelector();
+        this._reloadCurrentType();
+        Toast.success('已切换项目: ' + (sel.options[sel.selectedIndex]?.text || projectId));
+    },
+
     // 选用/切换当前类型后，刷新依赖「当前类型」的页面区域
     _reloadCurrentType() {
         if (typeof App !== 'undefined' && App.loadFileList) {
@@ -74,11 +123,13 @@ const DocTypeManager = {
 
     // ─── 管理弹窗 ───
 
-    openManageDialog() {
+    async openManageDialog() {
         document.getElementById('doctype-modal-overlay').classList.add('active');
         this.manage.page = 1;
         this.manage.selected = new Set();
         this.manage.menuOpenId = null;
+        try { this.projects = await API.getProjects() || []; } catch (e) { console.warn(e); }
+        this._renderProjectFilterOptions();
         this.loadManage();
     },
     closeManageDialog() {
@@ -89,7 +140,7 @@ const DocTypeManager = {
         const m = this.manage;
         let data;
         try {
-            data = await API.listDocTypes({ q: m.q, scope: m.scope, page: m.page, pageSize: m.pageSize });
+            data = await API.listDocTypes({ q: m.q, scope: m.scope, projectId: m.projectId, page: m.page, pageSize: m.pageSize });
         } catch (e) {
             Toast.error('加载失败: ' + e.message);
             return;
@@ -124,6 +175,9 @@ const DocTypeManager = {
             const src = t.parent_type_id
                 ? '←' + escapeHtml(nameMap[t.parent_type_id] || t.parent_type_id)
                 : '—';
+            const projectCell = t.project_name
+                ? escapeHtml(t.project_name)
+                : '<span style="color:#9ca3af;">未分组</span>';
             const parsePages = t.max_parse_pages ? `${escapeHtml(t.max_parse_pages)} 页` : '全部';
             const embeddingText = t.enable_embedding === 0 ? '关闭' : '执行';
             const checkbox = isDef ? '' :
@@ -136,6 +190,8 @@ const DocTypeManager = {
             const delItem = isDef
                 ? `<button disabled title="默认类型不可删除">删除</button>`
                 : `<button class="danger" onclick="DocTypeManager.deleteType('${escapeAttr(t.type_id)}')">删除</button>`;
+            const assignItem = isDef ? '' :
+                `<button onclick="DocTypeManager.assignOne('${escapeAttr(t.type_id)}')">归入项目…</button>`;
             const menuOpen = m.menuOpenId === t.type_id;
             return `<tr>
                 <td>${checkbox}</td>
@@ -145,6 +201,7 @@ const DocTypeManager = {
                 </td>
                 <td>${tag}</td>
                 <td>${src}</td>
+                <td>${projectCell}</td>
                 <td>${parsePages}</td>
                 <td>${embeddingText}</td>
                 <td>${t.file_count || 0}</td>
@@ -157,6 +214,7 @@ const DocTypeManager = {
                         <div class="dt-menu-pop">
                             <button onclick="DocTypeManager.viewType('${escapeAttr(t.type_id)}')">查看配置</button>
                             <button onclick="DocTypeManager.openDeriveForm('${escapeAttr(t.type_id)}')">复制为新类型</button>
+                            ${assignItem}
                             ${renameItem}
                             ${tplItem}
                             <button onclick="DocTypeManager.exportType('${escapeAttr(t.type_id)}')">导出</button>
@@ -197,6 +255,28 @@ const DocTypeManager = {
         this.manage.page = 1;
         this.loadManage();
     },
+    onProjectFilterChange() {
+        this.manage.projectId = document.getElementById('dt-project-filter').value;
+        this.manage.page = 1;
+        this.loadManage();
+    },
+
+    // 填充管理弹窗的项目筛选下拉 + 批量归入下拉
+    _renderProjectFilterOptions() {
+        const filter = document.getElementById('dt-project-filter');
+        if (filter) {
+            filter.innerHTML =
+                '<option value="">全部项目</option><option value="__ungrouped__">未分组</option>' +
+                (this.projects || []).map(p => `<option value="${escapeAttr(p.project_id)}">${escapeHtml(p.project_name)}</option>`).join('');
+            filter.value = this.manage.projectId || '';
+        }
+        const assign = document.getElementById('dt-assign-project');
+        if (assign) {
+            assign.innerHTML =
+                '<option value="__ungrouped__">移出（未分组）</option>' +
+                (this.projects || []).map(p => `<option value="${escapeAttr(p.project_id)}">${escapeHtml(p.project_name)}</option>`).join('');
+        }
+    },
 
     prevPage() { if (this.manage.page > 1) { this.manage.page--; this.loadManage(); } },
     nextPage() {
@@ -236,6 +316,8 @@ const DocTypeManager = {
         const t = this.manage.items.find(x => x.type_id === typeId);
         this._currentName = t ? t.type_name : typeId;
         API.setCurrentTypeId(typeId);
+        // 同步当前项目到该类型所属项目，保证顶部两级下拉一致
+        if (t) API.setCurrentProjectId(t.project_id || '__ungrouped__');
         await this.refresh();
         this._reloadCurrentType();
         Toast.success('已选用文档类型：' + this._currentName);
@@ -251,6 +333,54 @@ const DocTypeManager = {
         this.closeRowMenu();
         try { await API.demoteType(typeId); Toast.success('已取消模板'); await this.loadManage(); await this.refresh(); }
         catch (e) { Toast.error('操作失败: ' + e.message); }
+    },
+
+    async batchAssign() {
+        const ids = Array.from(this.manage.selected);
+        if (ids.length === 0) { Toast.error('未选择任何类型'); return; }
+        const val = document.getElementById('dt-assign-project').value;
+        const projectId = val === '__ungrouped__' ? null : val;
+        try {
+            const res = await API.batchAssignProject(ids, projectId);
+            const extra = (res.affected || 0) > (res.requested || 0) ? `（含血缘下游共 ${res.affected} 个）` : '';
+            Toast.success(`已归类 ${res.affected} 个类型${extra}`);
+            this.manage.selected = new Set();
+            await this.loadManage();
+            await this.refresh();
+        } catch (e) { Toast.error('归类失败: ' + e.message); }
+    },
+
+    // 行内「归入项目…」：单个类型归类（服务端同样级联血缘下游）
+    assignOne(typeId) {
+        this.closeRowMenu();
+        const t = this.manage.items.find(x => x.type_id === typeId);
+        if (!t) return;
+        this._assignOneTypeId = typeId;
+        document.getElementById('assign-one-hint').textContent = `把「${t.type_name}」归入：`;
+        const sel = document.getElementById('assign-one-project');
+        sel.innerHTML =
+            '<option value="__ungrouped__">未分组（移出项目）</option>' +
+            (this.projects || []).map(p => `<option value="${escapeAttr(p.project_id)}">${escapeHtml(p.project_name)}</option>`).join('');
+        sel.value = t.project_id || '__ungrouped__';
+        document.getElementById('assign-one-modal-overlay').classList.add('active');
+    },
+    closeAssignOne() {
+        document.getElementById('assign-one-modal-overlay').classList.remove('active');
+        this._assignOneTypeId = null;
+    },
+    async confirmAssignOne() {
+        const typeId = this._assignOneTypeId;
+        if (!typeId) return;
+        const val = document.getElementById('assign-one-project').value;
+        const projectId = val === '__ungrouped__' ? null : val;
+        try {
+            const res = await API.batchAssignProject([typeId], projectId);
+            const extra = (res.affected || 0) > (res.requested || 0) ? `（含血缘下游共 ${res.affected} 个）` : '';
+            Toast.success(`已归类${extra}`);
+            this.closeAssignOne();
+            await this.loadManage();
+            await this.refresh();
+        } catch (e) { Toast.error('归类失败: ' + e.message); }
     },
 
     async batchDelete() {
@@ -332,9 +462,11 @@ const DocTypeManager = {
 
     // ─── 从其他类型复制配置（灌入当前类型；与「派生新类型」方向相反，二者并存） ───
 
-    openCopyDialog() {
+    async openCopyDialog() {
         const current = API.getCurrentTypeId();
-        const pool = this.selectorTypes || [];
+        let pool = [];
+        try { pool = await API.listDocTypes({}) || []; } catch (e) { console.warn(e); pool = this.selectorTypes || []; }
+        this._copyPool = pool;
         const currentType = pool.find(t => t.type_id === current);
         document.getElementById('copy-target-display').value =
             currentType ? `${currentType.type_name} (${currentType.type_id})` : current;
@@ -356,7 +488,7 @@ const DocTypeManager = {
 
     onSourceTypeChange() {
         const tid = document.getElementById('copy-source-select').value;
-        const t = (this.selectorTypes || []).find(x => x.type_id === tid);
+        const t = (this._copyPool || this.selectorTypes || []).find(x => x.type_id === tid);
         const summary = document.getElementById('copy-source-summary');
         summary.textContent = t
             ? `源类型 "${t.type_name}" 当前有 ${t.field_count || 0} 个字段、${t.rule_count || 0} 条规则。复制后两份完全独立，目标类型修改不会影响源。`
@@ -484,12 +616,15 @@ const DocTypeManager = {
             Toast.error('最大解析页数必须是大于 0 的整数');
             return;
         }
+        const currentProject = API.getCurrentProjectId();
         const typePayload = {
             type_id: id,
             type_name: name,
             enabled: 1,
             max_parse_pages: maxParsePages,
             enable_embedding: enableEmbedding,
+            // 新建时落在当前项目（未分组则为 null）；编辑走 PUT 会忽略该字段
+            project_id: currentProject && currentProject !== '__ungrouped__' ? currentProject : null,
         };
 
         // 编辑：upsert 类型基础配置
@@ -571,6 +706,88 @@ const DocTypeManager = {
             await this.loadManage();
             await this.refresh();
         } catch (e) { Toast.error('创建失败: ' + e.message); }
+    },
+
+    // ─── 项目管理子弹窗（建/改名/删除项目；删项目仅解除归属，不删类型） ───
+
+    async openProjectDialog() {
+        this.closeRowMenu();
+        try { this.projects = await API.getProjects() || []; }
+        catch (e) { Toast.error('加载项目失败: ' + e.message); return; }
+        this.resetProjectForm();
+        this.renderProjectList();
+        document.getElementById('project-modal-overlay').classList.add('active');
+    },
+    closeProjectDialog() { document.getElementById('project-modal-overlay').classList.remove('active'); },
+
+    renderProjectList() {
+        const tbody = document.getElementById('project-table-body');
+        if (!tbody) return;
+        tbody.innerHTML = (this.projects || []).map(p => `<tr>
+            <td>
+                <div class="dt-name">${escapeHtml(p.project_name)}</div>
+                <div class="dt-id-sub"><code>${escapeHtml(p.project_id)}</code></div>
+            </td>
+            <td>${p.type_count || 0}</td>
+            <td class="dt-actions">
+                <button class="btn btn-secondary btn-sm" onclick="DocTypeManager.editProject('${escapeAttr(p.project_id)}')">编辑</button>
+                <button class="btn btn-danger btn-sm" onclick="DocTypeManager.deleteProjectRow('${escapeAttr(p.project_id)}')">删除</button>
+            </td>
+        </tr>`).join('') || '<tr><td colspan="3" style="color:#9ca3af; padding:10px;">暂无项目，填写上方表单创建</td></tr>';
+    },
+
+    resetProjectForm() {
+        this._editingProjectId = null;
+        const idEl = document.getElementById('pj-id');
+        idEl.value = '';
+        idEl.disabled = false;
+        document.getElementById('pj-name').value = '';
+        document.getElementById('pj-desc').value = '';
+    },
+
+    editProject(pid) {
+        const p = (this.projects || []).find(x => x.project_id === pid);
+        if (!p) return;
+        this._editingProjectId = pid;
+        const idEl = document.getElementById('pj-id');
+        idEl.value = p.project_id;
+        idEl.disabled = true;   // project_id 是主键，改名只改名称
+        document.getElementById('pj-name').value = p.project_name || '';
+        document.getElementById('pj-desc').value = p.description || '';
+    },
+
+    async submitProject() {
+        const id = (document.getElementById('pj-id').value || '').trim();
+        const name = (document.getElementById('pj-name').value || '').trim();
+        const desc = (document.getElementById('pj-desc').value || '').trim();
+        if (!id) { Toast.error('项目 ID 必填'); return; }
+        if (!/^[a-zA-Z0-9_-]+$/.test(id)) { Toast.error('项目 ID 只能包含英文/数字/_/-'); return; }
+        if (!name) { Toast.error('项目名称必填'); return; }
+        try {
+            await API.saveProject({ project_id: id, project_name: name, description: desc || null });
+            Toast.success(this._editingProjectId ? '项目已更新' : '项目已创建');
+            this.projects = await API.getProjects() || [];
+            this.resetProjectForm();
+            this.renderProjectList();
+            this._renderProjectFilterOptions();
+            await this.refresh();
+        } catch (e) { Toast.error('保存失败: ' + e.message); }
+    },
+
+    async deleteProjectRow(pid) {
+        const p = (this.projects || []).find(x => x.project_id === pid);
+        if (!p) return;
+        if (!confirm(`删除项目 "${p.project_name}"？其下 ${p.type_count || 0} 个类型将变为未分组（类型本身不删除）。`)) return;
+        try {
+            await API.deleteProject(pid);
+            Toast.success('项目已删除');
+            if (API.getCurrentProjectId() === pid) API.setCurrentProjectId('__ungrouped__');
+            this.projects = await API.getProjects() || [];
+            this.renderProjectList();
+            this._renderProjectFilterOptions();
+            await this.loadManage();
+            await this.refresh();
+        } catch (e) { Toast.error('删除失败: ' + e.message); }
     },
 };
 

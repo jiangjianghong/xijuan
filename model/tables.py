@@ -35,7 +35,23 @@ class DocType(Base):
     is_default: Mapped[int] = mapped_column(TINYINT, default=0)
     is_template: Mapped[int] = mapped_column(TINYINT, default=0)
     parent_type_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 归属项目；NULL = 未分组。项目对「模板 + 其血缘下游」分类，一个 type 属 ≤1 个项目
+    project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     enabled: Mapped[int] = mapped_column(TINYINT, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Project(Base):
+    """项目：对文档类型（模板及其血缘下游）分类的容器。"""
+
+    __tablename__ = "project"
+
+    project_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

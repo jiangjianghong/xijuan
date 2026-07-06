@@ -1,7 +1,4 @@
-"""文档类型管理：list 分页/筛选 / 批量删除 / 血缘（copy_from 记录来源、promote/demote）。
-
-项目维度已彻底移除，相关测试一并删除。
-"""
+"""文档类型管理：list 分页/筛选 / 批量删除 / 血缘（copy_from 记录来源、promote/demote）/ 项目分类。"""
 
 from __future__ import annotations
 
@@ -43,7 +40,7 @@ async def test_list_paginated_shape_and_filters(client: AsyncClient):
         assert items[0]["is_template"] == 0
         assert items[0]["max_parse_pages"] == 5
         assert items[0]["enable_embedding"] == 0
-        assert "project_id" not in items[0]
+        assert "project_id" in items[0]
 
         # scope=template：含 default（is_default=1），不含 dm_plain
         r = await client.get("/doctype/list?scope=template&page=1&page_size=500")
@@ -210,3 +207,151 @@ async def test_batch_delete(client: AsyncClient):
     # default 仍在
     r = await client.get("/doctype/list?page=1&page_size=500")
     assert any(i["type_id"] == "default" for i in r.json()["data"]["items"])
+
+
+# ─────────────────────────────────────────────────────────────
+# 项目分类：CRUD / 归类级联血缘 / copy_from 继承 / list 过滤 / default 不归类
+# ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_project_crud(client: AsyncClient):
+    r = await client.post(
+        "/doctype/projects", json={"project_id": "pj_crud", "project_name": "CRUD项目"}
+    )
+    assert r.status_code == 200
+    await client.post(
+        "/doctype",
+        json={"type_id": "pj_crud_t", "type_name": "T", "project_id": "pj_crud"},
+    )
+    try:
+        # list 项目：附带 type_count
+        r = await client.get("/doctype/projects")
+        proj = next(p for p in r.json()["data"] if p["project_id"] == "pj_crud")
+        assert proj["type_count"] == 1
+
+        # upsert 改名
+        await client.post(
+            "/doctype/projects", json={"project_id": "pj_crud", "project_name": "改名了"}
+        )
+        r = await client.get("/doctype/projects")
+        proj = next(p for p in r.json()["data"] if p["project_id"] == "pj_crud")
+        assert proj["project_name"] == "改名了"
+
+        # 删项目 → 成员回落未分组，项目消失
+        r = await client.delete("/doctype/projects/pj_crud")
+        assert r.status_code == 200
+        r = await client.get("/doctype/projects")
+        assert all(p["project_id"] != "pj_crud" for p in r.json()["data"])
+        r = await client.get("/doctype/list?q=pj_crud_t&page=1&page_size=10")
+        assert r.json()["data"]["items"][0]["project_id"] is None
+    finally:
+        await client.delete("/doctype/pj_crud_t?force=true")
+        await client.delete("/doctype/projects/pj_crud")
+
+
+@pytest.mark.anyio
+async def test_batch_assign_cascades_lineage(client: AsyncClient):
+    """归类某模板时，其血缘下游（传递闭包）一并带入同一项目。"""
+    await client.post("/doctype", json={"type_id": "pj_t", "type_name": "模板T"})
+    await client.post("/doctype/pj_t/promote")
+    await client.post("/doctype/projects", json={"project_id": "pj_p", "project_name": "项目P"})
+    # 派生 C（parent=pj_t），再从 C 派生 GC（parent=pj_c）
+    await client.post("/doctype", json={"type_id": "pj_c", "type_name": "副本C"})
+    await client.post("/doctype/pj_c/copy_from", json={"source_type_id": "pj_t"})
+    await client.post("/doctype", json={"type_id": "pj_gc", "type_name": "副本GC"})
+    await client.post("/doctype/pj_gc/copy_from", json={"source_type_id": "pj_c"})
+    try:
+        r = await client.post(
+            "/doctype/batch_assign_project",
+            json={"type_ids": ["pj_t"], "project_id": "pj_p"},
+        )
+        assert r.status_code == 200
+        assert r.json()["data"]["affected"] == 3  # T + C + GC
+        for tid in ("pj_t", "pj_c", "pj_gc"):
+            r = await client.get(f"/doctype/list?q={tid}&page=1&page_size=10")
+            assert r.json()["data"]["items"][0]["project_id"] == "pj_p"
+    finally:
+        await client.delete("/doctype/pj_t?force=true")
+        await client.delete("/doctype/pj_c?force=true")
+        await client.delete("/doctype/pj_gc?force=true")
+        await client.delete("/doctype/projects/pj_p")
+
+
+@pytest.mark.anyio
+async def test_copy_from_inherits_project(client: AsyncClient):
+    """源在项目里、目标未分组 → copy_from 后目标继承源项目。"""
+    await client.post("/doctype/projects", json={"project_id": "pj_inh", "project_name": "继承项目"})
+    await client.post(
+        "/doctype", json={"type_id": "pj_src", "type_name": "源", "project_id": "pj_inh"}
+    )
+    await client.post("/doctype", json={"type_id": "pj_tgt", "type_name": "目标"})
+    try:
+        # 源建档即落项目（验证 DocTypeCreate.project_id 生效）
+        r = await client.get("/doctype/list?q=pj_src&page=1&page_size=10")
+        assert r.json()["data"]["items"][0]["project_id"] == "pj_inh"
+
+        r = await client.post("/doctype/pj_tgt/copy_from", json={"source_type_id": "pj_src"})
+        assert r.status_code == 200
+        r = await client.get("/doctype/list?q=pj_tgt&page=1&page_size=10")
+        item = r.json()["data"]["items"][0]
+        assert item["project_id"] == "pj_inh"
+        assert item["project_name"] == "继承项目"
+    finally:
+        await client.delete("/doctype/pj_src?force=true")
+        await client.delete("/doctype/pj_tgt?force=true")
+        await client.delete("/doctype/projects/pj_inh")
+
+
+@pytest.mark.anyio
+async def test_list_filter_by_project(client: AsyncClient):
+    await client.post("/doctype/projects", json={"project_id": "pj_f", "project_name": "筛选项目"})
+    await client.post(
+        "/doctype", json={"type_id": "pj_in", "type_name": "在项目", "project_id": "pj_f"}
+    )
+    await client.post("/doctype", json={"type_id": "pj_out", "type_name": "未分组类型"})
+    try:
+        # 按项目过滤：只含该项目成员
+        r = await client.get("/doctype/list?project_id=pj_f&page=1&page_size=100")
+        ids = [i["type_id"] for i in r.json()["data"]["items"]]
+        assert "pj_in" in ids and "pj_out" not in ids and "default" not in ids
+
+        # 未分组过滤：含 default 与未归类类型，不含项目成员
+        r = await client.get("/doctype/list?project_id=__ungrouped__&page=1&page_size=500")
+        ids = [i["type_id"] for i in r.json()["data"]["items"]]
+        assert "pj_out" in ids and "default" in ids and "pj_in" not in ids
+    finally:
+        await client.delete("/doctype/pj_in?force=true")
+        await client.delete("/doctype/pj_out?force=true")
+        await client.delete("/doctype/projects/pj_f")
+
+
+@pytest.mark.anyio
+async def test_default_not_assignable(client: AsyncClient):
+    """default 类型恒未分组：归类跳过它。"""
+    await client.post("/doctype/projects", json={"project_id": "pj_d", "project_name": "D项目"})
+    try:
+        r = await client.post(
+            "/doctype/batch_assign_project",
+            json={"type_ids": ["default"], "project_id": "pj_d"},
+        )
+        assert r.status_code == 200
+        assert r.json()["data"]["affected"] == 0
+        r = await client.get("/doctype/list?page=1&page_size=500")
+        item = next(i for i in r.json()["data"]["items"] if i["type_id"] == "default")
+        assert item["project_id"] is None
+    finally:
+        await client.delete("/doctype/projects/pj_d")
+
+
+@pytest.mark.anyio
+async def test_assign_nonexistent_project_404(client: AsyncClient):
+    await client.post("/doctype", json={"type_id": "pj_x", "type_name": "X"})
+    try:
+        r = await client.post(
+            "/doctype/batch_assign_project",
+            json={"type_ids": ["pj_x"], "project_id": "no_such_project"},
+        )
+        assert r.status_code == 404
+    finally:
+        await client.delete("/doctype/pj_x?force=true")

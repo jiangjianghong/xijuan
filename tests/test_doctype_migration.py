@@ -1,4 +1,4 @@
-"""doc_type 血缘列保留、项目维度（project_id 列 + project 表）已彻底移除的迁移验证。"""
+"""doc_type 血缘 + 项目列保留、project 表存在的迁移验证（项目维度已恢复）。"""
 
 from __future__ import annotations
 
@@ -10,12 +10,18 @@ from service.init_service import init_database
 
 
 @pytest.mark.anyio
-async def test_lineage_columns_kept_and_project_dropped():
-    await init_database()  # 幂等：建表 + 补列 + 回收项目维度
+async def test_lineage_and_project_columns_present():
+    await init_database()  # 幂等：建表 + 补列 + 建 project 表
     engine = get_engine()
     async with engine.connect() as conn:
-        # 血缘维度与运行配置保留
-        for col in ("is_template", "parent_type_id", "max_parse_pages", "enable_embedding"):
+        # 血缘 + 项目 + 运行配置列均存在
+        for col in (
+            "is_template",
+            "parent_type_id",
+            "project_id",
+            "max_parse_pages",
+            "enable_embedding",
+        ):
             r = await conn.execute(
                 text(
                     "SELECT COUNT(*) FROM information_schema.COLUMNS "
@@ -24,23 +30,23 @@ async def test_lineage_columns_kept_and_project_dropped():
                 ),
                 {"c": col},
             )
-            assert r.scalar() == 1, f"doc_type 应保留列 {col}"
+            assert r.scalar() == 1, f"doc_type 应有列 {col}"
 
-        # 项目维度移除：列
+        # project_id 索引存在
         r = await conn.execute(
             text(
-                "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                "SELECT COUNT(*) FROM information_schema.STATISTICS "
                 "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doc_type' "
-                "AND COLUMN_NAME = 'project_id'"
+                "AND INDEX_NAME = 'ix_doc_type_project_id'"
             )
         )
-        assert r.scalar() == 0, "doc_type.project_id 应已删除"
+        assert r.scalar() >= 1, "ix_doc_type_project_id 索引应存在"
 
-        # 项目维度移除：表
+        # project 表存在
         r = await conn.execute(
             text(
                 "SELECT COUNT(*) FROM information_schema.TABLES "
                 "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project'"
             )
         )
-        assert r.scalar() == 0, "project 表应已删除"
+        assert r.scalar() == 1, "project 表应存在"

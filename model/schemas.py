@@ -27,6 +27,8 @@ class DocTypeCreate(BaseModel):
     max_parse_pages: Optional[int] = Field(None, ge=1)
     enable_embedding: int = Field(1, ge=0, le=1)
     enabled: int = 1
+    # 归属项目；仅新建（upsert 建档分支）生效，更新已存在类型时忽略。None = 未分组
+    project_id: Optional[str] = None
 
 
 class DocTypeResponse(BaseModel):
@@ -39,6 +41,8 @@ class DocTypeResponse(BaseModel):
     enabled: int = 1
     is_template: int = 0
     parent_type_id: Optional[str] = None
+    project_id: Optional[str] = None
+    project_name: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -137,6 +141,31 @@ class ImportConfigsResponse(BaseModel):
 class DocTypeBatchDeleteRequest(BaseModel):
     type_ids: List[str]
     force: bool = False
+
+
+class ProjectCreate(BaseModel):
+    """创建/改名项目（按 project_id upsert）。"""
+    project_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$", max_length=64)
+    project_name: str = Field(..., max_length=200)
+    description: Optional[str] = None
+
+
+class ProjectResponse(BaseModel):
+    project_id: str
+    project_name: str
+    description: Optional[str] = None
+    type_count: int = 0
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class BatchAssignProjectRequest(BaseModel):
+    """批量把类型归入项目；project_id 为 None 表示移出（未分组）。
+
+    归类会级联到每个 type_id 的血缘下游（服务端计算），default 类型不受影响。
+    """
+    type_ids: List[str]
+    project_id: Optional[str] = None
 
 
 # ── 文件相关 ────────────────────────────────────────────────

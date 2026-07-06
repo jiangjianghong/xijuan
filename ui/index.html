@@ -89,6 +89,8 @@
         </nav>
         <div class="doctype-bar" style="margin-left:auto; display:flex; align-items:center; gap:8px;">
             <i data-lucide="folder" class="w-4 h-4 text-bio-med"></i>
+            <label style="font-size:13px; color:#4F775D;">项目</label>
+            <select id="project-selector" class="status-filter" style="min-width:130px;" onchange="DocTypeManager.onProjectChange()"></select>
             <label style="font-size:13px; color:#4F775D;">文档类型</label>
             <select id="doctype-selector" class="status-filter" style="min-width:140px;"></select>
             <button class="btn btn-secondary" style="padding:4px 10px; font-size:12px;" onclick="DocTypeManager.openManageDialog()">管理</button>
@@ -620,7 +622,9 @@
                         <option value="template">★ 模板</option>
                         <option value="copy">副本</option>
                     </select>
+                    <select id="dt-project-filter" class="form-select" style="width:150px;" onchange="DocTypeManager.onProjectFilterChange()"></select>
                     <div style="flex:1;"></div>
+                    <button class="btn btn-secondary" onclick="DocTypeManager.openProjectDialog()">管理项目</button>
                     <button class="btn btn-primary" onclick="DocTypeManager.openCreateForm()">+ 新建类型</button>
                 </div>
                 <!-- 表格 -->
@@ -631,6 +635,7 @@
                             <th>名称 / ID</th>
                             <th style="width:72px;">标签</th>
                             <th style="width:160px;">来源</th>
+                            <th style="width:120px;">项目</th>
                             <th style="width:92px;">解析页数</th>
                             <th style="width:82px;">向量化</th>
                             <th style="width:56px;">文件</th>
@@ -645,6 +650,8 @@
             <div class="rule-modal-footer" style="display:flex; align-items:center; gap:12px;">
                 <div id="dt-batch-bar" style="display:none; align-items:center; gap:12px;">
                     <span id="dt-selected-count" style="font-size:12px; color:#4F775D;">已选 0 项</span>
+                    <select id="dt-assign-project" class="form-select" style="width:150px;"></select>
+                    <button class="btn btn-secondary" onclick="DocTypeManager.batchAssign()">归入项目</button>
                     <button class="btn btn-danger" onclick="DocTypeManager.batchDelete()">批量删除</button>
                 </div>
                 <div style="flex:1;"></div>
@@ -652,6 +659,66 @@
                 <span id="dt-page-info" style="font-size:12px; color:#4F775D;">1 / 1</span>
                 <button class="btn btn-ghost" onclick="DocTypeManager.nextPage()">▶</button>
                 <span id="dt-total" style="font-size:12px; color:#4F775D;">共 0 个</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Project Manage Modal -->
+    <div id="project-modal-overlay" class="rule-modal-overlay">
+        <div class="rule-modal" style="max-width:640px;">
+            <div class="rule-modal-header">
+                <h3>项目管理</h3>
+                <button class="rule-modal-close" onclick="DocTypeManager.closeProjectDialog()">&times;</button>
+            </div>
+            <div class="rule-modal-body">
+                <p style="font-size:12px; color:#4F775D; margin:0 0 12px;">项目对「模板 + 其血缘下游」分类。删除项目只解除归属，不删除类型。</p>
+                <!-- 新建 / 编辑项目 -->
+                <div style="display:flex; gap:8px; align-items:flex-end; margin-bottom:14px; flex-wrap:wrap;">
+                    <div>
+                        <label style="display:block; font-size:12px; color:#4F775D;">项目 ID</label>
+                        <input id="pj-id" type="text" class="form-input" style="width:150px;" placeholder="英文/数字/_/-">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:12px; color:#4F775D;">项目名称</label>
+                        <input id="pj-name" type="text" class="form-input" style="width:170px;">
+                    </div>
+                    <div style="flex:1; min-width:140px;">
+                        <label style="display:block; font-size:12px; color:#4F775D;">描述（可选）</label>
+                        <input id="pj-desc" type="text" class="form-input" style="width:100%;">
+                    </div>
+                    <button class="btn btn-primary" onclick="DocTypeManager.submitProject()">保存</button>
+                    <button class="btn btn-ghost" onclick="DocTypeManager.resetProjectForm()">清空</button>
+                </div>
+                <table class="rule-table">
+                    <thead>
+                        <tr>
+                            <th>名称 / ID</th>
+                            <th style="width:80px;">类型数</th>
+                            <th style="width:150px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="project-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Assign One To Project Modal -->
+    <div id="assign-one-modal-overlay" class="rule-modal-overlay">
+        <div class="rule-modal" style="max-width:420px;">
+            <div class="rule-modal-header">
+                <h3>归入项目</h3>
+                <button class="rule-modal-close" onclick="DocTypeManager.closeAssignOne()">&times;</button>
+            </div>
+            <div class="rule-modal-body">
+                <p id="assign-one-hint" style="font-size:13px; color:#4F775D; margin:0 0 12px;"></p>
+                <label style="display:block; font-size:12px; color:#4F775D; margin-bottom:4px;">目标项目</label>
+                <select id="assign-one-project" class="form-select" style="width:100%;"></select>
+                <p style="font-size:12px; color:#9ca3af; margin:10px 0 0;">归类会连同该类型的血缘下游一并带入同一项目。</p>
+            </div>
+            <div class="rule-modal-footer" style="display:flex; justify-content:flex-end; gap:8px;">
+                <button class="btn btn-ghost" onclick="DocTypeManager.closeAssignOne()">取消</button>
+                <button class="btn btn-primary" onclick="DocTypeManager.confirmAssignOne()">确定</button>
             </div>
         </div>
     </div>
