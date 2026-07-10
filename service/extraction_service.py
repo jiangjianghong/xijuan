@@ -20,7 +20,7 @@ from utils.config import get_config
 from utils.llm_client import chat_completion, get_embeddings
 from utils.milvus_client import MilvusClient
 from utils.page_mapping import lookup_bboxes, lookup_page_num
-from utils.text_utils import normalize_cjk_quotes
+from utils.text_utils import normalize_cjk_quotes, salvage_value_reason
 
 
 # ── JSON 解析辅助 ────────────────────────────────────────────
@@ -71,7 +71,11 @@ def parse_llm_json_response(response: str) -> Tuple[str, str]:
         except json.JSONDecodeError:
             pass
 
-    # 解析失败，返回原始响应作为 value
+    # 解析失败：先尝试从非法 JSON 里抢救 value/reason（模型吐裸英文双引号时常见），
+    # 抢救到值则用之，否则退回把整段响应当 value。
+    salvaged_value, salvaged_reason = salvage_value_reason(response)
+    if salvaged_value or salvaged_reason:
+        return salvaged_value, salvaged_reason
     return response.strip(), ""
 
 

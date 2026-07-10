@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from utils.text_utils import normalize_cjk_quotes
+from utils.text_utils import normalize_cjk_quotes, salvage_value_reason
 
 
 _THINK_PATTERN = re.compile(r"<think>[\s\S]*?</think>", re.DOTALL)
@@ -52,6 +52,10 @@ def parse_vl_json_response(response: str) -> tuple[str, str]:
         except json.JSONDecodeError:
             pass
 
+    # 解析失败：先尝试从非法 JSON 抢救 value/reason，抢救不到再退回原文
+    salvaged_value, salvaged_reason = salvage_value_reason(text)
+    if salvaged_value or salvaged_reason:
+        return salvaged_value, salvaged_reason
     return text.strip(), ""
 
 

@@ -15,7 +15,7 @@ from model.tables import AnalysisResult, AnalysisRule, ExtractionResult, File
 from utils.callback import notify_callback
 from utils.config import get_config
 from utils.llm_client import chat_completion
-from utils.text_utils import normalize_cjk_quotes
+from utils.text_utils import normalize_cjk_quotes, salvage_reason
 from utils.web_search import bocha_web_search
 
 
@@ -164,7 +164,8 @@ async def execute_judge(resolved_expression: str, *, system_prompt: str = "") ->
     prompt = f"""{resolved_expression}
 
 请根据以上内容进行判断，以 JSON 格式返回结果：
-{{"result": "true 或 false", "reason": "判断理由/依据"}}"""
+{{"result": "true 或 false", "reason": "判断理由/依据"}}
+重点关注：只输出 JSON 结果不要带有```等标识；result 与 reason 的值中不得含有英文双引号，需要引用文字请一律使用中文引号“”，否则会破坏 JSON 结构。"""
 
     try:
         sys_prompt = (system_prompt or "").strip()
@@ -215,19 +216,20 @@ async def execute_judge(resolved_expression: str, *, system_prompt: str = "") ->
             except json.JSONDecodeError:
                 pass
 
-        # JSON 解析失败，尝试从文本中提取结果
+        # JSON 解析失败，尝试从文本中提取结果；reason 用 salvage 抢救（模型吐裸英文双引号时常见）
+        salvaged_reason = salvage_reason(response)
         response_lower = response.lower()
         if "true" in response_lower:
-            return "true", ""
+            return "true", salvaged_reason
         elif "false" in response_lower:
-            return "false", ""
+            return "false", salvaged_reason
         elif "是" in response_lower:
-            return "true", ""
+            return "true", salvaged_reason
         elif "否" in response_lower:
-            return "false", ""
+            return "false", salvaged_reason
         else:
             logger.warning("LLM 判断返回非标准值: {}", response)
-            return response_lower, ""
+            return response_lower, salvaged_reason
 
     except Exception as e:
         logger.error("LLM 判断执行失败: {}", e)
@@ -860,7 +862,8 @@ async def test_rule_analysis_stream(
             user_prompt = f"""{resolved}
 
 请根据以上内容进行判断，以 JSON 格式返回结果：
-{{"result": "true 或 false", "reason": "判断理由/依据"}}"""
+{{"result": "true 或 false", "reason": "判断理由/依据"}}
+重点关注：只输出 JSON 结果不要带有```等标识；result 与 reason 的值中不得含有英文双引号，需要引用文字请一律使用中文引号“”，否则会破坏 JSON 结构。"""
 
             sys_prompt = (system_prompt or "").strip()
             yield {
@@ -942,6 +945,7 @@ async def test_rule_analysis_stream(
                         pass
 
             if not parsed:
+                reason = salvage_reason(raw_response)
                 response_lower = raw_response.lower()
                 if "true" in response_lower:
                     result_value = "true"
