@@ -20,6 +20,7 @@ from utils.config import get_config
 from utils.llm_client import chat_completion, get_embeddings
 from utils.milvus_client import MilvusClient
 from utils.page_mapping import lookup_bboxes, lookup_page_num
+from utils.text_utils import normalize_cjk_quotes
 
 
 # ── JSON 解析辅助 ────────────────────────────────────────────
@@ -49,8 +50,8 @@ def parse_llm_json_response(response: str) -> Tuple[str, str]:
             if isinstance(raw_value, (list, dict)):
                 value = json.dumps(raw_value, ensure_ascii=False)
             else:
-                value = str(raw_value).strip()
-            reason = str(data.get("reason", "")).strip()
+                value = normalize_cjk_quotes(str(raw_value).strip())
+            reason = normalize_cjk_quotes(str(data.get("reason", "")).strip())
             return value, reason
     except json.JSONDecodeError:
         pass
@@ -64,8 +65,8 @@ def parse_llm_json_response(response: str) -> Tuple[str, str]:
             if isinstance(raw_value, (list, dict)):
                 value = json.dumps(raw_value, ensure_ascii=False)
             else:
-                value = str(raw_value).strip()
-            reason = str(data.get("reason", "")).strip()
+                value = normalize_cjk_quotes(str(raw_value).strip())
+            reason = normalize_cjk_quotes(str(data.get("reason", "")).strip())
             return value, reason
         except json.JSONDecodeError:
             pass

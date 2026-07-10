@@ -6,6 +6,8 @@ import json
 import re
 from typing import Any
 
+from utils.text_utils import normalize_cjk_quotes
+
 
 _THINK_PATTERN = re.compile(r"<think>[\s\S]*?</think>", re.DOTALL)
 
@@ -56,10 +58,11 @@ def parse_vl_json_response(response: str) -> tuple[str, str]:
 def _extract_value_reason(data: dict) -> tuple[str, str]:
     raw_value = data.get("value", "")
     if isinstance(raw_value, (list, dict)):
+        # list/dict 序列化为 JSON，结构性双引号必须保留，不做引号规范化
         value = json.dumps(raw_value, ensure_ascii=False)
     else:
-        value = str(raw_value).strip()
-    reason = str(data.get("reason", "")).strip()
+        value = normalize_cjk_quotes(str(raw_value).strip())
+    reason = normalize_cjk_quotes(str(data.get("reason", "")).strip())
     return value, reason
 
 

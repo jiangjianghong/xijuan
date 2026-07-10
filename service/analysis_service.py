@@ -15,6 +15,7 @@ from model.tables import AnalysisResult, AnalysisRule, ExtractionResult, File
 from utils.callback import notify_callback
 from utils.config import get_config
 from utils.llm_client import chat_completion
+from utils.text_utils import normalize_cjk_quotes
 from utils.web_search import bocha_web_search
 
 
@@ -186,7 +187,7 @@ async def execute_judge(resolved_expression: str, *, system_prompt: str = "") ->
         try:
             data = json.loads(response)
             result_raw = str(data.get("result", "")).lower().strip()
-            reason = str(data.get("reason", "")).strip()
+            reason = normalize_cjk_quotes(str(data.get("reason", "")).strip())
 
             # 规范化返回值
             if "true" in result_raw or "是" in result_raw:
@@ -204,7 +205,7 @@ async def execute_judge(resolved_expression: str, *, system_prompt: str = "") ->
             try:
                 data = json.loads(json_obj_match.group())
                 result_raw = str(data.get("result", "")).lower().strip()
-                reason = str(data.get("reason", "")).strip()
+                reason = normalize_cjk_quotes(str(data.get("reason", "")).strip())
                 if "true" in result_raw or "是" in result_raw:
                     return "true", reason
                 elif "false" in result_raw or "否" in result_raw:
@@ -910,7 +911,7 @@ async def test_rule_analysis_stream(
             try:
                 data = json.loads(response)
                 result_raw = str(data.get("result", "")).lower().strip()
-                reason = str(data.get("reason", "")).strip()
+                reason = normalize_cjk_quotes(str(data.get("reason", "")).strip())
                 if "true" in result_raw or "是" in result_raw:
                     result_value = "true"
                 elif "false" in result_raw or "否" in result_raw:
@@ -929,7 +930,7 @@ async def test_rule_analysis_stream(
                     try:
                         data = json.loads(json_obj_match.group())
                         result_raw = str(data.get("result", "")).lower().strip()
-                        reason = str(data.get("reason", "")).strip()
+                        reason = normalize_cjk_quotes(str(data.get("reason", "")).strip())
                         if "true" in result_raw or "是" in result_raw:
                             result_value = "true"
                         elif "false" in result_raw or "否" in result_raw:
