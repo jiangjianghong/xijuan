@@ -355,20 +355,43 @@ h1, h2, h3, h4, h5, h6,
     background: #dbe6d7;
 }
 
-/* ── Re-run section (drawer, completed files) ── */
-.rerun-section {
-    margin-top: 16px;
+/* ── File Row Action Menu (fixed-positioned dropdown) ── */
+.file-action-menu {
+    display: none;
+    position: fixed;
+    z-index: 200;
+    min-width: 140px;
+    background: #fff;
+    border: 1px solid rgba(44, 76, 59, 0.15);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(44, 76, 59, 0.18);
+    padding: 4px;
 }
 
-.rerun-btns {
-    display: flex;
-    gap: 8px;
+.file-action-menu.open {
+    display: block;
 }
 
-.rerun-hint {
-    margin-top: 8px;
-    font-size: 12px;
-    color: var(--text-secondary);
+.file-action-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: 0;
+    background: transparent;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: var(--bio-dark);
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.file-action-menu button:hover {
+    background: var(--bio-pale);
+}
+
+.file-action-menu button.danger {
+    color: #b3261e;
 }
 
 .btn-ghost {
@@ -589,9 +612,10 @@ h1, h2, h3, h4, h5, h6,
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: 0 20px 60px rgba(44, 76, 59, 0.15);
-    width: 1100px;
-    max-width: 94vw;
-    max-height: 90vh;
+    width: 72vw;
+    height: 94vh;
+    max-width: 72vw;
+    max-height: 94vh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -665,31 +689,48 @@ h1, h2, h3, h4, h5, h6,
     flex-shrink: 0;
 }
 
-/* ── Timeline ── */
+/* ── Timeline (横向：圆点在上，标签与时长在下方) ── */
 .timeline {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: flex-start;
     gap: 0;
     position: relative;
-    padding-left: 20px;
-}
-
-.timeline::before {
-    content: '';
-    position: absolute;
-    left: 6px;
-    top: 8px;
-    bottom: 8px;
-    width: 2px;
-    background: var(--bio-pale);
+    padding: 4px 0;
 }
 
 .timeline-item {
+    flex: 1;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 12px;
-    padding: 8px 0;
+    gap: 6px;
+    padding: 0;
     position: relative;
+    text-align: center;
+    min-width: 0;
+}
+
+/* 阶段之间的连接线：穿过圆点垂直中心，从上一阶段连到当前阶段 */
+.timeline-item::before {
+    content: '';
+    position: absolute;
+    top: 7px;
+    right: 50%;
+    left: -50%;
+    height: 2px;
+    background: var(--bio-pale);
+    z-index: 0;
+}
+
+.timeline-item:first-child::before {
+    display: none;
+}
+
+.timeline-item.completed::before,
+.timeline-item.processing::before,
+.timeline-item.failed::before {
+    background: var(--bio-med);
 }
 
 .timeline-dot {
@@ -698,9 +739,8 @@ h1, h2, h3, h4, h5, h6,
     border-radius: 50%;
     border: 2px solid var(--bio-pale);
     background: white;
-    position: absolute;
-    left: -20px;
     flex-shrink: 0;
+    position: relative;
     z-index: 1;
 }
 
@@ -721,15 +761,16 @@ h1, h2, h3, h4, h5, h6,
 }
 
 .timeline-label {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 500;
-    flex: 1;
+    line-height: 1.25;
 }
 
 .timeline-duration {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
+    min-height: 14px;
 }
 
 /* ── Error Section ── */
@@ -800,12 +841,38 @@ h1, h2, h3, h4, h5, h6,
 }
 
 .table-split-sidebar {
-    width: 200px;
-    min-width: 200px;
+    width: 260px;
+    min-width: 260px;
     border-right: 1px solid var(--border);
     overflow-y: auto;
     padding: 8px 0;
     flex-shrink: 0;
+}
+
+/* 分栏拖拽条（大纲 / 表格 / 提取 PDF 共用），拖动可左右调宽 */
+.split-resizer {
+    flex: 0 0 6px;
+    width: 6px;
+    cursor: col-resize;
+    background: transparent;
+    position: relative;
+    z-index: 2;
+}
+
+.split-resizer::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2px;
+    width: 2px;
+    background: var(--border);
+    transition: background 0.15s;
+}
+
+.split-resizer:hover::after,
+.split-resizer:active::after {
+    background: var(--bio-med);
 }
 
 .table-split-name {
@@ -859,6 +926,24 @@ h1, h2, h3, h4, h5, h6,
     overflow: auto;
     padding: 16px;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* 大纲 / 表格：右侧内容卡片撑满可用高度（详情弹窗已全屏，纵向空间充足） */
+.table-split-content .data-card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 0;
+    min-height: 0;
+}
+
+.table-split-content .data-card-content,
+.table-split-content .data-card-content.table-rendered {
+    flex: 1;
+    max-height: none;
+    min-height: 0;
 }
 
 .tab-content-empty {
@@ -3286,8 +3371,11 @@ input[type="checkbox"] {
     }
 
     .detail-modal {
-        max-width: 96vw;
-        max-height: 92vh;
+        width: 100vw;
+        height: 100vh;
+        max-width: 100vw;
+        max-height: 100vh;
+        border-radius: 0;
     }
 
     .table-split {

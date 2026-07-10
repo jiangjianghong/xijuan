@@ -70,9 +70,6 @@ const App = {
             errorSection: document.getElementById('error-section'),
             errorMessage: document.getElementById('error-message'),
             retryBtn: document.getElementById('retry-btn'),
-            rerunSection: document.getElementById('rerun-section'),
-            rerunExtractBtn: document.getElementById('rerun-extract-btn'),
-            rerunAnalyzeBtn: document.getElementById('rerun-analyze-btn'),
             tabContent: document.getElementById('tab-content'),
         };
     },
@@ -120,9 +117,15 @@ const App = {
         // 重试按钮
         this.els.retryBtn.addEventListener('click', () => this.retryCurrentFile());
 
-        // 重新执行按钮（已完成文件从抽取 / 分析阶段重跑）
-        this.els.rerunExtractBtn.addEventListener('click', () => this.rerunStage('extracting'));
-        this.els.rerunAnalyzeBtn.addEventListener('click', () => this.rerunStage('analyzing'));
+        // 行操作 ⋯ 菜单：点击空白 / 滚动 / 缩放时关闭
+        document.addEventListener('click', (e) => {
+            const menu = document.getElementById('file-action-menu');
+            if (menu && menu.classList.contains('open') && !menu.contains(e.target)) {
+                this.closeActionMenu();
+            }
+        });
+        window.addEventListener('scroll', () => this.closeActionMenu(), true);
+        window.addEventListener('resize', () => this.closeActionMenu());
 
         // Tab 切换
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -246,10 +249,11 @@ const App = {
         }
 
         let html = '';
+        this._fileItems = {};
         data.items.forEach((item, index) => {
+            this._fileItems[item.file_id] = item;
             const statusClass = Utils.getStatusClass(item.progress);
             const statusText = Utils.getStatusText(item.progress);
-            const isFailed = Utils.isFailed(item.progress);
             const isSelected = this.state.selectedIds.has(item.file_id);
 
             html += `
@@ -273,18 +277,11 @@ const App = {
                                     <circle cx="12" cy="12" r="3"></circle>
                                 </svg>
                             </button>
-                            ${isFailed ? `
-                                <button class="action-btn" onclick="App.retryFile('${item.file_id}', '${item.progress}')" title="重试">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polyline points="23 4 23 10 17 10"></polyline>
-                                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                                    </svg>
-                                </button>
-                            ` : ''}
-                            <button class="action-btn delete" onclick="App.deleteFile('${item.file_id}')" title="删除">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="3 6 5 6 21 6"></polyline>
-                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            <button class="action-btn" onclick="App.toggleActionMenu(event, '${item.file_id}')" title="更多操作">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                    <circle cx="12" cy="5" r="2"></circle>
+                                    <circle cx="12" cy="12" r="2"></circle>
+                                    <circle cx="12" cy="19" r="2"></circle>
                                 </svg>
                             </button>
                         </div>
@@ -469,7 +466,6 @@ const App = {
             this.els.drawerFilesize.textContent = Utils.formatFileSize(detail.file_size);
             this.renderTimeline(detail);
             this.renderErrorSection(detail);
-            this.renderRerunSection(detail);
             this.switchTab('outline');
         } catch (error) {
             Toast.error('加载详情失败');
@@ -514,7 +510,7 @@ const App = {
             }
 
             html += `
-                <div class="timeline-item">
+                <div class="timeline-item ${status}">
                     <div class="timeline-dot ${status}"></div>
                     <span class="timeline-label">${stage.label}</span>
                     <span class="timeline-duration">${Utils.formatDuration(duration)}</span>
@@ -534,13 +530,60 @@ const App = {
         }
     },
 
-    renderRerunSection(detail) {
-        // 仅对已完成文件提供重跑入口（失败文件走错误区的重试按钮）
-        this.els.rerunSection.style.display = detail.progress === 'complete' ? 'block' : 'none';
+    // 行操作 ⋯ 菜单：根据文件状态构造菜单项（删除 / 重新提取 / 重新分析 / 重试）
+    buildActionMenu(item) {
+        const id = item.file_id;
+        const isFailed = Utils.isFailed(item.progress);
+        const isComplete = item.progress === 'complete';
+        let html = '';
+        if (isFailed) {
+            html += `<button onclick="App.closeActionMenu(); App.retryFile('${id}', '${item.progress}')">重试</button>`;
+        }
+        html += `<button class="danger" onclick="App.closeActionMenu(); App.deleteFile('${id}')">删除</button>`;
+        if (isComplete) {
+            html += `<button onclick="App.closeActionMenu(); App.rerunStage('extracting', '${id}')">重新提取</button>`;
+            html += `<button onclick="App.closeActionMenu(); App.rerunStage('analyzing', '${id}')">重新分析</button>`;
+        }
+        return html;
     },
 
-    async rerunStage(stage) {
-        const fileId = this.state.currentFileId;
+    toggleActionMenu(event, fileId) {
+        event.stopPropagation();
+        const menu = document.getElementById('file-action-menu');
+        if (!menu) return;
+        // 再次点击同一按钮 → 关闭
+        if (menu.classList.contains('open') && menu.dataset.fileId === fileId) {
+            this.closeActionMenu();
+            return;
+        }
+        const item = this._fileItems && this._fileItems[fileId];
+        if (!item) return;
+        menu.innerHTML = this.buildActionMenu(item);
+        menu.dataset.fileId = fileId;
+        menu.classList.add('open');
+        // 显示后测量尺寸再定位：右对齐 ⋯ 按钮，底部空间不足则向上弹
+        const rect = event.currentTarget.getBoundingClientRect();
+        const menuRect = menu.getBoundingClientRect();
+        let top = rect.bottom + 4;
+        if (top + menuRect.height > window.innerHeight - 8) {
+            top = Math.max(8, rect.top - menuRect.height - 4);
+        }
+        let left = rect.right - menuRect.width;
+        if (left < 8) left = 8;
+        menu.style.top = top + 'px';
+        menu.style.left = left + 'px';
+    },
+
+    closeActionMenu() {
+        const menu = document.getElementById('file-action-menu');
+        if (menu) {
+            menu.classList.remove('open');
+            delete menu.dataset.fileId;
+        }
+    },
+
+    async rerunStage(stage, fileId) {
+        fileId = fileId || this.state.currentFileId;
         if (!fileId) return;
 
         const isExtract = stage === 'extracting';
@@ -550,7 +593,8 @@ const App = {
             : '重新分析会清空现有「分析结果」并重新执行分析，确定继续？';
         if (!confirm(confirmMsg)) return;
 
-        const fileName = this.els.drawerFilename.textContent || 'unknown';
+        const item = this._fileItems && this._fileItems[fileId];
+        const fileName = (item && item.file_name) || this.els.drawerFilename.textContent || 'unknown';
         this.closeDrawer();
         this.addToQueue(fileId, fileName, stage, Utils.getStageProgress(stage));
 
@@ -594,6 +638,7 @@ const App = {
                         html = `
                             <div class="table-split">
                                 <div class="table-split-sidebar">${sidebar}</div>
+                                <div class="split-resizer" title="拖动调整宽度"></div>
                                 <div class="table-split-content">
                                     <div class="data-card">
                                         <div class="data-card-title">${this.escapeHtml(firstLabel)}</div>
@@ -622,6 +667,7 @@ const App = {
                         html = `
                             <div class="table-split">
                                 <div class="table-split-sidebar">${sidebar}</div>
+                                <div class="split-resizer" title="拖动调整宽度"></div>
                                 <div class="table-split-content">
                                     <div class="data-card">
                                         <div class="data-card-title">${this.escapeHtml(first.table_name || `表格 ${first.table_index}`)}${firstPage}</div>
@@ -666,6 +712,7 @@ const App = {
                         html = `
                             <div class="pdf-split">
                                 <div class="pdf-split-left">${cards}</div>
+                                <div class="split-resizer" title="拖动调整宽度"></div>
                                 <div class="pdf-split-right" id="pdf-panel"></div>
                             </div>
                         `;
@@ -709,6 +756,9 @@ const App = {
             }
 
             this.els.tabContent.innerHTML = html;
+
+            // 绑定分栏拖拽条（大纲 / 表格 / 提取 PDF 均为左右分栏）
+            this.initSplitResizers();
 
             // Bind table sidebar click events
             if (tab === 'tables' && this._tablesData && this._tablesData.length > 0) {
@@ -771,6 +821,41 @@ const App = {
 
     escapeHtml(text) {
         return Utils.escapeHtml(text);
+    },
+
+    // 分栏左侧栏拖拽调宽：拖动 .split-resizer 改变其前一个兄弟（侧栏/左栏）的宽度
+    initSplitResizers() {
+        this.els.tabContent.querySelectorAll('.split-resizer').forEach(resizer => {
+            const sidebar = resizer.previousElementSibling;
+            if (!sidebar) return;
+            const isPdf = sidebar.classList.contains('pdf-split-left');
+            resizer.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                const startX = e.clientX;
+                const startW = sidebar.getBoundingClientRect().width;
+                const parentW = resizer.parentElement.getBoundingClientRect().width;
+                const maxW = Math.max(200, parentW - 260);  // 给右侧内容留出最小空间
+                const onMove = (ev) => {
+                    let w = startW + (ev.clientX - startX);
+                    w = Math.max(140, Math.min(w, maxW));
+                    sidebar.style.width = w + 'px';
+                    sidebar.style.minWidth = w + 'px';
+                    if (isPdf) sidebar.style.flex = 'none';  // pdf-split-left 原本 width:42%，改为固定宽
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    document.body.style.userSelect = '';
+                    document.body.style.cursor = '';
+                    // PDF 预览按容器宽渲染，拖动后重绘当前页以适配新宽度
+                    if (isPdf && PdfViewer.pdfDoc) PdfViewer.gotoPage(PdfViewer.currentPage);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+                document.body.style.userSelect = 'none';
+                document.body.style.cursor = 'col-resize';
+            });
+        });
     },
 
     // 渲染 source_refs 的「检索原文」折叠区块（老数据无 text/_texts 时返回空串）

@@ -80,7 +80,10 @@ const PdfViewer = {
             const canvas = this.container.querySelector('canvas');
             if (!wrap || !canvas) return;
             const base = page.getViewport({ scale: 1 });
-            const scale = Math.max(0.1, (wrap.clientWidth - 16) / base.width);
+            // 整页显示：按容器宽高取较小的缩放比，保证竖版页面完整可见（不再只按宽度撑满导致露半页）
+            const scaleW = (wrap.clientWidth - 16) / base.width;
+            const scaleH = (wrap.clientHeight - 16) / base.height;
+            const scale = Math.max(0.1, Math.min(scaleW, scaleH));
             const viewport = page.getViewport({ scale });
             canvas.width = viewport.width;
             canvas.height = viewport.height;

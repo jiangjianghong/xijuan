@@ -624,7 +624,9 @@ JSON_OUTPUT_INSTRUCTION = """
 
 请以 JSON 格式返回结果，包含 value（提取的值）和 reason（提取理由/依据）两个字段：
 {"value": "提取的值", "reason": "说明从哪里提取、为什么这样提取"}
-注意：value 的格式请严格遵循 system_prompt 中的要求（如有），可以是字符串、JSON数组或JSON对象。"""
+注意：value 的格式请严格遵循 system_prompt 中的要求（如有），可以是字符串、JSON数组或JSON对象。
+重点关注：只要输出json结果不要带有```等标识,value和reason的值中不得含有英文标点符号。
+"""
 
 
 async def _extract_page_field(
