@@ -435,7 +435,8 @@ async def search_rule(
         config: search_config 配置，包含:
             - keywords: 关键词列表
             - stop_words: 停用词列表（默认 ["#", "##", "###", "\\n\\n", "\\n", "。", ".", "；", ";"]）
-            - direction: 扩展方向 (forward/backward/both)
+            - direction: 扩展方向。forward=向关键词【后文】扩展；
+              backward=向关键词【前文】扩展；both=双向（默认 forward）
             - min_length: 最小提取长度（默认 2）
             - max_length: 最大提取长度（默认 200）
             - max_results: 最大返回条数（默认 5）
@@ -461,26 +462,31 @@ async def search_rule(
             pos = match.start()
             end_pos = match.end()
 
-            # 向后扩展（找关键词之前最近的停用词）
-            search_start = max(0, pos - max_length)
-            start = search_start  # 默认扩展到最大范围
+            # 向【前文】方向扩展（direction=backward）：从关键词开头 pos 向左，
+            # 止于最近停用词之后；无停用词时扩展到 max_length。
+            # 仅在该方向启用时才扩展，否则 start 固定在关键词开头。
+            start = pos
             if direction in ("backward", "both"):
+                search_start = max(0, pos - max_length)
+                start = search_start  # 无停用词时扩展到最大范围
                 for stop_word in stop_words:
                     idx = content.rfind(stop_word, search_start, pos)
                     if idx != -1:
-                        # 取停用词之后的位置，保留最近的（最大的 idx）
+                        # 保留最靠近关键词的停用词边界（最大的 idx）
                         start = max(start, idx + len(stop_word))
 
-            # 向前扩展（找关键词之后最近的停用词）
+            # 向【后文】方向扩展（direction=forward）：从关键词结尾 end_pos 向右，
+            # 止于最近停用词之前；无停用词时扩展到 max_length。
+            # 仅在该方向启用时才扩展，否则 end 固定在关键词结尾。
             end = end_pos
             if direction in ("forward", "both"):
                 search_end = min(len(content), end_pos + max_length)
+                end = search_end  # 无停用词时扩展到最大范围
                 for stop_word in stop_words:
                     idx = content.find(stop_word, end_pos, search_end)
                     if idx != -1:
-                        end = min(end, idx) if end != end_pos else idx
-                if end == end_pos:
-                    end = search_end
+                        # 保留最靠近关键词的停用词（最小的 idx）
+                        end = min(end, idx)
 
             extracted_text = content[start:end].strip()
 

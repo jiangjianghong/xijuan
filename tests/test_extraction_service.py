@@ -219,3 +219,87 @@ def test_build_text_source_refs_section_groups_by_pattern_keyword():
     refs, texts = _build_text_source_refs("section", results, [])
     assert texts == {"付款": "按月支付\n---\n30 日内"}
     assert len(refs["付款"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# search_rule 向前/向后扩展方向逻辑
+#   direction 语义：forward=向关键词【后文】扩展；backward=向关键词【前文】扩展；
+#   both=双向。两个方向应完全对称，各自只在自己方向扩展。
+# ---------------------------------------------------------------------------
+
+async def test_search_rule_forward_excludes_preceding_text():
+    """forward 只向关键词后文扩展，不应把关键词前面的内容截进来。"""
+    from service.extraction_service import search_rule
+
+    content = "无关前置段落XXXX金额是100元。后续段落"
+    results = await search_rule(
+        content,
+        {"keywords": ["金额"], "stop_words": ["。"],
+         "direction": "forward", "max_length": 200},
+    )
+    assert results[0]["extracted_text"] == "金额是100元"
+
+
+async def test_search_rule_forward_stops_at_adjacent_stopword():
+    """forward 遇到紧邻关键词右侧的停用词应立即停止，不被更远的停用词覆盖。"""
+    from service.extraction_service import search_rule
+
+    content = "金额。一大段本不该被截取的后续内容\n结束"
+    results = await search_rule(
+        content,
+        {"keywords": ["金额"], "stop_words": ["。", "\n"],
+         "direction": "forward", "max_length": 200},
+    )
+    assert results[0]["extracted_text"] == "金额"
+
+
+async def test_search_rule_forward_adjacent_stopword_no_overexpand():
+    """forward 紧邻停用词为唯一停用词时，不应被误判为未命中而扩展到 max_length。"""
+    from service.extraction_service import search_rule
+
+    content = "金额。" + "尾" * 50
+    results = await search_rule(
+        content,
+        {"keywords": ["金额"], "stop_words": ["。"],
+         "direction": "forward", "max_length": 200},
+    )
+    assert results[0]["extracted_text"] == "金额"
+
+
+async def test_search_rule_forward_no_stopword_expands_to_max_length():
+    """forward 无停用词命中时向后文扩展至 max_length，且不含关键词前文。"""
+    from service.extraction_service import search_rule
+
+    content = "前缀金额" + "后" * 300
+    results = await search_rule(
+        content,
+        {"keywords": ["金额"], "stop_words": ["。"],
+         "direction": "forward", "max_length": 50},
+    )
+    assert results[0]["extracted_text"] == "金额" + "后" * 50
+
+
+async def test_search_rule_backward_excludes_following_text():
+    """backward 只向关键词前文扩展，不应把关键词后面的内容截进来（回归保护）。"""
+    from service.extraction_service import search_rule
+
+    content = "前置段落。金额是100元后续无关YYYY"
+    results = await search_rule(
+        content,
+        {"keywords": ["金额"], "stop_words": ["。"],
+         "direction": "backward", "max_length": 200},
+    )
+    assert results[0]["extracted_text"] == "金额"
+
+
+async def test_search_rule_both_expands_both_sides():
+    """both 双向扩展，两侧各到最近停用词（回归保护）。"""
+    from service.extraction_service import search_rule
+
+    content = "前置段落。金额是100元。后续段落"
+    results = await search_rule(
+        content,
+        {"keywords": ["金额"], "stop_words": ["。"],
+         "direction": "both", "max_length": 200},
+    )
+    assert results[0]["extracted_text"] == "金额是100元"
