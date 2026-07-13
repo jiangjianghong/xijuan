@@ -3755,3 +3755,13 @@ input[type="checkbox"] {
     align-items: center;
     gap: 6px;
 }
+
+/* 大纲层级树：编号高亮 + 单行省略（缩进由内联 padding-left 按 level 控制） */
+.table-split-name.outline-item {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.table-split-name.outline-item .outline-num {
+    color: #2563eb;
+}

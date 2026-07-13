@@ -626,15 +626,21 @@ const App = {
                 case 'outline':
                     data = await API.getFileOutline(fileId);
                     if (data.length === 0) {
-                        html = '<div class="tab-content-empty">暂无章节(文档无 # X 编号标题格式)</div>';
+                        html = '<div class="tab-content-empty">暂无章节(文档无标题)</div>';
                     } else {
+                        // 显示深度：编号标题按 level（封顶 4 级）缩进，无编号标题顶格
+                        const depthOf = (it) => (it.numbered ? Math.min(it.level, 4) - 1 : 0);
                         let sidebar = '';
                         data.forEach((item, idx) => {
-                            const label = `${item.number} ${item.title}`;
-                            sidebar += `<div class="table-split-name${idx === 0 ? ' active' : ''}" data-oidx="${idx}" title="${this.escapeHtml(label)}">${this.escapeHtml(label)}</div>`;
+                            const label = item.number ? `${item.number} ${item.title}` : item.title;
+                            const depth = depthOf(item);
+                            const numHtml = item.number
+                                ? `<span class="outline-num">${this.escapeHtml(item.number)}</span> `
+                                : '';
+                            sidebar += `<div class="table-split-name outline-item${idx === 0 ? ' active' : ''}" data-oidx="${idx}" style="padding-left:${8 + depth * 16}px" title="${this.escapeHtml(label)}">${numHtml}${this.escapeHtml(item.title)}</div>`;
                         });
                         const first = data[0];
-                        const firstLabel = `${first.number} ${first.title}`;
+                        const firstLabel = first.number ? `${first.number} ${first.title}` : first.title;
                         html = `
                             <div class="table-split">
                                 <div class="table-split-sidebar">${sidebar}</div>
@@ -804,7 +810,7 @@ const App = {
                         this.els.tabContent.querySelectorAll('.table-split-name').forEach(n => n.classList.remove('active'));
                         el.classList.add('active');
                         const contentArea = this.els.tabContent.querySelector('.table-split-content');
-                        const label = `${item.number} ${item.title}`;
+                        const label = item.number ? `${item.number} ${item.title}` : item.title;
                         contentArea.innerHTML = `
                             <div class="data-card">
                                 <div class="data-card-title">${this.escapeHtml(label)}</div>
