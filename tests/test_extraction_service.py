@@ -436,3 +436,26 @@ def test_outline_payload_has_level_fields():
     assert "子节" in parent["tree_content"]        # 含子树
     assert "子节" not in parent["content"]         # 自身正文不含子树
     assert payload[2]["title"] == "下一章"
+
+
+async def test_search_section_mixed_document_integration():
+    from service.extraction_service import search_section
+
+    content = (
+        "# 目录\n\n二、项目的基本情况 1\n\n"                    # 无编号 + 目录列表
+        "# 二、项目的基本情况\n\n本章引言。\n\n"                 # L1 正文
+        "# （三）建设规模及内容\n\n建设内容正文很详细。\n\n"      # L2
+        "# 1. 经济效益\n\n效益明显。\n\n"                        # L3
+        "# (1) 子项\n\n子项内容。\n\n"                           # L4
+        "# 三、下一章\n\n无关。\n\n"                             # L1
+        "# 附图\n\n某图。\n"                                     # 无编号叶子
+    )
+    # L2 定位拿到含 L3/L4 的整节
+    r2 = await search_section(content, {"section_pattern": "建设规模及内容", "match_type": "contains"})
+    assert len(r2) == 1
+    assert "经济效益" in r2[0]["content"] and "子项" in r2[0]["content"]
+    assert "下一章" not in r2[0]["content"]
+    # L1 定位去重后只剩正文条（含引言，不是目录条）
+    r1 = await search_section(content, {"section_pattern": "项目的基本情况", "match_type": "exact"})
+    assert len(r1) == 1
+    assert "本章引言" in r1[0]["content"]
