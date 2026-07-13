@@ -17,6 +17,13 @@ const RuleConfig = {
 
     els: {},
 
+    // text / table 抽取默认提示词（新建字段时预填，方便用户在此基础上改写）。
+    // 用户提示词须包含 <search_result>...</search_result> 占位符（use_llm=1 时后端强制校验）。
+    EXTRACT_DEFAULTS: {
+        SYSTEM_PROMPT: '你是一个抽取以及逻辑分析专家，你擅长对检索到的文本进行分析提取',
+        USER_PROMPT: '你需要在检索到的内容中提取xxx。\n\n检索到的内容：<search_result>检索标签</search_result>',
+    },
+
     // VL 默认提示词（与后端 service/vl_service/_defaults.py 严格保持一致）。
     // 注：locate 模板里字面 { } 必须写成 {{ }}，因为后端会 .format() 这个模板。
     VL_DEFAULTS: {
@@ -555,7 +562,7 @@ const RuleConfig = {
                 <div id="fm-table-prompt-wrap">
                 <div class="form-group">
                     <label class="form-label">系统提示词</label>
-                    <textarea class="form-textarea" id="fm-table-system-prompt" rows="3" placeholder="可选，设置 LLM 的角色和行为约束">${Utils.escapeHtml(field.table_system_prompt || '')}</textarea>
+                    <textarea class="form-textarea" id="fm-table-system-prompt" rows="3" placeholder="可选，设置 LLM 的角色和行为约束">${Utils.escapeHtml(field.table_system_prompt || (isEdit ? '' : this.EXTRACT_DEFAULTS.SYSTEM_PROMPT))}</textarea>
                     <div class="form-hint">作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束</div>
                 </div>
                 <div class="form-group">
@@ -565,7 +572,7 @@ const RuleConfig = {
                             <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-table-extract-prompt','search_result',this)" title="插入占位符">{x}</button>
                         </div>
                     </div>
-                    <textarea class="form-textarea" id="fm-table-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.table_extract_prompt || '')}</textarea>
+                    <textarea class="form-textarea" id="fm-table-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.table_extract_prompt || (isEdit ? '' : this.EXTRACT_DEFAULTS.USER_PROMPT))}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
                 </div>
                 </div>
@@ -592,7 +599,7 @@ const RuleConfig = {
                 <div id="fm-text-prompt-wrap">
                 <div class="form-group">
                     <label class="form-label">系统提示词</label>
-                    <textarea class="form-textarea" id="fm-text-system-prompt" rows="3" placeholder="可选，设置 LLM 的角色和行为约束">${Utils.escapeHtml(field.text_system_prompt || '')}</textarea>
+                    <textarea class="form-textarea" id="fm-text-system-prompt" rows="3" placeholder="可选，设置 LLM 的角色和行为约束">${Utils.escapeHtml(field.text_system_prompt || (isEdit ? '' : this.EXTRACT_DEFAULTS.SYSTEM_PROMPT))}</textarea>
                     <div class="form-hint">作为 system message 发送给 LLM，用于定义角色、输出格式等全局约束</div>
                 </div>
                 <div class="form-group">
@@ -602,7 +609,7 @@ const RuleConfig = {
                             <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-text-extract-prompt','search_result',this)" title="插入占位符">{x}</button>
                         </div>
                     </div>
-                    <textarea class="form-textarea" id="fm-text-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.text_extract_prompt || '')}</textarea>
+                    <textarea class="form-textarea" id="fm-text-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.text_extract_prompt || (isEdit ? '' : this.EXTRACT_DEFAULTS.USER_PROMPT))}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
                 </div>
                 </div>
