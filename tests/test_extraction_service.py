@@ -68,8 +68,38 @@ def test_parse_sections_basic():
     assert len(result) == 2
     assert result[0].number == "1"
     assert result[0].title == "概述"
+    assert result[0].level == 3          # 纯数字+空格 → level 3
     assert result[1].number == "2"
     assert result[1].title == "详细设计"
+
+
+def test_parse_sections_all_headings_become_nodes():
+    """所有 # 标题都成节点，含无编号标题。"""
+    content = "# 一、总则\n\n正文A\n\n# （一）子节\n\n正文B\n\n# 附图\n\n图\n"
+    secs = parse_sections(content)
+    assert [s.title for s in secs] == ["总则", "子节", "附图"]
+    assert [s.level for s in secs] == [1, 2, _PLAIN_LEVEL]
+    assert [s.numbered for s in secs] == [True, True, False]
+
+
+def test_parse_sections_tree_end_covers_children():
+    """父级 tree_end_pos 跨越子节，end_pos 仍停在下一个任意标题。"""
+    content = "# 一、父章\n\n引言\n\n# （一）子一\n\nA\n\n# （二）子二\n\nB\n\n# 二、下一章\n\nC\n"
+    secs = parse_sections(content)
+    parent = secs[0]  # 一、父章
+    # 平铺 end 停在 （一）
+    assert content[parent.start_pos:parent.end_pos].count("#") == 1
+    # 层级 tree_end 跨到 二、下一章 之前，含 （一）（二）
+    tree = content[parent.start_pos:parent.tree_end_pos]
+    assert "子一" in tree and "子二" in tree
+    assert "下一章" not in tree
+
+
+def test_parse_sections_leaf_tree_end_equals_flat_end():
+    """无编号叶子的 tree_end 退化为平铺 end（下一个任意标题）。"""
+    content = "# 附图\n\n图1\n\n# 说明\n\n注\n"
+    secs = parse_sections(content)
+    assert secs[0].end_pos == secs[0].tree_end_pos
 
 def test_build_text_source_refs_attaches_bboxes():
     from service.extraction_service import _build_text_source_refs

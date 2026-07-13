@@ -304,7 +304,11 @@ class SectionInfo:
 
 
 def parse_sections(content: str) -> List[SectionInfo]:
-    """解析 Markdown 文档中所有章节。
+    """解析 Markdown 文档中所有章节（层级化）。
+
+    每个 `#{1,6}` 标题都是一个节点，编号体系推断 level，无编号标题记为叶子。
+    end_pos 为平铺边界（下一个任意标题），tree_end_pos 为层级边界（下一个
+    level ≤ 自己的标题，父章因此包含全部子节内容）。
 
     Args:
         content: Markdown 文档内容。
@@ -312,19 +316,31 @@ def parse_sections(content: str) -> List[SectionInfo]:
     Returns:
         章节信息列表。
     """
-    pattern = re.compile(r"^#\s+([\d.]+)\s+(.+?)(?:\s+\d+)?\s*$", re.MULTILINE)
+    pattern = re.compile(r"^#{1,6}[ \t]+(.+?)[ \t]*$", re.MULTILINE)
     matches = list(pattern.finditer(content))
-    sections = []
+    n = len(matches)
 
-    for i, match in enumerate(matches):
-        end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+    metas = [_classify_heading(m.group(1).strip()) for m in matches]
+    sections: List[SectionInfo] = []
+
+    for i, m in enumerate(matches):
+        level, number, title, numbered = metas[i]
+        flat_end = matches[i + 1].start() if i + 1 < n else len(content)
+        tree_end = len(content)
+        for j in range(i + 1, n):
+            if metas[j][0] <= level:
+                tree_end = matches[j].start()
+                break
         sections.append(
             SectionInfo(
                 index=i,
-                number=match.group(1),
-                title=match.group(2).strip(),
-                start_pos=match.start(),
-                end_pos=end_pos,
+                number=number,
+                title=title,
+                level=level,
+                numbered=numbered,
+                start_pos=m.start(),
+                end_pos=flat_end,
+                tree_end_pos=tree_end,
             )
         )
 
