@@ -400,21 +400,56 @@ const RuleConfig = {
         if (available.length === 0) {
             dropdown.innerHTML = '<div class="dropdown-empty">暂无可选字段</div>';
         } else {
+            // 搜索框：字段较多时可按名称 / ID 模糊过滤
+            const search = document.createElement('input');
+            search.type = 'text';
+            search.className = 'dropdown-search';
+            search.placeholder = '搜索字段名称 / ID…';
+            dropdown.appendChild(search);
+
+            const itemsWrap = document.createElement('div');
+            itemsWrap.className = 'dropdown-items';
+            dropdown.appendChild(itemsWrap);
+
+            const emptyHint = document.createElement('div');
+            emptyHint.className = 'dropdown-empty';
+            emptyHint.textContent = '无匹配字段';
+            emptyHint.style.display = 'none';
+            dropdown.appendChild(emptyHint);
+
             available.forEach(f => {
                 const item = document.createElement('div');
                 item.className = 'dropdown-item';
                 item.textContent = `${f.field_name} (${f.field_id})`;
+                item._search = `${f.field_name} ${f.field_id}`.toLowerCase();
                 item.addEventListener('click', (e) => {
                     e.stopPropagation();
                     RuleConfig.addDependFieldTag(f.field_id, f.field_name);
                     RuleConfig.closeInsertTagDropdown();
                 });
-                dropdown.appendChild(item);
+                itemsWrap.appendChild(item);
             });
+
+            search.addEventListener('input', () => {
+                const kw = search.value.trim().toLowerCase();
+                let visible = 0;
+                itemsWrap.querySelectorAll('.dropdown-item').forEach(item => {
+                    const hit = !kw || item._search.includes(kw);
+                    item.style.display = hit ? '' : 'none';
+                    if (hit) visible++;
+                });
+                emptyHint.style.display = visible === 0 ? '' : 'none';
+            });
+            // 阻止点击搜索框时冒泡触发关闭
+            search.addEventListener('click', (e) => e.stopPropagation());
         }
 
         const wrap = btnEl.closest('.insert-tag-wrap');
         if (wrap) wrap.appendChild(dropdown);
+
+        // 打开后自动聚焦搜索框，便于直接输入过滤
+        const searchEl = dropdown.querySelector('.dropdown-search');
+        if (searchEl) setTimeout(() => searchEl.focus(), 0);
 
         const closeHandler = (e) => {
             if (!dropdown.contains(e.target) && e.target !== btnEl) {
