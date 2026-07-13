@@ -249,6 +249,51 @@ def slice_by_page_range(
     }
 
 
+def split_md_by_pages(
+    md: str,
+    page_mapping: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """把整篇 markdown 按 page_mapping 拆成逐页列表。
+
+    以每一页首个 block 锚点的 start_pos 作为页边界；首页从 0 起（含首个锚点
+    之前的前导内容），末页切到文末。无内容（空白）的页码跳过。
+
+    Args:
+        md: 整篇 markdown。
+        page_mapping: build_page_mapping 返回的映射（按 start_pos 排序）。
+
+    Returns:
+        [{"page_num": int, "content": str}, ...]，按页码升序。
+        md 为空或无 page_mapping 时返回空列表。
+    """
+    if not md or not page_mapping:
+        return []
+
+    # 收集每一页首次出现的锚点位置（page_mapping 已按 start_pos 升序）
+    page_starts: List[Tuple[int, int]] = []  # (page_num, start_pos)
+    seen_pages: set = set()
+    for entry in page_mapping:
+        p = entry["page_num"]
+        if p not in seen_pages:
+            seen_pages.add(p)
+            page_starts.append((p, entry["start_pos"]))
+
+    # 按页码排序（防止映射中页序错乱）
+    page_starts.sort(key=lambda x: x[0])
+
+    results: List[Dict[str, Any]] = []
+    for i, (page_num, start_pos) in enumerate(page_starts):
+        # 首页从 0 起，纳入首个锚点前的前导内容
+        slice_start = 0 if i == 0 else start_pos
+        slice_end = page_starts[i + 1][1] if i + 1 < len(page_starts) else len(md)
+        content = md[slice_start:slice_end]
+        if not content.strip():
+            continue
+        results.append({"page_num": page_num, "content": content})
+
+    return results
+
+
 # ── 章节解析 ────────────────────────────────────────────────
 
 # 无编号标题的 level（叶子：恒大于任何编号 level，不参与父级边界）

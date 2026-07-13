@@ -41,7 +41,7 @@ from model.tables import (
 )
 from service.file_context_service import query_file_context
 from service.pipeline_service import run_from_stage, run_from_stage_stream, run_pipeline, run_pipeline_stream
-from service.extraction_service import parse_sections
+from service.extraction_service import parse_sections, split_md_by_pages
 from utils.config import get_config
 from utils.file_utils import generate_file_id
 from utils.milvus_client import get_milvus_client
@@ -570,6 +570,26 @@ async def get_file_outline(file_id: str, db: AsyncSession = Depends(get_db)):
             for s in sections
         ]
     )
+
+
+@router.get("/{file_id}/content", response_model=ResponseWrapper)
+async def get_file_content_by_page(file_id: str, db: AsyncSession = Depends(get_db)):
+    """按页返回文件 markdown 内容：[{"page_num": 1, "content": "..."}, ...]。
+
+    基于 parsing 阶段落库的 page_mapping 逐页切分整篇 markdown，页码升序。
+    文件不存在/内容为空/无 page_mapping（存量老文件重解析前无 bbox 亦无逐页锚点）
+    → 返回空列表（非 404），与 /tables、/chunks、/outline 行为一致。
+    """
+    stmt = select(FileContent).where(FileContent.file_id == file_id)
+    result = await db.execute(stmt)
+    file_content = result.scalar_one_or_none()
+
+    if not file_content or not file_content.file_content:
+        return ResponseWrapper(data=[])
+
+    pages = split_md_by_pages(file_content.file_content, file_content.page_mapping or [])
+
+    return ResponseWrapper(data=pages)
 
 
 @router.get("/{file_id}/extraction", response_model=ResponseWrapper)

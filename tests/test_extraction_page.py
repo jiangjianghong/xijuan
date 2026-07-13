@@ -118,6 +118,61 @@ def test_slice_by_page_range_truncate():
     assert r["end_pos"] == 10
 
 
+from service.extraction_service import split_md_by_pages
+
+
+def test_split_md_by_pages_basic():
+    pages = split_md_by_pages(_MD_5P, _make_mapping())
+    assert [p["page_num"] for p in pages] == [1, 2, 3, 4, 5]
+    assert pages[0]["content"] == "PAGE1_AAA"
+    assert pages[2]["content"] == "PAGE3_CCC"
+    assert pages[4]["content"] == "PAGE5_EEE"
+
+
+def test_split_md_by_pages_first_page_includes_leading_content():
+    """首页锚点前的前导内容并入首页。"""
+    md = "LEAD_" + _MD_5P
+    mapping = [
+        {"start_pos": 5, "end_pos": 14, "page_num": 1},
+        {"start_pos": 14, "end_pos": 23, "page_num": 2},
+    ]
+    pages = split_md_by_pages(md, mapping)
+    assert pages[0]["page_num"] == 1
+    assert pages[0]["content"].startswith("LEAD_PAGE1_AAA")
+
+
+def test_split_md_by_pages_last_page_to_end():
+    mapping = [
+        {"start_pos": 0, "end_pos": 9, "page_num": 1},
+        {"start_pos": 9, "end_pos": 18, "page_num": 2},
+    ]
+    pages = split_md_by_pages(_MD_5P, mapping)
+    # 末页（第2页）切到文末，包含后续全部内容
+    assert pages[-1]["page_num"] == 2
+    assert pages[-1]["content"] == _MD_5P[9:]
+
+
+def test_split_md_by_pages_empty_md():
+    assert split_md_by_pages("", _make_mapping()) == []
+
+
+def test_split_md_by_pages_empty_mapping():
+    assert split_md_by_pages(_MD_5P, []) == []
+
+
+def test_split_md_by_pages_skips_blank_pages():
+    """切片为纯空白的页码跳过。"""
+    md = "PAGE1_AAA" + "   " + "PAGE3_CCC"
+    mapping = [
+        {"start_pos": 0, "end_pos": 9, "page_num": 1},
+        {"start_pos": 9, "end_pos": 12, "page_num": 2},   # 只有空白
+        {"start_pos": 12, "end_pos": 21, "page_num": 3},
+    ]
+    pages = split_md_by_pages(md, mapping)
+    assert [p["page_num"] for p in pages] == [1, 3]
+
+
+
 def test_slice_by_page_range_empty_md():
     r = slice_by_page_range("", _make_mapping(), 1, 1, 30000)
     assert r["ok"] is False
