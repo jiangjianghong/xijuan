@@ -159,6 +159,21 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
         }
     },
     "/doctype/{type_id}": {
+        "put": {
+            "summary": "更新文档类型（可改 type_id）",
+            "description": (
+                "更新类型基础配置（`type_name` / `description` / `max_parse_pages` / "
+                "`enable_embedding` / `enabled`）。**`project_id` 更新时忽略**（仅建档时生效），"
+                "`is_template` / `parent_type_id` 也不经本接口修改。\n\n"
+                "当请求体 `type_id` 与路径 `type_id` 不同时，视为**改名并级联**：把该类型下的"
+                "`files` / `extraction_field` / `analysis_rule` 的 `type_id`、以及子类型的 "
+                "`parent_type_id` 全部改到新值。\n\n"
+                "**错误码**：400（原 type_id 为空 / 默认类型改名）/ 404（类型不存在）/ "
+                "409（新 type_id 已存在）。\n\n"
+                "返回 `data={old_type_id, type_id, renamed, updated_files, updated_fields, "
+                "updated_rules, updated_children}`（后四个计数仅改名时非零）。"
+            ),
+        },
         "delete": {
             "summary": "删除文档类型（单个）",
             "description": (
@@ -336,6 +351,23 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             ),
         }
     },
+    "/file/context_query": {
+        "post": {
+            "summary": "文件片段上下文查询",
+            "description": (
+                "按请求体 `file_id` + `query`（关键词或 MinerU Markdown 文本片段）在整篇 Markdown 中"
+                "精确查找，返回每处命中的上下文窗口、页码，并可选返回该文件全部分块。**`file_id` 放在请求体**"
+                "（不在 URL）。\n\n"
+                "`context_before` / `context_after` 控制命中位置前后返回的字符数；`page_num` 按命中片段"
+                "自身位置计算（非上下文窗口）；`include_all_chunks=true` 时 `chunks` 返回全部分块并用 "
+                "`hit`/`hit_count` 标记命中。\n\n"
+                "文件内容不存在或尚未解析完成时返回 **404**。\n\n"
+                "返回 `data=FileContextQueryResponse{file_id, query, query_type, matched, match_count, "
+                "matches:[{match_index, keyword, position, match_start_pos, match_end_pos, "
+                "context_start_pos, context_end_pos, context, page_num, bboxes}], chunks:[...]}`。"
+            ),
+        }
+    },
     "/file/{file_id}/status": {
         "get": {
             "summary": "查询文件处理进度",
@@ -434,6 +466,18 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "切片口径 —— 前端看到什么 = 抽取时能匹配到什么。\n\n"
                 "返回 `data=[{index, number, title, content, start_pos, end_pos}]`，`content` 是该章节切片正文。"
                 "文件不存在或内容为空返回 `[]`（不返回 404），与 `/tables`、`/chunks` 一致。"
+            ),
+        }
+    },
+    "/file/{file_id}/content": {
+        "get": {
+            "summary": "按页返回 Markdown 内容",
+            "description": (
+                "基于 `parsing` 阶段落库的 `page_mapping` 把整篇 Markdown 逐页切分，"
+                "按页码升序返回：`data=[{page_num, content}]`。\n\n"
+                "首页并入首个块锚点前的前导内容，末页切到文末，纯空白页跳过。\n\n"
+                "文件不存在 / 内容为空 / 无 `page_mapping`（存量老文件重解析前无逐页锚点）返回 `[]`"
+                "（非 404），与 `/tables`、`/chunks`、`/outline` 一致。"
             ),
         }
     },
@@ -652,6 +696,41 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "- `score_threshold`：可选，L2 距离上限，超过该距离的结果被过滤；省略不过滤\n\n"
                 "返回 `data=[SearchResultItem{chunk_id, file_id, chunk_index, chunk_content, "
                 "score, page_num}]`。"
+            ),
+        }
+    },
+    "/log/files": {
+        "get": {
+            "summary": "应用日志文件列表",
+            "description": (
+                "列出 `logs/` 下可查看的 `app_*.log` 文件，按修改时间倒序（最新在前）。\n\n"
+                "返回 `data={current, items:[{name, size, modified_at}]}`；`current` 为最新文件名"
+                "（无日志时为 `null`）。"
+            ),
+        }
+    },
+    "/log/recent": {
+        "get": {
+            "summary": "读取最近日志",
+            "description": (
+                "读取指定日志文件末尾若干行。`file` 省略时取最新 `app_*.log`；`lines` 默认 200"
+                "（`0..1000`）；`level` 按等级精确过滤（`TRACE`/`DEBUG`/`INFO`/`SUCCESS`/"
+                "`WARNING`/`ERROR`/`CRITICAL`，省略不过滤）。\n\n"
+                "**错误码**：400（文件名不合法 / 等级不合法）/ 404（日志文件不存在）。\n\n"
+                "返回 `data={file, lines:[{file, level, line, timestamp, type_id, file_id, "
+                "message, offset}]}`（无日志文件时 `file=null`、`lines=[]`）。"
+            ),
+        }
+    },
+    "/log/stream": {
+        "get": {
+            "summary": "实时日志流（SSE）",
+            "description": (
+                "SSE 实时推送日志。先回放末尾 `tail` 行（默认 200，`0..1000`），再持续跟随追加内容；"
+                "未指定 `file` 时自动跟随最新 `app_*.log`（轮转时切换）。`level` 同 `/log/recent`。\n\n"
+                "**SSE 事件**：`ready`（连接建立）/ `line`（单行日志，data 同 `/log/recent` 的行结构）/ "
+                "`rotated`（已切到新文件）/ `heartbeat`（心跳）。\n\n"
+                "**错误码**：400（文件名 / 等级不合法）/ 404（指定的日志文件不存在）。"
             ),
         }
     },

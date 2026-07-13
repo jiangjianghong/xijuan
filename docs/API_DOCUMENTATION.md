@@ -854,6 +854,32 @@
 
 ---
 
+### 4.11.1 按页 Markdown 内容
+
+基于 `parsing` 阶段落库的 `page_mapping`，把整篇 Markdown 逐页切分，按页码升序返回。
+
+- **URL**: `GET /file/{file_id}/content`
+
+**响应示例**
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": [
+    {"page_num": 1, "content": "# 公司简介\n..."},
+    {"page_num": 2, "content": "## 主营业务\n..."}
+  ]
+}
+```
+
+说明：
+
+- 首页并入首个块锚点前的前导内容，末页切到文末，纯空白页跳过。
+- 文件不存在 / 内容为空 / 无 `page_mapping`（存量老文件重解析前无逐页锚点）返回 `[]`（不返回 404），与 `/tables`、`/chunks`、`/outline` 一致。
+
+---
+
 ### 4.12 字段提取结果
 
 - **URL**: `GET /file/{file_id}/extraction`
@@ -1799,19 +1825,20 @@ data: <json>
 | 24 | GET | `/file/{file_id}/chunks` | 分块列表 |
 | 25 | POST | `/file/context_query` | 文件片段上下文查询（请求体传 `file_id`） |
 | 26 | GET | `/file/{file_id}/outline` | 章节大纲 |
-| 27 | GET | `/file/{file_id}/extraction` | 字段提取结果 |
-| 28 | GET | `/file/{file_id}/analysis` | 逻辑分析结果 |
-| 29 | GET | `/file/{file_id}/pdf` | 原始 PDF 下载（定位预览用） |
-| 30 | GET | `/extraction/fields` | 字段配置列表（可 `type_id` 过滤） |
-| 31 | POST | `/extraction/fields` | 新增/更新字段配置 |
-| 32 | DELETE | `/extraction/fields/{field_id}` | 删除字段配置（硬删） |
-| 33 | GET | `/extraction/fields/{field_id}/check` | 检查 ID 是否存在 |
-| 34 | POST | `/extraction/test` | 字段提取调试 |
-| 35 | POST | `/extraction/test/stream` | 字段提取流式调试（SSE） |
-| 36 | GET | `/analysis/rules` | 规则配置列表（可 `type_id` 过滤） |
-| 37 | POST | `/analysis/rules` | 新增/更新规则 |
-| 38 | DELETE | `/analysis/rules/{rule_id}` | 删除规则（硬删） |
-| 39 | GET | `/analysis/rules/{rule_id}/check` | 检查 ID 是否存在 |
-| 40 | POST | `/analysis/test` | 逻辑分析调试 |
-| 41 | POST | `/analysis/test/stream` | 逻辑分析流式调试（SSE） |
-| 42 | POST | `/search` | 向量相似度检索 |
+| 27 | GET | `/file/{file_id}/content` | 按页 Markdown 内容 |
+| 28 | GET | `/file/{file_id}/extraction` | 字段提取结果 |
+| 29 | GET | `/file/{file_id}/analysis` | 逻辑分析结果 |
+| 30 | GET | `/file/{file_id}/pdf` | 原始 PDF 下载（定位预览用） |
+| 31 | GET | `/extraction/fields` | 字段配置列表（可 `type_id` 过滤） |
+| 32 | POST | `/extraction/fields` | 新增/更新字段配置 |
+| 33 | DELETE | `/extraction/fields/{field_id}` | 删除字段配置（硬删） |
+| 34 | GET | `/extraction/fields/{field_id}/check` | 检查 ID 是否存在 |
+| 35 | POST | `/extraction/test` | 字段提取调试 |
+| 36 | POST | `/extraction/test/stream` | 字段提取流式调试（SSE） |
+| 37 | GET | `/analysis/rules` | 规则配置列表（可 `type_id` 过滤） |
+| 38 | POST | `/analysis/rules` | 新增/更新规则 |
+| 39 | DELETE | `/analysis/rules/{rule_id}` | 删除规则（硬删） |
+| 40 | GET | `/analysis/rules/{rule_id}/check` | 检查 ID 是否存在 |
+| 41 | POST | `/analysis/test` | 逻辑分析调试 |
+| 42 | POST | `/analysis/test/stream` | 逻辑分析流式调试（SSE） |
+| 43 | POST | `/search` | 向量相似度检索 |
