@@ -3,6 +3,49 @@
 from __future__ import annotations
 
 from service.extraction_service import parse_sections, SectionInfo
+from service.extraction_service import _classify_heading, _PLAIN_LEVEL
+
+
+def test_classify_heading_chinese_number_level1():
+    assert _classify_heading("一、项目单位的基本情况") == (1, "一、", "项目单位的基本情况", True)
+
+
+def test_classify_heading_chapter_level1():
+    assert _classify_heading("第二章 规划目标及策略") == (1, "第二章", "规划目标及策略", True)
+
+
+def test_classify_heading_paren_chinese_level2():
+    assert _classify_heading("（三）建设规模及内容") == (2, "（三）", "建设规模及内容", True)
+
+
+def test_classify_heading_article_level2():
+    assert _classify_heading("第七条 村庄分类") == (2, "第七条", "村庄分类", True)
+
+
+def test_classify_heading_arabic_dot_level3():
+    assert _classify_heading("1. 经济效益") == (3, "1.", "经济效益", True)
+
+
+def test_classify_heading_arabic_dotted_level3():
+    # 点分十进制不能被 "1." 规则切成 number="7."
+    assert _classify_heading("7.1行政村分类") == (3, "7.1", "行政村分类", True)
+
+
+def test_classify_heading_paren_arabic_level4():
+    assert _classify_heading("(1) 农村水生态环境显著修复") == (4, "(1)", "农村水生态环境显著修复", True)
+
+
+def test_classify_heading_plain_is_leaf():
+    lvl, num, title, numbered = _classify_heading("道路提升横断面图")
+    assert lvl == _PLAIN_LEVEL
+    assert num == ""
+    assert title == "道路提升横断面图"
+    assert numbered is False
+
+
+def test_classify_heading_strips_toc_page_number():
+    # 目录标题尾部页码剥掉
+    assert _classify_heading("二、项目的基本情况 1") == (1, "二、", "项目的基本情况", True)
 
 
 def test_parse_sections_empty():

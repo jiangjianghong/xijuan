@@ -251,14 +251,56 @@ def slice_by_page_range(
 
 # ── 章节解析 ────────────────────────────────────────────────
 
+# 无编号标题的 level（叶子：恒大于任何编号 level，不参与父级边界）
+_PLAIN_LEVEL = 90
+
+
+def _strip_trailing_page_num(title: str) -> str:
+    """剥掉目录标题尾部的页码（'... 22' -> '...'）。仅删"空格+纯数字"结尾。"""
+    return re.sub(r"\s+\d+$", "", title).strip()
+
+
+# 编号体系 → level。顺序敏感：点分十进制必须早于单数字，否则 '7.1' 被切成 '7.'
+_HEADING_RULES = [
+    (1, re.compile(r"^第[一二三四五六七八九十百千]+[章卷篇部]")),   # 第二章
+    (1, re.compile(r"^[一二三四五六七八九十]+\s*[、.．]")),          # 一、 二.
+    (2, re.compile(r"^[（(]\s*[一二三四五六七八九十]+\s*[)）]")),    # （一） (一)
+    (2, re.compile(r"^第[一二三四五六七八九十百千]+条")),           # 第七条
+    (4, re.compile(r"^[（(]\s*\d+\s*[)）]")),                        # (1) （1）
+    (3, re.compile(r"^\d+\s*[.．]\s*\d+(?:\s*[.．]\s*\d+)*")),       # 7.1  8.1.2
+    (3, re.compile(r"^\d+\s*[、.．]")),                              # 1.  2、  3．
+    (3, re.compile(r"^\d+(?=\s)")),                                  # 1 概述（纯数字+空格，兼容旧格式）
+]
+
+
+def _classify_heading(raw_title: str):
+    """判定标题的编号层级。
+
+    Returns:
+        (level, number, clean_title, numbered) 四元组。
+        无编号标题返回 (_PLAIN_LEVEL, "", 原标题, False)。
+    """
+    t = _strip_trailing_page_num(raw_title)
+    for level, pat in _HEADING_RULES:
+        m = pat.match(t)
+        if m:
+            number = m.group(0).strip()
+            clean = t[m.end():].strip()
+            return level, number, clean or t, True
+    return _PLAIN_LEVEL, "", t, False
+
+
 @dataclass
 class SectionInfo:
     """章节信息。"""
     index: int
     number: str
     title: str
+    level: int
+    numbered: bool
     start_pos: int
-    end_pos: int
+    end_pos: int        # 平铺边界：下一个任意标题（自身正文，向后兼容）
+    tree_end_pos: int   # 层级边界：下一个 level ≤ 自己的标题（含子树）
 
 
 def parse_sections(content: str) -> List[SectionInfo]:
