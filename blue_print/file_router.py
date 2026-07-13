@@ -559,9 +559,13 @@ async def get_file_outline(file_id: str, db: AsyncSession = Depends(get_db)):
                 "index": s.index,
                 "number": s.number,
                 "title": s.title,
-                "content": content[s.start_pos:s.end_pos],
+                "level": s.level,
+                "numbered": s.numbered,
+                "content": content[s.start_pos:s.end_pos],          # 自身正文（平铺）
+                "tree_content": content[s.start_pos:s.tree_end_pos],  # 含子树
                 "start_pos": s.start_pos,
                 "end_pos": s.end_pos,
+                "tree_end_pos": s.tree_end_pos,
             }
             for s in sections
         ]

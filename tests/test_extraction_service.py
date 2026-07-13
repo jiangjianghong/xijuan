@@ -413,3 +413,26 @@ async def test_search_rule_both_expands_both_sides():
          "direction": "both", "max_length": 200},
     )
     assert results[0]["extracted_text"] == "金额是100元"
+
+
+def test_outline_payload_has_level_fields():
+    """outline 每项透出 level/numbered/tree_end_pos/tree_content。"""
+    content = "# 一、父章\n\n引言\n\n# （一）子节\n\nA\n\n# 二、下一章\n\nB\n"
+    secs = parse_sections(content)
+    # 复刻 get_file_outline 的构造逻辑做纯函数校验
+    payload = [
+        {
+            "index": s.index, "number": s.number, "title": s.title,
+            "level": s.level, "numbered": s.numbered,
+            "content": content[s.start_pos:s.end_pos],
+            "tree_content": content[s.start_pos:s.tree_end_pos],
+            "start_pos": s.start_pos, "end_pos": s.end_pos,
+            "tree_end_pos": s.tree_end_pos,
+        }
+        for s in secs
+    ]
+    parent = payload[0]
+    assert parent["level"] == 1 and parent["numbered"] is True
+    assert "子节" in parent["tree_content"]        # 含子树
+    assert "子节" not in parent["content"]         # 自身正文不含子树
+    assert payload[2]["title"] == "下一章"
