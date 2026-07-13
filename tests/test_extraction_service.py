@@ -279,6 +279,43 @@ async def test_search_section_attaches_pattern_as_keyword():
     assert results[0]["section_title"] == "付款方式"
 
 
+async def test_search_section_returns_full_subtree():
+    """定位父章拿到整章（含子节），而非停在第一个子标题。"""
+    from service.extraction_service import search_section
+
+    content = (
+        "# 二、项目的基本情况\n\n引言\n\n"
+        "# （一）项目名称\n\n某某项目\n\n"
+        "# （二）项目代码\n\nABC123\n\n"
+        "# 三、下一章\n\n无关\n"
+    )
+    results = await search_section(
+        content, {"section_pattern": "项目的基本情况", "match_type": "contains"}
+    )
+    assert len(results) == 1
+    body = results[0]["content"]
+    assert "项目名称" in body and "项目代码" in body  # 含子节
+    assert "下一章" not in body
+    assert results[0]["level"] == 1
+
+
+async def test_search_section_dedup_toc_and_body_keep_longest():
+    """目录条 + 正文条同名，只保留内容最长（正文）的那条。"""
+    from service.extraction_service import search_section
+
+    content = (
+        "# 二、项目的基本情况 1\n\n（一）项目名称 1\n\n"                     # 目录条：正文即目录列表（短）
+        "# 三、下一章 2\n\n（一）xxx\n\n"
+        "# 二、项目的基本情况\n\n"                                          # 正文条（长）
+        "这里是真正的正文内容，篇幅明显更长更长更长更长更长更长更长更长更长更长更长更长更长。\n"
+    )
+    results = await search_section(
+        content, {"section_pattern": "项目的基本情况", "match_type": "exact"}
+    )
+    assert len(results) == 1
+    assert "真正的正文内容" in results[0]["content"]
+
+
 def test_build_text_source_refs_section_groups_by_pattern_keyword():
     """section 结果带 keyword=pattern 时按 pattern 分组（contains/fuzzy/llm 多命中合并到同一标签）。"""
     from service.extraction_service import _build_text_source_refs

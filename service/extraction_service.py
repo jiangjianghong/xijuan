@@ -440,14 +440,15 @@ async def search_section(
             for idx in indices:
                 if 1 <= idx <= len(sections):
                     section = sections[idx - 1]
-                    section_content = content[section.start_pos:section.end_pos]
+                    section_content = content[section.start_pos:section.tree_end_pos]
                     results.append({
                         "section_number": section.number,
                         "section_title": section.title,
                         "section_index": section.index,
+                        "level": section.level,
                         "content": section_content,
                         "start_pos": section.start_pos,
-                        "end_pos": section.end_pos,
+                        "end_pos": section.tree_end_pos,
                     })
         except Exception as e:
             logger.warning("LLM 章节匹配失败: {}", e)
@@ -465,15 +466,24 @@ async def search_section(
                 matched = section_pattern.lower() in section.title.lower()
 
             if matched:
-                section_content = content[section.start_pos:section.end_pos]
+                section_content = content[section.start_pos:section.tree_end_pos]
                 results.append({
                     "section_number": section.number,
                     "section_title": section.title,
                     "section_index": section.index,
+                    "level": section.level,
                     "content": section_content,
                     "start_pos": section.start_pos,
-                    "end_pos": section.end_pos,
+                    "end_pos": section.tree_end_pos,
                 })
+
+    # 目录/正文同名去重：完全同名的多命中只保留 content 最长的（目录条极短，正文条含整章）
+    deduped: Dict[str, Dict[str, Any]] = {}
+    for r in results:
+        key = r["section_title"]
+        if key not in deduped or len(r["content"]) > len(deduped[key]["content"]):
+            deduped[key] = r
+    results = list(deduped.values())
 
     # 按章节索引排序
     results.sort(key=lambda x: x["section_index"], reverse=(sort_order == "desc"))
