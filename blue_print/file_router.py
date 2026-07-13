@@ -602,6 +602,7 @@ async def get_extraction_results(file_id: str, db: AsyncSession = Depends(get_db
             ExtractionResult.field_id == ExtractionField.field_id,
         )
         .where(ExtractionResult.file_id == file_id)
+        .order_by(ExtractionField.priority)
     )
     result = await db.execute(stmt)
     rows = result.all()

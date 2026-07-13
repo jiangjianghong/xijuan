@@ -294,6 +294,66 @@ def split_md_by_pages(
     return results
 
 
+# ── source_refs 按「抽取值 ↔ 命中页内容」包含相似度排序 ────────────
+
+# source_refs 中非 ref 列表的保留键，排序时跳过
+_NON_REF_KEYS = frozenset({"_texts", "_vl", "_web_search"})
+
+
+def _norm_for_match(s: str) -> str:
+    """归一化文本用于包含匹配：去空白/常见中英标点，转小写。"""
+    s = re.sub(r"\s+", "", s or "")
+    s = re.sub(r"[，。、；：！？,.;:!?\"'()（）\[\]【】]", "", s)
+    return s.lower()
+
+
+def containment_score(value: str, page_content: str) -> float:
+    """抽取值被某页内容「包含」的程度，∈ [0, 1]。
+
+    非对称：分母只用抽取值长度，故短抽取值被整页完全包含时得 1.0，
+    避免用对称 ratio 导致「值短页长」时相似度被稀释到接近 0。
+
+    - 完全包含 → 1.0
+    - 部分命中（解析/OCR 差几个字）→ 最长公共子串占抽取值的比例
+    - 无关 → 接近 0
+    """
+    v = _norm_for_match(value)
+    p = _norm_for_match(page_content)
+    if not v or not p:
+        return 0.0
+    if v in p:
+        return 1.0
+    m = SequenceMatcher(None, v, p).find_longest_match(0, len(v), 0, len(p))
+    return m.size / len(v)
+
+
+def _sort_source_refs_by_page_containment(
+    source_refs: Optional[Dict[str, Any]],
+    extracted_value: str,
+    page_contents: Dict[Any, str],
+) -> None:
+    """就地按包含相似度对 source_refs 各 label 分组内的 ref 排序（降序）。
+
+    每条 ref 用其 page_num 取整页内容与 extracted_value 算 containment_score，
+    分高者排前。page_num 缺失/非法（如 page 类的范围字符串）→ 该页内容取空串、
+    得分 0，稳定地沉到末尾，不影响其余 ref。稳定排序保证同分保持原相对顺序。
+
+    非 ref 列表键（_texts/_vl/_web_search）与非 list 值原样跳过。
+    """
+    if not source_refs or not extracted_value:
+        return
+    for key, refs in source_refs.items():
+        if key in _NON_REF_KEYS or not isinstance(refs, list) or len(refs) < 2:
+            continue
+        refs.sort(
+            key=lambda ref: containment_score(
+                extracted_value,
+                page_contents.get(ref.get("page_num"), ""),
+            ),
+            reverse=True,
+        )
+
+
 # ── 章节解析 ────────────────────────────────────────────────
 
 # 无编号标题的 level（叶子：恒大于任何编号 level，不参与父级边界）
@@ -1361,6 +1421,17 @@ async def run_extraction(
     file_row = (await session.execute(select(File).where(File.file_id == file_id))).scalar_one_or_none()
     type_id = (file_row.type_id if file_row else None) or "default"
 
+    # 预建「页码 -> 整页内容」映射，供 source_refs 按包含相似度排序复用
+    fc_row = (
+        await session.execute(select(FileContent).where(FileContent.file_id == file_id))
+    ).scalar_one_or_none()
+    page_contents: Dict[Any, str] = {}
+    if fc_row and fc_row.file_content:
+        page_contents = {
+            p["page_num"]: p["content"]
+            for p in split_md_by_pages(fc_row.file_content, fc_row.page_mapping or [])
+        }
+
     # 获取所有启用的字段配置，按 priority 排序
     stmt = (
         select(ExtractionField)
@@ -1385,6 +1456,9 @@ async def run_extraction(
                 extracted_value, reason, source_refs = await extract_text_field(file_id, field, session)
 
             _ensure_valid_extraction_result(field, extracted_value, reason, source_refs)
+
+            # 按「抽取值 ↔ 命中页内容」包含相似度对各 label 分组内 ref 排序
+            _sort_source_refs_by_page_containment(source_refs, extracted_value, page_contents)
 
             # 保存结果
             stmt = select(ExtractionResult).where(
@@ -1501,6 +1575,17 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     file_row = (await session.execute(select(File).where(File.file_id == file_id))).scalar_one_or_none()
     type_id = (file_row.type_id if file_row else None) or "default"
 
+    # 预建「页码 -> 整页内容」映射，供 source_refs 按包含相似度排序复用
+    fc_row = (
+        await session.execute(select(FileContent).where(FileContent.file_id == file_id))
+    ).scalar_one_or_none()
+    page_contents: Dict[Any, str] = {}
+    if fc_row and fc_row.file_content:
+        page_contents = {
+            p["page_num"]: p["content"]
+            for p in split_md_by_pages(fc_row.file_content, fc_row.page_mapping or [])
+        }
+
     # 获取所有启用的字段配置，按 priority 排序
     stmt = (
         select(ExtractionField)
@@ -1522,6 +1607,9 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
                 extracted_value, reason, source_refs = await extract_text_field(file_id, field, session)
 
             _ensure_valid_extraction_result(field, extracted_value, reason, source_refs)
+
+            # 按「抽取值 ↔ 命中页内容」包含相似度对各 label 分组内 ref 排序
+            _sort_source_refs_by_page_containment(source_refs, extracted_value, page_contents)
 
             # 保存结果
             stmt = select(ExtractionResult).where(

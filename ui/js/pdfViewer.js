@@ -3,11 +3,13 @@
  *
  * 对外接口：
  *   PdfViewer.init(container)            绑定容器并显示占位提示
- *   PdfViewer.openAndLocate(url, hits)   加载 PDF（同 url 缓存）→ 跳首个命中页 → 画框
+ *   PdfViewer.openAndLocate(url, hits, preferPage)   加载 PDF（同 url 缓存）→ 跳目标页 → 画框
  *   PdfViewer.gotoPage(n)                翻页（保留当前 hits 的框）
  *
  * hits 形如 {1: [{bbox:[x0,y0,x1,y1], page_size:[w,h]}], 7: []}
  * 页码为 int；空数组表示该页有命中但无框（老数据仅 page_num），只跳页。
+ * preferPage（可选）：首跳目标页，用于优先跳到相似度最高的命中页；
+ *   缺省或不在 hits 中时回退到最小命中页。
  */
 const PdfViewer = {
     container: null,
@@ -34,7 +36,7 @@ const PdfViewer = {
         this.url = null;
     },
 
-    async openAndLocate(url, hits) {
+    async openAndLocate(url, hits, preferPage) {
         if (!window.pdfjsLib) {
             this._showMessage('pdf.js 未加载，无法预览');
             return;
@@ -57,7 +59,11 @@ const PdfViewer = {
             if (gen !== this._gen) return;
             const pages = Object.keys(this.hits).map(Number).sort((a, b) => a - b);
             this._buildSkeleton();
-            await this.gotoPage(pages.length > 0 ? pages[0] : 1);
+            // 首跳优先落在 preferPage（相似度最高的命中页）；不合法时回退最小命中页
+            const target = (preferPage && this.hits[preferPage] !== undefined)
+                ? preferPage
+                : (pages.length > 0 ? pages[0] : 1);
+            await this.gotoPage(target);
         } catch (err) {
             if (gen !== this._gen) return;
             console.error('PDF 加载失败:', err);

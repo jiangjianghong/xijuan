@@ -796,7 +796,8 @@ const App = {
                         const item = this._extractionData[parseInt(btn.dataset.fidx)];
                         if (!item || !panel) return;
                         const hits = this.collectLocateHits(item.source_refs);
-                        PdfViewer.openAndLocate(`/file/${fileId}/pdf`, hits);
+                        const preferPage = this.preferredLocatePage(item.source_refs);
+                        PdfViewer.openAndLocate(`/file/${fileId}/pdf`, hits, preferPage);
                     });
                 });
             }
@@ -894,6 +895,22 @@ const App = {
                 ${inner}
             </details>
         `;
+    },
+
+    // 取「最佳定位页」：source_refs 各分组已按包含相似度降序排好，
+    // 取首条带整数 page_num 的 ref 所在页作为默认落地页（vl 的 _vl 无 page_num 跳过）。
+    // 返回 null 表示无可用页码，调用方回退到最小命中页。
+    preferredLocatePage(sourceRefs) {
+        if (!sourceRefs || typeof sourceRefs !== 'object') return null;
+        for (const [label, refs] of Object.entries(sourceRefs)) {
+            if (label === '_texts' || label === '_vl' || !Array.isArray(refs)) continue;
+            for (const ref of refs) {
+                if (!ref) continue;
+                const m = String(ref.page_num || '').match(/^(\d+)/);
+                if (m) return parseInt(m[1]);
+            }
+        }
+        return null;
     },
 
     // 从 source_refs 收集定位命中：{页码int: [{bbox, page_size}...]}
