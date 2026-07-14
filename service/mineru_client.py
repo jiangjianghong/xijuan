@@ -34,7 +34,7 @@ async def parse_pdf(
         max_parse_pages: 最大解析页数；为空时解析全部页。
 
     Returns:
-        包含 md_content、middle_json 和 content_list 的字典。
+        包含 md_content 和 middle_json 的字典。
     """
     cfg = get_config().mineru
     base_url = base_url or cfg.base_url
@@ -50,7 +50,6 @@ async def parse_pdf(
         "return_middle_json": "true",
         "return_model_output": "false",
         "return_md": "true",
-        "return_content_list": "true",
         "return_images": "false",
         "start_page_id": "0",
         "end_page_id": end_page_id,
@@ -80,15 +79,8 @@ async def parse_pdf(
                 middle_json_str = json.dumps(middle_json_raw, ensure_ascii=False)
             else:
                 middle_json_str = middle_json_raw or ""
-            content_list_raw = first_result.get("content_list")
-            # content_list 可能是 list 或 str，统一转为 str 传递
-            if content_list_raw and not isinstance(content_list_raw, str):
-                content_list_str = json.dumps(content_list_raw, ensure_ascii=False)
-            else:
-                content_list_str = content_list_raw or ""
             return {
                 "md_content": md_content,
                 "middle_json": middle_json_str,
-                "content_list": content_list_str,
             }
-        return {"md_content": "", "middle_json": "", "content_list": ""}
+        return {"md_content": "", "middle_json": ""}
