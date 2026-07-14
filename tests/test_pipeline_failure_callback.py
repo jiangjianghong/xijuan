@@ -80,7 +80,7 @@ async def test_run_pipeline_tableing_failure_pushes_stage_failed(monkeypatch):
     monkeypatch.setattr(pipeline_service, "notify_callback", recorder)
 
     async def _fake_parse_file(*args, **kwargs):
-        return "# md 内容", None  # middle_json=None,跳过 build_page_mapping
+        return "# md 内容", None, None  # middle_json/content_list 均空,跳过 build_page_mapping
 
     async def _fake_save_content(*args, **kwargs):
         pass

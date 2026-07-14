@@ -60,6 +60,7 @@ files = {"files": (file_name, file_content, "application/pdf")}
 | `return_middle_json` | `"true"` | 要求返回 middle_json（布局结构） |
 | `return_model_output` | `"false"` | 不要模型原始输出 |
 | `return_md` | `"true"` | 要求返回 markdown |
+| `return_content_list` | `"true"` | 要求返回 content_list（阅读序内容列表，建页码映射用） |
 | `return_images` | `"false"` | 不要图片 |
 | `start_page_id` | `"0"` | 从第 0 页开始 |
 | `end_page_id` | `str(max_parse_pages - 1)` 或 `"99999"` | 有页数限制时为「页数-1」（0-indexed 闭区间）；无限制时给一个大值表示全部页 |
@@ -108,10 +109,15 @@ files = {"files": (file_name, file_content, "application/pdf")}
 
 ## 6. middle_json 后处理：page_mapping（`utils/page_mapping.py`）
 
+2026-07 起页码映射优先走 `build_page_mapping_auto`：MinerU 返回 `content_list`
+（每项带 page_idx 与 1000×1000 归一化 bbox，md 即按其顺序渲染）时逐项顺序重放定位，
+bbox 乘 page_size/1000 反归一化后落库；content_list 缺失或重放产出为空时降级为
+原 middle_json 前缀匹配算法。content_list 用后即弃，不落库。
+
 解析完成后，管线层（`pipeline_service.py`）调用：
 
 ```python
-page_mapping = build_page_mapping(content, middle_json_str) if middle_json_str else []
+page_mapping = build_page_mapping_auto(content, middle_json_str, content_list_str)
 ```
 
 **middle_json 关键结构**（MinerU 输出）：
@@ -168,5 +174,6 @@ page_mapping = build_page_mapping(content, middle_json_str) if middle_json_str e
 - MinerU 接口是**一次性同步 HTTP**，长文档解析时间全部消耗在这一个请求上，务必设置足够大的客户端超时（本系统生产配置 1200s）。
 - 响应中 `results` 的 key 是「文件名去后缀」，但实现上**不依赖 key**，直接取第一个 value——一次只传一个文件。
 - `middle_json` 的 dict/str 二态必须兼容（不同 MinerU 版本/部署行为不一致）。
-- `page_mapping` 不是 MinerU 直接给的，而是本系统用 `md_content` × `middle_json.pdf_info[].para_blocks` 自建的：文本块靠文本前缀匹配，表格块（`type == "table"`）靠 `<table` 字面量匹配并挂整表 bbox；它是后续表格页码、分块页码、抽取结果 bbox 高亮的唯一来源。
+- `page_mapping` 不是 MinerU 直接给的，而是本系统自建的：优先用 `content_list`（阅读序 + page_idx + 归一化 bbox）顺序重放定位，降级时用 `md_content` × `middle_json.pdf_info[].para_blocks` 前缀匹配（文本块靠文本前缀、表格块靠 `<table` 字面量并挂整表 bbox）；它是后续表格页码、分块页码、抽取结果 bbox 高亮的唯一来源。
+- 降级用的 middle_json 前缀匹配算法在长文档 + 重复公文套话下会因 cursor 单调误跳产生大面积页码错位（436 页文档实测仅建出 116 锚/69 页），content_list 路径根治此问题；该路径上线前解析的存量文件不自动修复（需重新解析）。
 - 解析阶段失败的文件通过 `POST /file/{file_id}/retry/parsing` 重试（需重新提交原始文件内容，见 `pipeline_service.py:1169`）。

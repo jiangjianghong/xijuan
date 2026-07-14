@@ -294,6 +294,67 @@ def split_md_by_pages(
     return results
 
 
+def slice_pages_in_range(
+    md: str,
+    page_mapping: List[Dict[str, Any]],
+    start_page: int,
+    end_page: int,
+) -> List[Dict[str, Any]]:
+    """按页码区间逐页切 markdown，返回每页 {page_num, content, start_pos, end_pos}。
+
+    与 slice_by_page_range 返回单块整片不同，这里保留逐页边界，供 page 检索
+    把区间拆成若干「单页」分别喂给模型（每页各带真实页码）。切片逻辑同
+    split_md_by_pages（首页含前导内容，末页切到文末），只额外做区间过滤并
+    带上位置。空白页跳过。md 为空或无 page_mapping 返回空列表。
+    """
+    if not md or not page_mapping:
+        return []
+
+    page_starts: List[Tuple[int, int]] = []
+    seen_pages: set = set()
+    for entry in page_mapping:
+        p = entry["page_num"]
+        if p not in seen_pages:
+            seen_pages.add(p)
+            page_starts.append((p, entry["start_pos"]))
+    page_starts.sort(key=lambda x: x[0])
+
+    results: List[Dict[str, Any]] = []
+    for i, (page_num, start_pos) in enumerate(page_starts):
+        slice_start = 0 if i == 0 else start_pos
+        slice_end = page_starts[i + 1][1] if i + 1 < len(page_starts) else len(md)
+        if page_num < start_page or page_num > end_page:
+            continue
+        content = md[slice_start:slice_end]
+        if not content.strip():
+            continue
+        results.append({
+            "page_num": page_num,
+            "content": content,
+            "start_pos": slice_start,
+            "end_pos": slice_end,
+        })
+
+    return results
+
+
+# ── 页码标记（注入模型的检索文本前缀，与 source_refs 页码对齐） ────
+
+def _page_prefix(page_num: Any) -> str:
+    """把页码格式化成注入模型的行首标记 '【第X页】\\n'；页码缺失时返回空串。"""
+    s = str(page_num if page_num is not None else "").strip()
+    return f"【第{s}页】\n" if s else ""
+
+
+def _result_page_num(r: Dict[str, Any], page_mapping: List[Dict[str, Any]]) -> Any:
+    """取检索结果页码：自带非空 page_num 优先，否则用 start/end_pos 查 page_mapping。"""
+    if r.get("page_num") not in (None, ""):
+        return r["page_num"]
+    if r.get("start_pos") is not None and r.get("end_pos") is not None:
+        return lookup_page_num(page_mapping, r["start_pos"], r["end_pos"])
+    return ""
+
+
 # ── source_refs 按「抽取值 ↔ 命中页内容」包含相似度排序 ────────────
 
 # source_refs 中非 ref 列表的保留键，排序时跳过
@@ -819,10 +880,12 @@ async def _extract_page_field(
     search_config: Dict[str, Any],
     field: ExtractionField,
 ) -> Tuple[str, str, Optional[Dict]]:
-    """page 检索方式：直接按页码切 markdown 喂 LLM。
+    """page 检索方式：按页码切 markdown 喂 LLM，区间内**逐页**注入。
 
     与其他 5 种 text 方法不同，page 不做关键词过滤，只用一个固定 label
-    `page_content` 作为 prompt 占位符。
+    `page_content` 作为 prompt 占位符。区间（如 1-5 页）会被拆成若干单页，
+    每页各带真实【第X页】标记后用 `\\n---\\n` 拼接，模型看到的页码与 source_refs
+    逐页 ref 一致。无 page_mapping 时回退到整片切法（不带逐页页码）。
     """
     page_range_raw = (search_config or {}).get("page_range", "")
     parsed = _parse_page_range(page_range_raw)
@@ -834,30 +897,69 @@ async def _extract_page_field(
     if not isinstance(max_length, int) or max_length <= 0:
         return "", f"max_length 配置非法：{max_length!r}", None
 
-    sliced = slice_by_page_range(content, page_mapping, start_page, end_page, max_length)
-    if not sliced["ok"]:
-        return "", sliced["reason"], None
+    pages = slice_pages_in_range(content, page_mapping, start_page, end_page)
 
-    results_text_by_label = {"page_content": sliced["text"]}
-    source_refs: Dict[str, List[Dict[str, Any]]] = {
-        "page_content": [
-            {
+    if pages:
+        # 逐页构建：每页一条 ref（带真实 page_num + bbox），注入文本各带页码标记
+        page_refs: List[Dict[str, Any]] = []
+        parts: List[str] = []
+        used = 0
+        truncated = False
+        for pg in pages:
+            piece = _page_prefix(pg["page_num"]) + pg["content"]
+            # 按累计长度截断，保留整页边界；超限则本页截断后停止
+            if used + len(piece) > max_length:
+                piece = piece[: max_length - used]
+                truncated = True
+            ref: Dict[str, Any] = {
                 "type": "page",
                 "page_range": page_range_raw,
-                "start_pos": sliced["start_pos"],
-                "end_pos": sliced["end_pos"],
-                "length": sliced["length"],
-                "truncated": sliced["truncated"],
-                "page_num": page_range_raw,
-                "text": sliced["text"],
+                "start_pos": pg["start_pos"],
+                "end_pos": pg["end_pos"],
+                "length": len(pg["content"]),
+                "page_num": pg["page_num"],
+                "text": pg["content"],
             }
-        ],
-        "_texts": {"page_content": sliced["text"]},
-    }
+            bboxes = lookup_bboxes(page_mapping, pg["start_pos"], pg["end_pos"])
+            if bboxes:
+                ref["bboxes"] = bboxes
+            page_refs.append(ref)
+            parts.append(piece)
+            used += len(piece)
+            if truncated:
+                break
+
+        injected = "\n---\n".join(parts)
+        results_text_by_label = {"page_content": injected}
+        source_refs: Dict[str, Any] = {
+            "page_content": page_refs,
+            "_texts": {"page_content": injected},
+        }
+    else:
+        # 无 page_mapping：回退整片切法（不带逐页页码，兼容老数据）
+        sliced = slice_by_page_range(content, page_mapping, start_page, end_page, max_length)
+        if not sliced["ok"]:
+            return "", sliced["reason"], None
+        results_text_by_label = {"page_content": sliced["text"]}
+        source_refs = {
+            "page_content": [
+                {
+                    "type": "page",
+                    "page_range": page_range_raw,
+                    "start_pos": sliced["start_pos"],
+                    "end_pos": sliced["end_pos"],
+                    "length": sliced["length"],
+                    "truncated": sliced["truncated"],
+                    "page_num": page_range_raw,
+                    "text": sliced["text"],
+                }
+            ],
+            "_texts": {"page_content": sliced["text"]},
+        }
 
     # use_llm 关闭：直接返回切片原文，不校验占位符 / 不调 LLM
     if _is_llm_disabled(field):
-        return sliced["text"], NO_LLM_REASON, source_refs
+        return results_text_by_label["page_content"], NO_LLM_REASON, source_refs
 
     prompt_template = field.text_extract_prompt or ""
     if not validate_prompt_has_placeholder(prompt_template):
@@ -917,7 +1019,8 @@ def _build_table_source_refs(
             if bboxes:
                 ref["bboxes"] = bboxes
         table_refs.append(ref)
-        parts.append(text)
+        # 注入模型的文本加【第X页】标记，页码与 ref.page_num 一致
+        parts.append(_page_prefix(table.page_num or "") + text)
 
     results_text_by_label: Dict[str, str] = {label: "\n---\n".join(parts)} if parts else {}
     source_refs: Dict[str, Any] = {
@@ -1117,7 +1220,9 @@ def _build_text_source_refs(
         source_refs.setdefault(keyword, []).append(ref)
 
     # 按关键词分组拼接检索文本（与注入 prompt 的内容完全一致；
-    # section 无 keyword 用 section_title 兜底，vector_db 的 keyword 为 query_text）
+    # section 无 keyword 用 section_title 兜底，vector_db 的 keyword 为 query_text）。
+    # 每段前加【第X页】标记，页码取自与 source_refs 相同的计算，确保模型看到的
+    # 页码与落库 source_refs 对得上。
     results_by_keyword: Dict[str, List[Dict]] = {}
     for r in search_results:
         kw = r.get("keyword", "") or r.get("section_title", "")
@@ -1125,7 +1230,10 @@ def _build_text_source_refs(
             results_by_keyword.setdefault(kw, []).append(r)
 
     results_text_by_label: Dict[str, str] = {
-        kw: "\n---\n".join(r.get(text_key, "") for r in items)
+        kw: "\n---\n".join(
+            _page_prefix(_result_page_num(r, page_mapping)) + r.get(text_key, "")
+            for r in items
+        )
         for kw, items in results_by_keyword.items()
     }
     source_refs["_texts"] = results_text_by_label
@@ -1820,7 +1928,7 @@ async def test_field_extraction_stream(
                     full_table = next((tb for tb in tables if tb.table_index == t["table_index"]), None)
                     content_text = full_table.table_content if full_table else t["table_content"]
                     content = f"表格名称: {table_name}\n{content_text}"
-                    parts.append(content)
+                    parts.append(_page_prefix(t.get("page_num") or "") + content)
                 if parts:
                     results_by_label[label] = "\n---\n".join(parts)
 
@@ -1854,7 +1962,8 @@ async def test_field_extraction_stream(
 
                 search_results = []
                 if search_type == "page":
-                    # page 方法不走通用按 keyword 分组流程，stream 预览也直接展示切片文本
+                    # page 方法不走通用按 keyword 分组流程；预览与实际注入一致：区间
+                    # 逐页拆分、每页各带【第X页】标记
                     page_range_raw = (search_config or {}).get("page_range", "")
                     parsed = _parse_page_range(page_range_raw)
                     if parsed:
@@ -1862,9 +1971,23 @@ async def test_field_extraction_stream(
                         max_len = (search_config or {}).get("max_length", 30000)
                         if not isinstance(max_len, int) or max_len <= 0:
                             max_len = 30000
-                        sliced = slice_by_page_range(content, page_mapping, start_p, end_p, max_len)
-                        if sliced["ok"]:
-                            results_by_label["page_content"] = sliced["text"]
+                        pages = slice_pages_in_range(content, page_mapping, start_p, end_p)
+                        if pages:
+                            parts_pg = []
+                            used = 0
+                            for pg in pages:
+                                piece = _page_prefix(pg["page_num"]) + pg["content"]
+                                if used + len(piece) > max_len:
+                                    piece = piece[: max_len - used]
+                                    parts_pg.append(piece)
+                                    break
+                                parts_pg.append(piece)
+                                used += len(piece)
+                            results_by_label["page_content"] = "\n---\n".join(parts_pg)
+                        else:
+                            sliced = slice_by_page_range(content, page_mapping, start_p, end_p, max_len)
+                            if sliced["ok"]:
+                                results_by_label["page_content"] = sliced["text"]
                 elif search_type == "context":
                     search_results = await search_context(content, search_config)
                 elif search_type == "section":
@@ -1885,15 +2008,16 @@ async def test_field_extraction_stream(
                             results_by_keyword[kw] = []
                         results_by_keyword[kw].append(r)
 
-                for keyword, items in results_by_keyword.items():
-                    if search_type == "context":
-                        results_by_label[keyword] = "\n---\n".join([r["context"] for r in items])
-                    elif search_type == "section":
-                        results_by_label[keyword] = "\n---\n".join([r["content"] for r in items])
-                    elif search_type == "rule":
-                        results_by_label[keyword] = "\n---\n".join([r["extracted_text"] for r in items])
-                    elif search_type in ("chunk_db", "vector_db"):
-                        results_by_label[keyword] = "\n---\n".join([r["chunk_content"] for r in items])
+                # 每段带【第X页】标记，与实际注入 prompt 的文本一致
+                _seg_key = {"context": "context", "section": "content",
+                            "rule": "extracted_text", "chunk_db": "chunk_content",
+                            "vector_db": "chunk_content"}.get(search_type)
+                if _seg_key:
+                    for keyword, items in results_by_keyword.items():
+                        results_by_label[keyword] = "\n---\n".join(
+                            _page_prefix(_result_page_num(r, page_mapping)) + r.get(_seg_key, "")
+                            for r in items
+                        )
 
                 yield {
                     "event": "search_results",
