@@ -117,3 +117,53 @@ def test_auto_falls_back_when_replay_yields_nothing():
     cl = [{"type": "page_number", "text": "1", "page_idx": 0}]
     mapping = build_page_mapping_auto(md, middle, cl)
     assert len(mapping) == 1
+
+
+# ── 真实 MinerU 产物回归(应对气候变化规划.pdf, 14 页) ─────────────
+
+import json as _json
+from pathlib import Path
+
+_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "content_list_sample"
+
+
+def _load_real_sample():
+    md = (_FIXTURE_DIR / "1.md").read_text(encoding="utf-8")
+    middle = _json.loads((_FIXTURE_DIR / "middle.json").read_text(encoding="utf-8"))
+    cl = _json.loads((_FIXTURE_DIR / "content_list.json").read_text(encoding="utf-8"))
+    return md, middle, cl
+
+
+def test_real_sample_full_coverage():
+    md, middle, cl = _load_real_sample()
+    mapping = build_page_mapping_from_content_list(md, cl, middle)
+    # 88 项中 74 项为实内容(其余为 page_number),顺序重放应全命中
+    assert len(mapping) == 74
+    # 覆盖 1-13 页；第 14 页(page_idx=13)content_list 仅一个 page_number 水印、
+    # 无实内容,md 不渲染故无锚点——正确覆盖为 1..13
+    assert {m["page_num"] for m in mapping} == set(range(1, 14))
+    # 锚点单调
+    positions = [m["start_pos"] for m in mapping]
+    assert positions == sorted(positions)
+
+
+def test_real_sample_bbox_within_page_size():
+    md, middle, cl = _load_real_sample()
+    mapping = build_page_mapping_from_content_list(md, cl, middle)
+    with_bbox = [m for m in mapping if "bbox" in m]
+    assert with_bbox, "真实产物应有 bbox"
+    for m in with_bbox:
+        w, h = m["page_size"]
+        x0, y0, x1, y1 = m["bbox"]
+        assert 0 <= x0 <= x1 <= w
+        assert 0 <= y0 <= y1 <= h
+
+
+def test_real_sample_known_page_lookup():
+    from utils.page_mapping import lookup_page_num
+    md, middle, cl = _load_real_sample()
+    mapping = build_page_mapping_from_content_list(md, cl, middle)
+    # 第 4 页(page_idx=3)的表格「专栏1 非二氧化碳温室气体管控工程」
+    pos = md.find("专栏1 非二氧化碳温室气体管控工程")
+    assert pos != -1
+    assert lookup_page_num(mapping, pos, pos + 10) == "4"
