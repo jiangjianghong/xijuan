@@ -251,7 +251,7 @@ def test_build_text_source_refs_vector_db_enters_texts():
          "end_pos": 7, "page_num": "2", "chunk_id": "c2", "chunk_index": 1},
     ]
     refs, texts = _build_text_source_refs("vector_db", results, [])
-    assert texts == {"合同总金额": "块1\n---\n块2"}
+    assert texts == {"合同总金额": "【第1页】\n块1\n---\n【第2页】\n块2"}
     assert refs["合同总金额"][0]["chunk_id"] == "c1"
 
 

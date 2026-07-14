@@ -27,7 +27,8 @@ def test_context_refs_carry_text_and_joined():
     assert [r["text"] for r in refs["金额"]] == ["合同金额为100万元", "总金额含税"]
     assert refs["金额"][0]["page_num"] == "1"
     assert refs["金额"][1]["page_num"] == "2"
-    assert texts == {"金额": "合同金额为100万元\n---\n总金额含税"}
+    # 注入文本每段带【第X页】前缀，页码与 ref.page_num 一致；ref.text 仍是裸原文
+    assert texts == {"金额": "【第1页】\n合同金额为100万元\n---\n【第2页】\n总金额含税"}
     assert refs["_texts"] == texts
 
 
@@ -43,7 +44,7 @@ def test_chunk_db_refs_carry_text():
     assert ref["text"] == "乙方为某某公司"
     assert ref["chunk_id"] == "c1"
     assert ref["page_num"] == "2"
-    assert texts == {"乙方": "乙方为某某公司"}
+    assert texts == {"乙方": "【第2页】\n乙方为某某公司"}
 
 
 def test_rule_refs_carry_text():
@@ -91,7 +92,7 @@ def test_table_refs_carry_text_and_joined():
     assert refs["_tables"][0]["table_name"] == "报价表"
     assert refs["_tables"][0]["page_num"] == "2"
     assert texts == {
-        "报价": "表格名称: 报价表\n<table>A</table>\n---\n表格名称: 明细表\n<table>B</table>"
+        "报价": "【第2页】\n表格名称: 报价表\n<table>A</table>\n---\n【第3页】\n表格名称: 明细表\n<table>B</table>"
     }
     assert refs["_texts"] == texts
 

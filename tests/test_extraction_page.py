@@ -219,16 +219,40 @@ async def test_extract_page_field_happy(monkeypatch):
                 "start_pos": 18,
                 "end_pos": 27,
                 "length": 9,
-                "truncated": False,
-                "page_num": "3",
+                "page_num": 3,
                 "text": "PAGE3_CCC",
             }
         ],
-        "_texts": {"page_content": "PAGE3_CCC"},
+        "_texts": {"page_content": "【第3页】\nPAGE3_CCC"},
     }
     sent = captured["prompt"] or (captured["messages"] and captured["messages"][-1]["content"])
     assert "PAGE3_CCC" in sent
+    assert "【第3页】" in sent
     assert "<search_result>" not in sent
+
+
+@pytest.mark.asyncio
+async def test_extract_page_field_per_page_injection(monkeypatch):
+    """区间被拆成逐页，每页各带【第X页】标记，refs 逐页各一条。"""
+    captured = {}
+
+    async def fake_chat(prompt, messages=None):
+        captured["prompt"] = prompt
+        return '{"value": "v", "reason": "r"}'
+
+    monkeypatch.setattr(ext_svc, "chat_completion", fake_chat)
+
+    field = _make_field()
+    config = {"page_range": "2-4", "max_length": 30000}
+    value, reason, refs = await _extract_page_field(_MD_5P, _make_mapping(), config, field)
+
+    assert [r["page_num"] for r in refs["page_content"]] == [2, 3, 4]
+    assert [r["text"] for r in refs["page_content"]] == ["PAGE2_BBB", "PAGE3_CCC", "PAGE4_DDD"]
+    injected = refs["_texts"]["page_content"]
+    assert injected == (
+        "【第2页】\nPAGE2_BBB\n---\n【第3页】\nPAGE3_CCC\n---\n【第4页】\nPAGE4_DDD"
+    )
+    assert captured["prompt"].count("【第") == 3
 
 
 @pytest.mark.asyncio
@@ -243,10 +267,11 @@ async def test_extract_page_field_truncated(monkeypatch):
     value, reason, refs = await _extract_page_field(_MD_5P, _make_mapping(), config, field)
 
     assert value == "v"
-    assert refs["page_content"][0]["truncated"] is True
-    assert refs["page_content"][0]["length"] == 10
-    assert refs["page_content"][0]["text"] == refs["_texts"]["page_content"]
-    assert len(refs["_texts"]["page_content"]) == 10
+    # 首页 piece = "【第1页】\nPAGE1_AAA"(16 字) 超过 10 → 截断到 10 字并停止
+    injected = refs["_texts"]["page_content"]
+    assert len(injected) == 10
+    assert injected == "【第1页】\nPAGE"
+    assert [r["page_num"] for r in refs["page_content"]] == [1]
 
 
 @pytest.mark.asyncio
