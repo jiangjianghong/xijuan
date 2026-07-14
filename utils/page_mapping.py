@@ -25,94 +25,139 @@ def _extract_block_text(block: dict) -> str:
     return " ".join(parts)
 
 
+# 唯一锚前缀尝试长度：先长(更易唯一)后短(容忍 md 渲染在中段与块文本分叉)
+_PROBE_LENS = (40, 25)
+
+
+def _block_probe_and_bbox(block: dict):
+    """从任意块递归收集探针文本(span content / 表格 html),返回 (probe, bbox)。
+
+    text/title/list 块取 span content;table 块取 table_body span 的 html。
+    统一用 " " 连接(与 _extract_block_text 口径一致,30~40 字前缀极少跨 span)。
+    """
+    texts: List[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            content = node.get("content")
+            if isinstance(content, str) and content:
+                texts.append(content)
+            html = node.get("html")
+            if isinstance(html, str) and html:
+                texts.append(html)
+            for key in ("blocks", "lines", "spans"):
+                if key in node:
+                    walk(node[key])
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(block)
+    probe = " ".join(t for t in texts if t).strip()
+    return probe, block.get("bbox")
+
+
+def _unique_find(md_content: str, probe: str):
+    """在整篇 md 里找 probe 的全局唯一出现;返回 (pos, used_len),不唯一返回 (-1, 0)。"""
+    for length in _PROBE_LENS:
+        candidate = probe[:length].strip()
+        if len(candidate) < 8:
+            continue
+        if md_content.count(candidate) == 1:
+            return md_content.find(candidate), len(candidate)
+    return -1, 0
+
+
+def _longest_nondecreasing_keep(pages: List[int]) -> List[int]:
+    """返回要保留的下标(page_num 的最长非降子序列),剔除破坏单调的假唯一锚。"""
+    if not pages:
+        return []
+    from bisect import bisect_right
+
+    tails_val: List[int] = []   # tails_val[k] = 长度 k+1 的非降子序列的最小结尾值
+    tails_idx: List[int] = []   # 对应 pages 下标
+    prev = [-1] * len(pages)
+    for i, v in enumerate(pages):
+        j = bisect_right(tails_val, v)
+        if j == len(tails_val):
+            tails_val.append(v)
+            tails_idx.append(i)
+        else:
+            tails_val[j] = v
+            tails_idx[j] = i
+        prev[i] = tails_idx[j - 1] if j > 0 else -1
+    keep: List[int] = []
+    k = tails_idx[-1]
+    while k != -1:
+        keep.append(k)
+        k = prev[k]
+    keep.reverse()
+    return keep
+
+
 def build_page_mapping(
     md_content: str,
     middle_json_raw: Union[str, dict],
 ) -> List[Dict[str, Any]]:
-    """构建 markdown 文本位置 → 页码的映射表。
+    """构建 markdown 文本位置 → 页码的映射表(全局唯一锚 + LIS 单调清洗)。
 
-    算法：遍历 middle_json 中每页的每个 para_block。文本块提取文本前缀在
-    md_content 中前向扫描定位；表格块（type=table）改以 <table 字面量定位，
-    挂整表 bbox。记录 (start_pos, page_num)。
+    算法：遍历 middle_json 每页每块，取足够长前缀在整篇 md 做全局唯一匹配
+    (count==1)得到可信锚 (pos, page_num, bbox, page_size)；锚点按 pos 排序后
+    用 LIS 保留 page_num 非降的最长子序列，剔除极少数破坏单调的假唯一匹配。
+    产出 schema 与历史版本一致，lookup_page_num/lookup_bboxes 无需改动。
 
     Args:
         md_content: MinerU 返回的 markdown 全文。
         middle_json_raw: MinerU 返回的 middle_json（字符串或 dict）。
 
     Returns:
-        按 start_pos 排序的映射列表，每项: {"start_pos": int, "end_pos": int, "page_num": int,
-        "bbox": [x0, y0, x1, y1], "page_size": [w, h]}（bbox/page_size 在 middle_json 缺失时不带）。
+        按 start_pos 排序的映射列表，每项: {"start_pos", "end_pos", "page_num",
+        "bbox"(可选), "page_size"(可选)}。
     """
     if not md_content or not middle_json_raw:
         return []
-
     middle = _parse_middle_json(middle_json_raw)
     pdf_info = middle.get("pdf_info", [])
     if not pdf_info:
         return []
 
-    mapping: List[Dict[str, Any]] = []
-    cursor = 0  # 前向扫描游标
-
+    # 1) 候选：每块取全局唯一锚
+    candidates = []  # (pos, used_len, page_num, bbox, page_size)
     for page in pdf_info:
-        page_num = page.get("page_idx", 0) + 1  # 转为 1-indexed
+        page_num = page.get("page_idx", 0) + 1
         page_size = page.get("page_size")
-        blocks = page.get("para_blocks", [])
-
-        for block in blocks:
-            bbox = block.get("bbox")
-
-            def _make_entry(pos: int, length: int) -> Dict[str, Any]:
-                entry: Dict[str, Any] = {
-                    "start_pos": pos,
-                    "end_pos": pos + length,
-                    "page_num": page_num,
-                }
-                if bbox:
-                    entry["bbox"] = bbox
-                if page_size:
-                    entry["page_size"] = page_size
-                return entry
-
-            # 表格块：无 lines/spans 文本（提不出前缀），改在 markdown 中前向找
-            # <table 字面量作锚点，挂整表 bbox；找不到或无 bbox 时不产锚点（容错）
-            if block.get("type") == "table":
-                if bbox:
-                    pos = md_content.find("<table", cursor)
-                    if pos != -1:
-                        mapping.append(_make_entry(pos, len("<table")))
-                        cursor = pos + 1
+        for block in page.get("para_blocks", []):
+            probe, bbox = _block_probe_and_bbox(block)
+            if len(probe) < 8:
                 continue
-
-            block_text = _extract_block_text(block)
-            if not block_text or len(block_text.strip()) < 3:
+            pos, used_len = _unique_find(md_content, probe)
+            if pos < 0:
                 continue
+            candidates.append((pos, used_len, page_num, bbox, page_size))
 
-            # 用不同长度的前缀尝试定位
-            found = False
-            for prefix_len in (50, 30, 20):
-                prefix = block_text[:prefix_len].strip()
-                if not prefix:
-                    continue
-                pos = md_content.find(prefix, cursor)
-                if pos != -1:
-                    mapping.append(_make_entry(pos, len(prefix)))
-                    cursor = pos + 1
-                    found = True
-                    break
+    if not candidates:
+        return []
 
-            if not found:
-                # 尝试更短的片段
-                short = block_text[:10].strip()
-                if short:
-                    pos = md_content.find(short, cursor)
-                    if pos != -1:
-                        mapping.append(_make_entry(pos, len(short)))
-                        cursor = pos + 1
+    # 2) 按位置排序
+    candidates.sort(key=lambda c: c[0])
 
-    # 按 start_pos 排序
-    mapping.sort(key=lambda x: x["start_pos"])
+    # 3) LIS 单调清洗（page_num 非降）
+    keep = _longest_nondecreasing_keep([c[2] for c in candidates])
+    candidates = [candidates[i] for i in keep]
 
+    # 4) 组装（schema 不变）
+    mapping: List[Dict[str, Any]] = []
+    for pos, used_len, page_num, bbox, page_size in candidates:
+        entry: Dict[str, Any] = {
+            "start_pos": pos,
+            "end_pos": pos + used_len,
+            "page_num": page_num,
+        }
+        if bbox:
+            entry["bbox"] = bbox
+        if page_size:
+            entry["page_size"] = page_size
+        mapping.append(entry)
     return mapping
 
 
