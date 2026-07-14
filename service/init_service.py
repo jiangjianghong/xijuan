@@ -71,6 +71,8 @@ async def init_database() -> None:
             ("doc_type", "max_parse_pages", "INT NULL"),
             ("doc_type", "enable_embedding", "TINYINT NOT NULL DEFAULT 1"),
             ("analysis_rule", "web_search", "JSON NULL"),
+            ("files", "start_extracting_time", "DATETIME NULL"),
+            ("files", "start_analyzing_time", "DATETIME NULL"),
         ]
         for table_name, column_name, column_type in migrations:
             result = await conn.execute(

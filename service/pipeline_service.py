@@ -38,6 +38,19 @@ def _sse_event(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+_RETRY_STAGES = ("tableing", "chunking", "embedding", "extracting", "analyzing")
+
+
+def _stage_time_reset_values(stage: str) -> Dict[str, None]:
+    """retry 清理用：该阶段及下游所有阶段的 start/end 时间戳置空，避免旧时间残留导致耗时统计错乱。"""
+    idx = _RETRY_STAGES.index(stage)
+    return {
+        f"{prefix}_{s}_time": None
+        for s in _RETRY_STAGES[idx:]
+        for prefix in ("start", "end")
+    }
+
+
 async def run_pipeline_stream(
     file_id: str, file_path: str, file_content_bytes: bytes, session: AsyncSession
 ) -> AsyncGenerator[str, None]:
@@ -283,7 +296,7 @@ async def run_pipeline_stream(
         stmt = (
             update(File)
             .where(File.file_id == file_id)
-            .values(progress="extracting")
+            .values(progress="extracting", start_extracting_time=datetime.now())
         )
         await session.execute(stmt)
         await session.commit()
@@ -350,7 +363,7 @@ async def run_pipeline_stream(
         stmt = (
             update(File)
             .where(File.file_id == file_id)
-            .values(progress="analyzing")
+            .values(progress="analyzing", start_analyzing_time=datetime.now())
         )
         await session.execute(stmt)
         await session.commit()
@@ -598,7 +611,7 @@ async def run_pipeline(
         stmt = (
             update(File)
             .where(File.file_id == file_id)
-            .values(progress="extracting")
+            .values(progress="extracting", start_extracting_time=datetime.now())
         )
         await session.execute(stmt)
         await session.commit()
@@ -629,7 +642,7 @@ async def run_pipeline(
         stmt = (
             update(File)
             .where(File.file_id == file_id)
-            .values(progress="analyzing")
+            .values(progress="analyzing", start_analyzing_time=datetime.now())
         )
         await session.execute(stmt)
         await session.commit()
@@ -769,6 +782,14 @@ async def run_from_stage_stream(
 
         else:
             raise ValueError(f"无效的阶段: {stage}，流式重试不支持 parsing 阶段")
+
+        # 时间戳同属下游数据：清空该阶段及之后所有阶段的起止时间，由重跑各阶段重新写入
+        await session.execute(
+            update(File)
+            .where(File.file_id == file_id)
+            .values(**_stage_time_reset_values(stage))
+        )
+        await session.commit()
 
         # 获取文件内容
         stmt = select(FileContent).where(FileContent.file_id == file_id)
@@ -1014,7 +1035,7 @@ async def run_from_stage_stream(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="extracting", error=None)
+                .values(progress="extracting", start_extracting_time=datetime.now(), error=None)
             )
             await session.execute(stmt)
             await session.commit()
@@ -1082,7 +1103,7 @@ async def run_from_stage_stream(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="analyzing", error=None)
+                .values(progress="analyzing", start_analyzing_time=datetime.now(), error=None)
             )
             await session.execute(stmt)
             await session.commit()
@@ -1218,6 +1239,14 @@ async def run_from_stage(
             # 仅清理分析结果
             await session.execute(delete(AnalysisResult).where(AnalysisResult.file_id == file_id))
             await session.commit()
+
+        # 时间戳同属下游数据：清空该阶段及之后所有阶段的起止时间，由重跑各阶段重新写入
+        await session.execute(
+            update(File)
+            .where(File.file_id == file_id)
+            .values(**_stage_time_reset_values(stage))
+        )
+        await session.commit()
 
         # 获取文件内容（用于后续阶段）
         stmt = select(FileContent).where(FileContent.file_id == file_id)
@@ -1413,7 +1442,7 @@ async def run_from_stage(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="extracting", error=None)
+                .values(progress="extracting", start_extracting_time=datetime.now(), error=None)
             )
             await session.execute(stmt)
             await session.commit()
@@ -1446,7 +1475,7 @@ async def run_from_stage(
             stmt = (
                 update(File)
                 .where(File.file_id == file_id)
-                .values(progress="analyzing", error=None)
+                .values(progress="analyzing", start_analyzing_time=datetime.now(), error=None)
             )
             await session.execute(stmt)
             await session.commit()

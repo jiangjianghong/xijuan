@@ -386,9 +386,10 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "description": (
                 "在 `/status` 字段基础上额外返回全套阶段时间戳：`start_parsing_time` / `end_parsing_time` / "
                 "`start_tableing_time` / `end_tableing_time` / `start_chunking_time` / `end_chunking_time` / "
-                "`start_embedding_time` / `end_embedding_time` / `end_extracting_time` / `end_analyzing_time`"
-                "（parsing / tableing / chunking / embedding 各有 start+end，extracting / analyzing "
-                "只记 end），可据此计算每阶段耗时。\n\n"
+                "`start_embedding_time` / `end_embedding_time` / `start_extracting_time` / `end_extracting_time` / "
+                "`start_analyzing_time` / `end_analyzing_time`"
+                "（六个阶段各有 start+end；存量老数据的 extracting / analyzing start 可能为 null），"
+                "可据此计算每阶段耗时。\n\n"
                 "**状态码**：200 / 404（文件不存在）。"
             ),
         }

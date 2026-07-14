@@ -581,7 +581,9 @@ class FileDetailResponse(BaseModel):
     end_chunking_time: Optional[datetime] = None
     start_embedding_time: Optional[datetime] = None
     end_embedding_time: Optional[datetime] = None
+    start_extracting_time: Optional[datetime] = None
     end_extracting_time: Optional[datetime] = None
+    start_analyzing_time: Optional[datetime] = None
     end_analyzing_time: Optional[datetime] = None
 
 

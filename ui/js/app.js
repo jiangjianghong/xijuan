@@ -478,8 +478,8 @@ const App = {
             { key: 'tableing', label: 'AI校验表格名', start: 'start_tableing_time', end: 'end_tableing_time' },
             { key: 'chunking', label: '分块', start: 'start_chunking_time', end: 'end_chunking_time' },
             { key: 'embedding', label: '向量化', start: 'start_embedding_time', end: 'end_embedding_time' },
-            { key: 'extracting', label: '提取', start: null, end: 'end_extracting_time' },
-            { key: 'analyzing', label: '分析', start: null, end: 'end_analyzing_time' },
+            { key: 'extracting', label: '提取', start: 'start_extracting_time', end: 'end_extracting_time' },
+            { key: 'analyzing', label: '分析', start: 'start_analyzing_time', end: 'end_analyzing_time' },
         ];
 
         let currentStage = (detail.progress || '').replace('_failed', '');
@@ -494,7 +494,8 @@ const App = {
         stages.forEach((stage, index) => {
             let status = 'pending';
             let duration = null;
-            const startTime = stage.start ? detail[stage.start] : prevEndTime;
+            // 存量老数据无 start_extracting/analyzing_time，回退用上一阶段结束时间近似
+            const startTime = detail[stage.start] || prevEndTime;
             const endTime = stage.end ? detail[stage.end] : null;
 
             if (endTime) {

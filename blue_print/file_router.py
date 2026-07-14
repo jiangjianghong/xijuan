@@ -680,7 +680,9 @@ async def get_file_detail(file_id: str, db: AsyncSession = Depends(get_db)):
             end_chunking_time=file_record.end_chunking_time,
             start_embedding_time=file_record.start_embedding_time,
             end_embedding_time=file_record.end_embedding_time,
+            start_extracting_time=file_record.start_extracting_time,
             end_extracting_time=file_record.end_extracting_time,
+            start_analyzing_time=file_record.start_analyzing_time,
             end_analyzing_time=file_record.end_analyzing_time,
         ).model_dump()
     )

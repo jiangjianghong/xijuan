@@ -122,7 +122,9 @@
 | `end_chunking_time` | DATETIME | NULLABLE | NULL | 分块完成时间 |
 | `start_embedding_time` | DATETIME | NULLABLE | NULL | 开始向量化时间 |
 | `end_embedding_time` | DATETIME | NULLABLE | NULL | 向量化完成时间 |
+| `start_extracting_time` | DATETIME | NULLABLE | NULL | 开始字段提取时间 |
 | `end_extracting_time` | DATETIME | NULLABLE | NULL | 字段提取完成时间 |
+| `start_analyzing_time` | DATETIME | NULLABLE | NULL | 开始逻辑分析时间 |
 | `end_analyzing_time` | DATETIME | NULLABLE | NULL | 逻辑分析完成时间 |
 | `progress` | VARCHAR(32) | - | 'parsing' | 当前处理进度状态 |
 | `error` | TEXT | NULLABLE | NULL | 错误信息（失败时记录） |
@@ -179,7 +181,9 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
   "end_chunking_time": "2025-01-15 10:31:20",
   "start_embedding_time": "2025-01-15 10:31:20",
   "end_embedding_time": "2025-01-15 10:32:00",
+  "start_extracting_time": "2025-01-15 10:32:00",
   "end_extracting_time": "2025-01-15 10:33:00",
+  "start_analyzing_time": "2025-01-15 10:33:00",
   "end_analyzing_time": "2025-01-15 10:33:30",
   "progress": "complete",
   "error": null,
@@ -933,7 +937,9 @@ CREATE TABLE IF NOT EXISTS files (
   end_chunking_time DATETIME NULL,
   start_embedding_time DATETIME NULL,
   end_embedding_time DATETIME NULL,
+  start_extracting_time DATETIME NULL,
   end_extracting_time DATETIME NULL,
+  start_analyzing_time DATETIME NULL,
   end_analyzing_time DATETIME NULL,
   progress VARCHAR(32) DEFAULT 'parsing',
   error TEXT NULL,

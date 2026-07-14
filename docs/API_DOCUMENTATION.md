@@ -622,7 +622,9 @@
     "end_chunking_time": "2025-01-15T10:31:45",
     "start_embedding_time": "2025-01-15T10:31:45",
     "end_embedding_time": "2025-01-15T10:32:00",
+    "start_extracting_time": "2025-01-15T10:32:00",
     "end_extracting_time": "2025-01-15T10:34:10",
+    "start_analyzing_time": "2025-01-15T10:34:10",
     "end_analyzing_time": "2025-01-15T10:35:00"
   }
 }
@@ -1596,8 +1598,8 @@ data: <json>
 | `start_tableing_time` / `end_tableing_time` | DATETIME | 表格阶段时间戳 |
 | `start_chunking_time` / `end_chunking_time` | DATETIME | 分块时间戳 |
 | `start_embedding_time` / `end_embedding_time` | DATETIME | 向量化时间戳 |
-| `end_extracting_time` | DATETIME | 提取完成时间 |
-| `end_analyzing_time` | DATETIME | 分析完成时间 |
+| `start_extracting_time` / `end_extracting_time` | DATETIME | 提取时间戳 |
+| `start_analyzing_time` / `end_analyzing_time` | DATETIME | 分析时间戳 |
 
 ### 10.3 `file_content`
 
