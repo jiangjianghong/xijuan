@@ -18,8 +18,8 @@ from utils.errors import format_exception as _format_exception
 
 async def parse_file(
     file_path: str, file_content_bytes: bytes, file_id: str, session: AsyncSession
-) -> Tuple[str, str, str]:
-    """调用 MinerU 解析文件，返回 Markdown 内容、middle_json 和 content_list。"""
+) -> Tuple[str, str]:
+    """调用 MinerU 解析文件，返回 Markdown 内容和 middle_json。"""
     logger.info("开始解析文件: {}", file_id)
 
     stmt = (
@@ -54,7 +54,6 @@ async def parse_file(
         )
         content = result["md_content"]
         middle_json_str = result["middle_json"]
-        content_list_str = result.get("content_list", "")
 
         stmt = (
             update(File)
@@ -65,7 +64,7 @@ async def parse_file(
         await session.commit()
 
         logger.info("文件解析完成: {}, 内容长度: {}", file_id, len(content))
-        return content, middle_json_str, content_list_str
+        return content, middle_json_str
 
     except Exception as e:
         stmt = (

@@ -45,6 +45,7 @@ from service.extraction_service import parse_sections, split_md_by_pages
 from utils.config import get_config
 from utils.file_utils import generate_file_id
 from utils.milvus_client import get_milvus_client
+from utils.page_mapping import build_page_mapping
 
 router = APIRouter(prefix="/file", tags=["file"])
 
@@ -533,6 +534,32 @@ async def get_file_chunks(file_id: str, db: AsyncSession = Depends(get_db)):
             for c in chunks
         ]
     )
+
+
+@router.post("/{file_id}/recompute_page_mapping", response_model=ResponseWrapper)
+async def recompute_page_mapping(file_id: str, db: AsyncSession = Depends(get_db)):
+    """用落库的 md + middle_json 重算 page_mapping 并写回。
+
+    供存量文件在不重新上传/重新解析的前提下,套用最新唯一锚定位算法刷新页码映射。
+    文件不存在或无内容 → 404;middle_json 缺失 → 产出空映射(不报错)。
+    """
+    stmt = select(FileContent).where(FileContent.file_id == file_id)
+    result = await db.execute(stmt)
+    file_content = result.scalar_one_or_none()
+    if not file_content or not file_content.file_content:
+        raise HTTPException(status_code=404, detail="文件内容不存在")
+
+    mapping = build_page_mapping(file_content.file_content, file_content.middle_json or "")
+    file_content.page_mapping = mapping
+    await db.commit()
+
+    pages = [m["page_num"] for m in mapping]
+    return ResponseWrapper(data={
+        "file_id": file_id,
+        "anchor_count": len(mapping),
+        "page_min": min(pages) if pages else None,
+        "page_max": max(pages) if pages else None,
+    })
 
 
 @router.get("/{file_id}/outline", response_model=ResponseWrapper)

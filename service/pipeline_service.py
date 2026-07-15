@@ -28,7 +28,7 @@ from service.type_config_service import get_file_type_runtime_config
 from utils.callback import notify_callback
 from utils.errors import format_exception as _format_exception
 from utils.milvus_client import MilvusClient
-from utils.page_mapping import build_page_mapping_auto
+from utils.page_mapping import build_page_mapping
 
 EMBEDDING_DISABLED_MESSAGE = "配置已关闭此文件的向量化，直接进行下一步"
 
@@ -84,8 +84,8 @@ async def run_pipeline_stream(
             "message": "开始 MinerU 解析",
         })
 
-        content, middle_json_str, content_list_str = await parse_file(file_path, file_content_bytes, file_id, session)
-        page_mapping = build_page_mapping_auto(content, middle_json_str, content_list_str)
+        content, middle_json_str = await parse_file(file_path, file_content_bytes, file_id, session)
+        page_mapping = build_page_mapping(content, middle_json_str)
         yield _sse_event("parsing", {
             "file_id": file_id,
             "stage": "parsing",
@@ -459,8 +459,8 @@ async def run_pipeline(
     try:
         # ── 阶段 1: 解析 ──────────────────────────────────────────
         await notify_callback(callback_url, file_id, "parsing")
-        content, middle_json_str, content_list_str = await parse_file(file_path, file_content_bytes, file_id, session)
-        page_mapping = build_page_mapping_auto(content, middle_json_str, content_list_str)
+        content, middle_json_str = await parse_file(file_path, file_content_bytes, file_id, session)
+        page_mapping = build_page_mapping(content, middle_json_str)
         await save_file_content(file_id, content, session, middle_json=middle_json_str, page_mapping=page_mapping)
 
         await notify_callback(

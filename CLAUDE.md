@@ -147,7 +147,7 @@ Two rule types:
 - **judge 网络搜索**：规则可配置 `web_search` JSON（`{"enabled", "query", "count", "freshness"}`，仅 judge 类型）。启用时执行判断前先调博查 Bocha AI 搜索（`utils/web_search.py`），搜索词支持 `<field_result>field_id</field_result>` 占位符拼接提取结果，搜索文本替换 expression 中的 `<web_search_result/>` 占位符（schema 层强制要求存在）。搜索失败不致命（占位符替换为失败提示继续判断）。溯源数据存 `source_refs._web_search`（`{query, results: [{name,url,siteName,datePublished,summary}], error?}`），`GET /file/{id}/analysis` 与回调 `rule_done` 透出。调试流新增 `web_search` 事件。`copy_from` 复制时 expression 与 `web_search.query` 中的 `<field_result>` 占位符随 depend_fields 重映射；导出/导入原样携带。全局参数在 `configs/config.yaml` 的 `web_search` 节。
 
 ### External Dependencies
-- **MinerU** (`service/mineru_client.py`) - External PDF parsing service. Polled async via httpx. Returns md_content + middle_json + content_list; page_mapping is built via `build_page_mapping_auto` (content_list sequential replay preferred, middle_json prefix-match fallback; content_list is used at parse time only, never persisted).
+- **MinerU** (`service/mineru_client.py`) - External PDF parsing service. Polled async via httpx. Returns md_content + middle_json; page_mapping is built via `build_page_mapping`（全局唯一锚 + LIS 单调清洗，数据源 middle_json，bbox 为原生页坐标）。存量文件可经 `POST /file/{id}/recompute_page_mapping` 用落库 md+middle_json 重算刷新（无需重传）。
 - **LLM** (`utils/llm_client.py`) - OpenAI-compatible API (default: Qwen via DashScope). Retry with exponential backoff; skips 4xx errors except 429.
 - **Embedding** - OpenAI-compatible embedding API (default: text-embedding-v4 via DashScope). Batches requests, truncates to 8192 chars.
 - **Milvus** (`utils/milvus_client.py`) - Vector database for semantic search. Collection auto-created on startup with IVF_FLAT index.
