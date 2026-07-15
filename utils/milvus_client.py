@@ -161,7 +161,8 @@ class MilvusClient:
         for result in results:
             for hit in result:
                 score = hit.distance
-                if score_threshold is not None and score > score_threshold:
+                # COSINE 相似度：越大越相似，低于阈值则丢弃
+                if score_threshold is not None and score < score_threshold:
                     continue
                 hits.append({
                     "chunk_id": hit.entity.get("chunk_id"),

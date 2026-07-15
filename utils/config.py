@@ -54,7 +54,7 @@ class MilvusConfig(BaseModel):
     password: str = ""
     collection_name: str = "file_chunks"
     index_type: str = "IVF_FLAT"
-    metric_type: str = "L2"
+    metric_type: str = "COSINE"
     nlist: int = 1024
     search_topk: int = 10
 

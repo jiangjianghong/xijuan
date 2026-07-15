@@ -112,7 +112,7 @@ TAGS = [
     {"name": "file", "description": "文件解析（async/sync/stream）、进度查询、删除、按阶段重试、各阶段结果获取。"},
     {"name": "extraction", "description": "字段提取配置（table / text / vl 三类源）CRUD 与同步/流式调试。"},
     {"name": "analysis", "description": "逻辑分析规则（judge / calc 两类）CRUD 与同步/流式调试。"},
-    {"name": "search", "description": "Milvus 向量相似度检索（L2 距离）。"},
+    {"name": "search", "description": "Milvus 向量相似度检索（COSINE 相似度）。"},
 ]
 
 
@@ -688,13 +688,13 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "post": {
             "summary": "向量相似度检索",
             "description": (
-                "将 `query` 通过 embedding 接口向量化后在 Milvus 中检索，返回分块及 L2 距离 `score`"
-                "（越小越相似）。\n\n"
+                "将 `query` 通过 embedding 接口向量化后在 Milvus 中检索，返回分块及 COSINE 相似度 `score`"
+                "（越大越相似，取值约 [-1, 1]）。\n\n"
                 "**请求字段**\n"
                 "- `query`：必填，检索文本（空串直接返回空列表）\n"
                 "- `file_id`：可选，限定检索范围；省略则跨全部已向量化的文件\n"
                 "- `top_k`：可选，默认 `10`\n"
-                "- `score_threshold`：可选，L2 距离上限，超过该距离的结果被过滤；省略不过滤\n\n"
+                "- `score_threshold`：可选，相似度下限，低于该值的结果被过滤；省略不过滤\n\n"
                 "返回 `data=[SearchResultItem{chunk_id, file_id, chunk_index, chunk_content, "
                 "score, page_num}]`。"
             ),
@@ -1093,7 +1093,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "query": "检索文本（必填，空串返回空列表）。",
             "file_id": "限定检索的文件；省略则跨全部已向量化文件。",
             "top_k": "返回条数，默认 10。",
-            "score_threshold": "L2 距离上限，超过则过滤；省略不过滤。",
+            "score_threshold": "相似度下限，低于则过滤；省略不过滤。",
         },
         "examples": [{"query": "公司注册资本是多少", "file_id": None, "top_k": 5, "score_threshold": None}],
     },
