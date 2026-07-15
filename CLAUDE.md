@@ -136,7 +136,7 @@ Three source types:
   - `vl_locate`：缩略图网格并行定位 + 关键页高清提取。配置 `field_hints`、`grid_pages`、`max_concurrent`，可自定义 `locate_prompt_template`。
   - VL 直接产出 `{value, reason}` JSON，**不**走文本 LLM 二次抽取；`source_refs` 存为 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, ...}}`。
   - 全局并发 `vl_model.global_max_concurrency`（默认 8）通过 `utils/vl_client.py` 的 asyncio.Semaphore 治理。
-  - PDF 字节由 `blue_print/file_router.py` 在上传时持久化到 `uploads/{file_id}.pdf`，由 DELETE / 批量删除 / 文档类型级联删除联动清理；启动时 `cleanup_orphan_pdfs` 兜底。
+  - PDF 字节由 `blue_print/file_router.py` 在上传时持久化到 `uploads/{file_id}.pdf`，由 DELETE / 批量删除 / 文档类型级联删除联动清理；启动时 `cleanup_orphan_pdfs` 兜底；另有 `storage` 保留策略按总量/时长滚动清理（见 Configuration 节）。
 - `source_refs` 落库时携带检索原文：每条 ref 含 `text`（该条命中注入 prompt 的原始片段，table 类含 `表格名称: xxx\n` 前缀），顶层 `_texts` 键为 `{label: 拼接后实际注入占位符的完整文本}`。text/table 类 ref 另携带 `bboxes: [{page_num, bbox: [x0,y0,x1,y1], page_size: [w,h]}]`（MinerU 块级框，来自 page_mapping，供前端 PDF 高亮定位；page 类整页切片不挂）。vl 类（`_vl`）无检索文本/bbox 不受影响。`GET /file/{id}/extraction` 与回调 `field_done`/`stage_done` 均透出完整 `source_refs`。存量老数据无 `text`/`_texts`/`bboxes`（老文件 page_mapping 无 bbox，重新解析后才有），消费方需容错。
 - **LLM 开关**：`extraction_field.use_llm`（TINYINT，默认 1，NULL/1 均视为启用）仅对 **text / table** 生效，**vl 恒需模型不读该开关**。置 0 时检索/表格匹配照常跑、`source_refs`（含 bbox）照常构建，但**跳过占位符校验与 LLM 调用**，直接把各 label 检索原文用 `\n---\n` 拼成 `value`（`_join_retrieved_text`），`reason` 固定为「未启用 LLM，直接返回检索原文」（常量 `NO_LLM_REASON`）。判定函数 `_is_llm_disabled`。use_llm=0 时 schema 层（`ExtractionFieldCreate` 校验器）与 `import` 均放宽提取提示词必填/占位符要求。`copy_from`/导出(`ExportFieldItem`)/导入原样携带。前端字段表单有「使用 LLM 提取」勾选框（VL 时隐藏）。
 
@@ -171,4 +171,4 @@ Two rule types:
 
 ## Configuration
 
-Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`. Each maps to a Pydantic model in `utils/config.py`.
+Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`, `storage`. Each maps to a Pydantic model in `utils/config.py`. `storage`（`max_total_bytes` / `max_retention_minutes` / `cleanup_interval_minutes`，默认 `0/0/10`，0=关闭）治理 `uploads` 下 PDF：启动时 + 每 `cleanup_interval_minutes` 分钟 + 每次上传后触发 `service/retention_service.py:enforce_pdf_retention`，只删物理 PDF（按 `create_time` 最旧优先淘汰 / 超时删除），不动数据库；被清文件的 PDF 预览与 VL 抽取返回 404。

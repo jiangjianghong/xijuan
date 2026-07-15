@@ -352,5 +352,7 @@ async def run_init() -> None:
         await recover_abnormal_status(session)
         await cleanup_garbage_data(session)
         await cleanup_orphan_pdfs(session)
+        from service.retention_service import enforce_pdf_retention
+        await enforce_pdf_retention(session)
 
     logger.info("服务初始化完成")

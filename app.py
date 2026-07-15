@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -13,6 +14,7 @@ from loguru import logger
 
 from blue_print import register_routers
 from service.init_service import run_init
+from service.retention_service import retention_loop
 from utils.config import get_config
 
 import logs  # noqa: F401  初始化日志配置
@@ -40,7 +42,16 @@ async def lifespan(app: FastAPI):
     with log_context(type_id="system", file_id="startup"):
         _log_startup_banner()
         await run_init()
-    yield
+    # 后台 PDF 保留清理:周期扫描 uploads,按总量/时间清理(配置全关时循环内快速空转)
+    cleanup_task = asyncio.create_task(retention_loop())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="析卷 AI", version="0.1.0", lifespan=lifespan)

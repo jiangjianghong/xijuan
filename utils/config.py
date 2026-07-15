@@ -121,6 +121,12 @@ class WebSearchConfig(BaseModel):
     max_result_length: int = 4000
 
 
+class StorageConfig(BaseModel):
+    max_total_bytes: int = 0            # uploads 下 PDF 总大小上限(字节)，0=不限
+    max_retention_minutes: int = 0      # PDF 最久保存时间(分钟)，0=不限
+    cleanup_interval_minutes: int = 10  # 后台清理扫描周期(分钟)
+
+
 # ── 顶层配置 ────────────────────────────────────────────────
 
 class AppConfig(BaseSettings):
@@ -137,6 +143,7 @@ class AppConfig(BaseSettings):
     analysis: AnalysisConfig = AnalysisConfig()
     vl_model: VLModelConfig = VLModelConfig()
     web_search: WebSearchConfig = WebSearchConfig()
+    storage: StorageConfig = StorageConfig()
 
 
 def _load_yaml(path: Path) -> dict:

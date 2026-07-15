@@ -114,3 +114,11 @@ web_search:
   timeout: 10
   retry_count: 2
   max_result_length: 4000  # 注入 prompt 的搜索文本最大字符数（末尾截断）
+
+# PDF 存储治理配置
+# uploads 下原始 PDF 的清理策略；只删物理 PDF 文件，不动数据库
+# 被清文件的解析/抽取结果仍可查，仅 PDF 预览（GET /file/{id}/pdf）与 VL 抽取会 404
+storage:
+  max_total_bytes: 0            # PDF 总大小上限(字节)，0=不限。超限时按 create_time 最旧优先淘汰。例:10737418240=10GB
+  max_retention_minutes: 0      # PDF 最久保存时间(分钟)，0=不限。超过则删除物理 PDF。例:4320=3天
+  cleanup_interval_minutes: 10  # 后台清理扫描周期(分钟)

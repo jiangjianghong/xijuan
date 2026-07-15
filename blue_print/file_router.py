@@ -263,6 +263,8 @@ async def parse_file(
     db.add(new_file)
     await db.commit()
 
+    background_tasks.add_task(_enforce_retention_background)
+
     if mode == "async":
         background_tasks.add_task(
             _run_pipeline_background, file_id, file_name, file_content_bytes, callback_url, type_id
@@ -355,6 +357,19 @@ def _cleanup_file_artifacts(file_id: str, type_id: str = "default") -> None:
             _vl_client_for_storage.pdf_path(file_id).unlink(missing_ok=True)
         except Exception as e:
             logger.warning("清理 PDF 失败 file_id={}: {}", file_id, e)
+
+
+async def _enforce_retention_background() -> None:
+    """上传后触发一次 PDF 保留清理(总量兜底)。独立 session,失败不影响上传。"""
+    from model.database import get_session_factory
+    from service.retention_service import enforce_pdf_retention
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        try:
+            await enforce_pdf_retention(session)
+        except Exception as e:
+            logger.warning("上传后 PDF 清理失败: {}", e)
 
 
 @router.delete("/{file_id}", response_model=ResponseWrapper)
