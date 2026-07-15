@@ -93,3 +93,37 @@ async def test_get_file_pdf_path_traversal_blocked(client: AsyncClient):
     """file_id 含路径穿越字符时应 404（Windows 反斜杠穿越防护）。"""
     resp = await client.get("/file/..%5C..%5Csecret/pdf")
     assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_list_processing_filters_and_joins_type_name(client: AsyncClient):
+    """/file/processing 只返回处理中的文件，并带上 type_name；type_id 可过滤。"""
+    from model.database import get_session_factory
+    from model.tables import DocType, File as FileModel
+
+    factory = get_session_factory()
+    async with factory() as session:
+        session.add(DocType(type_id="proc_t", type_name="处理中测试类型", project_id=None))
+        session.add(FileModel(file_id="proc_f1", type_id="proc_t",
+                              file_name="a.pdf", file_size=1, progress="parsing"))
+        session.add(FileModel(file_id="proc_f2", type_id="proc_t",
+                              file_name="b.pdf", file_size=1, progress="complete"))
+        await session.commit()
+
+    try:
+        resp = await client.get("/file/processing?type_id=proc_t")
+        assert resp.status_code == 200
+        items = resp.json()["data"]
+        ids = {it["file_id"] for it in items}
+        assert "proc_f1" in ids          # 处理中 → 返回
+        assert "proc_f2" not in ids      # complete → 不返回
+        f1 = next(it for it in items if it["file_id"] == "proc_f1")
+        assert f1["type_name"] == "处理中测试类型"
+        assert f1["type_id"] == "proc_t"
+    finally:
+        async with factory() as session:
+            for cls, key in [(FileModel, "proc_f1"), (FileModel, "proc_f2"), (DocType, "proc_t")]:
+                obj = await session.get(cls, key)
+                if obj:
+                    await session.delete(obj)
+            await session.commit()

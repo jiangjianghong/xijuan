@@ -27,11 +27,13 @@ from model.schemas import (
     FileListResponse,
     FileStatusResponse,
     FileTableItem,
+    ProcessingItem,
     ResponseWrapper,
 )
 from model.tables import (
     AnalysisResult,
     AnalysisRule,
+    DocType,
     ExtractionField,
     ExtractionResult,
     File as FileModel,
@@ -109,6 +111,58 @@ async def list_files(
             total_pages=total_pages,
         ).model_dump()
     )
+
+
+# 处理中状态集合：必须与前端 Utils.isProcessing 一致（含遗留名 table_name_validating）
+PROCESSING_STATES = (
+    "parsing", "table_name_validating", "tableing",
+    "chunking", "embedding", "extracting", "analyzing",
+)
+
+
+@router.get("/processing", response_model=ResponseWrapper)
+async def list_processing(
+    type_id: str = "",
+    db: AsyncSession = Depends(get_db),
+):
+    """查询所有"处理中"的文件（作为前端队列的唯一数据源）。
+
+    - 不传 type_id：返回全部类型（供「查看全部」弹窗）
+    - 传 type_id：只返回该类型（供默认队列块 restore / 轮询）
+    LEFT JOIN doc_type 带出 type_name / project_id，供前端显示类型名与跳转。
+    """
+    stmt = (
+        select(
+            FileModel.file_id,
+            FileModel.file_name,
+            FileModel.progress,
+            FileModel.type_id,
+            FileModel.create_time,
+            DocType.type_name,
+            DocType.project_id,
+        )
+        .select_from(FileModel)
+        .join(DocType, FileModel.type_id == DocType.type_id, isouter=True)
+        .where(FileModel.progress.in_(PROCESSING_STATES))
+    )
+    if type_id:
+        stmt = stmt.where(FileModel.type_id == type_id)
+    stmt = stmt.order_by(FileModel.create_time.desc()).limit(500)
+
+    rows = (await db.execute(stmt)).all()
+    items = [
+        ProcessingItem(
+            file_id=r.file_id,
+            file_name=r.file_name,
+            progress=r.progress,
+            type_id=r.type_id or "default",
+            type_name=r.type_name,
+            project_id=r.project_id,
+            create_time=r.create_time,
+        ).model_dump()
+        for r in rows
+    ]
+    return ResponseWrapper(data=items)
 
 
 @router.post("/context_query", response_model=ResponseWrapper)

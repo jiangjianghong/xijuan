@@ -564,6 +564,17 @@ class FileListResponse(BaseModel):
     total_pages: int
 
 
+class ProcessingItem(BaseModel):
+    """处理中队列项：/file/processing 返回。带 doc_type JOIN 出来的 type_name/project_id。"""
+    file_id: str
+    file_name: str
+    progress: str
+    type_id: str = "default"
+    type_name: Optional[str] = None
+    project_id: Optional[str] = None
+    create_time: Optional[datetime] = None
+
+
 class FileDetailResponse(BaseModel):
     file_id: str
     file_name: str
