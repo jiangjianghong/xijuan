@@ -37,17 +37,24 @@ const App = {
     },
 
     /**
-     * 页面加载时恢复正在处理中的文件到队列
+     * 恢复正在处理中的文件到队列。仅拉取「当前类型」的处理中文件。
+     * 重建时保留正在「上传中」的临时项（尚无真实 file_id）。
      */
     async restoreProcessingQueue() {
         try {
-            const data = await API.getFileList(1, 100);
-            data.items.forEach(item => {
-                if (Utils.isProcessing(item.progress)) {
-                    this.addToQueue(item.file_id, item.file_name, item.progress,
-                        Utils.getStageProgress(item.progress));
-                }
+            const items = await API.getProcessing(API.getCurrentTypeId());
+            // 清掉旧的非 uploading 项，保留上传中的临时卡片
+            for (const [id, it] of Array.from(this.state.queue.entries())) {
+                if (it.stage !== 'uploading') this.state.queue.delete(id);
+            }
+            items.forEach(item => {
+                this.state.queue.set(item.file_id, {
+                    fileName: item.file_name,
+                    stage: item.progress,
+                    progress: Utils.getStageProgress(item.progress),
+                });
             });
+            this.renderQueue();
         } catch (e) { /* 静默失败 */ }
     },
 
@@ -1037,39 +1044,44 @@ const App = {
     },
 
     async pollQueueStatus() {
-        if (this.state.queue.size === 0) return;
-
-        // 只轮询真实 file_id，跳过临时 uploading ID（长度较短）
-        const entries = Array.from(this.state.queue.entries()).filter(
+        // 跟踪队列里的真实文件（跳过上传中的临时项）
+        const tracked = Array.from(this.state.queue.entries()).filter(
             ([id, item]) => item.stage !== 'uploading'
         );
+        if (tracked.length === 0) return;
 
-        for (const [fileId, item] of entries) {
+        let processing;
+        try {
+            processing = await API.getProcessing(API.getCurrentTypeId());
+        } catch (e) {
+            return; // 本轮失败，下轮再试
+        }
+        const stillIds = new Set(processing.map(p => p.file_id));
+
+        // 1) 仍在处理中的：更新阶段/进度
+        processing.forEach(p => {
+            if (this.state.queue.has(p.file_id)) {
+                this.updateQueueItem(p.file_id, p.progress, Utils.getStageProgress(p.progress));
+            }
+        });
+
+        // 2) 已从处理中消失的：查最终态，弹完成/失败提示并移除
+        for (const [fileId, item] of tracked) {
+            if (stillIds.has(fileId)) continue;
+            this.removeFromQueue(fileId);
+            this.loadFileList();
             try {
                 const status = await API.getFileStatus(fileId);
-
-                if (Utils.isProcessing(status.progress)) {
-                    // 更新队列中的阶段和进度
-                    this.updateQueueItem(fileId, status.progress, Utils.getStageProgress(status.progress));
-                } else {
-                    // 完成或失败，从队列移除
-                    this.removeFromQueue(fileId);
-                    this.loadFileList();
-
-                    if (status.progress === 'complete') {
-                        Toast.success(`${item.fileName} 处理完成`);
-                    } else if (Utils.isFailed(status.progress)) {
-                        Toast.error(`${item.fileName} 处理失败`);
-                    }
-
-                    // 如果抽屉正在显示此文件，刷新详情
-                    if (this.state.currentFileId === fileId) {
-                        this.loadDrawerContent(fileId);
-                    }
+                if (status.progress === 'complete') {
+                    Toast.success(`${item.fileName} 处理完成`);
+                } else if (Utils.isFailed(status.progress)) {
+                    Toast.error(`${item.fileName} 处理失败`);
+                }
+                if (this.state.currentFileId === fileId) {
+                    this.loadDrawerContent(fileId);
                 }
             } catch (error) {
-                // 文件可能已被删除
-                this.removeFromQueue(fileId);
+                // 文件可能已被删除，静默
             }
         }
     },
