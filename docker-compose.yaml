@@ -12,7 +12,9 @@ services:
       - ./configs/config.yaml:/app/configs/config.yaml:ro
       # 挂载日志目录，持久化日志
       - ./logs:/app/logs
-      # 挂载数据目录（如需要持久化数据）
+      # 挂载 PDF 原始目录，持久化上传的 PDF（VL 抽取 / PDF 预览依赖，务必持久化，否则容器重建即丢）
+      - ./uploads:/app/uploads
+      # 挂载数据目录（预留，当前代码未写入此目录）
       - ./data:/app/data
     environment:
       - TZ=Asia/Shanghai
