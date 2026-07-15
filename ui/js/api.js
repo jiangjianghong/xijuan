@@ -147,6 +147,18 @@ const API = {
     },
 
     /**
+     * 查询处理中队列。typeId 省略/为空 = 全部类型；否则只查该类型。
+     * 返回数组：[{file_id, file_name, progress, type_id, type_name, project_id, create_time}]
+     */
+    async getProcessing(typeId) {
+        const params = new URLSearchParams();
+        if (typeId) params.append('type_id', typeId);
+        const qs = params.toString();
+        const result = await this.request(`/file/processing${qs ? '?' + qs : ''}`);
+        return result.data || [];
+    },
+
+    /**
      * 获取文件详情
      */
     async getFileDetail(fileId) {
