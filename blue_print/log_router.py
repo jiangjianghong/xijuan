@@ -18,7 +18,7 @@ from model.schemas import ResponseWrapper
 router = APIRouter(prefix="/log", tags=["log"])
 
 _LOGS_DIR = Path(__file__).resolve().parents[1] / "logs"
-_MAX_TAIL_LINES = 1000
+_MAX_TAIL_LINES = 2000
 _POLL_INTERVAL_SECONDS = 0.8
 _HEARTBEAT_SECONDS = 15
 _LOG_LEVELS = ("TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL")

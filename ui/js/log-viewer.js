@@ -7,7 +7,7 @@ const LogViewer = {
     paused: false,
     bufferedLines: [],
     renderedCount: 0,
-    maxEntries: 2000,
+    maxEntries: 5000,
     els: {},
 
     init() {
