@@ -328,6 +328,15 @@ const DocTypeManager = {
         this.closeManageDialog();
     },
 
+    // 切到指定类型/项目并同步顶部两级下拉（供「全部队列」跳转复用）
+    async switchTo(typeId, typeName, projectId) {
+        this._currentName = typeName || typeId;
+        API.setCurrentTypeId(typeId);
+        API.setCurrentProjectId(projectId || '__ungrouped__');
+        await this.refresh();
+        this._reloadCurrentType();
+    },
+
     async promote(typeId) {
         this.closeRowMenu();
         try { await API.promoteType(typeId); Toast.success('已设为模板'); await this.loadManage(); await this.refresh(); }

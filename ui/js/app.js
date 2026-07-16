@@ -12,6 +12,7 @@ const App = {
         selectedIds: new Set(),
         queue: new Map(), // fileId -> { fileName, stage, progress }
         pollingInterval: null,
+        allQueuePolling: null, // 「全部队列」弹窗打开时的独立轮询句柄
         currentFileId: null,
     },
 
@@ -225,6 +226,73 @@ const App = {
             `;
         });
         this.els.queueContainer.innerHTML = html;
+    },
+
+    // ─────────────────────────────────────────────────────────
+    // 全部处理中队列弹窗（跨类型）
+    // ─────────────────────────────────────────────────────────
+
+    async openAllQueueModal() {
+        const overlay = document.getElementById('allqueue-modal-overlay');
+        if (overlay) overlay.classList.add('active');
+        await this.refreshAllQueue();
+        // 打开期间独立轮询（数据量小，一次请求拿全部处理中）
+        if (this.state.allQueuePolling) clearInterval(this.state.allQueuePolling);
+        this.state.allQueuePolling = setInterval(() => this.refreshAllQueue(), 3000);
+    },
+
+    closeAllQueueModal() {
+        const overlay = document.getElementById('allqueue-modal-overlay');
+        if (overlay) overlay.classList.remove('active');
+        if (this.state.allQueuePolling) {
+            clearInterval(this.state.allQueuePolling);
+            this.state.allQueuePolling = null;
+        }
+    },
+
+    async refreshAllQueue() {
+        const list = document.getElementById('allqueue-list');
+        if (!list) return;
+        let items;
+        try {
+            items = await API.getProcessing(); // 不传 type_id = 全部类型
+        } catch (e) {
+            return;
+        }
+        if (!items.length) {
+            list.innerHTML = '<div class="allqueue-empty">暂无处理任务</div>';
+            return;
+        }
+        list.innerHTML = items.map(item => {
+            const typeName = item.type_name || item.type_id || 'default';
+            const stageText = Utils.getStatusText(item.progress);
+            const pct = Utils.getStageProgress(item.progress);
+            const projectId = item.project_id == null ? '' : item.project_id;
+            return `
+                <div class="allqueue-item"
+                     onclick="App.jumpToProcessingFile('${Utils.escapeHtml(item.file_id)}', '${Utils.escapeHtml(item.type_id)}', '${Utils.escapeHtml(typeName)}', '${Utils.escapeHtml(projectId)}')">
+                    <div class="allqueue-item-main">
+                        <div class="allqueue-item-name" title="${Utils.escapeHtml(item.file_name)}">${Utils.escapeHtml(item.file_name)}</div>
+                        <span class="allqueue-item-type">${Utils.escapeHtml(typeName)}</span>
+                        <div class="queue-progress">
+                            <div class="queue-progress-bar" style="width: ${pct}%"></div>
+                        </div>
+                    </div>
+                    <div class="allqueue-item-stage">${stageText}</div>
+                </div>
+            `;
+        }).join('');
+    },
+
+    // 从「全部队列」点击某项：切到该类型/项目并打开其详情
+    async jumpToProcessingFile(fileId, typeId, typeName, projectId) {
+        this.closeAllQueueModal();
+        if (typeof DocTypeManager !== 'undefined' && DocTypeManager.switchTo) {
+            try {
+                await DocTypeManager.switchTo(typeId, typeName, projectId || null);
+            } catch (e) { console.warn(e); }
+        }
+        this.openDrawer(fileId);
     },
 
     // ─────────────────────────────────────────────────────────
