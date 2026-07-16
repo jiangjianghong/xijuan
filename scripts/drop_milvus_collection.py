@@ -13,6 +13,14 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# 让脚本可独立运行（uv run scripts/drop_milvus_collection.py），把项目根加进 sys.path
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from pymilvus import connections, utility
 
 from utils.config import get_config
