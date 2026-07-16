@@ -1,6 +1,6 @@
 /**
  * 主应用模块
- * 上传和重试均使用异步接口，队列进度通过轮询 /file/{id}/status 更新
+ * 上传和重试均使用异步接口，队列进度通过轮询 /file/processing 更新（出队时查 /file/{id}/status 定最终态）
  */
 
 const App = {
@@ -1066,10 +1066,11 @@ const App = {
         });
 
         // 2) 已从处理中消失的：查最终态，弹完成/失败提示并移除
+        let dequeued = false;
         for (const [fileId, item] of tracked) {
             if (stillIds.has(fileId)) continue;
             this.removeFromQueue(fileId);
-            this.loadFileList();
+            dequeued = true;
             try {
                 const status = await API.getFileStatus(fileId);
                 if (status.progress === 'complete') {
@@ -1084,6 +1085,7 @@ const App = {
                 // 文件可能已被删除，静默
             }
         }
+        if (dequeued) this.loadFileList();
     },
 };
 
