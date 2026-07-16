@@ -3181,6 +3181,89 @@ h1, h2, h3, h4, h5, h6,
     word-break: break-word;
 }
 
+/* 可点击的 type_id / file_id 单元格：点击后按该值筛选 */
+.runtime-log-type.is-clickable,
+.runtime-log-file.is-clickable {
+    cursor: pointer;
+    border-radius: 4px;
+    transition: color 0.12s ease, background 0.12s ease;
+}
+
+.runtime-log-type.is-clickable:hover,
+.runtime-log-file.is-clickable:hover {
+    color: #cfeecf;
+    background: rgba(159, 209, 166, 0.16);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+/* 被筛掉的行 */
+.runtime-log-entry.is-filtered {
+    display: none;
+}
+
+/* 筛选栏（位于 meta 下方，仅存在筛选时显示） */
+.runtime-log-filters {
+    display: none;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 18px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(232, 239, 230, 0.5);
+    font-size: 12px;
+}
+
+.runtime-log-filters.active {
+    display: flex;
+}
+
+.runtime-log-filter-label {
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.runtime-log-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 9999px;
+    background: rgba(79, 119, 93, 0.12);
+    color: var(--bio-dark);
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-weight: 600;
+    cursor: pointer;
+    max-width: 100%;
+    transition: var(--transition);
+}
+
+.runtime-log-filter-chip:hover {
+    background: rgba(196, 91, 74, 0.12);
+    color: var(--error);
+}
+
+.runtime-log-filter-chip i {
+    flex-shrink: 0;
+}
+
+.runtime-log-filter-clear-all {
+    border: none;
+    background: none;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 3px 6px;
+    border-radius: 6px;
+    transition: var(--transition);
+}
+
+.runtime-log-filter-clear-all:hover {
+    color: var(--bio-dark);
+    background: rgba(79, 119, 93, 0.1);
+}
+
 .runtime-log-entry.level-debug .runtime-log-level {
     color: #9aa6a0;
 }

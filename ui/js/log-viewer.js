@@ -7,7 +7,9 @@ const LogViewer = {
     paused: false,
     bufferedLines: [],
     renderedCount: 0,
+    visibleCount: 0,
     maxEntries: 5000,
+    filters: { fileId: '', typeId: '' },
     els: {},
 
     init() {
@@ -31,6 +33,7 @@ const LogViewer = {
             status: document.getElementById('runtime-log-status'),
             currentFile: document.getElementById('runtime-log-current-file'),
             count: document.getElementById('runtime-log-count'),
+            filterBar: document.getElementById('runtime-log-filters'),
             container: document.getElementById('runtime-log-container'),
         };
     },
@@ -53,6 +56,20 @@ const LogViewer = {
             el?.addEventListener('change', () => {
                 if (this.source) this.connect();
             });
+        });
+
+        // 点击行内 file_id / type_id 激活筛选（事件委托，避免逐行绑定）
+        this.els.container?.addEventListener('click', event => {
+            const target = event.target.closest('[data-filter-key]');
+            if (!target) return;
+            this.toggleFilter(target.dataset.filterKey, target.dataset.filterValue || '');
+        });
+
+        // 筛选栏内的移除按钮
+        this.els.filterBar?.addEventListener('click', event => {
+            const chip = event.target.closest('[data-filter-clear]');
+            if (!chip) return;
+            this.clearFilter(chip.dataset.filterClear);
         });
     },
 
@@ -183,28 +200,102 @@ const LogViewer = {
         const entry = document.createElement('div');
         entry.className = `runtime-log-entry level-${level}`;
         entry.dataset.raw = rawLine;
+        entry.dataset.typeId = parsed.typeId;
+        entry.dataset.fileId = parsed.fileId;
+
+        const typeCell = parsed.typeId && parsed.typeId !== '-'
+            ? `<span class="runtime-log-type is-clickable" role="button" tabindex="-1" data-filter-key="typeId" data-filter-value="${this.escapeAttr(parsed.typeId)}" title="按此 type_id 筛选：${this.escapeAttr(parsed.typeId)}">${this.escapeHtml(parsed.typeId)}</span>`
+            : `<span class="runtime-log-type" title="${this.escapeAttr(parsed.typeId)}">${this.escapeHtml(parsed.typeId)}</span>`;
+        const fileCell = parsed.fileId && parsed.fileId !== '-'
+            ? `<span class="runtime-log-file is-clickable" role="button" tabindex="-1" data-filter-key="fileId" data-filter-value="${this.escapeAttr(parsed.fileId)}" title="按此 file_id 筛选：${this.escapeAttr(parsed.fileId)}">${this.escapeHtml(parsed.fileId)}</span>`
+            : `<span class="runtime-log-file" title="${this.escapeAttr(parsed.fileId)}">${this.escapeHtml(parsed.fileId)}</span>`;
+
         entry.innerHTML = `
             <span class="runtime-log-time">${this.escapeHtml(parsed.timestamp)}</span>
             <span class="runtime-log-level">${this.escapeHtml(parsed.level)}</span>
-            <span class="runtime-log-type" title="${this.escapeAttr(parsed.typeId)}">${this.escapeHtml(parsed.typeId)}</span>
-            <span class="runtime-log-file" title="${this.escapeAttr(parsed.fileId)}">${this.escapeHtml(parsed.fileId)}</span>
+            ${typeCell}
+            ${fileCell}
             <span class="runtime-log-text">${this.escapeHtml(parsed.message)}</span>
         `;
 
+        const hidden = !this.matchesFilter(entry);
+        if (hidden) entry.classList.add('is-filtered');
+
         this.els.container.appendChild(entry);
         this.renderedCount += 1;
+        if (!hidden) this.visibleCount += 1;
         this.pruneEntries();
         this.updateCount();
-        this.els.container.scrollTop = this.els.container.scrollHeight;
+        if (!hidden) this.els.container.scrollTop = this.els.container.scrollHeight;
     },
 
     pruneEntries() {
         const entries = this.els.container.querySelectorAll('.runtime-log-entry');
         const overflow = entries.length - this.maxEntries;
         for (let i = 0; i < overflow; i += 1) {
+            if (!entries[i].classList.contains('is-filtered')) {
+                this.visibleCount -= 1;
+            }
             entries[i].remove();
             this.renderedCount -= 1;
         }
+    },
+
+    matchesFilter(entry) {
+        const { fileId, typeId } = this.filters;
+        if (fileId && entry.dataset.fileId !== fileId) return false;
+        if (typeId && entry.dataset.typeId !== typeId) return false;
+        return true;
+    },
+
+    toggleFilter(key, value) {
+        if (key !== 'fileId' && key !== 'typeId') return;
+        this.filters[key] = this.filters[key] === value ? '' : value;
+        this.applyFilters();
+    },
+
+    clearFilter(key) {
+        if (key === 'all') {
+            this.filters = { fileId: '', typeId: '' };
+        } else if (key === 'fileId' || key === 'typeId') {
+            this.filters[key] = '';
+        }
+        this.applyFilters();
+    },
+
+    applyFilters() {
+        const entries = this.els.container.querySelectorAll('.runtime-log-entry');
+        let visible = 0;
+        entries.forEach(entry => {
+            const match = this.matchesFilter(entry);
+            entry.classList.toggle('is-filtered', !match);
+            if (match) visible += 1;
+        });
+        this.visibleCount = visible;
+        this.renderFilterBar();
+        this.updateCount();
+        this.els.container.scrollTop = this.els.container.scrollHeight;
+    },
+
+    renderFilterBar() {
+        if (!this.els.filterBar) return;
+        const { fileId, typeId } = this.filters;
+        const chips = [];
+        if (typeId) {
+            chips.push(`<span class="runtime-log-filter-chip" data-filter-clear="typeId" title="点击移除">type_id: ${this.escapeHtml(typeId)} <i data-lucide="x" class="w-3 h-3"></i></span>`);
+        }
+        if (fileId) {
+            chips.push(`<span class="runtime-log-filter-chip" data-filter-clear="fileId" title="点击移除">file_id: ${this.escapeHtml(fileId)} <i data-lucide="x" class="w-3 h-3"></i></span>`);
+        }
+        if (chips.length === 0) {
+            this.els.filterBar.innerHTML = '';
+            this.els.filterBar.classList.remove('active');
+            return;
+        }
+        chips.push('<button type="button" class="runtime-log-filter-clear-all" data-filter-clear="all">清除筛选</button>');
+        this.els.filterBar.innerHTML = `<span class="runtime-log-filter-label">筛选</span>${chips.join('')}`;
+        this.els.filterBar.classList.add('active');
+        this.refreshIcons();
     },
 
     togglePause() {
@@ -238,6 +329,7 @@ const LogViewer = {
     clear() {
         if (!this.els.container) return;
         this.renderedCount = 0;
+        this.visibleCount = 0;
         this.bufferedLines = [];
         this.els.container.innerHTML = '<div class="runtime-log-empty">等待日志连接...</div>';
         this.updateCount();
@@ -245,7 +337,9 @@ const LogViewer = {
     },
 
     async copyVisibleLogs() {
+        // 存在筛选时只复制可见（未被筛掉）的行
         const lines = Array.from(this.els.container.querySelectorAll('.runtime-log-entry'))
+            .filter(entry => !entry.classList.contains('is-filtered'))
             .map(entry => entry.dataset.raw || '')
             .filter(Boolean);
 
@@ -302,9 +396,12 @@ const LogViewer = {
     },
 
     updateCount() {
-        if (this.els.count) {
-            this.els.count.textContent = `${Math.max(0, this.renderedCount)} 行`;
-        }
+        if (!this.els.count) return;
+        const total = Math.max(0, this.renderedCount);
+        const hasFilter = this.filters.fileId || this.filters.typeId;
+        this.els.count.textContent = hasFilter
+            ? `${Math.max(0, this.visibleCount)} / ${total} 行`
+            : `${total} 行`;
     },
 
     setConnectButton(connected) {
