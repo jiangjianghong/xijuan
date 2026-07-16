@@ -13,6 +13,7 @@ const CustomSelect = {
         activeWrapper: null,
         activeTrigger: null,
         activeKeyHandler: null,
+        hoverCloseTimer: null,
         enhanced: new WeakSet(),
     },
 
@@ -152,6 +153,19 @@ const CustomSelect = {
             else this.open(wrapper, trigger, select);
         });
 
+        // hover 展开：鼠标移入触发器即打开，移出触发器/面板后短延时收起
+        if (select.dataset.hover === '1') {
+            wrapper.classList.add('cs-hover');
+            trigger.addEventListener('mouseenter', () => {
+                if (select.disabled) return;
+                this.cancelHoverClose();
+                if (this.state.activeWrapper !== wrapper) {
+                    this.open(wrapper, trigger, select);
+                }
+            });
+            trigger.addEventListener('mouseleave', () => this.scheduleHoverClose(wrapper));
+        }
+
         trigger.addEventListener('keydown', e => {
             if (select.disabled) return;
             if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -188,6 +202,12 @@ const CustomSelect = {
         document.body.appendChild(dropdown);
         wrapper.classList.add('cs-active');
         trigger.setAttribute('aria-expanded', 'true');
+
+        // hover 模式：面板挂在 body 上，鼠标从触发器移到面板途中要保持展开
+        if (wrapper.classList.contains('cs-hover')) {
+            dropdown.addEventListener('mouseenter', () => this.cancelHoverClose());
+            dropdown.addEventListener('mouseleave', () => this.scheduleHoverClose(wrapper));
+        }
 
         this.state.activeDropdown = dropdown;
         this.state.activeWrapper = wrapper;
@@ -228,7 +248,23 @@ const CustomSelect = {
         document.addEventListener('keydown', onKeyDown);
     },
 
+    scheduleHoverClose(wrapper) {
+        this.cancelHoverClose();
+        this.state.hoverCloseTimer = setTimeout(() => {
+            this.state.hoverCloseTimer = null;
+            if (this.state.activeWrapper === wrapper) this.close();
+        }, 200);
+    },
+
+    cancelHoverClose() {
+        if (this.state.hoverCloseTimer) {
+            clearTimeout(this.state.hoverCloseTimer);
+            this.state.hoverCloseTimer = null;
+        }
+    },
+
     close() {
+        this.cancelHoverClose();
         const { activeDropdown, activeWrapper, activeTrigger, activeKeyHandler } = this.state;
         if (!activeDropdown) return;
 

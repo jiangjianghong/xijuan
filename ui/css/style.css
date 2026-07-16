@@ -36,6 +36,10 @@ body {
     color: var(--text-primary);
     line-height: 1.6;
     min-height: 100vh;
+    /* flex 纵向容器：建立 BFC，避免 .header 的上外边距外溢到 body 之上
+       （margin collapse 会让文档高度变成 100vh + 16px，导致右侧滚动条常驻） */
+    display: flex;
+    flex-direction: column;
 }
 
 h1, h2, h3, h4, h5, h6,

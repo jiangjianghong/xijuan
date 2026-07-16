@@ -90,9 +90,9 @@
         <div class="doctype-bar" style="margin-left:auto; display:flex; align-items:center; gap:8px;">
             <i data-lucide="folder" class="w-4 h-4 text-bio-med"></i>
             <label style="font-size:13px; color:#4F775D;">项目</label>
-            <select id="project-selector" class="status-filter" style="min-width:130px;" onchange="DocTypeManager.onProjectChange()"></select>
+            <select id="project-selector" class="status-filter" data-hover="1" style="min-width:130px;" onchange="DocTypeManager.onProjectChange()"></select>
             <label style="font-size:13px; color:#4F775D;">文档类型</label>
-            <select id="doctype-selector" class="status-filter" style="min-width:140px;"></select>
+            <select id="doctype-selector" class="status-filter" data-hover="1" style="min-width:140px;"></select>
             <button class="btn btn-secondary" style="padding:4px 10px; font-size:12px;" onclick="DocTypeManager.openManageDialog()">管理</button>
         </div>
     </header>
