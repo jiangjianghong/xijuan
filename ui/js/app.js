@@ -235,6 +235,11 @@ const App = {
     async openAllQueueModal() {
         const overlay = document.getElementById('allqueue-modal-overlay');
         if (overlay) overlay.classList.add('active');
+        const list = document.getElementById('allqueue-list');
+        if (list && !list._clickBound) {
+            list.addEventListener('click', (e) => this.onAllQueueClick(e));
+            list._clickBound = true;
+        }
         await this.refreshAllQueue();
         // 打开期间独立轮询（数据量小，一次请求拿全部处理中）
         if (this.state.allQueuePolling) clearInterval(this.state.allQueuePolling);
@@ -257,12 +262,17 @@ const App = {
         try {
             items = await API.getProcessing(); // 不传 type_id = 全部类型
         } catch (e) {
+            console.warn(e);
             return;
         }
         if (!items.length) {
             list.innerHTML = '<div class="allqueue-empty">暂无处理任务</div>';
             return;
         }
+        // 跳转所需的值经 data-* 属性传递并由事件委托读取，避免把用户自由文本
+        // （类型名等）拼进内联 onclick 造成引号截断 / XSS。escapeAttr 转义含引号。
+        const escapeAttr = (s) => Utils.escapeHtml(s == null ? '' : String(s))
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         list.innerHTML = items.map(item => {
             const typeName = item.type_name || item.type_id || 'default';
             const stageText = Utils.getStatusText(item.progress);
@@ -270,9 +280,12 @@ const App = {
             const projectId = item.project_id == null ? '' : item.project_id;
             return `
                 <div class="allqueue-item"
-                     onclick="App.jumpToProcessingFile('${Utils.escapeHtml(item.file_id)}', '${Utils.escapeHtml(item.type_id)}', '${Utils.escapeHtml(typeName)}', '${Utils.escapeHtml(projectId)}')">
+                     data-file-id="${escapeAttr(item.file_id)}"
+                     data-type-id="${escapeAttr(item.type_id)}"
+                     data-type-name="${escapeAttr(typeName)}"
+                     data-project-id="${escapeAttr(projectId)}">
                     <div class="allqueue-item-main">
-                        <div class="allqueue-item-name" title="${Utils.escapeHtml(item.file_name)}">${Utils.escapeHtml(item.file_name)}</div>
+                        <div class="allqueue-item-name" title="${escapeAttr(item.file_name)}">${Utils.escapeHtml(item.file_name)}</div>
                         <span class="allqueue-item-type">${Utils.escapeHtml(typeName)}</span>
                         <div class="queue-progress">
                             <div class="queue-progress-bar" style="width: ${pct}%"></div>
@@ -284,13 +297,20 @@ const App = {
         }).join('');
     },
 
-    // 从「全部队列」点击某项：切到该类型/项目并打开其详情
-    async jumpToProcessingFile(fileId, typeId, typeName, projectId) {
+    // 从「全部队列」点击某项：切到该类型/项目并打开其详情。
+    // 事件委托：从被点击项的 data-* 读取参数（值已在渲染时转义）。
+    async onAllQueueClick(e) {
+        const el = e.target.closest('.allqueue-item');
+        if (!el) return;
+        const fileId = el.dataset.fileId;
+        const typeId = el.dataset.typeId;
+        const typeName = el.dataset.typeName;
+        const projectId = el.dataset.projectId || null;
         this.closeAllQueueModal();
         if (typeof DocTypeManager !== 'undefined' && DocTypeManager.switchTo) {
             try {
-                await DocTypeManager.switchTo(typeId, typeName, projectId || null);
-            } catch (e) { console.warn(e); }
+                await DocTypeManager.switchTo(typeId, typeName, projectId);
+            } catch (err) { console.warn(err); }
         }
         this.openDrawer(fileId);
     },
