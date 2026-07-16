@@ -418,9 +418,7 @@ const DocTypeManager = {
         const t = this.manage.items.find(x => x.type_id === typeId);
         if (!t) return;
         if (t.is_template === 1) {
-            if (confirm(`禁止删除模板 "${t.type_name}"（${typeId}）。\n\n如确认删除，请先将其降级为普通类型。\n\n现在降级为普通类型？`)) {
-                await this.demote(typeId);
-            }
+            alert(`禁止删除模板 "${t.type_name}"（${typeId}）。\n\n如确认删除，请先通过行内菜单「取消模板」将其降级为普通类型，再执行删除。`);
             return;
         }
         const hasData = (t.file_count || 0) + (t.field_count || 0) + (t.rule_count || 0) > 0;
