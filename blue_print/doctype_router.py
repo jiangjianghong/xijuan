@@ -326,6 +326,12 @@ async def _delete_one_type(type_id: str, force: bool, db: AsyncSession) -> dict:
         return {"type_id": type_id, "ok": False, "reason": "类型不存在"}
     if existing.is_default == 1:
         return {"type_id": type_id, "ok": False, "reason": "默认类型不可删除"}
+    if existing.is_template == 1:
+        return {
+            "type_id": type_id,
+            "ok": False,
+            "reason": "禁止删除模板，请检查 type_id，如确认删除，请降低其定位为普通",
+        }
 
     file_count = (
         await db.execute(

@@ -193,7 +193,9 @@ const DocTypeManager = {
                 `<button onclick="DocTypeManager.openRenameForm('${escapeAttr(t.type_id)}')">编辑</button>`;
             const delItem = isDef
                 ? `<button disabled title="默认类型不可删除">删除</button>`
-                : `<button class="danger" onclick="DocTypeManager.deleteType('${escapeAttr(t.type_id)}')">删除</button>`;
+                : isTpl
+                    ? `<button class="danger" title="模板不可删除，需先降级为普通类型" onclick="DocTypeManager.deleteType('${escapeAttr(t.type_id)}')">删除</button>`
+                    : `<button class="danger" onclick="DocTypeManager.deleteType('${escapeAttr(t.type_id)}')">删除</button>`;
             const assignItem = isDef ? '' :
                 `<button onclick="DocTypeManager.assignOne('${escapeAttr(t.type_id)}')">归入项目…</button>`;
             const menuOpen = m.menuOpenId === t.type_id;
@@ -415,6 +417,12 @@ const DocTypeManager = {
         this.closeRowMenu();
         const t = this.manage.items.find(x => x.type_id === typeId);
         if (!t) return;
+        if (t.is_template === 1) {
+            if (confirm(`禁止删除模板 "${t.type_name}"（${typeId}）。\n\n如确认删除，请先将其降级为普通类型。\n\n现在降级为普通类型？`)) {
+                await this.demote(typeId);
+            }
+            return;
+        }
         const hasData = (t.file_count || 0) + (t.field_count || 0) + (t.rule_count || 0) > 0;
         let force = false;
         if (hasData) {
