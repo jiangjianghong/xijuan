@@ -118,7 +118,10 @@
 
         <!-- Queue Section -->
         <section class="queue-section">
-            <h2 class="section-title">当前队列</h2>
+            <div class="queue-header">
+                <h2 class="section-title">当前队列</h2>
+                <button class="btn btn-secondary btn-sm" onclick="App.openAllQueueModal()">查看全部</button>
+            </div>
             <div id="queue-container" class="queue-container">
                 <div class="queue-empty">暂无处理任务</div>
             </div>
@@ -547,6 +550,21 @@
                 <button class="btn btn-ghost" onclick="RuleConfig.closeModal()">取消</button>
                 <button id="debug-field-btn" class="btn btn-debug" onclick="RuleConfig.toggleDebugMode()" style="display:none;">调试</button>
                 <button class="btn btn-primary" onclick="RuleConfig.saveForm()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 全部处理中队列弹窗（跨文档类型） -->
+    <div id="allqueue-modal-overlay" class="rule-modal-overlay">
+        <div class="rule-modal">
+            <div class="rule-modal-header">
+                <h3>全部处理中队列</h3>
+                <button class="rule-modal-close" onclick="App.closeAllQueueModal()">&times;</button>
+            </div>
+            <div class="rule-modal-body">
+                <div id="allqueue-list" class="allqueue-list">
+                    <div class="allqueue-empty">暂无处理任务</div>
+                </div>
             </div>
         </div>
     </div>

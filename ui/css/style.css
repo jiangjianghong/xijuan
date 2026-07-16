@@ -172,6 +172,13 @@ h1, h2, h3, h4, h5, h6,
     gap: 12px;
 }
 
+.queue-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
 .queue-container {
     display: flex;
     gap: 12px;
@@ -253,6 +260,75 @@ h1, h2, h3, h4, h5, h6,
     border-radius: 2px;
     transition: width 0.5s ease;
     animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* ── 全部处理中队列弹窗 ── */
+.allqueue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.allqueue-empty {
+    padding: 32px 0;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.allqueue-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.allqueue-item:hover {
+    box-shadow: var(--shadow-hover);
+    filter: brightness(1.02);
+}
+
+.allqueue-item-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.allqueue-item-name {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.allqueue-item-type {
+    display: inline-block;
+    align-self: flex-start;
+    padding: 1px 8px;
+    font-size: 11px;
+    color: var(--bio-dark);
+    background: var(--bio-pale);
+    border: 1px solid var(--border);
+    border-radius: 9999px;
+}
+
+.allqueue-item-stage {
+    font-size: 12px;
+    color: var(--bio-med);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.allqueue-item .queue-progress {
+    margin-top: 2px;
 }
 
 /* ── File List Section ── */
