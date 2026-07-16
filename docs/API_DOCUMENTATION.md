@@ -912,7 +912,8 @@
             ]
           }
         ],
-        "_texts": {"公司名称": "……拼接后实际注入占位符的完整文本……"}
+        "_texts": {"公司名称": "……拼接后实际注入占位符的完整文本……"},
+        "_model_pages": [1]
       }
     }
   ]
@@ -923,7 +924,9 @@
 >
 > `source_refs` 返回完整参考块（与回调 `field_done` / `stage_done` 透出的内容一致）：按占位符 label 分组——table 类固定 `_tables` 键、text 类按检索关键词分组（section 用 section_title，page 检索固定 `page_content`）、VL 类形如 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, ...}}`。每条 ref 含 `type` / `start_pos` / `end_pos` / `page_num`（字符串，可能为 `"3-5"` 范围）/ `text`（该条命中注入 prompt 的原始片段，table 类含 `表格名称: xxx\n` 前缀）；text 5 种检索（context/section/rule/chunk_db/vector_db）与 table 类的 ref 另带 `bboxes = [{page_num, bbox, page_size}]`（MinerU 块级框，左上原点、与 `page_size` 同单位，供前端 pdf.js 跳页画框；**非空才挂键**），page 检索与 VL 类不挂；顶层 `_texts` = `{label: 拼接后实际注入占位符的完整文本}`。
 >
-> **容错**：提取失败字段的 `source_refs` 为 `null`；存量老数据无 `text` / `_texts` / `bboxes` 键（老文件 page_mapping 无 bbox，重新解析后才有），消费方读取时需容错。
+> `source_refs._model_pages`（可选）= 模型在输出 `{value, reason, pages}` 时**自报的参考页码**整数数组（去重升序）。它是对系统按 `page_mapping` 算出的 `ref.page_num`（更准）的补充，区分「检索命中的所有页」与「模型下结论时实际引用的页」。仅 text / table 类 LLM 抽取产生；模型未返回 `pages` 时不挂键，VL 类（页码看 `_vl.key_pages`）与关闭 LLM 的字段不挂。前端提取结果卡片按此优先跳转定位。
+>
+> **容错**：提取失败字段的 `source_refs` 为 `null`；存量老数据无 `text` / `_texts` / `bboxes` / `_model_pages` 键（老文件 page_mapping 无 bbox，重新解析后才有），消费方读取时需容错。
 
 ---
 
@@ -1531,7 +1534,7 @@ data: <json>
 | 2-3（仅 `source_type=table` 且 `table_match_type=llm`）| `match_llm` | `step`, `prompt` / `llm_response` / `matched_indices` / `error` |
 | 4 | `prompt` | `system_prompt`, `user_prompt` |
 | 5（table/text）| `llm_response` | `raw_response` |
-| 6 | `result` | `extracted_value`, `reason`, `source_refs` |
+| 6 | `result` | `extracted_value`, `reason`, `pages`（模型自报参考页码 int[]，未返回则 `[]`）, `source_refs` |
 | 7 | `done` | `{}` |
 | —  | `error` | `step`, `message` |
 
@@ -1675,7 +1678,7 @@ data: <json>
 | `file_id`, `field_id` | 复合 PK | |
 | `extracted_value` | TEXT | |
 | `reason` | TEXT | LLM 给出的理由 |
-| `source_refs` | JSON | 参考块/页码/检索原文（`text`/`_texts`）/`bboxes`（块级 PDF 框）/VL 元数据（`_vl`）；失败时 NULL |
+| `source_refs` | JSON | 参考块/页码/检索原文（`text`/`_texts`）/`bboxes`（块级 PDF 框）/VL 元数据（`_vl`）/模型自报页码（`_model_pages`，int 数组）；失败时 NULL |
 
 ### 10.9 `analysis_result`
 

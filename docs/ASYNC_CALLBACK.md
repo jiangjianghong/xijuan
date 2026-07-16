@@ -241,7 +241,8 @@
       ],
       "_texts": {
         "投资估算表": "表格名称: 投资估算表\n<table>...</table>"
-      }
+      },
+      "_model_pages": [12]
     },
     "success": true,
     "index": 5,
@@ -287,7 +288,16 @@ table / text 字段的 `source_refs` 携带模型实际看到的检索原文：
 
 `GET /file/{id}/extraction` 与回调 `field_done` / `stage_done` 均透出完整 `source_refs`。
 
-> **老数据容错**：存量历史数据的 `source_refs` 无 `text` / `_texts` / `bboxes` 键（老文件 page_mapping 无 bbox，重新解析后才有），消费方读取时需容错（取不到时按缺省处理，勿强制解包）。
+##### 模型自报参考页 `_model_pages`
+
+table / text 字段（走 LLM 二次抽取）在 `source_refs` 顶层可能带一个 `_model_pages` 键——模型输出 `{value, reason, pages}` 时自报的「得出该值实际参考了哪几页」：
+
+- **类型固定为 int 数组**（1-indexed、去重升序），与 `ref.page_num`（string，可为 `"3-5"` 区间）不同；
+- 与算法命中页**互补**：检索常命中多页，`_model_pages` 只列模型真正引用的页；
+- 模型未返回 / 解析失败 / 关闭 LLM（`use_llm=0`）/ VL 类字段**无此键**（VL 页码仍看 `_vl.key_pages`）；
+- 以 `_` 开头，遍历 label 取页码的消费者（`label.startswith("_")` 跳过）不受影响；需要时**单独读** `source_refs.get("_model_pages")`。前端将其单列为「模型自报页码」行并作为 PDF 定位首选跳转页。取页码的完整参考实现见 `CALLBACK_PAGE_NUM.md` §4.6 / §7。
+
+> **老数据容错**：存量历史数据的 `source_refs` 无 `text` / `_texts` / `bboxes` / `_model_pages` 键（老文件 page_mapping 无 bbox，重新解析后才有），消费方读取时需容错（取不到时按缺省处理，勿强制解包）。
 
 **VL 字段的 field_done 示例（vl_locate 方法）：**
 

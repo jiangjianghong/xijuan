@@ -24,6 +24,7 @@
 | 1 | `stage_done`（tableing） | `data.tables[i].page_num` | — | **string** | 表格所在页，直取 |
 | 2 | `stage_done`（chunking） | `data.chunks[i].page_num` | — | **string** | 分块所在页，直取 |
 | 3 | `field_done` / `stage_done`（extracting） | `data.source_refs` 内 | 见 §4 | **string / int[]** | **核心，随来源类型分 3 种布局** |
+| 3′ | `field_done` / `stage_done`（extracting） | `data.source_refs._model_pages` | 见 §4.6 | **int[]** | 模型自报的参考页码（text/table 类，可选） |
 | 4 | `rule_done` / `stage_done`（analyzing） | `data.source_refs[field_id]` 内 | 见 §5 | 同 §4 | 嵌套依赖字段的抽取 source_refs |
 
 > `parsing` 阶段的 `stage_done.data.page_mapping` 是**原始映射表**（文本位置→页码），不是某条数据的页码，通常后端不用直接读；它是位置 1/3/4 反查页码的底层数据。
@@ -244,6 +245,24 @@ if pages is None:
 | vl_progressive | 含 `_vl` | `refs._vl.key_pages = null` | null | 用 `total_pages` 兜底 |
 | 失败字段 | `source_refs = null` | 无 | — | 无页码 |
 
+### 4.6 模型自报页码 `_model_pages`（新增，与算法页码互补）
+
+除上面「算法算出的命中页」外，**text / table 类**的 `source_refs` 顶层可能带一个 `_model_pages` 键——这是**模型在输出 `{value, reason, pages}` 时自报的「我得出该值时实际参考了哪几页」**（`extraction_service.py` 的 `parse_llm_json_response` 解析 `pages` 字段后由 `_attach_model_pages` 落库）：
+
+```jsonc
+{
+  "公司名称": [ {ref}, ... ],       // 算法命中（含 page_num / bboxes）
+  "_texts": { ... },
+  "_model_pages": [1, 3]            // ★模型自报参考页（int 数组，1-indexed，去重升序）
+}
+```
+
+- **类型固定为 int 数组**（1-indexed，已去重升序），**不是** string、**不会**是区间——与 `ref.page_num`（string，可区间）不同。
+- 与算法命中页**互补、可能不一致**：检索常命中多页，`_model_pages` 只列模型真正引用的页；模型未返回 / 解析失败 / 关闭 LLM（`use_llm=0`）/ VL 类时**无此键**。
+- vl 类页码仍看 `_vl.key_pages`（VL 不走 `{value,reason,pages}` 文本解析，不产生 `_model_pages`）。
+- 以 `_` 开头，§7 的取页函数 `label.startswith("_")` 会**自动跳过**它，因此老消费者不受影响；需要模型自报页时**单独读** `source_refs.get("_model_pages")`。
+- 前端提取结果卡片将其单列为「模型自报页码」行、并作为 PDF 定位的**首选跳转页**（详见 `ui/js/app.js`）。
+
 ---
 
 ## 5. analyzing 规则的页码（嵌套依赖字段）
@@ -332,9 +351,23 @@ def parse_page_num_str(s: Optional[str]) -> List[int]:
     return sorted(set(pages))
 
 
+def model_pages_of_extraction(source_refs: Any) -> List[int]:
+    """取「模型自报参考页码」（source_refs._model_pages，1-indexed，去重排序）。
+    仅 text / table 类的 LLM 抽取可能有；无此键 / 老数据 / vl 类 → []。
+    这是模型自称引用的页，与 pages_of_extraction（程序算的命中页）互补，不要混用。
+    """
+    if not isinstance(source_refs, dict):
+        return []
+    mp = source_refs.get("_model_pages")
+    if not isinstance(mp, list):
+        return []
+    return sorted({int(p) for p in mp if isinstance(p, int) or str(p).isdigit()})
+
+
 def pages_of_extraction(source_refs: Any) -> List[int]:
     """从「一个抽取字段」的 source_refs 里取所有命中页（1-indexed，去重排序）。
     覆盖 text / table / vl / page / 失败 全部形态。
+    注：这是**程序算出的命中页**；模型自报页请另用 model_pages_of_extraction。
     """
     if not isinstance(source_refs, dict):
         return []                     # None（失败字段）或异常形态
@@ -415,3 +448,4 @@ elif event == "stage_done" and payload["status"] == "chunking":
 8. **页码是 1-indexed**：直接对应 PDF 第几页，无需 +1/-1。
 9. **`ref.page_num`（string）与 `bboxes[i].page_num`（int）是两个字段**：展示/跳页用前者，画框用后者。
 10. **老数据无 `text`/`_texts`/`bboxes`**：只有 `page_num`，页码仍可取，别因缺 `bboxes` 就当整条无效。
+11. **`_model_pages` 是模型自报页、非程序命中页**：它是顶层 `_` 键（`startswith("_")` 自动跳过，不会污染 `pages_of_extraction`），仅 text/table 类可能有，老数据/vl 类无；需要时另用 `model_pages_of_extraction` 单取，别和命中页混算。

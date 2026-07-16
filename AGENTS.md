@@ -130,6 +130,7 @@ Three source types:
   - `vl_locate`：缩略图网格并行定位 + 关键页高清提取。配置 `field_hints`、`grid_pages`、`max_concurrent`，可自定义 `locate_prompt_template`。
   - VL 直接产出 `{value, reason}` JSON，**不**走文本 LLM 二次抽取；`source_refs` 存为 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, ...}}`。
   - 全局并发 `vl_model.global_max_concurrency`（默认 8）通过 `utils/vl_client.py` 的 asyncio.Semaphore 治理。
+- **模型自报参考页码**：text / table 抽取的 LLM 输出除 `value`/`reason` 外可带 `pages`（整数数组），`parse_llm_json_response` 归一化后经 `_attach_model_pages` 挂到 `source_refs._model_pages`（与 `_texts`/`_vl` 同级，无需 DB 加列；空则不挂键）。区别于程序算的 `ref.page_num`；vl 类用 `_vl.key_pages` 不受影响；前端定位以 `_model_pages` 为首选跳转页。老数据无此键，消费方需容错。
   - PDF 字节由 `blue_print/file_router.py` 在上传时持久化到 `uploads/{file_id}.pdf`，由 DELETE / 批量删除 / 文档类型级联删除联动清理；启动时 `cleanup_orphan_pdfs` 兜底；另有 `storage` 保留策略按总量/时长滚动清理（见 Configuration 节）。
 
 ### Analysis System (`service/analysis_service.py`)

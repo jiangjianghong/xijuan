@@ -25,14 +25,66 @@ from utils.text_utils import normalize_cjk_quotes, salvage_value_reason
 
 # ── JSON 解析辅助 ────────────────────────────────────────────
 
-def parse_llm_json_response(response: str) -> Tuple[str, str]:
-    """解析 LLM 返回的 JSON 响应，提取 value 和 reason。
+def _normalize_pages(raw: Any) -> List[int]:
+    """把模型返回的 pages 归一化为去重升序的正整数列表。
+
+    容错：接受 list（元素可为 int / 数字字符串 / "第X页" 等含数字文本）、
+    单个 int、逗号分隔字符串。取出所有正整数，非法值跳过，去重后升序。
+    解析不出任何页码时返回空列表。
+    """
+    if raw is None:
+        return []
+    items: List[Any]
+    if isinstance(raw, (list, tuple)):
+        items = list(raw)
+    elif isinstance(raw, int):
+        items = [raw]
+    elif isinstance(raw, str):
+        items = re.split(r"[，,、\s]+", raw.strip())
+    else:
+        items = [raw]
+
+    pages: List[int] = []
+    for it in items:
+        if isinstance(it, bool):
+            continue
+        if isinstance(it, int):
+            n = it
+        else:
+            m = re.search(r"\d+", str(it))
+            if not m:
+                continue
+            n = int(m.group())
+        if n >= 1:
+            pages.append(n)
+    return sorted(set(pages))
+
+
+def _extract_value_reason_pages(data: Dict[str, Any]) -> Tuple[str, str, List[int]]:
+    """从单个 dict 中取出 (value, reason, pages)。
+
+    value 为 list/dict 时转 JSON 字符串存储；其余转字符串并归一化中文标点。
+    pages 走 _normalize_pages 归一（去重升序正整数）。
+    """
+    raw_value = data.get("value", "")
+    if isinstance(raw_value, (list, dict)):
+        value = json.dumps(raw_value, ensure_ascii=False)
+    else:
+        value = normalize_cjk_quotes(str(raw_value).strip())
+    reason = normalize_cjk_quotes(str(data.get("reason", "")).strip())
+    pages = _normalize_pages(data.get("pages"))
+    return value, reason, pages
+
+
+def parse_llm_json_response(response: str) -> Tuple[str, str, List[int]]:
+    """解析 LLM 返回的 JSON 响应，提取 value、reason 和 pages。
 
     Args:
         response: LLM 返回的原始响应（可能是 JSON 或纯文本）。
 
     Returns:
-        (value, reason) 元组。如果解析失败，reason 为空。
+        (value, reason, pages) 元组。pages 为模型自报的引用页码（去重升序正整数
+        列表），模型未返回 / 解析失败时为空列表。
     """
     response = response.strip()
 
@@ -45,14 +97,25 @@ def parse_llm_json_response(response: str) -> Tuple[str, str]:
     try:
         data = json.loads(response)
         if isinstance(data, dict):
-            raw_value = data.get("value", "")
-            # value 可能是 list/dict（用户自定义格式），转为 JSON 字符串存储
-            if isinstance(raw_value, (list, dict)):
-                value = json.dumps(raw_value, ensure_ascii=False)
-            else:
-                value = normalize_cjk_quotes(str(raw_value).strip())
-            reason = normalize_cjk_quotes(str(data.get("reason", "")).strip())
-            return value, reason
+            return _extract_value_reason_pages(data)
+        # 模型违规返回对象数组（本应单个对象）：不静默丢弃后续元素，
+        # 把每个对象的 value 逐条拼接、pages 合并去重后返回，避免数据丢失。
+        if isinstance(data, list):
+            objs = [x for x in data if isinstance(x, dict)]
+            if objs:
+                values, reasons, all_pages = [], [], []
+                for obj in objs:
+                    v, r, p = _extract_value_reason_pages(obj)
+                    if v:
+                        values.append(v)
+                    if r:
+                        reasons.append(r)
+                    all_pages.extend(p)
+                return (
+                    "\n".join(values),
+                    normalize_cjk_quotes("\n".join(reasons)),
+                    sorted(set(all_pages)),
+                )
     except json.JSONDecodeError:
         pass
 
@@ -61,22 +124,16 @@ def parse_llm_json_response(response: str) -> Tuple[str, str]:
     if json_obj_match:
         try:
             data = json.loads(json_obj_match.group())
-            raw_value = data.get("value", "")
-            if isinstance(raw_value, (list, dict)):
-                value = json.dumps(raw_value, ensure_ascii=False)
-            else:
-                value = normalize_cjk_quotes(str(raw_value).strip())
-            reason = normalize_cjk_quotes(str(data.get("reason", "")).strip())
-            return value, reason
+            return _extract_value_reason_pages(data)
         except json.JSONDecodeError:
             pass
 
     # 解析失败：先尝试从非法 JSON 里抢救 value/reason（模型吐裸英文双引号时常见），
-    # 抢救到值则用之，否则退回把整段响应当 value。
+    # 抢救到值则用之，否则退回把整段响应当 value。pages 抢救不了，返回空。
     salvaged_value, salvaged_reason = salvage_value_reason(response)
     if salvaged_value or salvaged_reason:
-        return salvaged_value, salvaged_reason
-    return response.strip(), ""
+        return salvaged_value, salvaged_reason, []
+    return response.strip(), "", []
 
 
 # ── 搜索结果占位符处理 ────────────────────────────────────────
@@ -149,6 +206,21 @@ def _is_llm_disabled(field: ExtractionField) -> bool:
 def _join_retrieved_text(results_text_by_label: Dict[str, str]) -> str:
     """把各 label 的检索文本拼成一个字符串，等价于原本注入 prompt 的内容。"""
     return "\n---\n".join(v for v in results_text_by_label.values() if v)
+
+
+def _attach_model_pages(source_refs: Optional[Dict], pages: List[int]) -> Optional[Dict]:
+    """把模型自报的引用页码挂到 source_refs['_model_pages']。
+
+    与 _texts / _tables / _vl 同级，复用 JSON 元数据约定，免加数据库列。
+    pages 为空则不挂键（消费方容错，老数据同样无此键）；source_refs 为空
+    但 pages 非空时新建一个仅含 _model_pages 的 dict，保证页码不丢。
+    """
+    if not pages:
+        return source_refs
+    if source_refs is None:
+        source_refs = {}
+    source_refs["_model_pages"] = pages
+    return source_refs
 
 
 # ── 页码区间解析（page 检索方式） ─────────────────────────────
@@ -358,7 +430,8 @@ def _result_page_num(r: Dict[str, Any], page_mapping: List[Dict[str, Any]]) -> A
 # ── source_refs 按「抽取值 ↔ 命中页内容」包含相似度排序 ────────────
 
 # source_refs 中非 ref 列表的保留键，排序时跳过
-_NON_REF_KEYS = frozenset({"_texts", "_vl", "_web_search"})
+# （_model_pages 是模型自报页码的 int 数组，非 ref 列表，不可当 ref 排序）
+_NON_REF_KEYS = frozenset({"_texts", "_vl", "_web_search", "_model_pages"})
 
 
 def _norm_for_match(s: str) -> str:
@@ -867,9 +940,11 @@ async def search_vector_db(
 # JSON 输出格式说明（附加到 prompt 末尾）
 JSON_OUTPUT_INSTRUCTION = """
 
-请以 JSON 格式返回结果，包含 value（提取的值）和 reason（提取理由/依据）两个字段：
-{"value": "提取的值", "reason": "说明从哪里提取、为什么这样提取"}
-注意：value 的格式请严格遵循 system_prompt 中的要求（如有），可以是字符串、JSON数组或JSON对象。
+请以 JSON 格式返回结果，包含 value（提取的值）、reason（提取理由/依据）和 pages（参考页码）三个字段：
+{"value": "提取的值", "reason": "说明从哪里提取、为什么这样提取", "pages": [3, 5]}
+只返回**一个** JSON 对象，**禁止**返回对象数组（不要用 [ ] 把多个 {value,...} 括起来）。若文中存在多个符合条件的内容，请按 system_prompt 的要求归并为单个 value（如无特别要求则用顿号/换行拼成一个字符串），不要拆成多条记录。
+注意：value 本身的格式请严格遵循 system_prompt 中的要求（如有），可以是字符串、JSON数组或JSON对象——但最外层始终是上面那**一个**对象。
+pages 为你得出该值时实际参考的页码列表（整数数组），页码取自检索文本中每段开头标注的页码；若无法确定则返回空数组 []。
 重点关注：只要输出json结果不要带有```等标识,value和reason的值中不得含有英文标点符号。
 """
 
@@ -979,8 +1054,8 @@ async def _extract_page_field(
             response = await chat_completion("", messages=messages)
         else:
             response = await chat_completion(llm_input)
-        value, reason = parse_llm_json_response(response)
-        return value, reason, source_refs
+        value, reason, pages = parse_llm_json_response(response)
+        return value, reason, _attach_model_pages(source_refs, pages)
     except Exception as e:
         logger.error("LLM 文本提取失败 (page): {}", e)
         return "", "", None
@@ -1153,8 +1228,8 @@ async def extract_table_field(
             response = await chat_completion("", messages=messages)
         else:
             response = await chat_completion(llm_input)
-        value, reason = parse_llm_json_response(response)
-        return value, reason, source_refs
+        value, reason, pages = parse_llm_json_response(response)
+        return value, reason, _attach_model_pages(source_refs, pages)
     except Exception as e:
         logger.error("LLM 表格提取失败: {}", e)
         return "", "", None
@@ -1314,8 +1389,8 @@ async def extract_text_field(
             response = await chat_completion("", messages=messages)
         else:
             response = await chat_completion(llm_input)
-        value, reason = parse_llm_json_response(response)
-        return value, reason, source_refs
+        value, reason, pages = parse_llm_json_response(response)
+        return value, reason, _attach_model_pages(source_refs, pages)
     except Exception as e:
         logger.error("LLM 文本提取失败: {}", e)
         return "", "", None
@@ -2097,13 +2172,14 @@ async def test_field_extraction_stream(
 
         # ── Step 4: 解析结果 ──────────────────────────────────
         try:
-            value, reason = parse_llm_json_response(raw_response)
+            value, reason, pages = parse_llm_json_response(raw_response)
 
             yield {
                 "event": "result",
                 "data": {
                     "extracted_value": value,
                     "reason": reason,
+                    "pages": pages,
                 },
             }
 

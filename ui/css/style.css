@@ -1108,6 +1108,33 @@ h1, h2, h3, h4, h5, h6,
     word-break: break-all;
 }
 
+.model-pages {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.model-page-item {
+    display: inline-block;
+    padding: 1px 8px;
+    background: var(--bio-med, #2d8cf0);
+    color: #fff;
+    border-radius: 10px;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+/* 实际参考页码用弱化配色，与模型自报页码（主色）区分 */
+.model-page-item.model-page-item--actual {
+    background: var(--bg-primary, #f0f2f5);
+    color: var(--text-secondary, #666);
+    border: 1px solid var(--border-color, #dcdee2);
+}
+
 .source-refs {
     margin-top: 8px;
     font-size: 12px;

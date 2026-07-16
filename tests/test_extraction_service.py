@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from service.extraction_service import parse_sections, SectionInfo
 from service.extraction_service import _classify_heading, _PLAIN_LEVEL
+from service.extraction_service import (
+    parse_llm_json_response,
+    _normalize_pages,
+    _attach_model_pages,
+    _sort_source_refs_by_page_containment,
+)
 
 
 def test_classify_heading_chinese_number_level1():
@@ -459,3 +465,81 @@ async def test_search_section_mixed_document_integration():
     r1 = await search_section(content, {"section_pattern": "项目的基本情况", "match_type": "exact"})
     assert len(r1) == 1
     assert "本章引言" in r1[0]["content"]
+
+
+# ── 模型自报参考页码（pages） ────────────────────────────────
+
+
+def test_parse_llm_json_response_with_pages():
+    value, reason, pages = parse_llm_json_response(
+        '{"value": "甲公司", "reason": "见首页", "pages": [1, 3, 1]}'
+    )
+    assert value == "甲公司"
+    assert reason == "见首页"
+    assert pages == [1, 3]  # 去重升序
+
+
+def test_parse_llm_json_response_without_pages():
+    value, reason, pages = parse_llm_json_response('{"value": "x", "reason": "y"}')
+    assert (value, reason, pages) == ("x", "y", [])
+
+
+def test_parse_llm_json_response_array_merges_not_drops():
+    """模型违规返回对象数组时：不静默只取第一条，逐条拼接 value、合并去重 pages。"""
+    resp = (
+        '[{"value": "甲村", "reason": "r1", "pages": [215]},'
+        ' {"value": "乙村", "reason": "r2", "pages": [216, 217]},'
+        ' {"value": "丙村", "reason": "r3", "pages": [217]}]'
+    )
+    value, reason, pages = parse_llm_json_response(resp)
+    assert value == "甲村\n乙村\n丙村"
+    assert reason == "r1\nr2\nr3"
+    assert pages == [215, 216, 217]  # 合并去重升序
+
+
+def test_parse_llm_json_response_plain_text_fallback_no_pages():
+    value, reason, pages = parse_llm_json_response("这是一段纯文本")
+    assert value == "这是一段纯文本"
+    assert pages == []
+
+
+def test_normalize_pages_variants():
+    assert _normalize_pages([2, 1, "第3页", "5"]) == [1, 2, 3, 5]
+    assert _normalize_pages("3, 1、2") == [1, 2, 3]
+    assert _normalize_pages(4) == [4]
+    assert _normalize_pages(["", "abc", 0, -1, True]) == []
+    assert _normalize_pages(None) == []
+
+
+def test_attach_model_pages_merges_into_existing_refs():
+    refs = {"kw": [{"text": "a"}]}
+    out = _attach_model_pages(refs, [2, 1])
+    assert out is refs
+    assert out["_model_pages"] == [2, 1]
+
+
+def test_attach_model_pages_empty_pages_noop():
+    assert _attach_model_pages(None, []) is None
+    refs = {"kw": []}
+    assert _attach_model_pages(refs, []) is refs
+    assert "_model_pages" not in refs
+
+
+def test_attach_model_pages_creates_dict_when_refs_none():
+    out = _attach_model_pages(None, [7])
+    assert out == {"_model_pages": [7]}
+
+
+def test_sort_source_refs_skips_model_pages_int_list():
+    """回归：_model_pages 是 int 数组，排序时必须跳过，否则对 int 调 .get() 崩溃。"""
+    refs = {
+        "村庄": [
+            {"page_num": "216", "text": "a"},
+            {"page_num": "218", "text": "b"},
+        ],
+        "_model_pages": [216, 217, 218],  # 2 个以上 int，曾触发 'int' object has no attribute 'get'
+    }
+    page_contents = {"216": "命中值在这一页", "218": "无关内容"}
+    # 不抛异常即通过（就地排序）
+    _sort_source_refs_by_page_containment(refs, "命中值", page_contents)
+    assert refs["_model_pages"] == [216, 217, 218]  # 原样保留，未被当成 ref

@@ -492,8 +492,10 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "`source_refs` 为参考块字典：每条 ref 含 `text`（该条命中注入 prompt 的原始片段），"
                 "text/table 类 ref 另含 `bboxes`（`[{page_num, bbox, page_size}]` 块级 PDF 框，供前端高亮定位）；"
                 "顶层 `_texts` 键为 `{label: 拼接后实际注入占位符的完整文本}`；"
-                "vl 类为 `{_vl: {...}}` 元数据（无检索文本）。"
-                "存量老数据无 `text`/`_texts`/`bboxes`，消费方需容错。\n\n"
+                "顶层 `_model_pages` 键为 `int[]`（模型自报的参考页码，去重升序，1-indexed；text/table 类由 LLM "
+                "输出的 `pages` 字段落库，前端定位优先跳这些页；模型未返回 / vl 类 / use_llm=0 时无此键）；"
+                "vl 类为 `{_vl: {...}}` 元数据（无检索文本，页码在 `_vl.key_pages`）。"
+                "存量老数据无 `text`/`_texts`/`bboxes`/`_model_pages`，消费方需容错。\n\n"
                 "如需调试细节请走 `/extraction/test` 或 `/extraction/test/stream`。"
             ),
         }
@@ -591,6 +593,9 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "`extracted_value` / `reason` 是 JSON 解析后的结果\n"
                 "- VL 字段：`llm_input` 是 `vl_extract_prompt`，`llm_output` = `extracted_value`"
                 "（VL 直出 JSON，不再二次抽取）\n\n"
+                "text / table 字段的 prompt 末尾会追加 JSON 输出说明，要求模型额外返回 `pages`"
+                "（模型自报的参考页码整数数组），解析后落库到 `source_refs._model_pages`（去重升序；"
+                "模型未返回则为空、不挂键）。\n\n"
                 "返回 `data=ExtractionTestResponse{search_results, llm_input, llm_output, extracted_value, reason}`。\n\n"
                 "**状态码**：200 / 400（既未传 `field_id` 也未传 `config`）/ 404（字段或文件内容不存在）/ 500（提取异常）。"
             ),

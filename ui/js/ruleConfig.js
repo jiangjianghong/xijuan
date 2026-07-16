@@ -2146,6 +2146,17 @@ const RuleConfig = {
         const container = document.getElementById('debug-result-content');
         if (!section || !container) return;
 
+        // 模型自报页码（parse_llm_json_response 归一后的去重升序整数数组，可能缺省/为空）
+        const pages = Array.isArray(data.pages)
+            ? data.pages.map(p => parseInt(p)).filter(n => Number.isInteger(n) && n >= 1)
+            : [];
+        const pagesRow = pages.length > 0 ? `
+                <div class="debug-result-row">
+                    <span class="label">模型自报页码:</span>
+                    <span class="value">${pages.map(n => `第 ${n} 页`).join('、')}</span>
+                </div>
+            ` : '';
+
         container.innerHTML = `
             <div class="debug-result-card">
                 <div class="debug-result-row">
@@ -2156,6 +2167,7 @@ const RuleConfig = {
                     <span class="label">理由:</span>
                     <span class="reason">${Utils.escapeHtml(data.reason || '(无)')}</span>
                 </div>
+                ${pagesRow}
             </div>
         `;
         section.style.display = '';

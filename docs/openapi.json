@@ -84,6 +84,51 @@
         }
       }
     },
+    "/file/processing": {
+      "get": {
+        "tags": [
+          "file"
+        ],
+        "summary": "List Processing",
+        "description": "查询所有\"处理中\"的文件（作为前端队列的唯一数据源）。\n\n- 不传 type_id：返回全部类型（供「查看全部」弹窗）\n- 传 type_id：只返回该类型（供默认队列块 restore / 轮询）\nLEFT JOIN doc_type 带出 type_name / project_id，供前端显示类型名与跳转。",
+        "operationId": "list_processing_file_processing_get",
+        "parameters": [
+          {
+            "name": "type_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Type Id"
+            },
+            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/file/context_query": {
       "post": {
         "tags": [
@@ -714,6 +759,50 @@
         }
       }
     },
+    "/file/{file_id}/recompute_page_mapping": {
+      "post": {
+        "tags": [
+          "file"
+        ],
+        "summary": "Recompute Page Mapping",
+        "description": "用落库的 md + middle_json 重算 page_mapping 并写回。\n\n供存量文件在不重新上传/重新解析的前提下,套用最新唯一锚定位算法刷新页码映射。\n文件不存在或无内容 → 404;middle_json 缺失 → 产出空映射(不报错)。",
+        "operationId": "recompute_page_mapping_file__file_id__recompute_page_mapping_post",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            },
+            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/file/{file_id}/outline": {
       "get": {
         "tags": [
@@ -808,7 +897,7 @@
           "file"
         ],
         "summary": "字段提取结果",
-        "description": "返回 `extraction_result` 全表行（LEFT JOIN `extraction_field` 获取字段名称）：\n`data=[{file_id, field_id, field_name, extracted_value, reason, source_refs}]`。\n\n`field_name` 来自字段配置表，若配置已被删除则为 `null`。\n\n`source_refs` 为参考块字典：每条 ref 含 `text`（该条命中注入 prompt 的原始片段），text/table 类 ref 另含 `bboxes`（`[{page_num, bbox, page_size}]` 块级 PDF 框，供前端高亮定位）；顶层 `_texts` 键为 `{label: 拼接后实际注入占位符的完整文本}`；vl 类为 `{_vl: {...}}` 元数据（无检索文本）。存量老数据无 `text`/`_texts`/`bboxes`，消费方需容错。\n\n如需调试细节请走 `/extraction/test` 或 `/extraction/test/stream`。",
+        "description": "返回 `extraction_result` 全表行（LEFT JOIN `extraction_field` 获取字段名称）：\n`data=[{file_id, field_id, field_name, extracted_value, reason, source_refs}]`。\n\n`field_name` 来自字段配置表，若配置已被删除则为 `null`。\n\n`source_refs` 为参考块字典：每条 ref 含 `text`（该条命中注入 prompt 的原始片段），text/table 类 ref 另含 `bboxes`（`[{page_num, bbox, page_size}]` 块级 PDF 框，供前端高亮定位）；顶层 `_texts` 键为 `{label: 拼接后实际注入占位符的完整文本}`；顶层 `_model_pages` 键为 `int[]`（模型自报的参考页码，去重升序，1-indexed；text/table 类由 LLM 输出的 `pages` 字段落库，前端定位优先跳这些页；模型未返回 / vl 类 / use_llm=0 时无此键）；vl 类为 `{_vl: {...}}` 元数据（无检索文本，页码在 `_vl.key_pages`）。存量老数据无 `text`/`_texts`/`bboxes`/`_model_pages`，消费方需容错。\n\n如需调试细节请走 `/extraction/test` 或 `/extraction/test/stream`。",
         "operationId": "get_extraction_results_file__file_id__extraction_get",
         "parameters": [
           {
@@ -1113,7 +1202,7 @@
           "extraction"
         ],
         "summary": "字段提取调试（同步）",
-        "description": "两种模式（二选一）：传 `field_id` 加载已保存配置，或传 `config`（完整字段配置 dict）用临时配置。\n\n**`search_results` 形态因 `source_type` / `search_type` 不同而异**\n- `source_type=table`：`[{table_name, table_content(截断 500 字)}, ...]`\n- `source_type=text` + `search_type=context`：关键词命中前后上下文片段列表\n- `search_type=section`：章节切片列表\n- `search_type=rule`：关键词起点 + 停止词边界片段列表\n- `search_type=chunk_db`：MySQL 分块命中列表\n- `search_type=vector_db`：Milvus 语义命中列表（含 `score`）\n- `search_type=page`：按 `page_range` 切出的整页 Markdown\n- `source_type=vl`：**单元素**数组 `[{type:\"vl_meta\", method, key_pages, vl_total_tokens, batches_with_info}]`\n\n**`llm_input` / `llm_output`**\n- 普通字段：`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，`extracted_value` / `reason` 是 JSON 解析后的结果\n- VL 字段：`llm_input` 是 `vl_extract_prompt`，`llm_output` = `extracted_value`（VL 直出 JSON，不再二次抽取）\n\n返回 `data=ExtractionTestResponse{search_results, llm_input, llm_output, extracted_value, reason}`。\n\n**状态码**：200 / 400（既未传 `field_id` 也未传 `config`）/ 404（字段或文件内容不存在）/ 500（提取异常）。",
+        "description": "两种模式（二选一）：传 `field_id` 加载已保存配置，或传 `config`（完整字段配置 dict）用临时配置。\n\n**`search_results` 形态因 `source_type` / `search_type` 不同而异**\n- `source_type=table`：`[{table_name, table_content(截断 500 字)}, ...]`\n- `source_type=text` + `search_type=context`：关键词命中前后上下文片段列表\n- `search_type=section`：章节切片列表\n- `search_type=rule`：关键词起点 + 停止词边界片段列表\n- `search_type=chunk_db`：MySQL 分块命中列表\n- `search_type=vector_db`：Milvus 语义命中列表（含 `score`）\n- `search_type=page`：按 `page_range` 切出的整页 Markdown\n- `source_type=vl`：**单元素**数组 `[{type:\"vl_meta\", method, key_pages, vl_total_tokens, batches_with_info}]`\n\n**`llm_input` / `llm_output`**\n- 普通字段：`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，`extracted_value` / `reason` 是 JSON 解析后的结果\n- VL 字段：`llm_input` 是 `vl_extract_prompt`，`llm_output` = `extracted_value`（VL 直出 JSON，不再二次抽取）\n\ntext / table 字段的 prompt 末尾会追加 JSON 输出说明，要求模型额外返回 `pages`（模型自报的参考页码整数数组），解析后落库到 `source_refs._model_pages`（去重升序；模型未返回则为空、不挂键）。\n\n返回 `data=ExtractionTestResponse{search_results, llm_input, llm_output, extracted_value, reason}`。\n\n**状态码**：200 / 400（既未传 `field_id` 也未传 `config`）/ 404（字段或文件内容不存在）/ 500（提取异常）。",
         "operationId": "test_extraction_extraction_test_post",
         "requestBody": {
           "content": {
@@ -1450,7 +1539,7 @@
           "search"
         ],
         "summary": "向量相似度检索",
-        "description": "将 `query` 通过 embedding 接口向量化后在 Milvus 中检索，返回分块及 L2 距离 `score`（越小越相似）。\n\n**请求字段**\n- `query`：必填，检索文本（空串直接返回空列表）\n- `file_id`：可选，限定检索范围；省略则跨全部已向量化的文件\n- `top_k`：可选，默认 `10`\n- `score_threshold`：可选，L2 距离上限，超过该距离的结果被过滤；省略不过滤\n\n返回 `data=[SearchResultItem{chunk_id, file_id, chunk_index, chunk_content, score, page_num}]`。",
+        "description": "将 `query` 通过 embedding 接口向量化后在 Milvus 中检索，返回分块及 COSINE 相似度 `score`（越大越相似，取值约 [-1, 1]）。\n\n**请求字段**\n- `query`：必填，检索文本（空串直接返回空列表）\n- `file_id`：可选，限定检索范围；省略则跨全部已向量化的文件\n- `top_k`：可选，默认 `10`\n- `score_threshold`：可选，相似度下限，低于该值的结果被过滤；省略不过滤\n\n返回 `data=[SearchResultItem{chunk_id, file_id, chunk_index, chunk_content, score, page_num}]`。",
         "operationId": "search_search_post",
         "requestBody": {
           "content": {
@@ -2247,7 +2336,7 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 1000,
+              "maximum": 2000,
               "minimum": 0,
               "default": 200,
               "title": "Lines"
@@ -2325,7 +2414,7 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 1000,
+              "maximum": 2000,
               "minimum": 0,
               "default": 200,
               "title": "Tail"
@@ -3681,7 +3770,7 @@
               }
             ],
             "title": "Score Threshold",
-            "description": "L2 距离上限，超过则过滤；省略不过滤。"
+            "description": "相似度下限，低于则过滤；省略不过滤。"
           }
         },
         "type": "object",
@@ -3797,7 +3886,7 @@
     },
     {
       "name": "search",
-      "description": "Milvus 向量相似度检索（L2 距离）。"
+      "description": "Milvus 向量相似度检索（COSINE 相似度）。"
     }
   ],
   "servers": [
