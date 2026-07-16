@@ -18,11 +18,14 @@ RUN pip install uv -i https://pypi.tuna.tsinghua.edu.cn/simple
 # 复制依赖文件
 COPY pyproject.toml uv.lock ./
 
-# 安装依赖（不安装开发依赖）
+# 安装依赖（不安装开发依赖）；构建时一次装齐，含项目本身
 RUN uv sync --frozen --no-dev --no-install-project
 
 # 复制应用代码
 COPY . .
 
-# 启动命令（端口从 config.yaml 读取）
-CMD ["uv", "run", "python", "app.py"]
+# 把项目本身装进 venv（代码已就位），使 venv 与 uv.lock 完全一致
+RUN uv sync --frozen --no-dev
+
+# 启动命令（直接用 venv 内的 python，避免 uv run 每次启动做环境同步/联网校验）
+CMD ["/app/.venv/bin/python", "app.py"]
