@@ -115,6 +115,10 @@ const DocTypeManager = {
         if (typeof App !== 'undefined' && App.loadFileList) {
             try { App.loadFileList(); } catch (e) { console.warn(e); }
         }
+        // 切换类型时同步重建默认队列块，使其只显示当前类型的处理中文件
+        if (typeof App !== 'undefined' && App.restoreProcessingQueue) {
+            try { App.restoreProcessingQueue(); } catch (e) { console.warn(e); }
+        }
         if (typeof RuleConfig !== 'undefined') {
             try { RuleConfig.loadFields && RuleConfig.loadFields(); } catch (e) { console.warn(e); }
             try { RuleConfig.loadRules && RuleConfig.loadRules(); } catch (e) { console.warn(e); }
