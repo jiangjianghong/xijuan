@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import uuid
 from typing import Any, Dict
 
-import json
-
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from model.database import get_db
+from model.database import get_db, get_session_factory
 from model.schemas import (
+    AnalysisRunModeEnum,
+    AnalysisRunRequest,
+    AnalysisRunResponse,
     AnalysisRuleCreate,
     AnalysisRuleResponse,
     AnalysisTestRequest,
@@ -22,6 +26,8 @@ from model.schemas import (
 )
 from model.tables import AnalysisRule, ExtractionResult
 from service.analysis_service import apply_web_search, execute_calc, execute_judge, resolve_expression, test_rule_analysis_stream
+from service.analysis_run_service import run_analysis_batch
+from utils.callback import build_analysis_task_payload, notify_analysis_task_callback
 from utils.config import get_config
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -222,6 +228,195 @@ async def test_analysis(
 def _sse_event(event: str, data: Dict[str, Any]) -> str:
     """格式化 SSE 事件。"""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _new_analysis_task_id() -> str:
+    return uuid.uuid4().hex
+
+
+def _dump_run_items(req: AnalysisRunRequest) -> list[dict[str, Any]]:
+    return [item.model_dump() for item in req.items]
+
+
+async def _run_analysis_with_session(
+    items: list[dict[str, Any]],
+    *,
+    on_rule_done=None,
+) -> Dict[str, Any]:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        return await run_analysis_batch(
+            items,
+            session,
+            on_rule_done=on_rule_done,
+        )
+
+
+async def _run_analysis_task_background(
+    task_id: str,
+    items: list[dict[str, Any]],
+    callback_url: str,
+) -> None:
+    """运行 async 模式任务并推送开始、逐规则和任务终态。"""
+
+    await notify_analysis_task_callback(
+        callback_url,
+        task_id,
+        "analyzing",
+    )
+    try:
+        async def on_rule_done(data: Dict[str, Any]) -> None:
+            await notify_analysis_task_callback(
+                callback_url,
+                task_id,
+                "analyzing",
+                event="rule_done",
+                data=data,
+            )
+
+        result = await _run_analysis_with_session(
+            items,
+            on_rule_done=on_rule_done,
+        )
+        await notify_analysis_task_callback(
+            callback_url,
+            task_id,
+            "complete",
+            event="task_done",
+            data=result,
+        )
+    except Exception as exc:
+        logger.exception(
+            "独立逻辑分析后台任务失败: task_id={}, type={}, error={}",
+            task_id,
+            type(exc).__name__,
+            exc,
+        )
+        await notify_analysis_task_callback(
+            callback_url,
+            task_id,
+            "analysis_failed",
+            event="task_failed",
+            data={"error": f"{type(exc).__name__}: {exc}"},
+        )
+
+
+async def _analysis_run_stream(
+    task_id: str,
+    items: list[dict[str, Any]],
+):
+    """把批量执行的异步回调桥接为 SSE 事件。"""
+
+    queue: asyncio.Queue = asyncio.Queue()
+    sentinel = object()
+
+    async def worker() -> None:
+        await queue.put((
+            "analyzing",
+            build_analysis_task_payload(task_id, "analyzing"),
+        ))
+        try:
+            async def on_rule_done(data: Dict[str, Any]) -> None:
+                await queue.put((
+                    "rule_done",
+                    build_analysis_task_payload(
+                        task_id,
+                        "analyzing",
+                        event="rule_done",
+                        data=data,
+                    ),
+                ))
+
+            result = await _run_analysis_with_session(
+                items,
+                on_rule_done=on_rule_done,
+            )
+            await queue.put((
+                "task_done",
+                build_analysis_task_payload(
+                    task_id,
+                    "complete",
+                    event="task_done",
+                    data=result,
+                ),
+            ))
+        except Exception as exc:
+            logger.exception(
+                "独立逻辑分析流任务失败: task_id={}, type={}, error={}",
+                task_id,
+                type(exc).__name__,
+                exc,
+            )
+            await queue.put((
+                "task_failed",
+                build_analysis_task_payload(
+                    task_id,
+                    "analysis_failed",
+                    event="task_failed",
+                    data={"error": f"{type(exc).__name__}: {exc}"},
+                ),
+            ))
+        finally:
+            await queue.put((sentinel, None))
+
+    worker_task = asyncio.create_task(worker())
+    try:
+        while True:
+            event, payload = await queue.get()
+            if event is sentinel:
+                break
+            yield _sse_event(event, payload)
+    finally:
+        if not worker_task.done():
+            worker_task.cancel()
+        await asyncio.gather(worker_task, return_exceptions=True)
+
+
+@router.post("/run")
+async def run_independent_analysis(
+    req: AnalysisRunRequest,
+    background_tasks: BackgroundTasks,
+):
+    """使用外部字段值批量执行逻辑规则，支持 sync/async/stream。"""
+
+    items = _dump_run_items(req)
+    if req.mode == AnalysisRunModeEnum.sync:
+        try:
+            data = await _run_analysis_with_session(items)
+        except Exception as exc:
+            logger.exception(
+                "独立逻辑分析失败: type={}, error={}",
+                type(exc).__name__,
+                exc,
+            )
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return ResponseWrapper(
+            message="逻辑分析完成",
+            data=AnalysisRunResponse.model_validate(data).model_dump(),
+        )
+
+    task_id = _new_analysis_task_id()
+    if req.mode == AnalysisRunModeEnum.async_:
+        background_tasks.add_task(
+            _run_analysis_task_background,
+            task_id,
+            items,
+            str(req.callback_url),
+        )
+        return ResponseWrapper(
+            message="分析任务已提交（异步）",
+            data={"task_id": task_id},
+        )
+
+    return StreamingResponse(
+        _analysis_run_stream(task_id, items),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/test/stream")

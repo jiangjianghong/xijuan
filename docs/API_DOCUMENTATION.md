@@ -1385,6 +1385,108 @@ VL 字段 `llm_output` 与 `extracted_value` 一致（VL 直出 JSON，不再二
 
 ---
 
+### 6.7 独立逻辑分析执行（sync / async / stream）
+
+直接使用调用方传入的字段值执行某个文档类型的分析规则，不依赖文件管线。
+
+- **URL**: `POST /analysis/run`
+- **Content-Type**: `application/json`
+- **数据库行为**: 只读取 `analysis_rule`；不读取 `files` / `extraction_result`，不写 `analysis_result`，不更新文件进度
+
+**请求体**
+
+```json
+{
+  "mode": "sync",
+  "items": [
+    {
+      "type_id": "contract",
+      "biz_id": "order-889",
+      "field_values": {
+        "amount": "1200000",
+        "tax": "30000"
+      }
+    }
+  ]
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `mode` | string | 是 | `sync` / `async` / `stream`，无隐式默认值 |
+| `callback_url` | HTTP URL | async 必填 | async 模式的结果接收地址；sync/stream 不需要 |
+| `items` | array | 是 | 至少 1 组待分析数据 |
+| `items[].type_id` | string | 是 | 规则所属文档类型，格式 `^[a-zA-Z0-9_-]+$` |
+| `items[].biz_id` | string | 是 | 调用方业务 ID，用于关联批次结果与逐规则事件 |
+| `items[].field_values` | object | 是 | `{field_id: string_value}` 外部字段值映射 |
+
+**规则筛选与执行语义**
+
+- 仅加载 `type_id` 下 `enabled=1` 的规则；
+- 只有 `depend_fields` 被 `field_values` 的**键**完整覆盖时才执行该规则；
+- 字段键存在但值为空时，规则仍被选中，再由现有字段校验返回 `success=false`；
+- 不同 item 并发执行，同一 item 内按 `priority, rule_id` 稳定顺序执行；
+- 最终 `items` 顺序始终与请求顺序一致；不同 item 的实时 `rule_done` 允许交错；
+- 单规则失败不会终止同一 item 的后续规则；没有匹配规则时返回 `total=0, results=[]`。
+
+**sync 响应**
+
+```json
+{
+  "code": 200,
+  "message": "逻辑分析完成",
+  "data": {
+    "total_items": 1,
+    "items": [
+      {
+        "item_index": 0,
+        "biz_id": "order-889",
+        "type_id": "contract",
+        "total": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "results": [
+          {
+            "rule_id": "amount_check",
+            "rule_name": "金额检查",
+            "rule_type": "judge",
+            "result": "true",
+            "reason": "合同金额满足规则",
+            "input_values": {"amount": "1200000"},
+            "source_refs": null,
+            "success": true,
+            "index": 1,
+            "total": 1
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+judge 规则启用网络搜索时，`source_refs` 可能包含 `{"_web_search": {query, results, error?}}`；普通外部字段值没有文件来源信息，因此其余情况为 `null`。
+
+**async 响应**
+
+```json
+{
+  "code": 200,
+  "message": "分析任务已提交（异步）",
+  "data": {"task_id": "a3f8c38d8ad44d8e9bc8f5c88a1f4870"}
+}
+```
+
+接口返回后向 `callback_url` 推送 `analyzing`、`rule_done`、`task_done` 或 `task_failed`；完整契约见第 8 节和 `docs/ASYNC_CALLBACK.md`。
+
+**stream 响应**
+
+返回 `text/event-stream`，事件使用与 async callback 相同的 task envelope，详见第 9.4 节。
+
+**状态码**: 200 / 422（请求结构、mode 或 async callback_url 不合法）/ 500（sync 批量级异常）
+
+---
+
 ## 7. 向量检索接口 `/search`
 
 - **URL**: `POST /search`
@@ -1491,6 +1593,7 @@ complete
 
 - 每次回调超时 **2.5s**，失败仅 warning，**不影响主管线**。
 - VL 类字段的"进度事件"（progressive_batch / locate_locate / locate_extract）**仅 SSE 推送**，**不**走 `callback_url`。
+- `POST /analysis/run` 的 async 回调使用 `task_id` 而不是 `file_id`，事件为 `rule_done` / `task_done` / `task_failed`；详见 6.7 与 `docs/ASYNC_CALLBACK.md` 的独立任务章节。
 
 ---
 
@@ -1564,6 +1667,21 @@ data: <json>
 | 2 | `resolved_expression` | `original_expression`, `resolved_expression` |
 | 3 | `result` | `result_value`, `reason` |
 | 4 | `done` | `{}` |
+
+---
+
+### 9.4 `POST /analysis/run`（`mode=stream`）
+
+SSE 的 `data` 是完整 task envelope，与 async callback JSON 一致。
+
+| event | data.status | 说明 |
+|-------|-------------|------|
+| `analyzing` | `analyzing` | 任务开始，仅 1 次；data 含 `task_id`, `status` |
+| `rule_done` | `analyzing` | 每条匹配规则完成 1 次；内层 `data` 含规则结果及 `item_index`, `biz_id`, `index`, `total` |
+| `task_done` | `complete` | 成功终态，仅 1 次；内层 `data` 等于 sync 响应的 `data` |
+| `task_failed` | `analysis_failed` | 批量级失败终态，仅 1 次；内层 `data.error` 为 `异常类型: 异常文本` |
+
+成功序列：`analyzing → rule_done×M → task_done`。失败序列：`analyzing → task_failed`。
 
 ---
 
@@ -1846,4 +1964,5 @@ data: <json>
 | 40 | GET | `/analysis/rules/{rule_id}/check` | 检查 ID 是否存在 |
 | 41 | POST | `/analysis/test` | 逻辑分析调试 |
 | 42 | POST | `/analysis/test/stream` | 逻辑分析流式调试（SSE） |
-| 43 | POST | `/search` | 向量相似度检索 |
+| 43 | POST | `/analysis/run` | 独立逻辑分析（sync/async/stream） |
+| 44 | POST | `/search` | 向量相似度检索 |

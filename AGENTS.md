@@ -137,6 +137,7 @@ Three source types:
 Two rule types:
 - **judge** - LLM-based true/false determination. Uses `<field_result>field_id</field_result>` placeholders resolved with extraction results.
 - **calc** - Mathematical expressions evaluated with `numexpr`. Same placeholder resolution.
+- **独立分析接口** - `POST /analysis/run` 接收外部 `field_values`，支持 sync/async/stream 与批量 items。实现位于 `service/analysis_run_service.py`：仅按 `type_id` 读取启用规则，要求 `depend_fields` 被输入字段键完整覆盖，不读取文件提取结果、不写 `analysis_result`。items 间并发，单 item 内按 `priority, rule_id` 顺序执行；async 用 `task_id` 推送 `rule_done/task_done/task_failed`。
 
 ### External Dependencies
 - **MinerU** (`service/mineru_client.py`) - External PDF parsing service. Polled async via httpx.

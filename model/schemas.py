@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AnyHttpUrl, BaseModel, Field, field_validator, model_validator
 
 
 # ── 通用响应包装 ────────────────────────────────────────────
@@ -472,6 +472,72 @@ class AnalysisRuleCreate(BaseModel):
 class AnalysisRuleResponse(AnalysisRuleCreate):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+# ── 独立逻辑分析 ────────────────────────────────────────────
+
+class AnalysisRunModeEnum(str, Enum):
+    sync = "sync"
+    async_ = "async"
+    stream = "stream"
+
+
+class AnalysisRunItem(BaseModel):
+    """独立逻辑分析的单组外部字段值。"""
+
+    type_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$", max_length=64)
+    biz_id: str = Field(..., min_length=1, max_length=200)
+    field_values: Dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("biz_id")
+    @classmethod
+    def strip_biz_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("biz_id 不能为空")
+        return value
+
+
+class AnalysisRunRuleResult(BaseModel):
+    rule_id: str
+    rule_name: str
+    rule_type: str
+    result: str = ""
+    reason: str = ""
+    input_values: Dict[str, str] = Field(default_factory=dict)
+    source_refs: Optional[Dict[str, Any]] = None
+    success: bool
+    index: int
+    total: int
+
+
+class AnalysisRunItemResult(BaseModel):
+    item_index: int
+    biz_id: str
+    type_id: str
+    total: int
+    succeeded: int
+    failed: int
+    results: List[AnalysisRunRuleResult] = Field(default_factory=list)
+
+
+class AnalysisRunResponse(BaseModel):
+    total_items: int
+    items: List[AnalysisRunItemResult] = Field(default_factory=list)
+
+
+class AnalysisRunRequest(BaseModel):
+    """独立逻辑分析请求；async 模式必须通过 callback_url 接收结果。"""
+
+    mode: AnalysisRunModeEnum
+    callback_url: Optional[AnyHttpUrl] = None
+    items: List[AnalysisRunItem] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def validate_async_callback(self):
+        if self.mode == AnalysisRunModeEnum.async_ and self.callback_url is None:
+            raise ValueError("async 模式必须提供 callback_url")
+        return self
 
 
 # ── 提取结果 ────────────────────────────────────────────────

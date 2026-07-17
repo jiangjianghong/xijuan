@@ -2,8 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "析卷 AI",
-    "description": "析卷 AI 的 HTTP API —— 基于 **FastAPI + MinerU + LLM**，把 PDF 经过\n六阶段管线沉淀为结构化的「字段提取结果」与「逻辑分析结论」。\n\n## 处理管线\n\n```\nparsing → tableing → chunking → embedding → extracting → analyzing → complete\n```\n\n| 阶段 | 动作 | 产物表 |\n|---|---|---|\n| `parsing` | MinerU 解析 PDF 为 Markdown + middle_json + 页码映射 | `file_content` |\n| `tableing` | LLM 从表前文识别每张表的名称（截断 30 字） | `file_table` |\n| `chunking` | 递归文本切分（表格作为独立块不拆分） | `file_chunk` |\n| `embedding` | 向量化写入 Milvus（向量数据不随回调下发） | Milvus |\n| `extracting` | 按字段配置用 LLM/VL 抽取 `{value, reason}` | `extraction_result` |\n| `analyzing` | judge（LLM 真假判断）/ calc（numexpr 计算） | `analysis_result` |\n\n每个阶段失败会把 `files.progress` 置为 `<stage>_failed` 并写入 `error`；进程崩溃后\n启动时 `init_service` 会把残留的 `*ing` 态归一为 `*_failed` 并清理孤儿数据。\n\n## 关键概念\n\n- **文档类型 (`type_id`)** —— 隔离不同格式文件的字段/规则配置。每个文件归属唯一\n  `type_id`（默认 `default`，不可删除）。抽取字段 `extraction_field`、逻辑规则\n  `analysis_rule` 均按 `type_id` 隔离，**不跨类型共享**；共享靠显式复制 / 导入。\n- **类型的血缘维度**：`is_template`（模板标记，`promote` / `demote` 切换）+ `parent_type_id`\n  （复制来源，`copy_from` / `import` 自动记录）。\n- **类型的项目维度**：`project_id`（可空=未分组）对「模板 + 其血缘下游」分类，一个类型属 ≤1 个\n  项目；`batch_assign_project` 归类会**级联血缘后代**，`copy_from`/派生的新类型继承源项目，\n  `default` 恒未分组。\n- **`file_id`** —— 由 `(type_id, file_name, time.time_ns(), secrets.token_hex(8))`\n  取 `SHA256[:32]` 生成；**每次上传都是新 ID，不做去重**。\n- **`field_id` / `rule_id`** —— **全局唯一**（不只是类型内唯一）。upsert 时若 ID 已被\n  其它 `type_id` 占用，返回 **409**。\n- **重试** —— 失败后用 `POST /file/{file_id}/retry/{stage}`（会清理该阶段及下游数据后\n  重跑），**不要**重新上传（上传必产生新 `file_id` 与新记录）。\n- **回调 (`callback_url`)** —— `POST /file/parse` / `retry`（`async` / `sync` 模式）携带时，\n  管线在「每阶段开始」「每条 `field_done` / `rule_done`」「每阶段 `stage_done`」都会向该\n  地址 POST 通知（超时 **2.5s**，失败仅 warning，绝不阻断主流程）。完整 payload 形态见\n  `docs/API_DOCUMENTATION.md` 与 `docs/ASYNC_CALLBACK.md`。\n- **SSE 流** —— `mode=stream` 与 `/extraction/test/stream` / `/analysis/test/stream`\n  返回 `text/event-stream`，逐阶段/逐步推送事件。\n- **VL 抽取** —— `source_type=vl` 字段绕过 MinerU Markdown，直接读 `uploads/{file_id}.pdf`，\n  由视觉模型一次产出 `{value, reason}` JSON，**不再走文本 LLM 二次抽取**。\n\n## 占位符体系\n\n- 抽取 prompt：`<search_result>标签</search_result>` —— 渲染时替换为对应检索片段。\n- 分析表达式：`<field_result>字段ID</field_result>` —— 渲染时替换为该字段的提取值。\n\n## 响应约定\n\n除 SSE 与 `multipart` 上传外，所有接口统一返回\n`ResponseWrapper{code:int=200, message:str, data:any}`。**业务负载在 `data` 里**；因为\n`data` 是动态类型，其具体形态写在每个接口的描述中，而非组件 schema。\n\n`/doctype/list` 的分页是唯一的形态切换：**传齐 `page` + `page_size` 返回\n`{items, total}`，否则原样返回数组**（向后兼容旧调用方）。",
-    "version": "0.3.0"
+    "version": "0.1.0"
   },
   "paths": {
     "/file/list": {
@@ -11,8 +10,8 @@
         "tags": [
           "file"
         ],
-        "summary": "分页查询文件列表",
-        "description": "按 `create_time DESC` 分页。`status` 与 `type_id` 均为**精确匹配**，空字符串表示不过滤。\n\n**`status` 合法值**（即 `progress` 字段）：`parsing` / `tableing` / `chunking` / `embedding` / `extracting` / `analyzing` / `complete`，以及对应的 `*_failed` 失败态。\n\n返回 `data=FileListResponse{items:[FileListItem], total, page, page_size, total_pages}`；`FileListItem = {file_id, file_name, file_size, progress, type_id, error, create_time}`。",
+        "summary": "List Files",
+        "description": "分页查询文件列表。可选按 type_id 过滤。",
         "operationId": "list_files_file_list_get",
         "parameters": [
           {
@@ -23,8 +22,7 @@
               "type": "integer",
               "default": 1,
               "title": "Page"
-            },
-            "description": "页码，从 1 开始（默认 1）。"
+            }
           },
           {
             "name": "page_size",
@@ -34,8 +32,7 @@
               "type": "integer",
               "default": 20,
               "title": "Page Size"
-            },
-            "description": "每页条数（默认 20）。"
+            }
           },
           {
             "name": "status",
@@ -45,8 +42,7 @@
               "type": "string",
               "default": "",
               "title": "Status"
-            },
-            "description": "按 `progress` 精确过滤：`parsing` / `tableing` / `chunking` / `embedding` / `extracting` / `analyzing` / `complete` 及对应 `*_failed`；空串不过滤。"
+            }
           },
           {
             "name": "type_id",
@@ -56,8 +52,7 @@
               "type": "string",
               "default": "",
               "title": "Type Id"
-            },
-            "description": "按文档类型精确过滤；空串返回全部类型。"
+            }
           }
         ],
         "responses": {
@@ -101,8 +96,7 @@
               "type": "string",
               "default": "",
               "title": "Type Id"
-            },
-            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+            }
           }
         ],
         "responses": {
@@ -134,8 +128,8 @@
         "tags": [
           "file"
         ],
-        "summary": "文件片段上下文查询",
-        "description": "按请求体 `file_id` + `query`（关键词或 MinerU Markdown 文本片段）在整篇 Markdown 中精确查找，返回每处命中的上下文窗口、页码，并可选返回该文件全部分块。**`file_id` 放在请求体**（不在 URL）。\n\n`context_before` / `context_after` 控制命中位置前后返回的字符数；`page_num` 按命中片段自身位置计算（非上下文窗口）；`include_all_chunks=true` 时 `chunks` 返回全部分块并用 `hit`/`hit_count` 标记命中。\n\n文件内容不存在或尚未解析完成时返回 **404**。\n\n返回 `data=FileContextQueryResponse{file_id, query, query_type, matched, match_count, matches:[{match_index, keyword, position, match_start_pos, match_end_pos, context_start_pos, context_end_pos, context, page_num, bboxes}], chunks:[...]}`。",
+        "summary": "Query Context",
+        "description": "按请求体 file_id + 文本片段查询上下文、页码和全部分块。",
         "operationId": "query_context_file_context_query_post",
         "requestBody": {
           "content": {
@@ -176,8 +170,8 @@
         "tags": [
           "file"
         ],
-        "summary": "批量删除文件",
-        "description": "删除请求体中所有 `file_id` 关联的 MySQL 记录、Milvus 向量、`uploads/{file_id}.pdf`。\n\n不存在的 `file_id` 不报错，会出现在响应 `failed_ids` 中。Milvus / PDF 清理走后台任务，失败仅记 warning，不影响 MySQL 删除。\n\n返回 `data=BatchDeleteResponse{deleted_count, failed_ids}`。",
+        "summary": "Batch Delete Files",
+        "description": "批量删除文件及关联数据。\n\nMySQL 关联表同步删完并一次性提交;每个被成功删除的 file_id 都\n调度一次后台 `_cleanup_file_artifacts` 处理 Milvus + PDF。",
         "operationId": "batch_delete_files_file_batch_delete",
         "requestBody": {
           "content": {
@@ -218,8 +212,8 @@
         "tags": [
           "file"
         ],
-        "summary": "提交文件解析",
-        "description": "上传文件并启动 6 阶段处理管线（parsing → tableing → chunking → embedding → extracting → analyzing → complete）。`Content-Type` 必须为 `multipart/form-data`。\n\n**`mode` 行为差异**\n- `async`（默认）：后台任务，立即返回 `data={file_id}`，`message=\"文件已提交处理（异步）\"`\n- `sync`：阻塞直到全部完成或失败，再返回 `data={file_id}`\n- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `API_DOCUMENTATION.md` 第 9.1 节）\n- 其它任意值按 `sync` 处理（代码 fallback 分支）\n\n**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 `field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时 2.5s，失败仅 warning，不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— 每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`，**不要**重新上传（会产生新记录）。\n\n原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n**文件大小限制**：受 `mineru.max_file_size` 控制（默认 100MB / 104857600 字节），超限返回 `ResponseWrapper{code:400, message:\"文件大小超过限制 (100MB)\"}`（不抛 HTTP 错误）。",
+        "summary": "Parse File",
+        "description": "提交文件解析（支持 sync/async/stream）。\n\n- type_id：归属的文档类型（默认 'default'，通过 query 参数传入）\n- 当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：\n  {\"file_id\": \"...\", \"status\": \"parsing/tableing/chunking/embedding/extracting/analyzing/complete\"}",
         "operationId": "parse_file_file_parse_post",
         "parameters": [
           {
@@ -229,14 +223,8 @@
             "schema": {
               "type": "string",
               "default": "async",
-              "title": "Mode",
-              "enum": [
-                "async",
-                "sync",
-                "stream"
-              ]
-            },
-            "description": "处理模式：`async`（默认，后台任务立即返回）/ `sync`（阻塞至完成）/ `stream`（SSE 流）。其它值按 `sync` 处理。"
+              "title": "Mode"
+            }
           },
           {
             "name": "type_id",
@@ -246,8 +234,7 @@
               "type": "string",
               "default": "default",
               "title": "Type Id"
-            },
-            "description": "归属文档类型，默认 `default`；决定使用哪套字段/规则配置。"
+            }
           },
           {
             "name": "callback_url",
@@ -263,8 +250,7 @@
                 }
               ],
               "title": "Callback Url"
-            },
-            "description": "可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时 2.5s，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。"
+            }
           }
         ],
         "requestBody": {
@@ -304,8 +290,8 @@
         "tags": [
           "file"
         ],
-        "summary": "查询文件处理进度",
-        "description": "返回当前 `progress` 与最近的 `error`，含 `create_time` / `updated_at` 两个时间戳。\n\n`progress` 取值：`parsing` / `tableing` / `chunking` / `embedding` / `extracting` / `analyzing` / `complete`，以及对应的 `*_failed` 失败态。\n\n如需每阶段的开始/结束时间戳（计算阶段耗时），请走 `GET /file/{file_id}/detail`。\n\n**状态码**：200 / 404（文件不存在）。",
+        "summary": "Get File Status",
+        "description": "查询文件处理进度。",
         "operationId": "get_file_status_file__file_id__status_get",
         "parameters": [
           {
@@ -315,8 +301,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           }
         ],
         "responses": {
@@ -348,8 +333,8 @@
         "tags": [
           "file"
         ],
-        "summary": "下载原始 PDF",
-        "description": "下发 `uploads/{file_id}.pdf` 原始字节（`application/pdf`，Content-Disposition inline），供前端 PDF 定位预览。`file_id` 仅允许 `[\\w-]` 字符。\n\n历史文件（vl 持久化机制上线前上传）可能无落盘 PDF，此时 404。",
+        "summary": "Get File Pdf",
+        "description": "下发原始 PDF（uploads/{file_id}.pdf 原始字节），供前端定位预览。\n\n历史文件可能未持久化 PDF（vl 持久化机制上线前上传），此时 404。",
         "operationId": "get_file_pdf_file__file_id__pdf_get",
         "parameters": [
           {
@@ -359,8 +344,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           }
         ],
         "responses": {
@@ -390,8 +374,8 @@
         "tags": [
           "file"
         ],
-        "summary": "删除文件",
-        "description": "级联删除：`files` / `file_content` / `file_table` / `file_chunk` / `extraction_result` / `analysis_result`（MySQL 立即提交），Milvus 向量与 `uploads/{file_id}.pdf` 走后台清理（失败仅 warning），接口立即返回。\n\n**状态码**：200 / 404（文件不存在）。",
+        "summary": "Delete File",
+        "description": "删除文件及所有关联数据。\n\nMySQL 关联表立刻删完并提交;Milvus 向量与持久化 PDF 走后台\n清理,接口立即返回——前端列表轮询不会被 Milvus 调用阻塞。",
         "operationId": "delete_file_file__file_id__delete",
         "parameters": [
           {
@@ -401,8 +385,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           }
         ],
         "responses": {
@@ -434,8 +417,8 @@
         "tags": [
           "file"
         ],
-        "summary": "从指定阶段重试",
-        "description": "清掉指定阶段及其下游已有数据（依赖 `init_service` 同款清理逻辑），从该阶段重跑。\n\n**有效 `stage`**：`tableing` / `chunking` / `embedding` / `extracting` / `analyzing`。\n兼容旧别名 `table_name_validating` → `tableing`。其它值返回 **400**。\n\n**`mode`**：`async`（默认，后台任务）/ `sync`（阻塞返回）/ `stream`（SSE 流）。\n\n**`callback_url`** 仅在 `async` / `sync` 模式生效；`stream` 模式忽略，事件改走 SSE。\n\n`stream` 返回的事件序列与 `/file/parse?mode=stream` 完全一致。\n\n**状态码**：200 / 400（无效阶段名）/ 404（文件不存在）。",
+        "summary": "Retry File",
+        "description": "从指定阶段重试（支持 async/stream/sync）。\n\n当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：\n{\"file_id\": \"...\", \"status\": \"parsing/tableing/chunking/embedding/extracting/analyzing/complete\"}",
         "operationId": "retry_file_file__file_id__retry__stage__post",
         "parameters": [
           {
@@ -445,8 +428,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           },
           {
             "name": "stage",
@@ -454,16 +436,8 @@
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Stage",
-              "enum": [
-                "tableing",
-                "chunking",
-                "embedding",
-                "extracting",
-                "analyzing"
-              ]
-            },
-            "description": "重试起点阶段：`tableing` / `chunking` / `embedding` / `extracting` / `analyzing`（兼容旧别名 `table_name_validating` → `tableing`）。该阶段及下游数据会被清理后重跑。"
+              "title": "Stage"
+            }
           },
           {
             "name": "mode",
@@ -472,14 +446,8 @@
             "schema": {
               "type": "string",
               "default": "async",
-              "title": "Mode",
-              "enum": [
-                "async",
-                "sync",
-                "stream"
-              ]
-            },
-            "description": "处理模式：`async`（默认）/ `sync` / `stream`。"
+              "title": "Mode"
+            }
           },
           {
             "name": "callback_url",
@@ -495,8 +463,7 @@
                 }
               ],
               "title": "Callback Url"
-            },
-            "description": "可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时 2.5s，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。"
+            }
           }
         ],
         "responses": {
@@ -526,8 +493,8 @@
         "tags": [
           "file"
         ],
-        "summary": "快捷重试：字段提取",
-        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=extracting`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）。",
+        "summary": "Retry Extracting",
+        "description": "重试字段提取（支持 async/stream/sync）。",
         "operationId": "retry_extracting_file__file_id__retry_extracting_post",
         "parameters": [
           {
@@ -537,8 +504,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           },
           {
             "name": "mode",
@@ -547,14 +513,8 @@
             "schema": {
               "type": "string",
               "default": "async",
-              "title": "Mode",
-              "enum": [
-                "async",
-                "sync",
-                "stream"
-              ]
-            },
-            "description": "处理模式：`async`（默认）/ `sync` / `stream`。"
+              "title": "Mode"
+            }
           },
           {
             "name": "callback_url",
@@ -570,8 +530,7 @@
                 }
               ],
               "title": "Callback Url"
-            },
-            "description": "可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时 2.5s，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。"
+            }
           }
         ],
         "responses": {
@@ -601,8 +560,8 @@
         "tags": [
           "file"
         ],
-        "summary": "快捷重试：逻辑分析",
-        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=analyzing`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）。",
+        "summary": "Retry Analyzing",
+        "description": "重试逻辑分析（支持 async/stream/sync）。",
         "operationId": "retry_analyzing_file__file_id__retry_analyzing_post",
         "parameters": [
           {
@@ -612,8 +571,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           },
           {
             "name": "mode",
@@ -622,14 +580,8 @@
             "schema": {
               "type": "string",
               "default": "async",
-              "title": "Mode",
-              "enum": [
-                "async",
-                "sync",
-                "stream"
-              ]
-            },
-            "description": "处理模式：`async`（默认）/ `sync` / `stream`。"
+              "title": "Mode"
+            }
           },
           {
             "name": "callback_url",
@@ -645,8 +597,7 @@
                 }
               ],
               "title": "Callback Url"
-            },
-            "description": "可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时 2.5s，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。"
+            }
           }
         ],
         "responses": {
@@ -676,8 +627,8 @@
         "tags": [
           "file"
         ],
-        "summary": "文件表格列表",
-        "description": "返回 `file_table` 中按 `table_index` 升序的全部表格。\n\n`table_name` 由 LLM 在 `tableing` 阶段从表前文本识别得出（截断 30 字），`page_num` 是该表格在 PDF 中的页号（可能是范围如 `\"3-4\"`）。\n\n返回 `data=[FileTableItem{file_id, table_index, total_table, table_name, table_content, page_num}]`（文件不存在/无表格时为 `[]`，非 404）。",
+        "summary": "Get File Tables",
+        "description": "获取文件表格列表。",
         "operationId": "get_file_tables_file__file_id__tables_get",
         "parameters": [
           {
@@ -687,8 +638,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           }
         ],
         "responses": {
@@ -720,8 +670,8 @@
         "tags": [
           "file"
         ],
-        "summary": "文件分块列表",
-        "description": "返回 `file_chunk` 按 `chunk_index` 升序的全部分块（表格作为独立 chunk 不拆分）。\n\n返回 `data=[FileChunkItem{file_id, chunk_id, chunk_index, total_chunks, chunk_content, page_num}]`（文件不存在/无分块时为 `[]`）。",
+        "summary": "Get File Chunks",
+        "description": "获取文件分块列表。",
         "operationId": "get_file_chunks_file__file_id__chunks_get",
         "parameters": [
           {
@@ -731,8 +681,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           }
         ],
         "responses": {
@@ -775,8 +724,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           }
         ],
         "responses": {
@@ -808,8 +756,8 @@
         "tags": [
           "file"
         ],
-        "summary": "文件章节大纲",
-        "description": "正则解析 Markdown 章节标题（`parse_sections`），与 `extraction.search_type=section` 使用同一套切片口径 —— 前端看到什么 = 抽取时能匹配到什么。\n\n返回 `data=[{index, number, title, content, start_pos, end_pos}]`，`content` 是该章节切片正文。文件不存在或内容为空返回 `[]`（不返回 404），与 `/tables`、`/chunks` 一致。",
+        "summary": "Get File Outline",
+        "description": "获取文件大纲(基于 parse_sections 正则解析的章节列表,含切片后的正文)。\n\n与抽取阶段 search_section 使用的章节口径完全一致 —\n前端看到什么 = 抽取时能匹配到什么。文件不存在或内容为空 → 返回空列表(非 404),\n与 /tables、/chunks 行为一致。",
         "operationId": "get_file_outline_file__file_id__outline_get",
         "parameters": [
           {
@@ -819,8 +767,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           }
         ],
         "responses": {
@@ -852,8 +799,8 @@
         "tags": [
           "file"
         ],
-        "summary": "按页返回 Markdown 内容",
-        "description": "基于 `parsing` 阶段落库的 `page_mapping` 把整篇 Markdown 逐页切分，按页码升序返回：`data=[{page_num, content}]`。\n\n首页并入首个块锚点前的前导内容，末页切到文末，纯空白页跳过。\n\n文件不存在 / 内容为空 / 无 `page_mapping`（存量老文件重解析前无逐页锚点）返回 `[]`（非 404），与 `/tables`、`/chunks`、`/outline` 一致。",
+        "summary": "Get File Content By Page",
+        "description": "按页返回文件 markdown 内容：[{\"page_num\": 1, \"content\": \"...\"}, ...]。\n\n基于 parsing 阶段落库的 page_mapping 逐页切分整篇 markdown，页码升序。\n文件不存在/内容为空/无 page_mapping（存量老文件重解析前无 bbox 亦无逐页锚点）\n→ 返回空列表（非 404），与 /tables、/chunks、/outline 行为一致。",
         "operationId": "get_file_content_by_page_file__file_id__content_get",
         "parameters": [
           {
@@ -863,8 +810,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           }
         ],
         "responses": {
@@ -896,8 +842,8 @@
         "tags": [
           "file"
         ],
-        "summary": "字段提取结果",
-        "description": "返回 `extraction_result` 全表行（LEFT JOIN `extraction_field` 获取字段名称）：\n`data=[{file_id, field_id, field_name, extracted_value, reason, source_refs}]`。\n\n`field_name` 来自字段配置表，若配置已被删除则为 `null`。\n\n`source_refs` 为参考块字典：每条 ref 含 `text`（该条命中注入 prompt 的原始片段），text/table 类 ref 另含 `bboxes`（`[{page_num, bbox, page_size}]` 块级 PDF 框，供前端高亮定位）；顶层 `_texts` 键为 `{label: 拼接后实际注入占位符的完整文本}`；顶层 `_model_pages` 键为 `int[]`（模型自报的参考页码，去重升序，1-indexed；text/table 类由 LLM 输出的 `pages` 字段落库，前端定位优先跳这些页；模型未返回 / vl 类 / use_llm=0 时无此键）；vl 类为 `{_vl: {...}}` 元数据（无检索文本，页码在 `_vl.key_pages`）。存量老数据无 `text`/`_texts`/`bboxes`/`_model_pages`，消费方需容错。\n\n如需调试细节请走 `/extraction/test` 或 `/extraction/test/stream`。",
+        "summary": "Get Extraction Results",
+        "description": "获取文件字段提取结果（含字段名称）。",
         "operationId": "get_extraction_results_file__file_id__extraction_get",
         "parameters": [
           {
@@ -907,8 +853,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           }
         ],
         "responses": {
@@ -940,8 +885,8 @@
         "tags": [
           "file"
         ],
-        "summary": "逻辑分析结果",
-        "description": "返回 `analysis_result` 全表行（LEFT JOIN `analysis_rule` 获取规则名称）：\n`data=[{file_id, rule_id, rule_name, result_value, input_values, reason, source_refs}]`（含 `input_values` 字典）。\n\n`rule_name` 来自规则配置表，若配置已被删除则为 `null`。\n\n`source_refs` 目前仅 judge 规则启用网络搜索时携带 `_web_search` 键：`{query, results: [{name, url, siteName, datePublished, summary}], error?}`；未启用搜索的规则与存量老数据为 `null`，消费方需容错。",
+        "summary": "Get Analysis Results",
+        "description": "获取文件逻辑分析结果（含规则名称）。",
         "operationId": "get_analysis_results_file__file_id__analysis_get",
         "parameters": [
           {
@@ -951,8 +896,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           }
         ],
         "responses": {
@@ -984,8 +928,8 @@
         "tags": [
           "file"
         ],
-        "summary": "文件完整详情",
-        "description": "在 `/status` 字段基础上额外返回全套阶段时间戳：`start_parsing_time` / `end_parsing_time` / `start_tableing_time` / `end_tableing_time` / `start_chunking_time` / `end_chunking_time` / `start_embedding_time` / `end_embedding_time` / `start_extracting_time` / `end_extracting_time` / `start_analyzing_time` / `end_analyzing_time`（六个阶段各有 start+end；存量老数据的 extracting / analyzing start 可能为 null），可据此计算每阶段耗时。\n\n**状态码**：200 / 404（文件不存在）。",
+        "summary": "Get File Detail",
+        "description": "获取文件完整详情（含所有时间字段）。",
         "operationId": "get_file_detail_file__file_id__detail_get",
         "parameters": [
           {
@@ -995,8 +939,7 @@
             "schema": {
               "type": "string",
               "title": "File Id"
-            },
-            "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+            }
           }
         ],
         "responses": {
@@ -1028,8 +971,8 @@
         "tags": [
           "extraction"
         ],
-        "summary": "列出字段配置",
-        "description": "按 `priority` 升序返回字段配置。`type_id` 为空时返回全量；非空时按精确匹配过滤。\n\n返回 `data=[ExtractionFieldResponse]`（即 `ExtractionFieldCreate` 各字段 + `created_at` / `updated_at`）。",
+        "summary": "List Fields",
+        "description": "获取字段提取配置列表。可选按 type_id 过滤。",
         "operationId": "list_fields_extraction_fields_get",
         "parameters": [
           {
@@ -1040,8 +983,7 @@
               "type": "string",
               "default": "",
               "title": "Type Id"
-            },
-            "description": "按文档类型精确过滤字段配置；空串返回全部。"
+            }
           }
         ],
         "responses": {
@@ -1071,8 +1013,8 @@
         "tags": [
           "extraction"
         ],
-        "summary": "新增/更新字段配置（upsert）",
-        "description": "按 `field_id` **全局唯一** upsert。\n\n**冲突处理**：若 `field_id` 已存在但归属其它 `type_id`，返回 **409**，提示换 ID 或先删除原记录。\n\n**Prompt / 配置校验（Pydantic 层，违反返回 422）**\n- `source_type=text` 时 `text_extract_prompt` 必须含至少一个 `<search_result>标签</search_result>`\n- `source_type=table` 时 `table_extract_prompt` 同上\n- `source_type=vl` 时 `vl_method` 与 `vl_extract_prompt` 必填，且 prompt 必须含 `value` 和 `reason` 关键字（大小写不敏感，因为最终要求 VL 输出 `{value, reason}` JSON）\n- `vl_progressive` 的自定义 `batch_prompt_template` 必含 `{field_hints}` `{page_label}` `{total_pages}` `{history}`\n- `vl_locate` 的自定义 `locate_prompt_template` 必含 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`\n- 模板里的字面 `{` `}` 需写成 `{{` `}}` 转义（`str.format()` 渲染）\n\n返回 `data={field_id}`，`message` 区分「已创建 / 已更新」。",
+        "summary": "Upsert Field",
+        "description": "新增/更新字段提取配置（根据 field_id 判断 upsert）。\n\nfield_id 全局唯一；若已存在记录归属于其他 type_id，返回 409。",
         "operationId": "upsert_field_extraction_fields_post",
         "requestBody": {
           "required": true,
@@ -1113,8 +1055,8 @@
         "tags": [
           "extraction"
         ],
-        "summary": "删除字段配置",
-        "description": "**硬删除**（直接 `DELETE` 整行，不走 `enabled=0` 软删除），仅删除字段配置本身——该字段历史已写入的 `extraction_result` 行**不会级联清理**。\n\n字段不存在 → **404**。成功返回 `message=\"字段配置已删除\"`，`data=null`。",
+        "summary": "Delete Field",
+        "description": "删除字段提取配置。",
         "operationId": "delete_field_extraction_fields__field_id__delete",
         "parameters": [
           {
@@ -1124,8 +1066,7 @@
             "schema": {
               "type": "string",
               "title": "Field Id"
-            },
-            "description": "字段配置 ID（全局唯一，匹配 `^[a-zA-Z0-9_]+$`，最长 100）。"
+            }
           }
         ],
         "responses": {
@@ -1157,8 +1098,8 @@
         "tags": [
           "extraction"
         ],
-        "summary": "检查字段 ID 是否存在",
-        "description": "只读探测 `field_id` 是否已被占用（前端保存前查重用）。\n\n**全局**查存在性（不按 `type_id` 过滤），因此 `exists=true` 也可能是该 ID 被**其它类型**占用——与 upsert 的跨类型 409 冲突一致。无论是否存在都返回 **200** + `data={exists: bool}`（不会 404）。",
+        "summary": "Check Field",
+        "description": "检查 field_id 是否已存在。",
         "operationId": "check_field_extraction_fields__field_id__check_get",
         "parameters": [
           {
@@ -1168,8 +1109,7 @@
             "schema": {
               "type": "string",
               "title": "Field Id"
-            },
-            "description": "字段配置 ID（全局唯一，匹配 `^[a-zA-Z0-9_]+$`，最长 100）。"
+            }
           }
         ],
         "responses": {
@@ -1201,8 +1141,8 @@
         "tags": [
           "extraction"
         ],
-        "summary": "字段提取调试（同步）",
-        "description": "两种模式（二选一）：传 `field_id` 加载已保存配置，或传 `config`（完整字段配置 dict）用临时配置。\n\n**`search_results` 形态因 `source_type` / `search_type` 不同而异**\n- `source_type=table`：`[{table_name, table_content(截断 500 字)}, ...]`\n- `source_type=text` + `search_type=context`：关键词命中前后上下文片段列表\n- `search_type=section`：章节切片列表\n- `search_type=rule`：关键词起点 + 停止词边界片段列表\n- `search_type=chunk_db`：MySQL 分块命中列表\n- `search_type=vector_db`：Milvus 语义命中列表（含 `score`）\n- `search_type=page`：按 `page_range` 切出的整页 Markdown\n- `source_type=vl`：**单元素**数组 `[{type:\"vl_meta\", method, key_pages, vl_total_tokens, batches_with_info}]`\n\n**`llm_input` / `llm_output`**\n- 普通字段：`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，`extracted_value` / `reason` 是 JSON 解析后的结果\n- VL 字段：`llm_input` 是 `vl_extract_prompt`，`llm_output` = `extracted_value`（VL 直出 JSON，不再二次抽取）\n\ntext / table 字段的 prompt 末尾会追加 JSON 输出说明，要求模型额外返回 `pages`（模型自报的参考页码整数数组），解析后落库到 `source_refs._model_pages`（去重升序；模型未返回则为空、不挂键）。\n\n返回 `data=ExtractionTestResponse{search_results, llm_input, llm_output, extracted_value, reason}`。\n\n**状态码**：200 / 400（既未传 `field_id` 也未传 `config`）/ 404（字段或文件内容不存在）/ 500（提取异常）。",
+        "summary": "Test Extraction",
+        "description": "字段提取调试接口（支持两种模式）。\n\n模式 1: field_id + file_id - 使用已保存的字段配置\n模式 2: config + file_id - 使用临时配置",
         "operationId": "test_extraction_extraction_test_post",
         "requestBody": {
           "content": {
@@ -1243,8 +1183,8 @@
         "tags": [
           "extraction"
         ],
-        "summary": "字段提取流式调试（SSE）",
-        "description": "通过 SSE 分步推送检索结果 → prompt → LLM/VL 响应 → 最终结果。入参与 `/extraction/test` 相同（`field_id` 或 `config` 二选一）。\n\n事件类型清单见 `docs/API_DOCUMENTATION.md` 第 9.2 节。VL 字段的进度事件（`pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`）**仅** SSE 推送，不走异步 `callback_url`。\n\n**状态码**：200（SSE 流）/ 400 / 404。",
+        "summary": "Test Extraction Stream",
+        "description": "字段提取调试流式接口，分步返回检索结果、提示词、LLM 响应和提取结果。",
         "operationId": "test_extraction_stream_extraction_test_stream_post",
         "requestBody": {
           "content": {
@@ -1283,8 +1223,8 @@
         "tags": [
           "analysis"
         ],
-        "summary": "列出分析规则",
-        "description": "按 `priority` 升序返回规则。`type_id` 为空时返回全量；非空时按精确匹配过滤。\n\n返回 `data=[AnalysisRuleResponse]`（即 `AnalysisRuleCreate` 各字段 + `created_at` / `updated_at`）。",
+        "summary": "List Rules",
+        "description": "获取逻辑分析配置列表。可选按 type_id 过滤。",
         "operationId": "list_rules_analysis_rules_get",
         "parameters": [
           {
@@ -1295,8 +1235,7 @@
               "type": "string",
               "default": "",
               "title": "Type Id"
-            },
-            "description": "按文档类型精确过滤规则；空串返回全部。"
+            }
           }
         ],
         "responses": {
@@ -1326,8 +1265,8 @@
         "tags": [
           "analysis"
         ],
-        "summary": "新增/更新分析规则（upsert）",
-        "description": "按 `rule_id` **全局唯一** upsert。`rule_id` 已被其它 `type_id` 占用时返回 **409**。\n\n**校验（Pydantic 层，违反返回 422）**\n- `expression` 必须包含至少一个 `<field_result>字段ID</field_result>` 占位符\n- `web_search.enabled=true` 时：仅 `judge` 类型可启用、`web_search.query` 不能为空、`expression` 必须包含 `<web_search_result/>` 占位符\n\n`system_prompt` 仅 `judge` 类型生效；`calc` 类型直接用 `numexpr` 计算，结果按 `analysis.calc_precision`（默认 2 位）保留小数。返回 `data={rule_id}`。",
+        "summary": "Upsert Rule",
+        "description": "新增/更新逻辑分析配置（根据 rule_id 判断 upsert）。\n\nrule_id 全局唯一；若已存在记录归属于其他 type_id，返回 409。",
         "operationId": "upsert_rule_analysis_rules_post",
         "requestBody": {
           "required": true,
@@ -1368,8 +1307,8 @@
         "tags": [
           "analysis"
         ],
-        "summary": "删除分析规则",
-        "description": "**硬删除**（直接 `DELETE` 整行，不走 `enabled=0` 软删除），仅删除规则配置本身——该规则历史已写入的 `analysis_result` 行**不会级联清理**。\n\n规则不存在 → **404**。成功返回 `message=\"规则配置已删除\"`，`data=null`。",
+        "summary": "Delete Rule",
+        "description": "删除逻辑分析配置。",
         "operationId": "delete_rule_analysis_rules__rule_id__delete",
         "parameters": [
           {
@@ -1379,8 +1318,7 @@
             "schema": {
               "type": "string",
               "title": "Rule Id"
-            },
-            "description": "分析规则 ID（全局唯一，匹配 `^[a-zA-Z0-9_]+$`，最长 100）。"
+            }
           }
         ],
         "responses": {
@@ -1412,8 +1350,8 @@
         "tags": [
           "analysis"
         ],
-        "summary": "检查规则 ID 是否存在",
-        "description": "只读探测 `rule_id` 是否已被占用（前端保存前查重用）。\n\n**全局**查存在性（不按 `type_id` 过滤），因此 `exists=true` 也可能是该 ID 被**其它类型**占用——与 upsert 的跨类型 409 冲突一致。无论是否存在都返回 **200** + `data={exists: bool}`（不会 404）。",
+        "summary": "Check Rule",
+        "description": "检查 rule_id 是否已存在。",
         "operationId": "check_rule_analysis_rules__rule_id__check_get",
         "parameters": [
           {
@@ -1423,8 +1361,7 @@
             "schema": {
               "type": "string",
               "title": "Rule Id"
-            },
-            "description": "分析规则 ID（全局唯一，匹配 `^[a-zA-Z0-9_]+$`，最长 100）。"
+            }
           }
         ],
         "responses": {
@@ -1456,8 +1393,8 @@
         "tags": [
           "analysis"
         ],
-        "summary": "逻辑分析调试（同步）",
-        "description": "两种模式（二选一）：传 `rule_id` 加载已保存规则，或传 `config` 用临时配置。\n\n依赖字段值来自该 `file_id` 已有的 `extraction_result`；`depend_fields` 中缺失提取结果的字段取空串。\n\n**返回字段**（`data=AnalysisTestResponse`）：\n- `input_values`：依赖字段（`depend_fields`）的提取值字典；缺失字段值为空串\n- `expression_resolved`：`<field_result>...</field_result>` 占位符替换后的表达式\n- `result_value`：最终结果\n  - `judge`：调用 LLM 判断（受 `system_prompt` 控制），通常返回 `true` / `false`\n  - `calc`：`numexpr` 计算，按 `analysis.calc_precision`（默认 2 位）保留小数\n- `reason`：LLM 给出的判断理由（calc 类型为计算说明）\n\n**状态码**：200 / 400（既未传 `rule_id` 也未传 `config`）/ 404（规则不存在）/ 500（分析异常）。",
+        "summary": "Test Analysis",
+        "description": "逻辑分析调试接口（支持两种模式）。\n\n模式 1: rule_id + file_id - 使用已保存的规则配置\n模式 2: config + file_id - 使用临时配置",
         "operationId": "test_analysis_analysis_test_post",
         "requestBody": {
           "content": {
@@ -1493,13 +1430,53 @@
         }
       }
     },
+    "/analysis/run": {
+      "post": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "Run Independent Analysis",
+        "description": "使用外部字段值批量执行逻辑规则，支持 sync/async/stream。",
+        "operationId": "run_independent_analysis_analysis_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/analysis/test/stream": {
       "post": {
         "tags": [
           "analysis"
         ],
-        "summary": "逻辑分析流式调试（SSE）",
-        "description": "SSE 分步推送：`input_values` → `resolved_expression` → （judge：[启用网络搜索时 `web_search`] → `prompt` → `llm_response`）→ `result` → `done`。calc 类型无 `prompt` / `llm_response` 步骤。入参与 `/analysis/test` 相同。\n\n`web_search` 事件 data 即溯源结构 `{query, results: [{name, url, siteName, datePublished, summary}], error?}`（搜索失败不中断流，error 字段说明原因）。\n\n**状态码**：200（SSE 流）/ 400 / 404。",
+        "summary": "Test Analysis Stream",
+        "description": "逻辑分析调试流式接口，分步返回依赖字段值、表达式解析、LLM 提示词/响应和分析结果。\n\n模式 1: rule_id + file_id - 使用已保存的规则配置\n模式 2: config + file_id - 使用临时配置",
         "operationId": "test_analysis_stream_analysis_test_stream_post",
         "requestBody": {
           "content": {
@@ -1538,8 +1515,8 @@
         "tags": [
           "search"
         ],
-        "summary": "向量相似度检索",
-        "description": "将 `query` 通过 embedding 接口向量化后在 Milvus 中检索，返回分块及 COSINE 相似度 `score`（越大越相似，取值约 [-1, 1]）。\n\n**请求字段**\n- `query`：必填，检索文本（空串直接返回空列表）\n- `file_id`：可选，限定检索范围；省略则跨全部已向量化的文件\n- `top_k`：可选，默认 `10`\n- `score_threshold`：可选，相似度下限，低于该值的结果被过滤；省略不过滤\n\n返回 `data=[SearchResultItem{chunk_id, file_id, chunk_index, chunk_content, score, page_num}]`。",
+        "summary": "Search",
+        "description": "向量检索。",
         "operationId": "search_search_post",
         "requestBody": {
           "content": {
@@ -1580,8 +1557,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "列出文档类型（可搜索/过滤/分页）",
-        "description": "列出文档类型，每项附 `file_count` / `field_count` / `rule_count` 计数。\n\n**返回形态（重要）**\n- 传齐 `page` + `page_size` → `data = {items: [...], total: <int>}`（分页）\n- 否则 → `data = [...]`（数组，向后兼容；不传任何参数即旧的全量行为）\n\n**过滤**\n- `q`：对 `type_id` / `type_name` 做 `LIKE %q%` 模糊匹配\n- `scope`：`all`（全部）/ `template`（`is_template=1` 或默认类型）/ `copy`（既非模板也非默认的副本）\n- `project_id`：具体项目只返成员；`__ungrouped__` 只返未分组（含默认类型）\n\n**排序**：默认类型恒置顶（`is_default DESC` 优先），其后按 `sort` —— `created_at`（降序，默认）或 `type_name`（升序）。\n\n**性能**：计数对当前结果集的 `type_id` 用 3 条 `GROUP BY` 聚合，避免 N+1。\n\n**每项字段**：`type_id` / `type_name` / `description` / `is_default` / `enabled` / `is_template` / `parent_type_id` / `project_id` / `project_name` / `created_at` / `updated_at` / `file_count` / `field_count` / `rule_count`。\n\n> 顶部导航两级：先选项目，类型下拉只显示该项目的类型；副本的搜索/管理在「管理」弹窗里用本接口完成。",
+        "summary": "List Doctypes",
+        "description": "列出文档类型。\n\n- 传齐 page+page_size：返回 {items, total}（分页）\n- 否则：原样返回数组（向后兼容；不传任何参数即旧行为）\n- q/scope/project_id/sort 仅在传入时生效\n- 计数（file/field/rule）对结果集 type_id 用 3 条 GROUP BY 聚合，避免 N+1",
         "operationId": "list_doctypes_doctype_list_get",
         "parameters": [
           {
@@ -1600,7 +1577,7 @@
               "description": "模糊搜 type_id/type_name",
               "title": "Q"
             },
-            "description": "模糊搜索关键词，对 `type_id` / `type_name` 做 `LIKE %q%`；省略不过滤。"
+            "description": "模糊搜 type_id/type_name"
           },
           {
             "name": "scope",
@@ -1610,14 +1587,8 @@
               "type": "string",
               "pattern": "^(all|template|copy)$",
               "default": "all",
-              "title": "Scope",
-              "enum": [
-                "all",
-                "template",
-                "copy"
-              ]
-            },
-            "description": "范围过滤：`all` 全部 / `template` 模板（含默认类型）/ `copy` 副本（既非模板也非默认）。"
+              "title": "Scope"
+            }
           },
           {
             "name": "project_id",
@@ -1635,7 +1606,7 @@
               "description": "项目过滤；__ungrouped__ 表示未分组",
               "title": "Project Id"
             },
-            "description": "项目过滤：具体 `project_id` 只返该项目成员；`__ungrouped__` 只返未分组（含默认类型）；省略不过滤。"
+            "description": "项目过滤；__ungrouped__ 表示未分组"
           },
           {
             "name": "page",
@@ -1652,8 +1623,7 @@
                 }
               ],
               "title": "Page"
-            },
-            "description": "页码（从 1 开始）。**与 `page_size` 同时传入才启用分页**，返回 `{items, total}`；否则返回数组。"
+            }
           },
           {
             "name": "page_size",
@@ -1671,8 +1641,7 @@
                 }
               ],
               "title": "Page Size"
-            },
-            "description": "每页条数（1–500）。**与 `page` 同时传入才启用分页**。"
+            }
           },
           {
             "name": "sort",
@@ -1682,13 +1651,8 @@
               "type": "string",
               "pattern": "^(created_at|type_name)$",
               "default": "created_at",
-              "title": "Sort",
-              "enum": [
-                "created_at",
-                "type_name"
-              ]
-            },
-            "description": "排序字段：`created_at`（降序，默认）或 `type_name`（升序）。默认类型恒置顶，不受影响。"
+              "title": "Sort"
+            }
           }
         ],
         "responses": {
@@ -1720,8 +1684,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "新增/更新文档类型（upsert）",
-        "description": "按 `type_id` upsert。\n\n- **新建**（`type_id` 不存在）：`is_default` 固定写为 0\n- **更新**（`type_id` 已存在）：只更新 `type_name` / `description` / `enabled`；**`is_default` 保留原值**（默认类型可改名但不会变成非默认，反之亦然）\n\n**不经由本接口设置**的字段：`is_template`（用 `promote`/`demote`）、`parent_type_id`（由 `copy_from`/`import` 自动记录）。\n\n`type_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。返回 `data={type_id}`。",
+        "summary": "Upsert Doctype",
+        "description": "创建/更新类型（按 type_id upsert）。",
         "operationId": "upsert_doctype_doctype_post",
         "requestBody": {
           "content": {
@@ -1762,8 +1726,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "更新文档类型（可改 type_id）",
-        "description": "更新类型基础配置（`type_name` / `description` / `max_parse_pages` / `enable_embedding` / `enabled`）。**`project_id` 更新时忽略**（仅建档时生效），`is_template` / `parent_type_id` 也不经本接口修改。\n\n当请求体 `type_id` 与路径 `type_id` 不同时，视为**改名并级联**：把该类型下的`files` / `extraction_field` / `analysis_rule` 的 `type_id`、以及子类型的 `parent_type_id` 全部改到新值。\n\n**错误码**：400（原 type_id 为空 / 默认类型改名）/ 404（类型不存在）/ 409（新 type_id 已存在）。\n\n返回 `data={old_type_id, type_id, renamed, updated_files, updated_fields, updated_rules, updated_children}`（后四个计数仅改名时非零）。",
+        "summary": "Update Doctype",
+        "description": "更新类型基础配置；当 payload.type_id 变化时级联重命名 type_id。",
         "operationId": "update_doctype_doctype__type_id__put",
         "parameters": [
           {
@@ -1773,8 +1737,7 @@
             "schema": {
               "type": "string",
               "title": "Type Id"
-            },
-            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+            }
           }
         ],
         "requestBody": {
@@ -1814,8 +1777,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "删除文档类型（单个）",
-        "description": "**默认类型不可删除**（返回 400）。非默认类型若有关联数据：\n- 不传 `force` → 返回 **409** + 数量提示（文件 N、字段 N、规则 N）\n- `force=true` → 级联删除该类型下所有文件、`file_content/table/chunk`、`extraction_result/analysis_result`、Milvus 向量、`uploads/{file_id}.pdf`、字段、规则\n\n**错误码**：400（默认类型）/ 404（类型不存在）/ 409（有数据未 force）。\n\n返回 `data={type_id, deleted_files, deleted_fields, deleted_rules}`，三个计数仅在 `force=true` 时非零。",
+        "summary": "Delete Doctype",
+        "description": "删除类型（单个）。默认类型不可删；有关联数据需 force=true。",
         "operationId": "delete_doctype_doctype__type_id__delete",
         "parameters": [
           {
@@ -1825,8 +1788,7 @@
             "schema": {
               "type": "string",
               "title": "Type Id"
-            },
-            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+            }
           },
           {
             "name": "force",
@@ -1838,7 +1800,7 @@
               "default": false,
               "title": "Force"
             },
-            "description": "为 `true` 时级联删除该类型下所有文件、配置、Milvus 向量与 PDF；为 `false`（默认）且有关联数据则返回 409。"
+            "description": "是否级联删除该类型下所有文件与配置"
           }
         ],
         "responses": {
@@ -1870,8 +1832,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "批量删除文档类型",
-        "description": "对 `type_ids` 逐条复用单删逻辑，**单条失败不中断**整批，最后一次性提交。\n\n每条会被**跳过**（`ok=false` + `reason`）的情况：类型不存在 / 默认类型 / 有关联数据但未传 `force`。其余执行删除；`force=true` 时级联文件 + Milvus + PDF + 字段 + 规则。\n\n返回 `data={results:[{type_id, ok, reason?, deleted_files, deleted_fields, deleted_rules}], deleted:<成功条数>}`。",
+        "summary": "Batch Delete Types",
+        "description": "批量删除类型；逐条记录结果，默认类型/不存在/有数据未 force 的会被跳过。",
         "operationId": "batch_delete_types_doctype_batch_delete_post",
         "requestBody": {
           "content": {
@@ -1912,8 +1874,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "同实例跨类型复制配置",
-        "description": "把源类型（`source_type_id`）的字段+规则复制到当前 `type_id`，生成全新 ID 的**独立副本**（复制后两份互不影响）。\n\n- `field_ids` / `rule_ids` 不传或为 `null` 表示该类目全部复制；空数组 `[]` 表示不复制\n- 字段名 / 规则名保持不变；新的 `field_id` / `rule_id` 基于源 ID 自动编号，例如 `amount` → `amount_0002`，再次复制为 `amount_0003`\n- `on_conflict=skip`：目标类型已有同源 `field_id` / `rule_id` 副本时跳过\n- `on_conflict=rename`（默认）：自动取下一个可用 `_000N` 副本 ID\n- 规则的 `depend_fields` 按源 `field_id` 精确重映射到本次复制生成的新 `field_id`；依赖字段未随本次复制一起复制时记入 `missing_dependencies`（格式 `规则名::源field_id`），规则仍照常创建（仅丢失该依赖）\n\n**血缘副作用**（目标非默认类型时）：把目标 `parent_type_id` 记为 `source_type_id`。\n\n**错误码**：400（源=目标）/ 404（源或目标不存在）。\n\n返回 `data=CopyConfigsResponse{copied_fields, skipped_fields, copied_rules, skipped_rules, missing_dependencies}`。",
+        "summary": "Copy Configs",
+        "description": "从 source_type_id 复制字段/规则到当前 type_id（独立副本）。\n\n- field_ids/rule_ids 不传或为 null 表示复制全部；空数组表示不复制\n- on_conflict=skip：目标已有同源 field_id/rule_id 的副本时跳过\n- on_conflict=rename：自动生成下一个副本 ID（如 A_0002 / A_0003）\n- field_name/rule_name 保持不变；\n- 规则的 depend_fields 按源 field_id 精确重映射到本次复制生成的新 field_id；\n  若依赖字段未一起复制，记入 missing_dependencies 返回。",
         "operationId": "copy_configs_doctype__type_id__copy_from_post",
         "parameters": [
           {
@@ -1923,8 +1885,7 @@
             "schema": {
               "type": "string",
               "title": "Type Id"
-            },
-            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+            }
           }
         ],
         "requestBody": {
@@ -1966,8 +1927,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "导出配置为 JSON 载荷",
-        "description": "把目标类型的字段+规则序列化为可跨实例迁移的 JSON（字段按 `priority` 升序）。\n\n规则依赖以 **field_name** 列表（`depend_field_names`）序列化，避免依赖原 `field_id`，便于在 `POST /doctype/import` 时按名重映射。\n\n前端「只读查看配置」也复用本接口。返回 `data=ExportPayload`（见组件 schema）。",
+        "summary": "Export Configs",
+        "description": "导出指定类型的所有字段+规则为 JSON 载荷。\n\n返回的 JSON 可直接保存为文件，并通过 POST /doctype/import 导入到其他环境。\n规则的 depend_fields 在导出时按 field_name 序列化，导入时按 field_name 在目标\n类型中重映射，避免依赖原始 field_id。",
         "operationId": "export_configs_doctype__type_id__export_get",
         "parameters": [
           {
@@ -1977,8 +1938,7 @@
             "schema": {
               "type": "string",
               "title": "Type Id"
-            },
-            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+            }
           }
         ],
         "responses": {
@@ -2010,8 +1970,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "从 JSON 载荷导入配置",
-        "description": "把 `GET /doctype/{type_id}/export` 产生的载荷导入到目标类型。\n\n- `target_type_id` 为空时使用 `payload.type_id`（都为空 → 400）\n- 目标类型不存在且 `create_type_if_missing=true` → 自动创建；为 false → 404\n- 字段始终生成**新 `field_id`**，避免与全局唯一约束冲突\n- `on_conflict` 是导入时的同名策略：`rename`（默认，加 ` (副本)` 后缀）或 `skip`\n- 规则按 `depend_field_names` 在目标类型按字段名重映射；缺失依赖进 `missing_dependencies`\n\n返回 `data=ImportConfigsResponse{target_type_id, created_type, copied_fields, skipped_fields, copied_rules, skipped_rules, missing_dependencies}`。",
+        "summary": "Import Configs",
+        "description": "从 JSON 载荷导入字段+规则到目标类型。\n\n- 目标类型不存在且 create_type_if_missing=true 时自动创建\n- 字段以新生成的 field_id 写入（不复用源 field_id），避免跨类型冲突\n- 规则的 depend_field_names 按字段名重映射到目标类型的字段；\n  若目标缺失某依赖，记入 missing_dependencies 返回（依赖该字段的位置由规则引用）",
         "operationId": "import_configs_doctype_import_post",
         "requestBody": {
           "content": {
@@ -2052,8 +2012,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "列出项目",
-        "description": "列出所有项目，每项附 `type_count`（该项目下类型数）。\n\n返回 `data=[ProjectResponse{project_id, project_name, description, type_count, created_at, updated_at}]`。",
+        "summary": "List Projects",
+        "description": "列出所有项目，附带每个项目下的 type 数。",
         "operationId": "list_projects_doctype_projects_get",
         "responses": {
           "200": {
@@ -2072,8 +2032,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "新增/改名项目（upsert）",
-        "description": "按 `project_id` upsert。已存在则更新 `project_name` / `description`；不存在则创建。\n\n`project_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。返回 `data={project_id}`。",
+        "summary": "Upsert Project",
+        "description": "创建/改名项目（按 project_id upsert）。",
         "operationId": "upsert_project_doctype_projects_post",
         "requestBody": {
           "content": {
@@ -2114,8 +2074,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "删除项目",
-        "description": "删除项目：先把成员类型的 `project_id` 置空（变未分组），再删项目本身——**不删除任何类型**。\n\n**错误码**：404（项目不存在）。返回 `data={project_id}`。",
+        "summary": "Delete Project",
+        "description": "删除项目：成员 type 的 project_id 置空，再删项目本身（不删 type）。",
         "operationId": "delete_project_doctype_projects__project_id__delete",
         "parameters": [
           {
@@ -2125,8 +2085,7 @@
             "schema": {
               "type": "string",
               "title": "Project Id"
-            },
-            "description": "项目 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+            }
           }
         ],
         "responses": {
@@ -2158,8 +2117,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "批量归类到项目（级联血缘）",
-        "description": "把 `type_ids` 归入 `project_id`（传 `null` 表示移出、变未分组）。\n\n**归类级联血缘**：入参每个类型的所有 `parent_type_id` 传递后代一并归入同一项目（抓模板即整条血缘进组）；**默认类型跳过**（恒未分组）。\n\n**错误码**：404（`project_id` 非空但项目不存在）。\n\n返回 `data={requested:<入参数>, affected:<实际写入数，含级联带入>, project_id}`。",
+        "summary": "Batch Assign Project",
+        "description": "批量把 type 归入项目（project_id=None 表示移出/未分组）。\n\n归类级联血缘：入参每个 type 的所有血缘后代一并写入同一项目；default 类型跳过、恒未分组。\n返回 affected = 实际写入条数（含级联带入的后代）。",
         "operationId": "batch_assign_project_doctype_batch_assign_project_post",
         "requestBody": {
           "content": {
@@ -2200,8 +2159,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "标记为模板",
-        "description": "把副本/普通类型标记为模板（`is_template=1`），保留 `parent_type_id` 作血缘。\n\n模板会进入顶部选择器，并可用 `GET /doctype/list?scope=template` 过滤出来。\n\n**错误码**：400（默认类型无需标记）/ 404（类型不存在）。返回 `data={type_id}`。",
+        "summary": "Promote Type",
+        "description": "把副本/普通类型标记为模板（保留 parent_type_id 作血缘）。",
         "operationId": "promote_type_doctype__type_id__promote_post",
         "parameters": [
           {
@@ -2211,8 +2170,7 @@
             "schema": {
               "type": "string",
               "title": "Type Id"
-            },
-            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+            }
           }
         ],
         "responses": {
@@ -2244,8 +2202,8 @@
         "tags": [
           "doctype"
         ],
-        "summary": "取消模板标记",
-        "description": "取消模板标记（`is_template=0`），不影响 `parent_type_id` 血缘。\n\n**错误码**：400（默认类型不可操作）/ 404（类型不存在）。返回 `data={type_id}`。",
+        "summary": "Demote Type",
+        "description": "取消模板标记。",
         "operationId": "demote_type_doctype__type_id__demote_post",
         "parameters": [
           {
@@ -2255,8 +2213,7 @@
             "schema": {
               "type": "string",
               "title": "Type Id"
-            },
-            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+            }
           }
         ],
         "responses": {
@@ -2288,8 +2245,8 @@
         "tags": [
           "log"
         ],
-        "summary": "应用日志文件列表",
-        "description": "列出 `logs/` 下可查看的 `app_*.log` 文件，按修改时间倒序（最新在前）。\n\n返回 `data={current, items:[{name, size, modified_at}]}`；`current` 为最新文件名（无日志时为 `null`）。",
+        "summary": "List Log Files",
+        "description": "列出可查看的应用日志文件。",
         "operationId": "list_log_files_log_files_get",
         "responses": {
           "200": {
@@ -2310,8 +2267,8 @@
         "tags": [
           "log"
         ],
-        "summary": "读取最近日志",
-        "description": "读取指定日志文件末尾若干行。`file` 省略时取最新 `app_*.log`；`lines` 默认 200（`0..1000`）；`level` 按等级精确过滤（`TRACE`/`DEBUG`/`INFO`/`SUCCESS`/`WARNING`/`ERROR`/`CRITICAL`，省略不过滤）。\n\n**错误码**：400（文件名不合法 / 等级不合法）/ 404（日志文件不存在）。\n\n返回 `data={file, lines:[{file, level, line, timestamp, type_id, file_id, message, offset}]}`（无日志文件时 `file=null`、`lines=[]`）。",
+        "summary": "Get Recent Logs",
+        "description": "读取最近若干行应用日志。",
         "operationId": "get_recent_logs_log_recent_get",
         "parameters": [
           {
@@ -2388,8 +2345,8 @@
         "tags": [
           "log"
         ],
-        "summary": "实时日志流（SSE）",
-        "description": "SSE 实时推送日志。先回放末尾 `tail` 行（默认 200，`0..1000`），再持续跟随追加内容；未指定 `file` 时自动跟随最新 `app_*.log`（轮转时切换）。`level` 同 `/log/recent`。\n\n**SSE 事件**：`ready`（连接建立）/ `line`（单行日志，data 同 `/log/recent` 的行结构）/ `rotated`（已切到新文件）/ `heartbeat`（心跳）。\n\n**错误码**：400（文件名 / 等级不合法）/ 404（指定的日志文件不存在）。",
+        "summary": "Stream Logs",
+        "description": "实时推送应用日志。未指定 file 时自动跟随最新 app_*.log。",
         "operationId": "stream_logs_log_stream_get",
         "parameters": [
           {
@@ -2468,31 +2425,26 @@
             "type": "string",
             "maxLength": 100,
             "pattern": "^[a-zA-Z0-9_]+$",
-            "title": "Rule Id",
-            "description": "规则 ID，匹配 `^[a-zA-Z0-9_]+$`（最长 100），**全局唯一**。"
+            "title": "Rule Id"
           },
           "type_id": {
             "type": "string",
             "maxLength": 64,
             "pattern": "^[a-zA-Z0-9_-]+$",
             "title": "Type Id",
-            "default": "default",
-            "description": "归属文档类型，默认 `default`。"
+            "default": "default"
           },
           "rule_name": {
             "type": "string",
             "maxLength": 200,
-            "title": "Rule Name",
-            "description": "规则显示名（最长 200）。"
+            "title": "Rule Name"
           },
           "rule_type": {
-            "$ref": "#/components/schemas/RuleTypeEnum",
-            "description": "规则类型：`judge`（LLM 判断）/ `calc`（numexpr 计算）。"
+            "$ref": "#/components/schemas/RuleTypeEnum"
           },
           "expression": {
             "type": "string",
-            "title": "Expression",
-            "description": "表达式，须含至少一个 `<field_result>字段ID</field_result>` 占位符（渲染时替换为字段提取值）。"
+            "title": "Expression"
           },
           "system_prompt": {
             "anyOf": [
@@ -2503,8 +2455,7 @@
                 "type": "null"
               }
             ],
-            "title": "System Prompt",
-            "description": "[judge] 调控 LLM 判断的 system prompt；`calc` 类型忽略。"
+            "title": "System Prompt"
           },
           "depend_fields": {
             "anyOf": [
@@ -2518,8 +2469,7 @@
                 "type": "null"
               }
             ],
-            "title": "Depend Fields",
-            "description": "依赖的字段 ID 列表（用于取值并填充占位符）。"
+            "title": "Depend Fields"
           },
           "web_search": {
             "anyOf": [
@@ -2531,20 +2481,17 @@
                 "type": "null"
               }
             ],
-            "title": "Web Search",
-            "description": "[judge] 网络搜索配置（自由 JSON）：`{enabled: bool, query: str, count?: int, freshness?: str}`。启用时判断前先调博查搜索，`query` 支持 `<field_result>字段ID</field_result>` 占位符，搜索结果文本替换 `expression` 中的 `<web_search_result/>` 占位符（启用时必须存在）。搜索失败不致命（占位符替换为失败提示继续判断）。"
+            "title": "Web Search"
           },
           "enabled": {
             "type": "integer",
             "title": "Enabled",
-            "default": 1,
-            "description": "是否启用（1/0）。"
+            "default": 1
           },
           "priority": {
             "type": "integer",
             "title": "Priority",
-            "default": 0,
-            "description": "执行优先级（升序）。"
+            "default": 0
           }
         },
         "type": "object",
@@ -2554,29 +2501,87 @@
           "rule_type",
           "expression"
         ],
-        "title": "AnalysisRuleCreate",
-        "description": "逻辑分析规则配置（按 `rule_id` 全局唯一 upsert）。",
-        "examples": [
-          {
-            "rule_id": "assets_positive",
-            "type_id": "financial_report",
-            "rule_name": "资产为正",
-            "rule_type": "calc",
-            "expression": "<field_result>total_assets</field_result> > 0",
-            "depend_fields": [
-              "total_assets"
-            ],
-            "enabled": 1,
-            "priority": 0
+        "title": "AnalysisRuleCreate"
+      },
+      "AnalysisRunItem": {
+        "properties": {
+          "type_id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Type Id"
+          },
+          "biz_id": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Biz Id"
+          },
+          "field_values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Field Values"
           }
-        ]
+        },
+        "type": "object",
+        "required": [
+          "type_id",
+          "biz_id"
+        ],
+        "title": "AnalysisRunItem",
+        "description": "独立逻辑分析的单组外部字段值。"
+      },
+      "AnalysisRunModeEnum": {
+        "type": "string",
+        "enum": [
+          "sync",
+          "async",
+          "stream"
+        ],
+        "title": "AnalysisRunModeEnum"
+      },
+      "AnalysisRunRequest": {
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/AnalysisRunModeEnum"
+          },
+          "callback_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "format": "uri"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Callback Url"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisRunItem"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "items"
+        ],
+        "title": "AnalysisRunRequest",
+        "description": "独立逻辑分析请求；async 模式必须通过 callback_url 接收结果。"
       },
       "AnalysisTestRequest": {
         "properties": {
           "file_id": {
             "type": "string",
-            "title": "File Id",
-            "description": "目标文件 ID（其 `extraction_result` 提供依赖字段值）。"
+            "title": "File Id"
           },
           "rule_id": {
             "anyOf": [
@@ -2587,8 +2592,7 @@
                 "type": "null"
               }
             ],
-            "title": "Rule Id",
-            "description": "已保存规则 ID；与 `config` 二选一。"
+            "title": "Rule Id"
           },
           "config": {
             "anyOf": [
@@ -2600,8 +2604,7 @@
                 "type": "null"
               }
             ],
-            "title": "Config",
-            "description": "临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`）；与 `rule_id` 二选一。"
+            "title": "Config"
           }
         },
         "type": "object",
@@ -2609,13 +2612,7 @@
           "file_id"
         ],
         "title": "AnalysisTestRequest",
-        "description": "逻辑分析调试请求：`rule_id`（用已存规则）或 `config`（临时配置）二选一，均需 `file_id`。",
-        "examples": [
-          {
-            "file_id": "a1b2c3...",
-            "rule_id": "assets_positive"
-          }
-        ]
+        "description": "逻辑分析调试请求：rule_id + file_id 模式 或 完整 config 模式。"
       },
       "BatchAssignProjectRequest": {
         "properties": {
@@ -2624,8 +2621,7 @@
               "type": "string"
             },
             "type": "array",
-            "title": "Type Ids",
-            "description": "要归类的类型 ID 列表（各自的血缘后代会一并带入同一项目）。"
+            "title": "Type Ids"
           },
           "project_id": {
             "anyOf": [
@@ -2636,8 +2632,7 @@
                 "type": "null"
               }
             ],
-            "title": "Project Id",
-            "description": "目标项目 ID；`null` 表示移出（变未分组）。"
+            "title": "Project Id"
           }
         },
         "type": "object",
@@ -2645,15 +2640,7 @@
           "type_ids"
         ],
         "title": "BatchAssignProjectRequest",
-        "description": "批量把类型归入项目；归类会级联到每个类型的血缘下游，默认类型跳过。",
-        "examples": [
-          {
-            "type_ids": [
-              "annual_2023"
-            ],
-            "project_id": "annual_reports"
-          }
-        ]
+        "description": "批量把类型归入项目；project_id 为 None 表示移出（未分组）。\n\n归类会级联到每个 type_id 的血缘下游（服务端计算），default 类型不受影响。"
       },
       "BatchDeleteRequest": {
         "properties": {
@@ -2662,24 +2649,14 @@
               "type": "string"
             },
             "type": "array",
-            "title": "File Ids",
-            "description": "要删除的文件 ID 列表（不存在的会进入响应 `failed_ids`）。"
+            "title": "File Ids"
           }
         },
         "type": "object",
         "required": [
           "file_ids"
         ],
-        "title": "BatchDeleteRequest",
-        "description": "批量删除文件的请求体。",
-        "examples": [
-          {
-            "file_ids": [
-              "a1b2c3...",
-              "d4e5f6..."
-            ]
-          }
-        ]
+        "title": "BatchDeleteRequest"
       },
       "Body_parse_file_file_parse_post": {
         "properties": {
@@ -2699,8 +2676,7 @@
         "properties": {
           "source_type_id": {
             "type": "string",
-            "title": "Source Type Id",
-            "description": "源类型 ID（必填，须 ≠ 目标 `type_id`）。"
+            "title": "Source Type Id"
           },
           "field_ids": {
             "anyOf": [
@@ -2714,8 +2690,7 @@
                 "type": "null"
               }
             ],
-            "title": "Field Ids",
-            "description": "要复制的字段 ID 列表；不传或 `null` 表示全部字段，空数组 `[]` 表示不复制字段。"
+            "title": "Field Ids"
           },
           "rule_ids": {
             "anyOf": [
@@ -2729,15 +2704,13 @@
                 "type": "null"
               }
             ],
-            "title": "Rule Ids",
-            "description": "要复制的规则 ID 列表；不传或 `null` 表示全部规则，空数组 `[]` 表示不复制规则。"
+            "title": "Rule Ids"
           },
           "on_conflict": {
             "type": "string",
             "pattern": "^(skip|rename)$",
             "title": "On Conflict",
-            "default": "rename",
-            "description": "目标类型已有同源 ID 副本时的策略：`rename`（默认，生成下一个 `_000N` 副本 ID）或 `skip`（跳过）。字段名/规则名保持不变。"
+            "default": "rename"
           }
         },
         "type": "object",
@@ -2745,15 +2718,7 @@
           "source_type_id"
         ],
         "title": "CopyConfigsRequest",
-        "description": "从源类型复制字段/规则到目标类型（独立副本）。",
-        "examples": [
-          {
-            "source_type_id": "financial_report",
-            "field_ids": null,
-            "rule_ids": null,
-            "on_conflict": "rename"
-          }
-        ]
+        "description": "从源类型复制配置到目标类型。\n\nfield_ids / rule_ids 不传或为 null 表示全部复制；空数组表示不复制；\non_conflict 决定目标类型已有同源 field_id/rule_id 副本时的行为。"
       },
       "DocTypeBatchDeleteRequest": {
         "properties": {
@@ -2762,31 +2727,19 @@
               "type": "string"
             },
             "type": "array",
-            "title": "Type Ids",
-            "description": "要删除的类型 ID 列表（默认类型 / 不存在 / 有数据未 force 的会被跳过）。"
+            "title": "Type Ids"
           },
           "force": {
             "type": "boolean",
             "title": "Force",
-            "default": false,
-            "description": "是否级联删除类型下的文件与配置；默认 `false`。"
+            "default": false
           }
         },
         "type": "object",
         "required": [
           "type_ids"
         ],
-        "title": "DocTypeBatchDeleteRequest",
-        "description": "批量删除类型的请求体；逐条记录结果，不因单条失败中断。",
-        "examples": [
-          {
-            "type_ids": [
-              "tmp_a",
-              "tmp_b"
-            ],
-            "force": false
-          }
-        ]
+        "title": "DocTypeBatchDeleteRequest"
       },
       "DocTypeCreate": {
         "properties": {
@@ -2794,14 +2747,12 @@
             "type": "string",
             "maxLength": 64,
             "pattern": "^[a-zA-Z0-9_-]+$",
-            "title": "Type Id",
-            "description": "类型 ID，匹配 `^[a-zA-Z0-9_-]+$`（最长 64）；作为 upsert 主键。"
+            "title": "Type Id"
           },
           "type_name": {
             "type": "string",
             "maxLength": 200,
-            "title": "Type Name",
-            "description": "类型显示名（最长 200）。"
+            "title": "Type Name"
           },
           "description": {
             "anyOf": [
@@ -2812,8 +2763,7 @@
                 "type": "null"
               }
             ],
-            "title": "Description",
-            "description": "类型描述（可空）。"
+            "title": "Description"
           },
           "max_parse_pages": {
             "anyOf": [
@@ -2837,8 +2787,7 @@
           "enabled": {
             "type": "integer",
             "title": "Enabled",
-            "default": 1,
-            "description": "是否启用，1 启用 / 0 停用。"
+            "default": 1
           },
           "project_id": {
             "anyOf": [
@@ -2849,8 +2798,7 @@
                 "type": "null"
               }
             ],
-            "title": "Project Id",
-            "description": "归属项目 ID；**仅新建时生效**（更新已存在类型时忽略，项目归属由 `batch_assign_project` 管理）。`null`=未分组。"
+            "title": "Project Id"
           }
         },
         "type": "object",
@@ -2858,45 +2806,31 @@
           "type_id",
           "type_name"
         ],
-        "title": "DocTypeCreate",
-        "description": "创建/更新文档类型的请求体（按 `type_id` upsert）。",
-        "examples": [
-          {
-            "type_id": "financial_report",
-            "type_name": "财务报告",
-            "description": "上市公司年度财报",
-            "enabled": 1
-          }
-        ]
+        "title": "DocTypeCreate"
       },
       "ExportFieldItem": {
         "properties": {
           "field_id": {
             "type": "string",
-            "title": "Field Id",
-            "description": "源端字段 ID（导入时不复用，会生成新 ID）。"
+            "title": "Field Id"
           },
           "field_name": {
             "type": "string",
-            "title": "Field Name",
-            "description": "字段显示名（导入时的同名判定依据）。"
+            "title": "Field Name"
           },
           "source_type": {
             "type": "string",
-            "title": "Source Type",
-            "description": "来源类型：`table` / `text` / `vl`。"
+            "title": "Source Type"
           },
           "enabled": {
             "type": "integer",
             "title": "Enabled",
-            "default": 1,
-            "description": "是否启用（1/0）。"
+            "default": 1
           },
           "priority": {
             "type": "integer",
             "title": "Priority",
-            "default": 0,
-            "description": "执行优先级，数字越小越先（升序）。"
+            "default": 0
           },
           "use_llm": {
             "type": "integer",
@@ -2912,8 +2846,7 @@
                 "type": "null"
               }
             ],
-            "title": "Table Name Pattern",
-            "description": "[table] 表名匹配模式。"
+            "title": "Table Name Pattern"
           },
           "table_match_type": {
             "anyOf": [
@@ -2924,8 +2857,7 @@
                 "type": "null"
               }
             ],
-            "title": "Table Match Type",
-            "description": "[table] 匹配方式：`exact` / `fuzzy` / `contains` / `llm`。"
+            "title": "Table Match Type"
           },
           "table_match_keywords": {
             "anyOf": [
@@ -2939,8 +2871,7 @@
                 "type": "null"
               }
             ],
-            "title": "Table Match Keywords",
-            "description": "[table] 匹配关键词列表。"
+            "title": "Table Match Keywords"
           },
           "table_match_max_results": {
             "anyOf": [
@@ -2951,8 +2882,7 @@
                 "type": "null"
               }
             ],
-            "title": "Table Match Max Results",
-            "description": "[table] 最多命中表数。"
+            "title": "Table Match Max Results"
           },
           "table_system_prompt": {
             "anyOf": [
@@ -2963,8 +2893,7 @@
                 "type": "null"
               }
             ],
-            "title": "Table System Prompt",
-            "description": "[table] LLM system prompt。"
+            "title": "Table System Prompt"
           },
           "table_extract_prompt": {
             "anyOf": [
@@ -2975,8 +2904,7 @@
                 "type": "null"
               }
             ],
-            "title": "Table Extract Prompt",
-            "description": "[table] 抽取 prompt，须含 `<search_result>标签</search_result>` 占位符。"
+            "title": "Table Extract Prompt"
           },
           "search_type": {
             "anyOf": [
@@ -2987,8 +2915,7 @@
                 "type": "null"
               }
             ],
-            "title": "Search Type",
-            "description": "[text] 检索方式：`context` / `section` / `rule` / `chunk_db` / `vector_db` / `page`。"
+            "title": "Search Type"
           },
           "search_config": {
             "anyOf": [
@@ -3000,8 +2927,7 @@
                 "type": "null"
               }
             ],
-            "title": "Search Config",
-            "description": "检索配置（自由 JSON，键随 `search_type` 不同）：\n- `context`：`keywords`[必] / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)\n- `section`：`section_pattern` / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)\n- `rule`：`keywords`[必] / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)\n- `chunk_db`：`keywords`[必] / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)\n- `vector_db`：`query_text` / `top_k`(5) / `score_threshold`\n- `page`：`page_range`（如 `\"1-3\"` / `\"all\"` / `\"2\"`）/ `max_length`(30000，末尾截断)"
+            "title": "Search Config"
           },
           "text_system_prompt": {
             "anyOf": [
@@ -3012,8 +2938,7 @@
                 "type": "null"
               }
             ],
-            "title": "Text System Prompt",
-            "description": "[text] LLM system prompt。"
+            "title": "Text System Prompt"
           },
           "text_extract_prompt": {
             "anyOf": [
@@ -3024,8 +2949,7 @@
                 "type": "null"
               }
             ],
-            "title": "Text Extract Prompt",
-            "description": "[text] 抽取 prompt，须含 `<search_result>标签</search_result>` 占位符。"
+            "title": "Text Extract Prompt"
           },
           "vl_method": {
             "anyOf": [
@@ -3036,8 +2960,7 @@
                 "type": "null"
               }
             ],
-            "title": "Vl Method",
-            "description": "[vl] 方法：`vl_model` / `vl_progressive` / `vl_locate`。"
+            "title": "Vl Method"
           },
           "vl_config": {
             "anyOf": [
@@ -3049,8 +2972,7 @@
                 "type": "null"
               }
             ],
-            "title": "Vl Config",
-            "description": "VL 配置（自由 JSON，键随 `vl_method` 不同）：\n- `vl_model`：`page_range`(默认 `\"all\"`，指定页一次性塞 VL)\n- `vl_progressive`：`field_hints`(\"\") / `batch_size`(2) / 可选 `batch_prompt_template`（占位符 `{history}` `{field_hints}` `{page_label}` `{total_pages}`）\n- `vl_locate`：`field_hints`(\"\") / `grid_pages`(6) / `grid_cols`(3) / `max_concurrent`(20) / 可选 `locate_prompt_template`（占位符 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`）"
+            "title": "Vl Config"
           },
           "vl_system_prompt": {
             "anyOf": [
@@ -3061,8 +2983,7 @@
                 "type": "null"
               }
             ],
-            "title": "Vl System Prompt",
-            "description": "[vl] LLM system prompt。"
+            "title": "Vl System Prompt"
           },
           "vl_extract_prompt": {
             "anyOf": [
@@ -3073,8 +2994,7 @@
                 "type": "null"
               }
             ],
-            "title": "Vl Extract Prompt",
-            "description": "[vl] 抽取 prompt，须含 `value` 与 `reason` 关键字。"
+            "title": "Vl Extract Prompt"
           }
         },
         "type": "object",
@@ -3084,19 +3004,17 @@
           "source_type"
         ],
         "title": "ExportFieldItem",
-        "description": "导出格式的字段项（不含 `type_id` / 时间戳；`field_id` 保留但导入时会重新生成）。"
+        "description": "导出格式的字段项（不含 type_id / field_id / 时间戳）。"
       },
       "ExportPayload": {
         "properties": {
           "type_id": {
             "type": "string",
-            "title": "Type Id",
-            "description": "源类型 ID（导入时若未指定 `target_type_id` 则用它）。"
+            "title": "Type Id"
           },
           "type_name": {
             "type": "string",
-            "title": "Type Name",
-            "description": "源类型名（自动创建目标类型时作为名称）。"
+            "title": "Type Name"
           },
           "description": {
             "anyOf": [
@@ -3107,8 +3025,7 @@
                 "type": "null"
               }
             ],
-            "title": "Description",
-            "description": "源类型描述。"
+            "title": "Description"
           },
           "max_parse_pages": {
             "anyOf": [
@@ -3132,8 +3049,7 @@
           "version": {
             "type": "integer",
             "title": "Version",
-            "default": 1,
-            "description": "载荷版本号，当前为 1。"
+            "default": 1
           },
           "fields": {
             "items": {
@@ -3141,8 +3057,7 @@
             },
             "type": "array",
             "title": "Fields",
-            "default": [],
-            "description": "字段项列表（`ExportFieldItem`）。"
+            "default": []
           },
           "rules": {
             "items": {
@@ -3150,8 +3065,7 @@
             },
             "type": "array",
             "title": "Rules",
-            "default": [],
-            "description": "规则项列表（`ExportRuleItem`）。"
+            "default": []
           }
         },
         "type": "object",
@@ -3160,29 +3074,25 @@
           "type_name"
         ],
         "title": "ExportPayload",
-        "description": "导出/导入的整体载荷。`GET /doctype/{type_id}/export` 产出，`POST /doctype/import` 消费。"
+        "description": "导出/导入的整体载荷。"
       },
       "ExportRuleItem": {
         "properties": {
           "rule_id": {
             "type": "string",
-            "title": "Rule Id",
-            "description": "源端规则 ID（导入时不复用，会生成新 ID）。"
+            "title": "Rule Id"
           },
           "rule_name": {
             "type": "string",
-            "title": "Rule Name",
-            "description": "规则显示名（导入时的同名判定依据）。"
+            "title": "Rule Name"
           },
           "rule_type": {
             "type": "string",
-            "title": "Rule Type",
-            "description": "规则类型：`judge` / `calc`。"
+            "title": "Rule Type"
           },
           "expression": {
             "type": "string",
-            "title": "Expression",
-            "description": "表达式，含 `<field_result>字段ID</field_result>` 占位符。"
+            "title": "Expression"
           },
           "system_prompt": {
             "anyOf": [
@@ -3193,8 +3103,7 @@
                 "type": "null"
               }
             ],
-            "title": "System Prompt",
-            "description": "[judge] LLM system prompt。"
+            "title": "System Prompt"
           },
           "web_search": {
             "anyOf": [
@@ -3206,8 +3115,7 @@
                 "type": "null"
               }
             ],
-            "title": "Web Search",
-            "description": "[judge] 网络搜索配置（`{enabled, query, count, freshness}`），导出/导入原样携带（占位符不重映射）。"
+            "title": "Web Search"
           },
           "depend_field_names": {
             "items": {
@@ -3215,20 +3123,17 @@
             },
             "type": "array",
             "title": "Depend Field Names",
-            "default": [],
-            "description": "依赖字段的**名称**列表（导入时按名重映射到目标类型的 `field_id`）。"
+            "default": []
           },
           "enabled": {
             "type": "integer",
             "title": "Enabled",
-            "default": 1,
-            "description": "是否启用（1/0）。"
+            "default": 1
           },
           "priority": {
             "type": "integer",
             "title": "Priority",
-            "default": 0,
-            "description": "执行优先级（升序）。"
+            "default": 0
           }
         },
         "type": "object",
@@ -3239,7 +3144,7 @@
           "expression"
         ],
         "title": "ExportRuleItem",
-        "description": "导出格式的规则项；依赖用 `depend_field_names`（字段名列表）表达，便于跨环境恢复。"
+        "description": "导出格式的规则项。depend_fields 用 field_name 列表，便于跨环境恢复。"
       },
       "ExtractionFieldCreate": {
         "properties": {
@@ -3247,38 +3152,32 @@
             "type": "string",
             "maxLength": 100,
             "pattern": "^[a-zA-Z0-9_]+$",
-            "title": "Field Id",
-            "description": "字段 ID，匹配 `^[a-zA-Z0-9_]+$`（最长 100），**全局唯一**。"
+            "title": "Field Id"
           },
           "type_id": {
             "type": "string",
             "maxLength": 64,
             "pattern": "^[a-zA-Z0-9_-]+$",
             "title": "Type Id",
-            "default": "default",
-            "description": "归属文档类型，默认 `default`。"
+            "default": "default"
           },
           "field_name": {
             "type": "string",
             "maxLength": 200,
-            "title": "Field Name",
-            "description": "字段显示名（最长 200）。"
+            "title": "Field Name"
           },
           "source_type": {
-            "$ref": "#/components/schemas/SourceTypeEnum",
-            "description": "来源类型：`table` / `text` / `vl`（决定下面哪组字段生效）。"
+            "$ref": "#/components/schemas/SourceTypeEnum"
           },
           "enabled": {
             "type": "integer",
             "title": "Enabled",
-            "default": 1,
-            "description": "是否启用（1/0）。"
+            "default": 1
           },
           "priority": {
             "type": "integer",
             "title": "Priority",
-            "default": 0,
-            "description": "执行优先级，数字越小越先（升序）。"
+            "default": 0
           },
           "use_llm": {
             "type": "integer",
@@ -3294,8 +3193,7 @@
                 "type": "null"
               }
             ],
-            "title": "Table Name Pattern",
-            "description": "[table] 表名匹配模式（配合 `table_match_type`）。"
+            "title": "Table Name Pattern"
           },
           "table_match_type": {
             "anyOf": [
@@ -3305,8 +3203,7 @@
               {
                 "type": "null"
               }
-            ],
-            "description": "[table] 匹配方式：`exact` / `fuzzy` / `contains` / `llm`。"
+            ]
           },
           "table_match_keywords": {
             "anyOf": [
@@ -3320,8 +3217,7 @@
                 "type": "null"
               }
             ],
-            "title": "Table Match Keywords",
-            "description": "[table] 匹配关键词列表。"
+            "title": "Table Match Keywords"
           },
           "table_match_max_results": {
             "anyOf": [
@@ -3332,8 +3228,7 @@
                 "type": "null"
               }
             ],
-            "title": "Table Match Max Results",
-            "description": "[table] 最多命中表数。"
+            "title": "Table Match Max Results"
           },
           "table_system_prompt": {
             "anyOf": [
@@ -3344,8 +3239,7 @@
                 "type": "null"
               }
             ],
-            "title": "Table System Prompt",
-            "description": "[table] LLM system prompt（可空）。"
+            "title": "Table System Prompt"
           },
           "table_extract_prompt": {
             "anyOf": [
@@ -3356,8 +3250,7 @@
                 "type": "null"
               }
             ],
-            "title": "Table Extract Prompt",
-            "description": "[table] 抽取 prompt；`source_type=table` 时须含至少一个 `<search_result>标签</search_result>`。"
+            "title": "Table Extract Prompt"
           },
           "search_type": {
             "anyOf": [
@@ -3367,8 +3260,7 @@
               {
                 "type": "null"
               }
-            ],
-            "description": "[text] 检索方式：`context` / `section` / `rule` / `chunk_db` / `vector_db` / `page`。"
+            ]
           },
           "search_config": {
             "anyOf": [
@@ -3380,8 +3272,7 @@
                 "type": "null"
               }
             ],
-            "title": "Search Config",
-            "description": "[text] 检索配置（自由 JSON，键随 `search_type` 不同）：\n- `context`：`keywords`[必] / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)\n- `section`：`section_pattern` / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)\n- `rule`：`keywords`[必] / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)\n- `chunk_db`：`keywords`[必] / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)\n- `vector_db`：`query_text` / `top_k`(5) / `score_threshold`\n- `page`：`page_range`（如 `\"1-3\"` / `\"all\"` / `\"2\"`）/ `max_length`(30000，末尾截断)"
+            "title": "Search Config"
           },
           "text_system_prompt": {
             "anyOf": [
@@ -3392,8 +3283,7 @@
                 "type": "null"
               }
             ],
-            "title": "Text System Prompt",
-            "description": "[text] LLM system prompt（可空）。"
+            "title": "Text System Prompt"
           },
           "text_extract_prompt": {
             "anyOf": [
@@ -3404,8 +3294,7 @@
                 "type": "null"
               }
             ],
-            "title": "Text Extract Prompt",
-            "description": "[text] 抽取 prompt；`source_type=text` 时须含至少一个 `<search_result>标签</search_result>`。"
+            "title": "Text Extract Prompt"
           },
           "vl_method": {
             "anyOf": [
@@ -3415,8 +3304,7 @@
               {
                 "type": "null"
               }
-            ],
-            "description": "[vl] 方法：`vl_model` / `vl_progressive` / `vl_locate`；`source_type=vl` 时必填。"
+            ]
           },
           "vl_config": {
             "anyOf": [
@@ -3428,8 +3316,7 @@
                 "type": "null"
               }
             ],
-            "title": "Vl Config",
-            "description": "[vl] VL 配置（自由 JSON，键随 `vl_method` 不同）：\n- `vl_model`：`page_range`(默认 `\"all\"`，指定页一次性塞 VL)\n- `vl_progressive`：`field_hints`(\"\") / `batch_size`(2) / 可选 `batch_prompt_template`（占位符 `{history}` `{field_hints}` `{page_label}` `{total_pages}`）\n- `vl_locate`：`field_hints`(\"\") / `grid_pages`(6) / `grid_cols`(3) / `max_concurrent`(20) / 可选 `locate_prompt_template`（占位符 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`）"
+            "title": "Vl Config"
           },
           "vl_system_prompt": {
             "anyOf": [
@@ -3440,8 +3327,7 @@
                 "type": "null"
               }
             ],
-            "title": "Vl System Prompt",
-            "description": "[vl] LLM system prompt（可空）。"
+            "title": "Vl System Prompt"
           },
           "vl_extract_prompt": {
             "anyOf": [
@@ -3452,8 +3338,7 @@
                 "type": "null"
               }
             ],
-            "title": "Vl Extract Prompt",
-            "description": "[vl] 抽取 prompt；`source_type=vl` 时必填，且须含 `value` 与 `reason` 关键字（大小写不敏感）。"
+            "title": "Vl Extract Prompt"
           }
         },
         "type": "object",
@@ -3462,63 +3347,13 @@
           "field_name",
           "source_type"
         ],
-        "title": "ExtractionFieldCreate",
-        "description": "字段提取配置（按 `field_id` 全局唯一 upsert）。`source_type` 决定哪一组字段生效：`table` 用 `table_*`，`text` 用 `search_type` / `search_config` / `text_*`，`vl` 用 `vl_*`。",
-        "examples": [
-          {
-            "field_id": "company_name",
-            "type_id": "financial_report",
-            "field_name": "公司名称",
-            "source_type": "text",
-            "enabled": 1,
-            "priority": 0,
-            "search_type": "context",
-            "search_config": {
-              "keywords": [
-                "公司名称",
-                "企业名称"
-              ],
-              "context_before": 50,
-              "context_after": 200,
-              "max_results": 3
-            },
-            "text_extract_prompt": "从以下内容提取公司名称：\n<search_result>命中片段</search_result>\n以 JSON 输出 {value, reason}。"
-          },
-          {
-            "field_id": "total_assets",
-            "type_id": "financial_report",
-            "field_name": "资产总计",
-            "source_type": "table",
-            "enabled": 1,
-            "priority": 1,
-            "table_name_pattern": "资产负债表",
-            "table_match_type": "contains",
-            "table_extract_prompt": "从下表提取资产总计：\n<search_result>表格</search_result>\n输出 {value, reason}。"
-          },
-          {
-            "field_id": "seal_present",
-            "type_id": "contract",
-            "field_name": "是否盖章",
-            "source_type": "vl",
-            "enabled": 1,
-            "priority": 0,
-            "vl_method": "vl_locate",
-            "vl_config": {
-              "field_hints": "公章/合同章",
-              "grid_pages": 6,
-              "grid_cols": 3,
-              "max_concurrent": 20
-            },
-            "vl_extract_prompt": "判断文档是否盖章，输出 JSON {value, reason}。"
-          }
-        ]
+        "title": "ExtractionFieldCreate"
       },
       "ExtractionTestRequest": {
         "properties": {
           "file_id": {
             "type": "string",
-            "title": "File Id",
-            "description": "目标文件 ID（须已完成 parsing，文本类需 `file_content`，VL 类需 `uploads/{file_id}.pdf`）。"
+            "title": "File Id"
           },
           "field_id": {
             "anyOf": [
@@ -3529,8 +3364,7 @@
                 "type": "null"
               }
             ],
-            "title": "Field Id",
-            "description": "已保存字段配置 ID；与 `config` 二选一。"
+            "title": "Field Id"
           },
           "config": {
             "anyOf": [
@@ -3542,8 +3376,7 @@
                 "type": "null"
               }
             ],
-            "title": "Config",
-            "description": "临时字段配置 dict（结构同 `ExtractionFieldCreate`）；与 `field_id` 二选一。"
+            "title": "Config"
           }
         },
         "type": "object",
@@ -3551,13 +3384,7 @@
           "file_id"
         ],
         "title": "ExtractionTestRequest",
-        "description": "字段提取调试请求：`field_id`（用已存配置）或 `config`（临时完整配置）二选一，均需 `file_id`。",
-        "examples": [
-          {
-            "file_id": "a1b2c3...",
-            "field_id": "company_name"
-          }
-        ]
+        "description": "字段提取调试请求：field_id + file_id 模式 或 完整 config 模式。"
       },
       "FileContextQueryRequest": {
         "properties": {
@@ -3624,8 +3451,7 @@
       "ImportConfigsRequest": {
         "properties": {
           "payload": {
-            "$ref": "#/components/schemas/ExportPayload",
-            "description": "导出载荷（`ExportPayload`）。"
+            "$ref": "#/components/schemas/ExportPayload"
           },
           "target_type_id": {
             "anyOf": [
@@ -3636,21 +3462,18 @@
                 "type": "null"
               }
             ],
-            "title": "Target Type Id",
-            "description": "目标类型 ID；为空时用 `payload.type_id`。"
+            "title": "Target Type Id"
           },
           "create_type_if_missing": {
             "type": "boolean",
             "title": "Create Type If Missing",
-            "default": true,
-            "description": "目标类型不存在时是否自动创建（默认 `true`）；为 `false` 且不存在则 404。"
+            "default": true
           },
           "on_conflict": {
             "type": "string",
             "pattern": "^(skip|rename)$",
             "title": "On Conflict",
-            "default": "rename",
-            "description": "同名策略：`rename`（默认）或 `skip`。"
+            "default": "rename"
           }
         },
         "type": "object",
@@ -3658,7 +3481,7 @@
           "payload"
         ],
         "title": "ImportConfigsRequest",
-        "description": "从 JSON 载荷导入字段+规则到目标类型。"
+        "description": "从 JSON 载荷导入到目标类型。\n\ntarget_type_id 为空则使用 payload.type_id；\ncreate_type_if_missing=true 时若目标类型不存在则自动创建。"
       },
       "ProjectCreate": {
         "properties": {
@@ -3666,14 +3489,12 @@
             "type": "string",
             "maxLength": 64,
             "pattern": "^[a-zA-Z0-9_-]+$",
-            "title": "Project Id",
-            "description": "项目 ID，匹配 `^[a-zA-Z0-9_-]+$`（最长 64）；作为 upsert 主键。"
+            "title": "Project Id"
           },
           "project_name": {
             "type": "string",
             "maxLength": 200,
-            "title": "Project Name",
-            "description": "项目显示名（最长 200）。"
+            "title": "Project Name"
           },
           "description": {
             "anyOf": [
@@ -3684,8 +3505,7 @@
                 "type": "null"
               }
             ],
-            "title": "Description",
-            "description": "项目描述（可空）。"
+            "title": "Description"
           }
         },
         "type": "object",
@@ -3694,37 +3514,26 @@
           "project_name"
         ],
         "title": "ProjectCreate",
-        "description": "创建/改名项目的请求体（按 `project_id` upsert）。项目对「模板 + 其血缘下游」分类。",
-        "examples": [
-          {
-            "project_id": "annual_reports",
-            "project_name": "年报项目",
-            "description": "各类年度报告"
-          }
-        ]
+        "description": "创建/改名项目（按 project_id upsert）。"
       },
       "ResponseWrapper": {
         "properties": {
           "code": {
             "type": "integer",
             "title": "Code",
-            "default": 200,
-            "description": "业务状态码，成功 200；业务校验失败（如文件超限）也可能在 200 响应里返回非 200 的 `code`。"
+            "default": 200
           },
           "message": {
             "type": "string",
             "title": "Message",
-            "default": "success",
-            "description": "人类可读的结果说明。"
+            "default": "success"
           },
           "data": {
-            "title": "Data",
-            "description": "业务负载，类型随接口而定（对象 / 数组 / null）。"
+            "title": "Data"
           }
         },
         "type": "object",
-        "title": "ResponseWrapper",
-        "description": "统一响应包装。业务负载在 `data` 中，其具体形态见各接口描述。"
+        "title": "ResponseWrapper"
       },
       "RuleTypeEnum": {
         "type": "string",
@@ -3732,15 +3541,13 @@
           "judge",
           "calc"
         ],
-        "title": "RuleTypeEnum",
-        "description": "规则类型：`judge`（LLM 真假判断，用 `system_prompt` 调控）/ `calc`（numexpr 数学计算）。"
+        "title": "RuleTypeEnum"
       },
       "SearchRequest": {
         "properties": {
           "query": {
             "type": "string",
-            "title": "Query",
-            "description": "检索文本（必填，空串返回空列表）。"
+            "title": "Query"
           },
           "file_id": {
             "anyOf": [
@@ -3751,14 +3558,12 @@
                 "type": "null"
               }
             ],
-            "title": "File Id",
-            "description": "限定检索的文件；省略则跨全部已向量化文件。"
+            "title": "File Id"
           },
           "top_k": {
             "type": "integer",
             "title": "Top K",
-            "default": 10,
-            "description": "返回条数，默认 10。"
+            "default": 10
           },
           "score_threshold": {
             "anyOf": [
@@ -3769,24 +3574,14 @@
                 "type": "null"
               }
             ],
-            "title": "Score Threshold",
-            "description": "相似度下限，低于则过滤；省略不过滤。"
+            "title": "Score Threshold"
           }
         },
         "type": "object",
         "required": [
           "query"
         ],
-        "title": "SearchRequest",
-        "description": "向量相似度检索请求。",
-        "examples": [
-          {
-            "query": "公司注册资本是多少",
-            "file_id": null,
-            "top_k": 5,
-            "score_threshold": null
-          }
-        ]
+        "title": "SearchRequest"
       },
       "SearchTypeEnum": {
         "type": "string",
@@ -3798,8 +3593,7 @@
           "vector_db",
           "page"
         ],
-        "title": "SearchTypeEnum",
-        "description": "文本检索方式：`context` 关键词上下文 / `section` 章节匹配 / `rule` 关键词+停止词边界 / `chunk_db` MySQL 分块检索 / `vector_db` Milvus 语义检索 / `page` 按页码区间切片。"
+        "title": "SearchTypeEnum"
       },
       "SourceTypeEnum": {
         "type": "string",
@@ -3808,8 +3602,7 @@
           "text",
           "vl"
         ],
-        "title": "SourceTypeEnum",
-        "description": "字段提取来源：`table`（按表名匹配后 LLM 抽取）/ `text`（文本检索后 LLM 抽取）/ `vl`（视觉模型端到端抽取，绕过 Markdown）。"
+        "title": "SourceTypeEnum"
       },
       "TableMatchTypeEnum": {
         "type": "string",
@@ -3819,8 +3612,7 @@
           "contains",
           "llm"
         ],
-        "title": "TableMatchTypeEnum",
-        "description": "表名匹配方式：`exact` 精确 / `fuzzy` 模糊（相似度）/ `contains` 包含 / `llm` 由 LLM 判定。"
+        "title": "TableMatchTypeEnum"
       },
       "VLMethodEnum": {
         "type": "string",
@@ -3829,8 +3621,7 @@
           "vl_progressive",
           "vl_locate"
         ],
-        "title": "VLMethodEnum",
-        "description": "VL 抽取方法：`vl_model` 指定页一次出 JSON / `vl_progressive` 分批扫描+伪历史累积 / `vl_locate` 缩略图网格定位+关键页高清提取。"
+        "title": "VLMethodEnum"
       },
       "ValidationError": {
         "properties": {
@@ -3866,33 +3657,5 @@
         "title": "ValidationError"
       }
     }
-  },
-  "tags": [
-    {
-      "name": "doctype",
-      "description": "文档类型管理：CRUD、跨类型复制、导出/导入、模板血缘（promote/demote）、项目分类（projects CRUD + 级联归类）、批量删除。"
-    },
-    {
-      "name": "file",
-      "description": "文件解析（async/sync/stream）、进度查询、删除、按阶段重试、各阶段结果获取。"
-    },
-    {
-      "name": "extraction",
-      "description": "字段提取配置（table / text / vl 三类源）CRUD 与同步/流式调试。"
-    },
-    {
-      "name": "analysis",
-      "description": "逻辑分析规则（judge / calc 两类）CRUD 与同步/流式调试。"
-    },
-    {
-      "name": "search",
-      "description": "Milvus 向量相似度检索（COSINE 相似度）。"
-    }
-  ],
-  "servers": [
-    {
-      "url": "http://localhost:5019",
-      "description": "本地开发"
-    }
-  ]
+  }
 }

@@ -474,3 +474,134 @@ curl -X POST "http://localhost:5019/file/parse?mode=async&callback_url=http://12
 - 历史状态名 `table_name_validating` 已统一为 `tableing`，回调 `status` 不会再出现旧名。
 - `embedding` 阶段的 `stage_done` **永不携带 `data`**，请勿对 `data` 做强制解包。
 - 新增的 `stage_failed` 事件同样靠 `event` 字段区分；只读 `status` 的旧消费者会看到 `<stage>_failed` 状态值，与轮询 `/file/{id}` 看到的 `progress` 取值一致。
+
+---
+
+## 9. 独立逻辑分析任务回调（`POST /analysis/run`）
+
+`POST /analysis/run` 的 `mode=async` 不创建文件记录，也不落库保存任务结果，因此请求体必须提供 `callback_url`。接口立即返回 `task_id`，随后使用一套独立于文件管线的 task envelope 推送结果。
+
+### 9.1 与文件管线回调的区别
+
+| 项 | 文件管线 | 独立逻辑分析 |
+|---|---|---|
+| 关联 ID | `file_id` | `task_id` |
+| 入口接口 | `/file/parse`、`/file/{id}/retry/*` | `/analysis/run` |
+| 单项事件 | `field_done` / `rule_done` | `rule_done` |
+| 成功终态 | `status=complete` 阶段入口包 | `status=complete, event=task_done` |
+| 失败终态 | `<stage>_failed, event=stage_failed` | `analysis_failed, event=task_failed` |
+| 结果持久化 | 写文件相关结果表 | 不落库，只通过响应/回调/SSE 返回 |
+
+两类回调共用相同 HTTP 约束：`POST application/json`、单次超时 2.5 秒、不重试、发送失败仅写 warning 且不影响主任务。
+
+### 9.2 请求与立即响应
+
+```json
+{
+  "mode": "async",
+  "callback_url": "http://receiver.example.com/analysis-callback",
+  "items": [
+    {
+      "type_id": "contract",
+      "biz_id": "order-889",
+      "field_values": {"amount": "1200000", "tax": "30000"}
+    }
+  ]
+}
+```
+
+```json
+{
+  "code": 200,
+  "message": "分析任务已提交（异步）",
+  "data": {"task_id": "a3f8c38d8ad44d8e9bc8f5c88a1f4870"}
+}
+```
+
+### 9.3 成功事件序列
+
+```text
+analyzing
+analyzing + event=rule_done × M
+complete  + event=task_done
+```
+
+任务开始：
+
+```json
+{"task_id": "a3f8...", "status": "analyzing"}
+```
+
+单规则完成：
+
+```json
+{
+  "task_id": "a3f8...",
+  "status": "analyzing",
+  "event": "rule_done",
+  "data": {
+    "rule_id": "amount_check",
+    "rule_name": "金额检查",
+    "rule_type": "judge",
+    "result": "true",
+    "reason": "合同金额满足规则",
+    "input_values": {"amount": "1200000"},
+    "source_refs": null,
+    "success": true,
+    "index": 1,
+    "total": 3,
+    "item_index": 0,
+    "biz_id": "order-889"
+  }
+}
+```
+
+任务完成：
+
+```json
+{
+  "task_id": "a3f8...",
+  "status": "complete",
+  "event": "task_done",
+  "data": {
+    "total_items": 1,
+    "items": [
+      {
+        "item_index": 0,
+        "biz_id": "order-889",
+        "type_id": "contract",
+        "total": 3,
+        "succeeded": 3,
+        "failed": 0,
+        "results": []
+      }
+    ]
+  }
+}
+```
+
+`task_done.data` 与 `mode=sync` 的 HTTP 响应 `data` 完全一致。最终 `items` 保持请求顺序；item 间并发执行，所以不同 `item_index` 的 `rule_done` 可能交错到达。
+
+### 9.4 失败事件序列
+
+规则自身执行失败会生成 `success=false` 的 `rule_done` 并继续，不属于任务级失败。只有规则查询、session 创建或批量编排异常才终止任务：
+
+```text
+analyzing
+analysis_failed + event=task_failed
+```
+
+```json
+{
+  "task_id": "a3f8...",
+  "status": "analysis_failed",
+  "event": "task_failed",
+  "data": {"error": "RuntimeError: 规则加载失败"}
+}
+```
+
+收到 `task_failed` 后不会再收到 `task_done`。
+
+### 9.5 stream 模式
+
+`mode=stream` 不使用 `callback_url`，而是通过 `text/event-stream` 返回同样的 envelope：SSE 的 `event:` 分别为 `analyzing`、`rule_done`、`task_done`、`task_failed`，`data:` 为上文对应的完整 JSON。

@@ -145,6 +145,7 @@ Three source types:
 Two rule types:
 - **judge** - LLM-based true/false determination. Uses `<field_result>field_id</field_result>` placeholders resolved with extraction results.
 - **calc** - Mathematical expressions evaluated with `numexpr`. Same placeholder resolution.
+- **独立分析接口** - `POST /analysis/run` 接收外部 `field_values`，支持 sync/async/stream 与批量 items。实现位于 `service/analysis_run_service.py`：仅按 `type_id` 读取启用规则，要求 `depend_fields` 被输入字段键完整覆盖，不读取文件提取结果、不写 `analysis_result`。items 间并发，单 item 内按 `priority, rule_id` 顺序执行；async 用 `task_id` 推送 `rule_done/task_done/task_failed`。
 - **judge 网络搜索**：规则可配置 `web_search` JSON（`{"enabled", "query", "count", "freshness"}`，仅 judge 类型）。启用时执行判断前先调博查 Bocha AI 搜索（`utils/web_search.py`），搜索词支持 `<field_result>field_id</field_result>` 占位符拼接提取结果，搜索文本替换 expression 中的 `<web_search_result/>` 占位符（schema 层强制要求存在）。搜索失败不致命（占位符替换为失败提示继续判断）。溯源数据存 `source_refs._web_search`（`{query, results: [{name,url,siteName,datePublished,summary}], error?}`），`GET /file/{id}/analysis` 与回调 `rule_done` 透出。调试流新增 `web_search` 事件。`copy_from` 复制时 expression 与 `web_search.query` 中的 `<field_result>` 占位符随 depend_fields 重映射；导出/导入原样携带。全局参数在 `configs/config.yaml` 的 `web_search` 节。
 
 ### External Dependencies

@@ -8,6 +8,38 @@ import httpx
 from loguru import logger
 
 
+async def _post_callback_payload(
+    callback_url: Optional[str],
+    payload: Dict[str, Any],
+    *,
+    timeout: float,
+) -> None:
+    """发送回调；任何网络或接收端错误都只记录日志。"""
+
+    if not callback_url:
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(callback_url, json=payload)
+            logger.debug(
+                "回调通知已发送: url={}, status={}, event={}, status_code={}",
+                callback_url,
+                payload.get("status"),
+                payload.get("event", "-"),
+                resp.status_code,
+            )
+    except Exception as e:
+        logger.warning(
+            "回调通知失败: url={}, status={}, event={}, type={}, error={}",
+            callback_url,
+            payload.get("status"),
+            payload.get("event", "-"),
+            type(e).__name__,
+            e,
+        )
+
+
 async def notify_callback(
     callback_url: Optional[str],
     file_id: str,
@@ -33,29 +65,50 @@ async def notify_callback(
         data: 可选事件数据，仅在 event 非空时携带。
         timeout: HTTP 请求超时（秒）。默认 2.5s，避免接收端慢拖累主流程。
     """
-    if not callback_url:
-        return
-
     payload: Dict[str, Any] = {"file_id": file_id, "status": status}
     if event:
         payload["event"] = event
         if data is not None:
             payload["data"] = data
 
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(callback_url, json=payload)
-            logger.debug(
-                "回调通知已发送: url={}, status={}, event={}, status_code={}",
-                callback_url, status, event or "-", resp.status_code,
-            )
-    except Exception as e:
-        # 回调失败不应影响主流程
-        logger.warning(
-            "回调通知失败: url={}, status={}, event={}, type={}, error={}",
-            callback_url,
+    await _post_callback_payload(callback_url, payload, timeout=timeout)
+
+
+def build_analysis_task_payload(
+    task_id: str,
+    status: str,
+    *,
+    event: Optional[str] = None,
+    data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """构造独立分析任务的 callback/SSE 公共 envelope。"""
+
+    payload: Dict[str, Any] = {"task_id": task_id, "status": status}
+    if event:
+        payload["event"] = event
+        if data is not None:
+            payload["data"] = data
+    return payload
+
+
+async def notify_analysis_task_callback(
+    callback_url: Optional[str],
+    task_id: str,
+    status: str,
+    *,
+    event: Optional[str] = None,
+    data: Optional[Dict[str, Any]] = None,
+    timeout: float = 2.5,
+) -> None:
+    """发送独立逻辑分析任务事件，失败不影响任务执行。"""
+
+    await _post_callback_payload(
+        callback_url,
+        build_analysis_task_payload(
+            task_id,
             status,
-            event or "-",
-            type(e).__name__,
-            e,
-        )
+            event=event,
+            data=data,
+        ),
+        timeout=timeout,
+    )
