@@ -44,7 +44,7 @@
 
 ### 环境要求
 
-- Python 3.11+
+- Python 3.12+
 - MySQL 8.0+
 - Milvus 2.x
 - MinerU 服务（外部依赖）
@@ -56,15 +56,14 @@
 git clone <repository-url>
 cd wanz_prase2_001
 
-# 安装依赖
-pip install -r requirements.txt
+# 安装依赖（使用 uv）
+uv sync
 
-# 配置环境
-cp configs/config.yaml.example configs/config.yaml
-# 编辑 config.yaml 配置数据库、Milvus、MinerU 等连接信息
+# 配置：编辑 configs/config.yaml，配置数据库、Milvus、MinerU 等连接信息
 
-# 启动服务
-python main.py
+# 启动服务（开发热重载）
+python app.py
+# 或： uv run uvicorn app:app --host 0.0.0.0 --port 5019 --reload
 ```
 
 ### 验证
@@ -99,7 +98,7 @@ curl "http://localhost:5019/file/{file_id}/extraction"
 | `vl_model.global_max_concurrency` | VL 调用全局并发上限（asyncio.Semaphore 治理） | 8 |
 | `vl_model.pdf_storage_dir` | 原始 PDF 持久化目录（vl 抽取依赖） | uploads |
 
-完整配置参考 [docs/design.md](docs/design.md#配置参数configyaml)
+完整配置参考 [配置手册](docs/guides/configuration.md)
 
 ## API 概览
 
@@ -114,13 +113,13 @@ curl "http://localhost:5019/file/{file_id}/extraction"
 | POST | `/extraction/test` | 字段提取调试 |
 | POST | `/analysis/test` | 逻辑分析调试 |
 
-完整 API 文档参考 [openapi.yaml](openapi.yaml)
+完整 API 文档参考 [接口文档](docs/README.md)；启动后可访问交互式 Swagger UI：`http://localhost:5019/docs`
 
 ## 项目结构
 
 ```
 wanz_prase2_001/
-├── main.py                 # 入口文件
+├── app.py                  # 入口文件（FastAPI + uvicorn）
 ├── configs/
 │   └── config.yaml         # 配置文件
 ├── blue_print/             # 路由层
@@ -151,7 +150,9 @@ wanz_prase2_001/
 
 ## 文档
 
-- [详细设计文档](docs/design.md) - 算法流程、数据库表结构、检索方式详解
-- [数据库 Schema](docs/DATABASE_SCHEMA.md) - 表结构定义
-- [API 文档](openapi.yaml) - OpenAPI 规范
-- [VL 端到端抽取方法](docs/VL端到端抽取方法.md) - VL 三种方法的完整规格
+完整文档见 **[docs/README.md](docs/README.md)**（导航枢纽）。`docs/openapi.json` 与活的 `/docs` Swagger UI 是精确 schema 权威；手写文档分四层：
+
+- **接口参考** [docs/api/](docs/api/) — 各资源接口（含 curl / 请求·响应字段表 / 错误码）、[异步回调](docs/api/callbacks.md)、[SSE 事件](docs/api/sse.md)
+- **指南** — [字段提取配置](docs/guides/extraction-config.md) / [逻辑分析配置](docs/guides/analysis-config.md) / [source_refs 溯源](docs/guides/source-refs.md) / [config.yaml 配置](docs/guides/configuration.md)
+- **数据参考** — [数据模型 / 表结构](docs/reference/data-model.md) / [枚举与 progress 状态机](docs/reference/enums.md)
+- **架构** — [MinerU 集成](docs/architecture/mineru-integration.md)

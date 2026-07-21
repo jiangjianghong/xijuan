@@ -72,7 +72,7 @@ parsing → tableing → chunking → embedding → extracting → analyzing →
 - **回调 (`callback_url`)** —— `POST /file/parse` / `retry`（`async` / `sync` 模式）携带时，
   管线在「每阶段开始」「每条 `field_done` / `rule_done`」「每阶段 `stage_done`」都会向该
   地址 POST 通知（超时 **2.5s**，失败仅 warning，绝不阻断主流程）。完整 payload 形态见
-  `docs/API_DOCUMENTATION.md` 与 `docs/ASYNC_CALLBACK.md`。
+  `docs/api/callbacks.md`。
 - **SSE 流** —— `mode=stream` 与 `/extraction/test/stream` / `/analysis/test/stream`
   返回 `text/event-stream`，逐阶段/逐步推送事件。
 - **VL 抽取** —— `source_type=vl` 字段绕过 MinerU Markdown，直接读 `uploads/{file_id}.pdf`，
@@ -307,7 +307,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "**`mode` 行为差异**\n"
                 "- `async`（默认）：后台任务，立即返回 `data={file_id}`，`message=\"文件已提交处理（异步）\"`\n"
                 "- `sync`：阻塞直到全部完成或失败，再返回 `data={file_id}`\n"
-                "- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `API_DOCUMENTATION.md` 第 9.1 节）\n"
+                "- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `docs/api/sse.md`）\n"
                 "- 其它任意值按 `sync` 处理（代码 fallback 分支）\n\n"
                 "**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 "
                 "`field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时 2.5s，失败仅 warning，"
@@ -600,7 +600,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "description": (
                 "通过 SSE 分步推送检索结果 → prompt → LLM/VL 响应 → 最终结果。入参与 `/extraction/test` 相同"
                 "（`field_id` 或 `config` 二选一）。\n\n"
-                "事件类型清单见 `docs/API_DOCUMENTATION.md` 第 9.2 节。VL 字段的进度事件"
+                "事件类型清单见 `docs/api/sse.md`。VL 字段的进度事件"
                 "（`pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`）**仅** SSE 推送，"
                 "不走异步 `callback_url`。\n\n"
                 "**状态码**：200（SSE 流）/ 400 / 404。"

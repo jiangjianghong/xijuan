@@ -1,4 +1,8 @@
-# 数据库表结构文档
+# 数据模型 · 数据库表结构
+
+> 对应服务版本 0.3.0
+
+数据库表结构、JSON 子结构（`page_mapping` / `search_config` / `vl_config` / `source_refs` / `web_search`）、Milvus 集合与建表 SQL 的**唯一权威**。接口文档（`api/*`）中的响应字段与 `source_refs` 结构均以此处为准。
 
 > **数据库**: MySQL 8.0+
 > **字符集**: utf8mb4

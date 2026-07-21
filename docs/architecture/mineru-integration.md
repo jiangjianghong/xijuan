@@ -1,7 +1,10 @@
-# MinerU 解析集成说明（请求 → 返回 → 后处理）
+# MinerU 解析集成（请求 → 返回 → 后处理）
 
-> 本文档描述本系统当前对 MinerU 解析服务的完整调用实现，供其他 AI / 开发者对接或复刻时参考。
-> 涉及代码：`service/mineru_client.py`（HTTP 调用）、`service/parse_service.py`（业务封装）、`utils/page_mapping.py`（后处理）、`utils/config.py`（配置）。
+> 对应服务版本 0.3.0
+
+本文档面向维护者，描述本系统当前对 MinerU 解析服务的完整调用实现（请求 → 返回 → 后处理、page_mapping 构建、错误边界），供其他 AI / 开发者对接或复刻时参考。
+
+涉及代码：`service/mineru_client.py`（HTTP 调用）、`service/parse_service.py`（业务封装）、`utils/page_mapping.py`（后处理）、`utils/config.py`（配置）。
 
 ## 1. 总览
 
@@ -150,7 +153,7 @@ page_mapping = build_page_mapping(content, middle_json_str)
 2. **表格块**（`type == "table"`，无 lines/spans 文本，提不出前缀）：在 `md_content` 中从 `cursor` 处前向 `find("<table")` 字面量定位，命中则记录锚点并挂**整表 bbox**；找不到 `<table` 字面量或块无 bbox 时不产锚点（容错跳过）。
 3. **文本块**：提取纯文本（所有 span 的 `content` 用空格拼接），少于 3 个字符的块跳过；依次用块文本的前 50 / 30 / 20 字符前缀从 `cursor` 处 `find` 定位，都失败再试前 10 字符。
 4. 命中则记录一条映射并把游标推进到 `pos + 1`（保证单调前进，避免回头错配）。
-5. 映射项结构：`{"start_pos", "end_pos", "page_num"(1-indexed), "bbox", "page_size"}`，其中 `bbox`/`page_size` 在 middle_json 缺失时不带（存量老数据全部不带）；文本块 bbox 为该段落块的框，表格块 bbox 为整表框。坐标系为左上原点，与 `page_size` 同一单位，前端按 `canvas尺寸 / page_size` 线性缩放画框。
+5. 每个命中锚点产出一条映射项（位置区间 + 页码 + bbox/page_size）——**完整字段结构见 [reference/data-model.md#file_content](../reference/data-model.md#file_content)（`page_mapping` 子结构，schema 唯一权威），此处不复述**。语义要点：`page_num` 为 1-indexed；`bbox`/`page_size` 在 middle_json 缺失时不带（存量老数据全部不带）；文本块 bbox 为该段落块的框，表格块为整表框；坐标系为左上原点、与 `page_size` 同一单位，前端按 `canvas尺寸 / page_size` 线性缩放画框。
 6. 最终按 `start_pos` 排序返回。
 
 **配套查询函数**（供下游 tableing/chunking/extraction 用）：
