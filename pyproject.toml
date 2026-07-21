@@ -1,6 +1,6 @@
 [project]
 name = "wanz-prase2-001"
-version = "0.1.0"
+version = "0.3.0"
 description = "文档解析、字段提取与逻辑分析系统"
 readme = "README.md"
 requires-python = ">=3.12"

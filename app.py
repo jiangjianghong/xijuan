@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -16,6 +17,7 @@ from blue_print import register_routers
 from service.init_service import run_init
 from service.retention_service import retention_loop
 from utils.config import get_config
+from utils.openapi_enrich import enrich, get_version
 
 import logs  # noqa: F401  初始化日志配置
 from logs import log_context
@@ -54,7 +56,7 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="析卷 AI", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="析卷 AI", version=get_version(), lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -64,6 +66,18 @@ app.add_middleware(
 )
 
 register_routers(app)
+
+
+def _custom_openapi():
+    """活的 /docs 与导出的 docs/openapi.json 同源：原生 schema + 共享 enrich 富化，消除版本/内容三方漂移。"""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    app.openapi_schema = enrich(schema)
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi
 
 # 挂载静态文件服务
 app.mount("/ui", StaticFiles(directory="ui", html=True), name="ui")
