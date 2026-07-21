@@ -733,6 +733,39 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             ),
         }
     },
+    "/file/processing": {
+        "get": {
+            "summary": "处理中文件队列",
+            "description": (
+                "返回所有处于「处理中」（非 complete、非 `*_failed`）的文件，是前端处理队列的唯一数据源。"
+                "LEFT JOIN `doc_type` 带出 `type_name` / `project_id`。\n\n"
+                "返回 `data=[ProcessingItem{file_id, file_name, progress, type_id, type_name, "
+                "project_id, create_time}]`。"
+            ),
+        }
+    },
+    "/file/{file_id}/recompute_page_mapping": {
+        "post": {
+            "summary": "重算页码映射",
+            "description": (
+                "用已落库的 markdown + middle_json 重新构建 `page_mapping` 并写回 `file_content`，"
+                "供存量文件免重传刷新逐页锚点 / bbox。文件内容不存在时返回 404。"
+            ),
+        }
+    },
+    "/analysis/run": {
+        "post": {
+            "summary": "独立逻辑分析执行",
+            "description": (
+                "接收外部传入的 `field_values`（不读文件提取结果、不写 `analysis_result`），按 `type_id` "
+                "加载启用规则执行。支持 `sync` / `async` / `stream`，可批量 `items`。\n\n"
+                "- 要求每条 item 的 `field_values` 覆盖规则 `depend_fields`\n"
+                "- items 间并发，单 item 内按 `priority, rule_id` 顺序执行\n"
+                "- `async` 模式用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`\n\n"
+                "返回 `data=AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`（sync）。"
+            ),
+        }
+    },
 }
 
 
@@ -1098,6 +1131,126 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
 }
 
 
+# ─── 响应 schema 注入 ──────────────────────────────────────
+# 每个 (path, method) 的响应 data 形态。值可为:
+#   "ModelName"                 → 单个响应模型（model/schemas.py 中的类名）
+#   ["ModelName"] / [ {..} ]    → 数组（元素为模型名或内联对象）
+#   {"字段": "类型 — 说明", ...}  → 内联对象（ad-hoc dict 响应）
+# 未列出的接口（data=null / SSE / 二进制响应）不注入。
+RESPONSE_DATA: Dict[tuple, Any] = {
+    # doctype
+    ("/doctype/list", "get"): ["DocTypeResponse"],
+    ("/doctype", "post"): {"type_id": "string — 新建/更新的类型 ID"},
+    ("/doctype/{type_id}", "put"): {
+        "old_type_id": "string — 原类型 ID", "type_id": "string — 新类型 ID",
+        "renamed": "boolean — 是否发生改名", "updated_files": "integer — 改名级联的文件数",
+        "updated_fields": "integer — 改名级联的字段数", "updated_rules": "integer — 改名级联的规则数",
+        "updated_children": "integer — 改名级联的子类型数"},
+    ("/doctype/{type_id}", "delete"): {
+        "type_id": "string — 被删类型 ID", "deleted_files": "integer — 级联删除文件数",
+        "deleted_fields": "integer — 级联删除字段数", "deleted_rules": "integer — 级联删除规则数"},
+    ("/doctype/batch_delete", "post"): {"results": "array — 逐条删除结果", "deleted": "integer — 成功删除条数"},
+    ("/doctype/{type_id}/copy_from", "post"): "CopyConfigsResponse",
+    ("/doctype/{type_id}/export", "get"): "ExportPayload",
+    ("/doctype/import", "post"): "ImportConfigsResponse",
+    ("/doctype/{type_id}/promote", "post"): {"type_id": "string — 类型 ID"},
+    ("/doctype/{type_id}/demote", "post"): {"type_id": "string — 类型 ID"},
+    ("/doctype/projects", "get"): ["ProjectResponse"],
+    ("/doctype/projects", "post"): {"project_id": "string — 项目 ID"},
+    ("/doctype/projects/{project_id}", "delete"): {"project_id": "string — 被删项目 ID"},
+    ("/doctype/batch_assign_project", "post"): {
+        "requested": "integer — 入参类型数", "affected": "integer — 实际写入数（含级联）",
+        "project_id": "string — 目标项目 ID（null=移出）"},
+    # file
+    ("/file/parse", "post"): {"file_id": "string — 新建文件 ID"},
+    ("/file/list", "get"): "FileListResponse",
+    ("/file/processing", "get"): ["ProcessingItem"],
+    ("/file/context_query", "post"): "FileContextQueryResponse",
+    ("/file/batch", "delete"): "BatchDeleteResponse",
+    ("/file/{file_id}/status", "get"): "FileStatusResponse",
+    ("/file/{file_id}/detail", "get"): "FileDetailResponse",
+    ("/file/{file_id}/tables", "get"): ["FileTableItem"],
+    ("/file/{file_id}/chunks", "get"): ["FileChunkItem"],
+    ("/file/{file_id}/outline", "get"): [{
+        "index": "integer — 序号", "number": "string — 章节号", "title": "string — 标题",
+        "content": "string — 章节切片正文", "start_pos": "integer — 起始偏移", "end_pos": "integer — 结束偏移"}],
+    ("/file/{file_id}/content", "get"): [{"page_num": "integer — 页码", "content": "string — 该页 markdown"}],
+    ("/file/{file_id}/extraction", "get"): ["ExtractionResultItem"],
+    ("/file/{file_id}/analysis", "get"): ["AnalysisResultItem"],
+    # extraction
+    ("/extraction/fields", "get"): ["ExtractionFieldResponse"],
+    ("/extraction/fields", "post"): {"field_id": "string — 字段 ID"},
+    ("/extraction/fields/{field_id}/check", "get"): {"exists": "boolean — 是否已存在"},
+    ("/extraction/test", "post"): "ExtractionTestResponse",
+    # analysis
+    ("/analysis/rules", "get"): ["AnalysisRuleResponse"],
+    ("/analysis/rules", "post"): {"rule_id": "string — 规则 ID"},
+    ("/analysis/rules/{rule_id}/check", "get"): {"exists": "boolean — 是否已存在"},
+    ("/analysis/test", "post"): "AnalysisTestResponse",
+    ("/analysis/run", "post"): "AnalysisRunResponse",
+    # search
+    ("/search", "post"): ["SearchResultItem"],
+    # log
+    ("/log/files", "get"): {"current": "string — 最新日志文件名（可空）", "items": "array — 文件列表"},
+    ("/log/recent", "get"): {"file": "string — 日志文件名（可空）", "lines": "array — 日志行"},
+}
+
+
+def _register_model(components: Dict[str, Any], model_cls) -> Dict[str, Any]:
+    """把 Pydantic 模型（含嵌套 $defs）登记进 components.schemas，返回 $ref。"""
+    name = model_cls.__name__
+    js = model_cls.model_json_schema(ref_template="#/components/schemas/{model}")
+    for dname, dschema in js.pop("$defs", {}).items():
+        components.setdefault(dname, dschema)
+    components[name] = js
+    return {"$ref": f"#/components/schemas/{name}"}
+
+
+def _data_schema(components: Dict[str, Any], shape: Any, schemas) -> Dict[str, Any]:
+    """把 RESPONSE_DATA 的形态描述转成 JSON schema。"""
+    if isinstance(shape, str):
+        return _register_model(components, getattr(schemas, shape))
+    if isinstance(shape, list):
+        return {"type": "array", "items": _data_schema(components, shape[0], schemas)}
+    if isinstance(shape, dict):
+        props: Dict[str, Any] = {}
+        for key, spec in shape.items():
+            type_part, _, desc = spec.partition(" — ")
+            prop: Dict[str, Any] = {"type": type_part.strip()}
+            if desc.strip():
+                prop["description"] = desc.strip()
+            props[key] = prop
+        return {"type": "object", "properties": props}
+    raise ValueError(f"无法识别的响应形态: {shape!r}")
+
+
+def _inject_responses(schema: Dict[str, Any]) -> None:
+    """把响应模型注入 components + 各 operation 的 200 响应（纯文档增强，不改运行时行为）。"""
+    from model import schemas as _schemas
+
+    components = schema.setdefault("components", {}).setdefault("schemas", {})
+    paths = schema.get("paths", {})
+    injected = 0
+    for (path, method), shape in RESPONSE_DATA.items():
+        op = paths.get(path, {}).get(method)
+        if not op:
+            print(f"  [warn] RESPONSE_DATA 路径缺失: {method.upper()} {path}")
+            continue
+        wrapper = {
+            "type": "object",
+            "properties": {
+                "code": {"type": "integer", "default": 200},
+                "message": {"type": "string"},
+                "data": _data_schema(components, shape, _schemas),
+            },
+        }
+        resp = op.setdefault("responses", {}).setdefault("200", {})
+        resp.setdefault("description", "Successful Response")
+        resp["content"] = {"application/json": {"schema": wrapper}}
+        injected += 1
+    print(f"  injected {injected} 个响应 schema")
+
+
 # ─── 富化逻辑 ──────────────────────────────────────────────
 
 def _apply_params(op: Dict[str, Any], path: str, method: str) -> None:
@@ -1176,6 +1329,9 @@ def enrich(schema: Dict[str, Any]) -> Dict[str, Any]:
             if not isinstance(op, dict) or "parameters" not in op and "requestBody" not in op and "responses" not in op:
                 continue
             _apply_params(op, path, method)
+
+    # 响应 schema 注入（把响应模型补进 components + responses.200，纯文档）
+    _inject_responses(schema)
 
     # schema 级丰富
     _apply_schema_docs(schema)

@@ -66,7 +66,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/FileListResponse"
+                    }
+                  }
                 }
               }
             }
@@ -89,8 +101,8 @@
         "tags": [
           "file"
         ],
-        "summary": "List Processing",
-        "description": "查询所有\"处理中\"的文件（作为前端队列的唯一数据源）。\n\n- 不传 type_id：返回全部类型（供「查看全部」弹窗）\n- 传 type_id：只返回该类型（供默认队列块 restore / 轮询）\nLEFT JOIN doc_type 带出 type_name / project_id，供前端显示类型名与跳转。",
+        "summary": "处理中文件队列",
+        "description": "返回所有处于「处理中」（非 complete、非 `*_failed`）的文件，是前端处理队列的唯一数据源。LEFT JOIN `doc_type` 带出 `type_name` / `project_id`。\n\n返回 `data=[ProcessingItem{file_id, file_name, progress, type_id, type_name, project_id, create_time}]`。",
         "operationId": "list_processing_file_processing_get",
         "parameters": [
           {
@@ -111,7 +123,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProcessingItem"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -153,7 +180,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/FileContextQueryResponse"
+                    }
+                  }
                 }
               }
             }
@@ -195,7 +234,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/BatchDeleteResponse"
+                    }
+                  }
                 }
               }
             }
@@ -282,7 +333,27 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "file_id": {
+                          "type": "string",
+                          "description": "新建文件 ID"
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           },
@@ -325,7 +396,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/FileStatusResponse"
+                    }
+                  }
                 }
               }
             }
@@ -697,7 +780,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/FileTableItem"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -741,7 +839,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/FileChunkItem"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -764,8 +877,8 @@
         "tags": [
           "file"
         ],
-        "summary": "Recompute Page Mapping",
-        "description": "用落库的 md + middle_json 重算 page_mapping 并写回。\n\n供存量文件在不重新上传/重新解析的前提下,套用最新唯一锚定位算法刷新页码映射。\n文件不存在或无内容 → 404;middle_json 缺失 → 产出空映射(不报错)。",
+        "summary": "重算页码映射",
+        "description": "用已落库的 markdown + middle_json 重新构建 `page_mapping` 并写回 `file_content`，供存量文件免重传刷新逐页锚点 / bbox。文件内容不存在时返回 404。",
         "operationId": "recompute_page_mapping_file__file_id__recompute_page_mapping_post",
         "parameters": [
           {
@@ -829,7 +942,48 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "index": {
+                            "type": "integer",
+                            "description": "序号"
+                          },
+                          "number": {
+                            "type": "string",
+                            "description": "章节号"
+                          },
+                          "title": {
+                            "type": "string",
+                            "description": "标题"
+                          },
+                          "content": {
+                            "type": "string",
+                            "description": "章节切片正文"
+                          },
+                          "start_pos": {
+                            "type": "integer",
+                            "description": "起始偏移"
+                          },
+                          "end_pos": {
+                            "type": "integer",
+                            "description": "结束偏移"
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -873,7 +1027,32 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "page_num": {
+                            "type": "integer",
+                            "description": "页码"
+                          },
+                          "content": {
+                            "type": "string",
+                            "description": "该页 markdown"
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -917,7 +1096,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ExtractionResultItem"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -961,7 +1155,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AnalysisResultItem"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1005,7 +1214,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/FileDetailResponse"
+                    }
+                  }
                 }
               }
             }
@@ -1050,7 +1271,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ExtractionFieldResponse"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1090,7 +1326,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "field_id": {
+                          "type": "string",
+                          "description": "字段 ID"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1178,7 +1432,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "exists": {
+                          "type": "boolean",
+                          "description": "是否已存在"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1220,7 +1492,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ExtractionTestResponse"
+                    }
+                  }
                 }
               }
             }
@@ -1305,7 +1589,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AnalysisRuleResponse"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1345,7 +1644,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "rule_id": {
+                          "type": "string",
+                          "description": "规则 ID"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1433,7 +1750,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "exists": {
+                          "type": "boolean",
+                          "description": "是否已存在"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1475,7 +1810,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AnalysisTestResponse"
+                    }
+                  }
                 }
               }
             }
@@ -1498,8 +1845,8 @@
         "tags": [
           "analysis"
         ],
-        "summary": "Run Independent Analysis",
-        "description": "使用外部字段值批量执行逻辑规则，支持 sync/async/stream。",
+        "summary": "独立逻辑分析执行",
+        "description": "接收外部传入的 `field_values`（不读文件提取结果、不写 `analysis_result`），按 `type_id` 加载启用规则执行。支持 `sync` / `async` / `stream`，可批量 `items`。\n\n- 要求每条 item 的 `field_values` 覆盖规则 `depend_fields`\n- items 间并发，单 item 内按 `priority, rule_id` 顺序执行\n- `async` 模式用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`\n\n返回 `data=AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`（sync）。",
         "operationId": "run_independent_analysis_analysis_run_post",
         "requestBody": {
           "content": {
@@ -1516,7 +1863,21 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AnalysisRunResponse"
+                    }
+                  }
+                }
               }
             }
           },
@@ -1597,7 +1958,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SearchResultItem"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1737,7 +2113,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/DocTypeResponse"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1779,7 +2170,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "type_id": {
+                          "type": "string",
+                          "description": "新建/更新的类型 ID"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1833,7 +2242,49 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "old_type_id": {
+                          "type": "string",
+                          "description": "原类型 ID"
+                        },
+                        "type_id": {
+                          "type": "string",
+                          "description": "新类型 ID"
+                        },
+                        "renamed": {
+                          "type": "boolean",
+                          "description": "是否发生改名"
+                        },
+                        "updated_files": {
+                          "type": "integer",
+                          "description": "改名级联的文件数"
+                        },
+                        "updated_fields": {
+                          "type": "integer",
+                          "description": "改名级联的字段数"
+                        },
+                        "updated_rules": {
+                          "type": "integer",
+                          "description": "改名级联的规则数"
+                        },
+                        "updated_children": {
+                          "type": "integer",
+                          "description": "改名级联的子类型数"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1887,7 +2338,37 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "type_id": {
+                          "type": "string",
+                          "description": "被删类型 ID"
+                        },
+                        "deleted_files": {
+                          "type": "integer",
+                          "description": "级联删除文件数"
+                        },
+                        "deleted_fields": {
+                          "type": "integer",
+                          "description": "级联删除字段数"
+                        },
+                        "deleted_rules": {
+                          "type": "integer",
+                          "description": "级联删除规则数"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1929,7 +2410,29 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "results": {
+                          "type": "array",
+                          "description": "逐条删除结果"
+                        },
+                        "deleted": {
+                          "type": "integer",
+                          "description": "成功删除条数"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1983,7 +2486,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/CopyConfigsResponse"
+                    }
+                  }
                 }
               }
             }
@@ -2027,7 +2542,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ExportPayload"
+                    }
+                  }
                 }
               }
             }
@@ -2069,7 +2596,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ImportConfigsResponse"
+                    }
+                  }
                 }
               }
             }
@@ -2101,7 +2640,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProjectResponse"
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2131,7 +2685,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "project_id": {
+                          "type": "string",
+                          "description": "项目 ID"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2175,7 +2747,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "project_id": {
+                          "type": "string",
+                          "description": "被删项目 ID"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2217,7 +2807,33 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "requested": {
+                          "type": "integer",
+                          "description": "入参类型数"
+                        },
+                        "affected": {
+                          "type": "integer",
+                          "description": "实际写入数（含级联）"
+                        },
+                        "project_id": {
+                          "type": "string",
+                          "description": "目标项目 ID（null=移出）"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2261,7 +2877,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "type_id": {
+                          "type": "string",
+                          "description": "类型 ID"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2305,7 +2939,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "type_id": {
+                          "type": "string",
+                          "description": "类型 ID"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2337,7 +2989,29 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "current": {
+                          "type": "string",
+                          "description": "最新日志文件名（可空）"
+                        },
+                        "items": {
+                          "type": "array",
+                          "description": "文件列表"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -2405,7 +3079,29 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResponseWrapper"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "file": {
+                          "type": "string",
+                          "description": "日志文件名（可空）"
+                        },
+                        "lines": {
+                          "type": "array",
+                          "description": "日志行"
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -3201,15 +3897,16 @@
         "description": "导出格式的字段项（不含 `type_id` / 时间戳；`field_id` 保留但导入时会重新生成）。"
       },
       "ExportPayload": {
+        "description": "导出/导入的整体载荷。`GET /doctype/{type_id}/export` 产出，`POST /doctype/import` 消费。",
         "properties": {
           "type_id": {
-            "type": "string",
             "title": "Type Id",
+            "type": "string",
             "description": "源类型 ID（导入时若未指定 `target_type_id` 则用它）。"
           },
           "type_name": {
-            "type": "string",
             "title": "Type Name",
+            "type": "string",
             "description": "源类型名（自动创建目标类型时作为名称）。"
           },
           "description": {
@@ -3221,60 +3918,61 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Description",
             "description": "源类型描述。"
           },
           "max_parse_pages": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": 1.0
+                "minimum": 1,
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Max Parse Pages"
           },
           "enable_embedding": {
-            "type": "integer",
-            "maximum": 1.0,
-            "minimum": 0.0,
+            "default": 1,
+            "maximum": 1,
+            "minimum": 0,
             "title": "Enable Embedding",
-            "default": 1
+            "type": "integer"
           },
           "version": {
-            "type": "integer",
-            "title": "Version",
             "default": 1,
+            "title": "Version",
+            "type": "integer",
             "description": "载荷版本号，当前为 1。"
           },
           "fields": {
+            "default": [],
             "items": {
               "$ref": "#/components/schemas/ExportFieldItem"
             },
-            "type": "array",
             "title": "Fields",
-            "default": [],
+            "type": "array",
             "description": "字段项列表（`ExportFieldItem`）。"
           },
           "rules": {
+            "default": [],
             "items": {
               "$ref": "#/components/schemas/ExportRuleItem"
             },
-            "type": "array",
             "title": "Rules",
-            "default": [],
+            "type": "array",
             "description": "规则项列表（`ExportRuleItem`）。"
           }
         },
-        "type": "object",
         "required": [
           "type_id",
           "type_name"
         ],
         "title": "ExportPayload",
-        "description": "导出/导入的整体载荷。`GET /doctype/{type_id}/export` 产出，`POST /doctype/import` 消费。"
+        "type": "object"
       },
       "ExportRuleItem": {
         "properties": {
@@ -3978,6 +4676,1739 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "DocTypeResponse": {
+        "properties": {
+          "type_id": {
+            "title": "Type Id",
+            "type": "string"
+          },
+          "type_name": {
+            "title": "Type Name",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "max_parse_pages": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Parse Pages"
+          },
+          "enable_embedding": {
+            "default": 1,
+            "title": "Enable Embedding",
+            "type": "integer"
+          },
+          "is_default": {
+            "default": 0,
+            "title": "Is Default",
+            "type": "integer"
+          },
+          "enabled": {
+            "default": 1,
+            "title": "Enabled",
+            "type": "integer"
+          },
+          "is_template": {
+            "default": 0,
+            "title": "Is Template",
+            "type": "integer"
+          },
+          "parent_type_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parent Type Id"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project Id"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project Name"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "type_id",
+          "type_name"
+        ],
+        "title": "DocTypeResponse",
+        "type": "object"
+      },
+      "CopyConfigsResponse": {
+        "properties": {
+          "copied_fields": {
+            "default": 0,
+            "title": "Copied Fields",
+            "type": "integer"
+          },
+          "skipped_fields": {
+            "default": 0,
+            "title": "Skipped Fields",
+            "type": "integer"
+          },
+          "copied_rules": {
+            "default": 0,
+            "title": "Copied Rules",
+            "type": "integer"
+          },
+          "skipped_rules": {
+            "default": 0,
+            "title": "Skipped Rules",
+            "type": "integer"
+          },
+          "missing_dependencies": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Dependencies",
+            "type": "array"
+          }
+        },
+        "title": "CopyConfigsResponse",
+        "type": "object"
+      },
+      "ImportConfigsResponse": {
+        "properties": {
+          "target_type_id": {
+            "title": "Target Type Id",
+            "type": "string"
+          },
+          "created_type": {
+            "default": false,
+            "title": "Created Type",
+            "type": "boolean"
+          },
+          "copied_fields": {
+            "default": 0,
+            "title": "Copied Fields",
+            "type": "integer"
+          },
+          "skipped_fields": {
+            "default": 0,
+            "title": "Skipped Fields",
+            "type": "integer"
+          },
+          "copied_rules": {
+            "default": 0,
+            "title": "Copied Rules",
+            "type": "integer"
+          },
+          "skipped_rules": {
+            "default": 0,
+            "title": "Skipped Rules",
+            "type": "integer"
+          },
+          "missing_dependencies": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Dependencies",
+            "type": "array"
+          }
+        },
+        "required": [
+          "target_type_id"
+        ],
+        "title": "ImportConfigsResponse",
+        "type": "object"
+      },
+      "ProjectResponse": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "project_name": {
+            "title": "Project Name",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "type_count": {
+            "default": 0,
+            "title": "Type Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "project_id",
+          "project_name"
+        ],
+        "title": "ProjectResponse",
+        "type": "object"
+      },
+      "FileListItem": {
+        "properties": {
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "file_name": {
+            "title": "File Name",
+            "type": "string"
+          },
+          "file_size": {
+            "title": "File Size",
+            "type": "integer"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "string"
+          },
+          "type_id": {
+            "default": "default",
+            "title": "Type Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          },
+          "create_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Create Time"
+          }
+        },
+        "required": [
+          "file_id",
+          "file_name",
+          "file_size",
+          "progress"
+        ],
+        "title": "FileListItem",
+        "type": "object"
+      },
+      "FileListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FileListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "total_pages"
+        ],
+        "title": "FileListResponse",
+        "type": "object"
+      },
+      "ProcessingItem": {
+        "description": "处理中队列项：/file/processing 返回。带 doc_type JOIN 出来的 type_name/project_id。",
+        "properties": {
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "file_name": {
+            "title": "File Name",
+            "type": "string"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "string"
+          },
+          "type_id": {
+            "default": "default",
+            "title": "Type Id",
+            "type": "string"
+          },
+          "type_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Type Name"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project Id"
+          },
+          "create_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Create Time"
+          }
+        },
+        "required": [
+          "file_id",
+          "file_name",
+          "progress"
+        ],
+        "title": "ProcessingItem",
+        "type": "object"
+      },
+      "FileContextChunkItem": {
+        "properties": {
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "chunk_index": {
+            "title": "Chunk Index",
+            "type": "integer"
+          },
+          "total_chunks": {
+            "title": "Total Chunks",
+            "type": "integer"
+          },
+          "chunk_content": {
+            "title": "Chunk Content",
+            "type": "string"
+          },
+          "start_pos": {
+            "title": "Start Pos",
+            "type": "integer"
+          },
+          "end_pos": {
+            "title": "End Pos",
+            "type": "integer"
+          },
+          "page_num": {
+            "default": "",
+            "title": "Page Num",
+            "type": "string"
+          },
+          "hit": {
+            "default": false,
+            "title": "Hit",
+            "type": "boolean"
+          },
+          "hit_count": {
+            "default": 0,
+            "title": "Hit Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_id",
+          "chunk_id",
+          "chunk_index",
+          "total_chunks",
+          "chunk_content",
+          "start_pos",
+          "end_pos"
+        ],
+        "title": "FileContextChunkItem",
+        "type": "object"
+      },
+      "FileContextMatchItem": {
+        "properties": {
+          "match_index": {
+            "title": "Match Index",
+            "type": "integer"
+          },
+          "keyword": {
+            "title": "Keyword",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "match_start_pos": {
+            "title": "Match Start Pos",
+            "type": "integer"
+          },
+          "match_end_pos": {
+            "title": "Match End Pos",
+            "type": "integer"
+          },
+          "context_start_pos": {
+            "title": "Context Start Pos",
+            "type": "integer"
+          },
+          "context_end_pos": {
+            "title": "Context End Pos",
+            "type": "integer"
+          },
+          "context": {
+            "title": "Context",
+            "type": "string"
+          },
+          "page_num": {
+            "default": "",
+            "title": "Page Num",
+            "type": "string"
+          },
+          "bboxes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Bboxes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "match_index",
+          "keyword",
+          "position",
+          "match_start_pos",
+          "match_end_pos",
+          "context_start_pos",
+          "context_end_pos",
+          "context"
+        ],
+        "title": "FileContextMatchItem",
+        "type": "object"
+      },
+      "FileContextQueryResponse": {
+        "properties": {
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "query_type": {
+            "title": "Query Type",
+            "type": "string"
+          },
+          "matched": {
+            "title": "Matched",
+            "type": "boolean"
+          },
+          "match_count": {
+            "title": "Match Count",
+            "type": "integer"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/FileContextMatchItem"
+            },
+            "title": "Matches",
+            "type": "array"
+          },
+          "chunks": {
+            "items": {
+              "$ref": "#/components/schemas/FileContextChunkItem"
+            },
+            "title": "Chunks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "file_id",
+          "query",
+          "query_type",
+          "matched",
+          "match_count"
+        ],
+        "title": "FileContextQueryResponse",
+        "type": "object"
+      },
+      "BatchDeleteResponse": {
+        "properties": {
+          "deleted_count": {
+            "title": "Deleted Count",
+            "type": "integer"
+          },
+          "failed_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Failed Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "deleted_count"
+        ],
+        "title": "BatchDeleteResponse",
+        "type": "object"
+      },
+      "FileStatusResponse": {
+        "properties": {
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "file_name": {
+            "title": "File Name",
+            "type": "string"
+          },
+          "file_size": {
+            "title": "File Size",
+            "type": "integer"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "string"
+          },
+          "type_id": {
+            "default": "default",
+            "title": "Type Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          },
+          "create_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Create Time"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "file_id",
+          "file_name",
+          "file_size",
+          "progress"
+        ],
+        "title": "FileStatusResponse",
+        "type": "object"
+      },
+      "FileDetailResponse": {
+        "properties": {
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "file_name": {
+            "title": "File Name",
+            "type": "string"
+          },
+          "file_size": {
+            "title": "File Size",
+            "type": "integer"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "string"
+          },
+          "type_id": {
+            "default": "default",
+            "title": "Type Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          },
+          "create_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Create Time"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Updated At"
+          },
+          "start_parsing_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Parsing Time"
+          },
+          "end_parsing_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Parsing Time"
+          },
+          "start_tableing_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Tableing Time"
+          },
+          "end_tableing_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Tableing Time"
+          },
+          "start_chunking_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Chunking Time"
+          },
+          "end_chunking_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Chunking Time"
+          },
+          "start_embedding_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Embedding Time"
+          },
+          "end_embedding_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Embedding Time"
+          },
+          "start_extracting_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Extracting Time"
+          },
+          "end_extracting_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Extracting Time"
+          },
+          "start_analyzing_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Analyzing Time"
+          },
+          "end_analyzing_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Analyzing Time"
+          }
+        },
+        "required": [
+          "file_id",
+          "file_name",
+          "file_size",
+          "progress"
+        ],
+        "title": "FileDetailResponse",
+        "type": "object"
+      },
+      "FileTableItem": {
+        "properties": {
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "table_index": {
+            "title": "Table Index",
+            "type": "integer"
+          },
+          "total_table": {
+            "title": "Total Table",
+            "type": "integer"
+          },
+          "table_name": {
+            "title": "Table Name",
+            "type": "string"
+          },
+          "table_content": {
+            "title": "Table Content",
+            "type": "string"
+          },
+          "page_num": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page Num"
+          }
+        },
+        "required": [
+          "file_id",
+          "table_index",
+          "total_table",
+          "table_name",
+          "table_content"
+        ],
+        "title": "FileTableItem",
+        "type": "object"
+      },
+      "FileChunkItem": {
+        "properties": {
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "chunk_index": {
+            "title": "Chunk Index",
+            "type": "integer"
+          },
+          "total_chunks": {
+            "title": "Total Chunks",
+            "type": "integer"
+          },
+          "chunk_content": {
+            "title": "Chunk Content",
+            "type": "string"
+          },
+          "page_num": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page Num"
+          }
+        },
+        "required": [
+          "file_id",
+          "chunk_id",
+          "chunk_index",
+          "total_chunks",
+          "chunk_content"
+        ],
+        "title": "FileChunkItem",
+        "type": "object"
+      },
+      "ExtractionResultItem": {
+        "properties": {
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "field_id": {
+            "title": "Field Id",
+            "type": "string"
+          },
+          "field_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Field Name"
+          },
+          "extracted_value": {
+            "title": "Extracted Value",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "source_refs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Refs"
+          }
+        },
+        "required": [
+          "file_id",
+          "field_id",
+          "extracted_value"
+        ],
+        "title": "ExtractionResultItem",
+        "type": "object"
+      },
+      "AnalysisResultItem": {
+        "properties": {
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "rule_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rule Name"
+          },
+          "result_value": {
+            "title": "Result Value",
+            "type": "string"
+          },
+          "input_values": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Input Values"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "source_refs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Refs"
+          }
+        },
+        "required": [
+          "file_id",
+          "rule_id",
+          "result_value"
+        ],
+        "title": "AnalysisResultItem",
+        "type": "object"
+      },
+      "ExtractionFieldResponse": {
+        "properties": {
+          "field_id": {
+            "maxLength": 100,
+            "pattern": "^[a-zA-Z0-9_]+$",
+            "title": "Field Id",
+            "type": "string"
+          },
+          "type_id": {
+            "default": "default",
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Type Id",
+            "type": "string"
+          },
+          "field_name": {
+            "maxLength": 200,
+            "title": "Field Name",
+            "type": "string"
+          },
+          "source_type": {
+            "$ref": "#/components/schemas/SourceTypeEnum"
+          },
+          "enabled": {
+            "default": 1,
+            "title": "Enabled",
+            "type": "integer"
+          },
+          "priority": {
+            "default": 0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "use_llm": {
+            "default": 1,
+            "title": "Use Llm",
+            "type": "integer"
+          },
+          "table_name_pattern": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Table Name Pattern"
+          },
+          "table_match_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TableMatchTypeEnum"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "table_match_keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Table Match Keywords"
+          },
+          "table_match_max_results": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Table Match Max Results"
+          },
+          "table_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Table System Prompt"
+          },
+          "table_extract_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Table Extract Prompt"
+          },
+          "search_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchTypeEnum"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "search_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Search Config"
+          },
+          "text_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Text System Prompt"
+          },
+          "text_extract_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Text Extract Prompt"
+          },
+          "vl_method": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VLMethodEnum"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "vl_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Vl Config"
+          },
+          "vl_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Vl System Prompt"
+          },
+          "vl_extract_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Vl Extract Prompt"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "field_id",
+          "field_name",
+          "source_type"
+        ],
+        "title": "ExtractionFieldResponse",
+        "type": "object"
+      },
+      "ExtractionTestResponse": {
+        "properties": {
+          "search_results": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Search Results",
+            "type": "array"
+          },
+          "llm_input": {
+            "default": "",
+            "title": "Llm Input",
+            "type": "string"
+          },
+          "llm_output": {
+            "default": "",
+            "title": "Llm Output",
+            "type": "string"
+          },
+          "extracted_value": {
+            "default": "",
+            "title": "Extracted Value",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "ExtractionTestResponse",
+        "type": "object"
+      },
+      "AnalysisRuleResponse": {
+        "properties": {
+          "rule_id": {
+            "maxLength": 100,
+            "pattern": "^[a-zA-Z0-9_]+$",
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "type_id": {
+            "default": "default",
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Type Id",
+            "type": "string"
+          },
+          "rule_name": {
+            "maxLength": 200,
+            "title": "Rule Name",
+            "type": "string"
+          },
+          "rule_type": {
+            "$ref": "#/components/schemas/RuleTypeEnum"
+          },
+          "expression": {
+            "title": "Expression",
+            "type": "string"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "System Prompt"
+          },
+          "depend_fields": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Depend Fields"
+          },
+          "web_search": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Web Search"
+          },
+          "enabled": {
+            "default": 1,
+            "title": "Enabled",
+            "type": "integer"
+          },
+          "priority": {
+            "default": 0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "rule_id",
+          "rule_name",
+          "rule_type",
+          "expression"
+        ],
+        "title": "AnalysisRuleResponse",
+        "type": "object"
+      },
+      "AnalysisTestResponse": {
+        "properties": {
+          "input_values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Input Values",
+            "type": "object"
+          },
+          "expression_resolved": {
+            "default": "",
+            "title": "Expression Resolved",
+            "type": "string"
+          },
+          "result_value": {
+            "default": "",
+            "title": "Result Value",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "AnalysisTestResponse",
+        "type": "object"
+      },
+      "AnalysisRunItemResult": {
+        "properties": {
+          "item_index": {
+            "title": "Item Index",
+            "type": "integer"
+          },
+          "biz_id": {
+            "title": "Biz Id",
+            "type": "string"
+          },
+          "type_id": {
+            "title": "Type Id",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "succeeded": {
+            "title": "Succeeded",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisRunRuleResult"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "item_index",
+          "biz_id",
+          "type_id",
+          "total",
+          "succeeded",
+          "failed"
+        ],
+        "title": "AnalysisRunItemResult",
+        "type": "object"
+      },
+      "AnalysisRunRuleResult": {
+        "properties": {
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "rule_name": {
+            "title": "Rule Name",
+            "type": "string"
+          },
+          "rule_type": {
+            "title": "Rule Type",
+            "type": "string"
+          },
+          "result": {
+            "default": "",
+            "title": "Result",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "input_values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Input Values",
+            "type": "object"
+          },
+          "source_refs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Refs"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rule_id",
+          "rule_name",
+          "rule_type",
+          "success",
+          "index",
+          "total"
+        ],
+        "title": "AnalysisRunRuleResult",
+        "type": "object"
+      },
+      "AnalysisRunResponse": {
+        "properties": {
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisRunItemResult"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "total_items"
+        ],
+        "title": "AnalysisRunResponse",
+        "type": "object"
+      },
+      "SearchResultItem": {
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "chunk_index": {
+            "title": "Chunk Index",
+            "type": "integer"
+          },
+          "chunk_content": {
+            "title": "Chunk Content",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "page_num": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page Num"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "file_id",
+          "chunk_index",
+          "chunk_content",
+          "score"
+        ],
+        "title": "SearchResultItem",
+        "type": "object"
       }
     }
   },
