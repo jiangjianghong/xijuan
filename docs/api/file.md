@@ -76,11 +76,11 @@ curl -X POST "http://localhost:5019/file/parse?type_id=default&mode=async" \
 <!-- AUTOGEN:response GET /file/list status=200 -->
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| items | array[FileListItem] | 否 |  |
-| total | integer | 否 |  |
-| page | integer | 否 |  |
-| page_size | integer | 否 |  |
-| total_pages | integer | 否 |  |
+| items | array[FileListItem] | 否 | 当前页文件列表 |
+| total | integer | 否 | 总条数 |
+| page | integer | 否 | 当前页码（从 1 起） |
+| page_size | integer | 否 | 每页条数 |
+| total_pages | integer | 否 | 总页数 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -103,13 +103,13 @@ _data 为数组，每个元素：_
 
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| file_id | string | 否 |  |
-| file_name | string | 否 |  |
-| progress | string | 否 |  |
-| type_id | string | 是 |  |
-| type_name | string | 是 |  |
-| project_id | string | 是 |  |
-| create_time | string | 是 |  |
+| file_id | string | 否 | 文件唯一 ID |
+| file_name | string | 否 | 原始文件名 |
+| progress | string | 否 | 处理进度 |
+| type_id | string | 是 | 归属文档类型 |
+| type_name | string | 是 | 类型名（JOIN doc_type，可空） |
+| project_id | string | 是 | 所属项目 ID（可空） |
+| create_time | string | 是 | 创建时间 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -149,13 +149,13 @@ _data 为数组，每个元素：_
 <!-- AUTOGEN:response POST /file/context_query status=200 -->
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| file_id | string | 否 |  |
-| query | string | 否 |  |
-| query_type | string | 否 |  |
-| matched | boolean | 否 |  |
-| match_count | integer | 否 |  |
-| matches | array[FileContextMatchItem] | 是 |  |
-| chunks | array[FileContextChunkItem] | 是 |  |
+| file_id | string | 否 | 文件唯一 ID |
+| query | string | 否 | 查询词 |
+| query_type | string | 否 | 查询类型（keyword/text_fragment） |
+| matched | boolean | 否 | 是否有命中 |
+| match_count | integer | 否 | 命中数 |
+| matches | array[FileContextMatchItem] | 是 | 命中列表 |
+| chunks | array[FileContextChunkItem] | 是 | 全部分块（include_all_chunks=true 时含命中标记） |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -188,8 +188,8 @@ _data 为数组，每个元素：_
 <!-- AUTOGEN:response DELETE /file/batch status=200 -->
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| deleted_count | integer | 否 |  |
-| failed_ids | array[string] | 是 |  |
+| deleted_count | integer | 否 | 成功删除数 |
+| failed_ids | array[string] | 是 | 删除失败/不存在的 file_id 列表 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -218,14 +218,14 @@ _data 为数组，每个元素：_
 <!-- AUTOGEN:response GET /file/{file_id}/status status=200 -->
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| file_id | string | 否 |  |
-| file_name | string | 否 |  |
-| file_size | integer | 否 |  |
-| progress | string | 否 |  |
-| type_id | string | 是 |  |
-| error | string | 是 |  |
-| create_time | string | 是 |  |
-| updated_at | string | 是 |  |
+| file_id | string | 否 | 文件唯一 ID |
+| file_name | string | 否 | 原始文件名 |
+| file_size | integer | 否 | 文件字节数 |
+| progress | string | 否 | 处理进度（见 progress 状态机） |
+| type_id | string | 是 | 归属文档类型 |
+| error | string | 是 | 最近失败的错误信息（可空） |
+| create_time | string | 是 | 创建时间 |
+| updated_at | string | 是 | 最近更新时间 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -255,26 +255,26 @@ _data 为数组，每个元素：_
 <!-- AUTOGEN:response GET /file/{file_id}/detail status=200 -->
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| file_id | string | 否 |  |
-| file_name | string | 否 |  |
-| file_size | integer | 否 |  |
-| progress | string | 否 |  |
-| type_id | string | 是 |  |
-| error | string | 是 |  |
-| create_time | string | 是 |  |
-| updated_at | string | 是 |  |
-| start_parsing_time | string | 是 |  |
-| end_parsing_time | string | 是 |  |
-| start_tableing_time | string | 是 |  |
-| end_tableing_time | string | 是 |  |
-| start_chunking_time | string | 是 |  |
-| end_chunking_time | string | 是 |  |
-| start_embedding_time | string | 是 |  |
-| end_embedding_time | string | 是 |  |
-| start_extracting_time | string | 是 |  |
-| end_extracting_time | string | 是 |  |
-| start_analyzing_time | string | 是 |  |
-| end_analyzing_time | string | 是 |  |
+| file_id | string | 否 | 文件唯一 ID |
+| file_name | string | 否 | 原始文件名 |
+| file_size | integer | 否 | 文件字节数 |
+| progress | string | 否 | 处理进度 |
+| type_id | string | 是 | 归属文档类型 |
+| error | string | 是 | 错误信息（可空） |
+| create_time | string | 是 | 创建时间 |
+| updated_at | string | 是 | 最近更新时间 |
+| start_parsing_time | string | 是 | 解析开始 |
+| end_parsing_time | string | 是 | 解析结束 |
+| start_tableing_time | string | 是 | 表名校验开始 |
+| end_tableing_time | string | 是 | 表名校验结束 |
+| start_chunking_time | string | 是 | 分块开始 |
+| end_chunking_time | string | 是 | 分块结束 |
+| start_embedding_time | string | 是 | 向量化开始 |
+| end_embedding_time | string | 是 | 向量化结束 |
+| start_extracting_time | string | 是 | 抽取开始 |
+| end_extracting_time | string | 是 | 抽取结束 |
+| start_analyzing_time | string | 是 | 分析开始 |
+| end_analyzing_time | string | 是 | 分析结束 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -447,12 +447,12 @@ _data 为数组，每个元素：_
 
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| file_id | string | 否 |  |
-| table_index | integer | 否 |  |
-| total_table | integer | 否 |  |
-| table_name | string | 否 |  |
-| table_content | string | 否 |  |
-| page_num | string | 是 |  |
+| file_id | string | 否 | 文件唯一 ID |
+| table_index | integer | 否 | 表序号（从 0） |
+| total_table | integer | 否 | 表总数 |
+| table_name | string | 否 | 表名（tableing 阶段 LLM 识别，截断 30 字） |
+| table_content | string | 否 | 表格 HTML 内容 |
+| page_num | string | 是 | 所在页（可能为范围如 3-4，可空） |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -483,12 +483,12 @@ _data 为数组，每个元素：_
 
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| file_id | string | 否 |  |
-| chunk_id | string | 否 |  |
-| chunk_index | integer | 否 |  |
-| total_chunks | integer | 否 |  |
-| chunk_content | string | 否 |  |
-| page_num | string | 是 |  |
+| file_id | string | 否 | 文件唯一 ID |
+| chunk_id | string | 否 | 分块 ID |
+| chunk_index | integer | 否 | 分块序号 |
+| total_chunks | integer | 否 | 分块总数 |
+| chunk_content | string | 否 | 分块正文 |
+| page_num | string | 是 | 所在页（可空） |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -587,12 +587,12 @@ _data 为数组，每个元素：_
 
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| file_id | string | 否 |  |
-| field_id | string | 否 |  |
-| field_name | string | 是 |  |
-| extracted_value | string | 否 |  |
-| reason | string | 是 |  |
-| source_refs | object | 是 | 结构详见 [source_refs](../guides/source-refs.md) |
+| file_id | string | 否 | 文件唯一 ID |
+| field_id | string | 否 | 字段 ID |
+| field_name | string | 是 | 字段名（配置删除则 null） |
+| extracted_value | string | 否 | 抽取值 |
+| reason | string | 是 | 抽取理由（可空） |
+| source_refs | object | 是 | 溯源（结构见 source-refs 指南）（结构详见 [source_refs](../guides/source-refs.md)） |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -623,13 +623,13 @@ _data 为数组，每个元素：_
 
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| file_id | string | 否 |  |
-| rule_id | string | 否 |  |
-| rule_name | string | 是 |  |
-| result_value | string | 否 |  |
-| input_values | object | 是 | 结构详见 [input_values](../reference/data-model.md#analysis_result) |
-| reason | string | 是 |  |
-| source_refs | object | 是 | 结构详见 [source_refs](../guides/source-refs.md) |
+| file_id | string | 否 | 文件唯一 ID |
+| rule_id | string | 否 | 规则 ID |
+| rule_name | string | 是 | 规则名（配置删除则 null） |
+| result_value | string | 否 | 分析结果 |
+| input_values | object | 是 | 依赖字段取值（结构详见 [input_values](../reference/data-model.md#analysis_result)） |
+| reason | string | 是 | 判断/计算理由（可空） |
+| source_refs | object | 是 | 溯源（judge 启用网络搜索时含 _web_search）（结构详见 [source_refs](../guides/source-refs.md)） |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**

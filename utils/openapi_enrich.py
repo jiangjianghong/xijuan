@@ -1128,6 +1128,191 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         },
         "examples": [{"query": "公司注册资本是多少", "file_id": None, "top_k": 5, "score_threshold": None}],
     },
+    # ── 响应模型（由 _inject_responses 注入 components 后，此处补字段说明）──
+    "FileListItem": {
+        "description": "文件列表项。",
+        "properties": {
+            "file_id": "文件唯一 ID", "file_name": "原始文件名", "file_size": "文件字节数",
+            "progress": "处理进度（见 progress 状态机）", "type_id": "归属文档类型",
+            "error": "最近失败的错误信息（可空）", "create_time": "创建时间",
+        },
+    },
+    "FileListResponse": {
+        "description": "分页文件列表。",
+        "properties": {
+            "items": "当前页文件列表", "total": "总条数", "page": "当前页码（从 1 起）",
+            "page_size": "每页条数", "total_pages": "总页数",
+        },
+    },
+    "FileStatusResponse": {
+        "description": "文件处理进度。",
+        "properties": {
+            "file_id": "文件唯一 ID", "file_name": "原始文件名", "file_size": "文件字节数",
+            "progress": "处理进度（见 progress 状态机）", "type_id": "归属文档类型",
+            "error": "最近失败的错误信息（可空）", "create_time": "创建时间", "updated_at": "最近更新时间",
+        },
+    },
+    "FileDetailResponse": {
+        "description": "文件完整详情（含六阶段起止时间戳，可算每阶段耗时）。",
+        "properties": {
+            "file_id": "文件唯一 ID", "file_name": "原始文件名", "file_size": "文件字节数",
+            "progress": "处理进度", "type_id": "归属文档类型", "error": "错误信息（可空）",
+            "create_time": "创建时间", "updated_at": "最近更新时间",
+            "start_parsing_time": "解析开始", "end_parsing_time": "解析结束",
+            "start_tableing_time": "表名校验开始", "end_tableing_time": "表名校验结束",
+            "start_chunking_time": "分块开始", "end_chunking_time": "分块结束",
+            "start_embedding_time": "向量化开始", "end_embedding_time": "向量化结束",
+            "start_extracting_time": "抽取开始", "end_extracting_time": "抽取结束",
+            "start_analyzing_time": "分析开始", "end_analyzing_time": "分析结束",
+        },
+    },
+    "ProcessingItem": {
+        "description": "处理中队列项。",
+        "properties": {
+            "file_id": "文件唯一 ID", "file_name": "原始文件名", "progress": "处理进度",
+            "type_id": "归属文档类型", "type_name": "类型名（JOIN doc_type，可空）",
+            "project_id": "所属项目 ID（可空）", "create_time": "创建时间",
+        },
+    },
+    "FileTableItem": {
+        "description": "文件表格项。",
+        "properties": {
+            "file_id": "文件唯一 ID", "table_index": "表序号（从 0）", "total_table": "表总数",
+            "table_name": "表名（tableing 阶段 LLM 识别，截断 30 字）", "table_content": "表格 HTML 内容",
+            "page_num": "所在页（可能为范围如 3-4，可空）",
+        },
+    },
+    "FileChunkItem": {
+        "description": "文件分块项。",
+        "properties": {
+            "file_id": "文件唯一 ID", "chunk_id": "分块 ID", "chunk_index": "分块序号",
+            "total_chunks": "分块总数", "chunk_content": "分块正文", "page_num": "所在页（可空）",
+        },
+    },
+    "FileContextMatchItem": {
+        "description": "上下文命中项。",
+        "properties": {
+            "match_index": "命中序号", "keyword": "命中的关键词/片段", "position": "命中位置偏移",
+            "match_start_pos": "命中起始偏移", "match_end_pos": "命中结束偏移",
+            "context_start_pos": "上下文窗口起始", "context_end_pos": "上下文窗口结束",
+            "context": "上下文文本", "page_num": "命中所在页", "bboxes": "块级 PDF 框（高亮定位）",
+        },
+    },
+    "FileContextChunkItem": {
+        "description": "上下文查询返回的分块项。",
+        "properties": {
+            "file_id": "文件唯一 ID", "chunk_id": "分块 ID", "chunk_index": "分块序号",
+            "total_chunks": "分块总数", "chunk_content": "分块正文", "start_pos": "起始偏移",
+            "end_pos": "结束偏移", "page_num": "所在页", "hit": "该分块是否命中", "hit_count": "命中次数",
+        },
+    },
+    "FileContextQueryResponse": {
+        "description": "文件片段上下文查询结果。",
+        "properties": {
+            "file_id": "文件唯一 ID", "query": "查询词", "query_type": "查询类型（keyword/text_fragment）",
+            "matched": "是否有命中", "match_count": "命中数", "matches": "命中列表",
+            "chunks": "全部分块（include_all_chunks=true 时含命中标记）",
+        },
+    },
+    "ExtractionResultItem": {
+        "description": "字段提取结果行。",
+        "properties": {
+            "file_id": "文件唯一 ID", "field_id": "字段 ID", "field_name": "字段名（配置删除则 null）",
+            "extracted_value": "抽取值", "reason": "抽取理由（可空）", "source_refs": "溯源（结构见 source-refs 指南）",
+        },
+    },
+    "AnalysisResultItem": {
+        "description": "逻辑分析结果行。",
+        "properties": {
+            "file_id": "文件唯一 ID", "rule_id": "规则 ID", "rule_name": "规则名（配置删除则 null）",
+            "result_value": "分析结果", "input_values": "依赖字段取值", "reason": "判断/计算理由（可空）",
+            "source_refs": "溯源（judge 启用网络搜索时含 _web_search）",
+        },
+    },
+    "SearchResultItem": {
+        "description": "向量检索命中项。",
+        "properties": {
+            "chunk_id": "分块 ID", "file_id": "文件唯一 ID", "chunk_index": "分块序号",
+            "chunk_content": "分块正文", "score": "COSINE 相似度（越大越相似）", "page_num": "所在页（可空）",
+        },
+    },
+    "BatchDeleteResponse": {
+        "description": "批量删除文件结果。",
+        "properties": {"deleted_count": "成功删除数", "failed_ids": "删除失败/不存在的 file_id 列表"},
+    },
+    "CopyConfigsResponse": {
+        "description": "跨类型复制配置结果。",
+        "properties": {
+            "copied_fields": "复制字段数", "skipped_fields": "跳过字段数", "copied_rules": "复制规则数",
+            "skipped_rules": "跳过规则数", "missing_dependencies": "丢失的依赖（格式 规则名::源field_id）",
+        },
+    },
+    "ImportConfigsResponse": {
+        "description": "导入配置结果。",
+        "properties": {
+            "target_type_id": "目标类型 ID", "created_type": "是否自动创建了类型",
+            "copied_fields": "导入字段数", "skipped_fields": "跳过字段数", "copied_rules": "导入规则数",
+            "skipped_rules": "跳过规则数", "missing_dependencies": "丢失的依赖",
+        },
+    },
+    "ProjectResponse": {
+        "description": "项目项。",
+        "properties": {
+            "project_id": "项目 ID", "project_name": "项目名", "description": "项目描述（可空）",
+            "type_count": "该项目下类型数", "created_at": "创建时间", "updated_at": "更新时间",
+        },
+    },
+    "DocTypeResponse": {
+        "description": "文档类型项。",
+        "properties": {
+            "type_id": "类型 ID", "type_name": "类型名", "description": "描述（可空）",
+            "max_parse_pages": "最大解析页数（可空）", "enable_embedding": "是否启用向量化",
+            "is_default": "是否默认类型", "enabled": "是否启用", "is_template": "是否模板",
+            "parent_type_id": "复制来源类型 ID（血缘，可空）", "project_id": "所属项目 ID（可空）",
+            "project_name": "所属项目名（可空）", "created_at": "创建时间", "updated_at": "更新时间",
+        },
+    },
+    "AnalysisRunRuleResult": {
+        "description": "独立分析单规则结果。",
+        "properties": {
+            "rule_id": "规则 ID", "rule_name": "规则名", "rule_type": "judge/calc", "result": "结果",
+            "reason": "理由", "input_values": "依赖字段取值", "source_refs": "溯源（可空）",
+            "success": "是否成功", "index": "序号", "total": "规则总数",
+        },
+    },
+    "AnalysisRunItemResult": {
+        "description": "独立分析单 item 结果。",
+        "properties": {
+            "item_index": "item 序号", "biz_id": "业务 ID", "type_id": "文档类型", "total": "规则数",
+            "succeeded": "成功数", "failed": "失败数", "results": "逐规则结果",
+        },
+    },
+    "AnalysisRunResponse": {
+        "description": "独立逻辑分析结果（sync）。",
+        "properties": {"total_items": "item 总数", "items": "逐 item 结果"},
+    },
+    "ExtractionTestResponse": {
+        "description": "字段提取调试结果。",
+        "properties": {
+            "search_results": "检索结果（形态随 source_type/search_type 不同）", "llm_input": "渲染后的 prompt",
+            "llm_output": "LLM/VL 原始输出", "extracted_value": "解析后的值", "reason": "抽取理由",
+        },
+    },
+    "AnalysisTestResponse": {
+        "description": "逻辑分析调试结果。",
+        "properties": {
+            "input_values": "依赖字段取值", "expression_resolved": "占位符替换后的表达式",
+            "result_value": "结果", "reason": "理由",
+        },
+    },
+    "ExtractionFieldResponse": {
+        "description": "字段提取配置（含时间戳）；各字段含义同「新增/更新字段配置」请求体。",
+        "properties": {"created_at": "创建时间", "updated_at": "更新时间"},
+    },
+    "AnalysisRuleResponse": {
+        "description": "逻辑分析规则配置（含时间戳）；各字段含义同「新增/更新分析规则」请求体。",
+        "properties": {"created_at": "创建时间", "updated_at": "更新时间"},
+    },
 }
 
 

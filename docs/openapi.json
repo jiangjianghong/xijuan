@@ -4681,11 +4681,13 @@
         "properties": {
           "type_id": {
             "title": "Type Id",
-            "type": "string"
+            "type": "string",
+            "description": "类型 ID"
           },
           "type_name": {
             "title": "Type Name",
-            "type": "string"
+            "type": "string",
+            "description": "类型名"
           },
           "description": {
             "anyOf": [
@@ -4697,7 +4699,8 @@
               }
             ],
             "default": null,
-            "title": "Description"
+            "title": "Description",
+            "description": "描述（可空）"
           },
           "max_parse_pages": {
             "anyOf": [
@@ -4709,27 +4712,32 @@
               }
             ],
             "default": null,
-            "title": "Max Parse Pages"
+            "title": "Max Parse Pages",
+            "description": "最大解析页数（可空）"
           },
           "enable_embedding": {
             "default": 1,
             "title": "Enable Embedding",
-            "type": "integer"
+            "type": "integer",
+            "description": "是否启用向量化"
           },
           "is_default": {
             "default": 0,
             "title": "Is Default",
-            "type": "integer"
+            "type": "integer",
+            "description": "是否默认类型"
           },
           "enabled": {
             "default": 1,
             "title": "Enabled",
-            "type": "integer"
+            "type": "integer",
+            "description": "是否启用"
           },
           "is_template": {
             "default": 0,
             "title": "Is Template",
-            "type": "integer"
+            "type": "integer",
+            "description": "是否模板"
           },
           "parent_type_id": {
             "anyOf": [
@@ -4741,7 +4749,8 @@
               }
             ],
             "default": null,
-            "title": "Parent Type Id"
+            "title": "Parent Type Id",
+            "description": "复制来源类型 ID（血缘，可空）"
           },
           "project_id": {
             "anyOf": [
@@ -4753,7 +4762,8 @@
               }
             ],
             "default": null,
-            "title": "Project Id"
+            "title": "Project Id",
+            "description": "所属项目 ID（可空）"
           },
           "project_name": {
             "anyOf": [
@@ -4765,7 +4775,8 @@
               }
             ],
             "default": null,
-            "title": "Project Name"
+            "title": "Project Name",
+            "description": "所属项目名（可空）"
           },
           "created_at": {
             "anyOf": [
@@ -4778,7 +4789,8 @@
               }
             ],
             "default": null,
-            "title": "Created At"
+            "title": "Created At",
+            "description": "创建时间"
           },
           "updated_at": {
             "anyOf": [
@@ -4791,7 +4803,8 @@
               }
             ],
             "default": null,
-            "title": "Updated At"
+            "title": "Updated At",
+            "description": "更新时间"
           }
         },
         "required": [
@@ -4799,29 +4812,34 @@
           "type_name"
         ],
         "title": "DocTypeResponse",
-        "type": "object"
+        "type": "object",
+        "description": "文档类型项。"
       },
       "CopyConfigsResponse": {
         "properties": {
           "copied_fields": {
             "default": 0,
             "title": "Copied Fields",
-            "type": "integer"
+            "type": "integer",
+            "description": "复制字段数"
           },
           "skipped_fields": {
             "default": 0,
             "title": "Skipped Fields",
-            "type": "integer"
+            "type": "integer",
+            "description": "跳过字段数"
           },
           "copied_rules": {
             "default": 0,
             "title": "Copied Rules",
-            "type": "integer"
+            "type": "integer",
+            "description": "复制规则数"
           },
           "skipped_rules": {
             "default": 0,
             "title": "Skipped Rules",
-            "type": "integer"
+            "type": "integer",
+            "description": "跳过规则数"
           },
           "missing_dependencies": {
             "default": [],
@@ -4829,42 +4847,50 @@
               "type": "string"
             },
             "title": "Missing Dependencies",
-            "type": "array"
+            "type": "array",
+            "description": "丢失的依赖（格式 规则名::源field_id）"
           }
         },
         "title": "CopyConfigsResponse",
-        "type": "object"
+        "type": "object",
+        "description": "跨类型复制配置结果。"
       },
       "ImportConfigsResponse": {
         "properties": {
           "target_type_id": {
             "title": "Target Type Id",
-            "type": "string"
+            "type": "string",
+            "description": "目标类型 ID"
           },
           "created_type": {
             "default": false,
             "title": "Created Type",
-            "type": "boolean"
+            "type": "boolean",
+            "description": "是否自动创建了类型"
           },
           "copied_fields": {
             "default": 0,
             "title": "Copied Fields",
-            "type": "integer"
+            "type": "integer",
+            "description": "导入字段数"
           },
           "skipped_fields": {
             "default": 0,
             "title": "Skipped Fields",
-            "type": "integer"
+            "type": "integer",
+            "description": "跳过字段数"
           },
           "copied_rules": {
             "default": 0,
             "title": "Copied Rules",
-            "type": "integer"
+            "type": "integer",
+            "description": "导入规则数"
           },
           "skipped_rules": {
             "default": 0,
             "title": "Skipped Rules",
-            "type": "integer"
+            "type": "integer",
+            "description": "跳过规则数"
           },
           "missing_dependencies": {
             "default": [],
@@ -4872,24 +4898,28 @@
               "type": "string"
             },
             "title": "Missing Dependencies",
-            "type": "array"
+            "type": "array",
+            "description": "丢失的依赖"
           }
         },
         "required": [
           "target_type_id"
         ],
         "title": "ImportConfigsResponse",
-        "type": "object"
+        "type": "object",
+        "description": "导入配置结果。"
       },
       "ProjectResponse": {
         "properties": {
           "project_id": {
             "title": "Project Id",
-            "type": "string"
+            "type": "string",
+            "description": "项目 ID"
           },
           "project_name": {
             "title": "Project Name",
-            "type": "string"
+            "type": "string",
+            "description": "项目名"
           },
           "description": {
             "anyOf": [
@@ -4901,12 +4931,14 @@
               }
             ],
             "default": null,
-            "title": "Description"
+            "title": "Description",
+            "description": "项目描述（可空）"
           },
           "type_count": {
             "default": 0,
             "title": "Type Count",
-            "type": "integer"
+            "type": "integer",
+            "description": "该项目下类型数"
           },
           "created_at": {
             "anyOf": [
@@ -4919,7 +4951,8 @@
               }
             ],
             "default": null,
-            "title": "Created At"
+            "title": "Created At",
+            "description": "创建时间"
           },
           "updated_at": {
             "anyOf": [
@@ -4932,7 +4965,8 @@
               }
             ],
             "default": null,
-            "title": "Updated At"
+            "title": "Updated At",
+            "description": "更新时间"
           }
         },
         "required": [
@@ -4940,30 +4974,36 @@
           "project_name"
         ],
         "title": "ProjectResponse",
-        "type": "object"
+        "type": "object",
+        "description": "项目项。"
       },
       "FileListItem": {
         "properties": {
           "file_id": {
             "title": "File Id",
-            "type": "string"
+            "type": "string",
+            "description": "文件唯一 ID"
           },
           "file_name": {
             "title": "File Name",
-            "type": "string"
+            "type": "string",
+            "description": "原始文件名"
           },
           "file_size": {
             "title": "File Size",
-            "type": "integer"
+            "type": "integer",
+            "description": "文件字节数"
           },
           "progress": {
             "title": "Progress",
-            "type": "string"
+            "type": "string",
+            "description": "处理进度（见 progress 状态机）"
           },
           "type_id": {
             "default": "default",
             "title": "Type Id",
-            "type": "string"
+            "type": "string",
+            "description": "归属文档类型"
           },
           "error": {
             "anyOf": [
@@ -4975,7 +5015,8 @@
               }
             ],
             "default": null,
-            "title": "Error"
+            "title": "Error",
+            "description": "最近失败的错误信息（可空）"
           },
           "create_time": {
             "anyOf": [
@@ -4988,7 +5029,8 @@
               }
             ],
             "default": null,
-            "title": "Create Time"
+            "title": "Create Time",
+            "description": "创建时间"
           }
         },
         "required": [
@@ -4998,7 +5040,8 @@
           "progress"
         ],
         "title": "FileListItem",
-        "type": "object"
+        "type": "object",
+        "description": "文件列表项。"
       },
       "FileListResponse": {
         "properties": {
@@ -5007,23 +5050,28 @@
               "$ref": "#/components/schemas/FileListItem"
             },
             "title": "Items",
-            "type": "array"
+            "type": "array",
+            "description": "当前页文件列表"
           },
           "total": {
             "title": "Total",
-            "type": "integer"
+            "type": "integer",
+            "description": "总条数"
           },
           "page": {
             "title": "Page",
-            "type": "integer"
+            "type": "integer",
+            "description": "当前页码（从 1 起）"
           },
           "page_size": {
             "title": "Page Size",
-            "type": "integer"
+            "type": "integer",
+            "description": "每页条数"
           },
           "total_pages": {
             "title": "Total Pages",
-            "type": "integer"
+            "type": "integer",
+            "description": "总页数"
           }
         },
         "required": [
@@ -5034,27 +5082,32 @@
           "total_pages"
         ],
         "title": "FileListResponse",
-        "type": "object"
+        "type": "object",
+        "description": "分页文件列表。"
       },
       "ProcessingItem": {
-        "description": "处理中队列项：/file/processing 返回。带 doc_type JOIN 出来的 type_name/project_id。",
+        "description": "处理中队列项。",
         "properties": {
           "file_id": {
             "title": "File Id",
-            "type": "string"
+            "type": "string",
+            "description": "文件唯一 ID"
           },
           "file_name": {
             "title": "File Name",
-            "type": "string"
+            "type": "string",
+            "description": "原始文件名"
           },
           "progress": {
             "title": "Progress",
-            "type": "string"
+            "type": "string",
+            "description": "处理进度"
           },
           "type_id": {
             "default": "default",
             "title": "Type Id",
-            "type": "string"
+            "type": "string",
+            "description": "归属文档类型"
           },
           "type_name": {
             "anyOf": [
@@ -5066,7 +5119,8 @@
               }
             ],
             "default": null,
-            "title": "Type Name"
+            "title": "Type Name",
+            "description": "类型名（JOIN doc_type，可空）"
           },
           "project_id": {
             "anyOf": [
@@ -5078,7 +5132,8 @@
               }
             ],
             "default": null,
-            "title": "Project Id"
+            "title": "Project Id",
+            "description": "所属项目 ID（可空）"
           },
           "create_time": {
             "anyOf": [
@@ -5091,7 +5146,8 @@
               }
             ],
             "default": null,
-            "title": "Create Time"
+            "title": "Create Time",
+            "description": "创建时间"
           }
         },
         "required": [
@@ -5106,46 +5162,56 @@
         "properties": {
           "file_id": {
             "title": "File Id",
-            "type": "string"
+            "type": "string",
+            "description": "文件唯一 ID"
           },
           "chunk_id": {
             "title": "Chunk Id",
-            "type": "string"
+            "type": "string",
+            "description": "分块 ID"
           },
           "chunk_index": {
             "title": "Chunk Index",
-            "type": "integer"
+            "type": "integer",
+            "description": "分块序号"
           },
           "total_chunks": {
             "title": "Total Chunks",
-            "type": "integer"
+            "type": "integer",
+            "description": "分块总数"
           },
           "chunk_content": {
             "title": "Chunk Content",
-            "type": "string"
+            "type": "string",
+            "description": "分块正文"
           },
           "start_pos": {
             "title": "Start Pos",
-            "type": "integer"
+            "type": "integer",
+            "description": "起始偏移"
           },
           "end_pos": {
             "title": "End Pos",
-            "type": "integer"
+            "type": "integer",
+            "description": "结束偏移"
           },
           "page_num": {
             "default": "",
             "title": "Page Num",
-            "type": "string"
+            "type": "string",
+            "description": "所在页"
           },
           "hit": {
             "default": false,
             "title": "Hit",
-            "type": "boolean"
+            "type": "boolean",
+            "description": "该分块是否命中"
           },
           "hit_count": {
             "default": 0,
             "title": "Hit Count",
-            "type": "integer"
+            "type": "integer",
+            "description": "命中次数"
           }
         },
         "required": [
@@ -5158,46 +5224,56 @@
           "end_pos"
         ],
         "title": "FileContextChunkItem",
-        "type": "object"
+        "type": "object",
+        "description": "上下文查询返回的分块项。"
       },
       "FileContextMatchItem": {
         "properties": {
           "match_index": {
             "title": "Match Index",
-            "type": "integer"
+            "type": "integer",
+            "description": "命中序号"
           },
           "keyword": {
             "title": "Keyword",
-            "type": "string"
+            "type": "string",
+            "description": "命中的关键词/片段"
           },
           "position": {
             "title": "Position",
-            "type": "integer"
+            "type": "integer",
+            "description": "命中位置偏移"
           },
           "match_start_pos": {
             "title": "Match Start Pos",
-            "type": "integer"
+            "type": "integer",
+            "description": "命中起始偏移"
           },
           "match_end_pos": {
             "title": "Match End Pos",
-            "type": "integer"
+            "type": "integer",
+            "description": "命中结束偏移"
           },
           "context_start_pos": {
             "title": "Context Start Pos",
-            "type": "integer"
+            "type": "integer",
+            "description": "上下文窗口起始"
           },
           "context_end_pos": {
             "title": "Context End Pos",
-            "type": "integer"
+            "type": "integer",
+            "description": "上下文窗口结束"
           },
           "context": {
             "title": "Context",
-            "type": "string"
+            "type": "string",
+            "description": "上下文文本"
           },
           "page_num": {
             "default": "",
             "title": "Page Num",
-            "type": "string"
+            "type": "string",
+            "description": "命中所在页"
           },
           "bboxes": {
             "items": {
@@ -5205,7 +5281,8 @@
               "type": "object"
             },
             "title": "Bboxes",
-            "type": "array"
+            "type": "array",
+            "description": "块级 PDF 框（高亮定位）"
           }
         },
         "required": [
@@ -5219,43 +5296,51 @@
           "context"
         ],
         "title": "FileContextMatchItem",
-        "type": "object"
+        "type": "object",
+        "description": "上下文命中项。"
       },
       "FileContextQueryResponse": {
         "properties": {
           "file_id": {
             "title": "File Id",
-            "type": "string"
+            "type": "string",
+            "description": "文件唯一 ID"
           },
           "query": {
             "title": "Query",
-            "type": "string"
+            "type": "string",
+            "description": "查询词"
           },
           "query_type": {
             "title": "Query Type",
-            "type": "string"
+            "type": "string",
+            "description": "查询类型（keyword/text_fragment）"
           },
           "matched": {
             "title": "Matched",
-            "type": "boolean"
+            "type": "boolean",
+            "description": "是否有命中"
           },
           "match_count": {
             "title": "Match Count",
-            "type": "integer"
+            "type": "integer",
+            "description": "命中数"
           },
           "matches": {
             "items": {
               "$ref": "#/components/schemas/FileContextMatchItem"
             },
             "title": "Matches",
-            "type": "array"
+            "type": "array",
+            "description": "命中列表"
           },
           "chunks": {
             "items": {
               "$ref": "#/components/schemas/FileContextChunkItem"
             },
             "title": "Chunks",
-            "type": "array"
+            "type": "array",
+            "description": "全部分块（include_all_chunks=true 时含命中标记）"
           }
         },
         "required": [
@@ -5266,13 +5351,15 @@
           "match_count"
         ],
         "title": "FileContextQueryResponse",
-        "type": "object"
+        "type": "object",
+        "description": "文件片段上下文查询结果。"
       },
       "BatchDeleteResponse": {
         "properties": {
           "deleted_count": {
             "title": "Deleted Count",
-            "type": "integer"
+            "type": "integer",
+            "description": "成功删除数"
           },
           "failed_ids": {
             "default": [],
@@ -5280,37 +5367,44 @@
               "type": "string"
             },
             "title": "Failed Ids",
-            "type": "array"
+            "type": "array",
+            "description": "删除失败/不存在的 file_id 列表"
           }
         },
         "required": [
           "deleted_count"
         ],
         "title": "BatchDeleteResponse",
-        "type": "object"
+        "type": "object",
+        "description": "批量删除文件结果。"
       },
       "FileStatusResponse": {
         "properties": {
           "file_id": {
             "title": "File Id",
-            "type": "string"
+            "type": "string",
+            "description": "文件唯一 ID"
           },
           "file_name": {
             "title": "File Name",
-            "type": "string"
+            "type": "string",
+            "description": "原始文件名"
           },
           "file_size": {
             "title": "File Size",
-            "type": "integer"
+            "type": "integer",
+            "description": "文件字节数"
           },
           "progress": {
             "title": "Progress",
-            "type": "string"
+            "type": "string",
+            "description": "处理进度（见 progress 状态机）"
           },
           "type_id": {
             "default": "default",
             "title": "Type Id",
-            "type": "string"
+            "type": "string",
+            "description": "归属文档类型"
           },
           "error": {
             "anyOf": [
@@ -5322,7 +5416,8 @@
               }
             ],
             "default": null,
-            "title": "Error"
+            "title": "Error",
+            "description": "最近失败的错误信息（可空）"
           },
           "create_time": {
             "anyOf": [
@@ -5335,7 +5430,8 @@
               }
             ],
             "default": null,
-            "title": "Create Time"
+            "title": "Create Time",
+            "description": "创建时间"
           },
           "updated_at": {
             "anyOf": [
@@ -5348,7 +5444,8 @@
               }
             ],
             "default": null,
-            "title": "Updated At"
+            "title": "Updated At",
+            "description": "最近更新时间"
           }
         },
         "required": [
@@ -5358,30 +5455,36 @@
           "progress"
         ],
         "title": "FileStatusResponse",
-        "type": "object"
+        "type": "object",
+        "description": "文件处理进度。"
       },
       "FileDetailResponse": {
         "properties": {
           "file_id": {
             "title": "File Id",
-            "type": "string"
+            "type": "string",
+            "description": "文件唯一 ID"
           },
           "file_name": {
             "title": "File Name",
-            "type": "string"
+            "type": "string",
+            "description": "原始文件名"
           },
           "file_size": {
             "title": "File Size",
-            "type": "integer"
+            "type": "integer",
+            "description": "文件字节数"
           },
           "progress": {
             "title": "Progress",
-            "type": "string"
+            "type": "string",
+            "description": "处理进度"
           },
           "type_id": {
             "default": "default",
             "title": "Type Id",
-            "type": "string"
+            "type": "string",
+            "description": "归属文档类型"
           },
           "error": {
             "anyOf": [
@@ -5393,7 +5496,8 @@
               }
             ],
             "default": null,
-            "title": "Error"
+            "title": "Error",
+            "description": "错误信息（可空）"
           },
           "create_time": {
             "anyOf": [
@@ -5406,7 +5510,8 @@
               }
             ],
             "default": null,
-            "title": "Create Time"
+            "title": "Create Time",
+            "description": "创建时间"
           },
           "updated_at": {
             "anyOf": [
@@ -5419,7 +5524,8 @@
               }
             ],
             "default": null,
-            "title": "Updated At"
+            "title": "Updated At",
+            "description": "最近更新时间"
           },
           "start_parsing_time": {
             "anyOf": [
@@ -5432,7 +5538,8 @@
               }
             ],
             "default": null,
-            "title": "Start Parsing Time"
+            "title": "Start Parsing Time",
+            "description": "解析开始"
           },
           "end_parsing_time": {
             "anyOf": [
@@ -5445,7 +5552,8 @@
               }
             ],
             "default": null,
-            "title": "End Parsing Time"
+            "title": "End Parsing Time",
+            "description": "解析结束"
           },
           "start_tableing_time": {
             "anyOf": [
@@ -5458,7 +5566,8 @@
               }
             ],
             "default": null,
-            "title": "Start Tableing Time"
+            "title": "Start Tableing Time",
+            "description": "表名校验开始"
           },
           "end_tableing_time": {
             "anyOf": [
@@ -5471,7 +5580,8 @@
               }
             ],
             "default": null,
-            "title": "End Tableing Time"
+            "title": "End Tableing Time",
+            "description": "表名校验结束"
           },
           "start_chunking_time": {
             "anyOf": [
@@ -5484,7 +5594,8 @@
               }
             ],
             "default": null,
-            "title": "Start Chunking Time"
+            "title": "Start Chunking Time",
+            "description": "分块开始"
           },
           "end_chunking_time": {
             "anyOf": [
@@ -5497,7 +5608,8 @@
               }
             ],
             "default": null,
-            "title": "End Chunking Time"
+            "title": "End Chunking Time",
+            "description": "分块结束"
           },
           "start_embedding_time": {
             "anyOf": [
@@ -5510,7 +5622,8 @@
               }
             ],
             "default": null,
-            "title": "Start Embedding Time"
+            "title": "Start Embedding Time",
+            "description": "向量化开始"
           },
           "end_embedding_time": {
             "anyOf": [
@@ -5523,7 +5636,8 @@
               }
             ],
             "default": null,
-            "title": "End Embedding Time"
+            "title": "End Embedding Time",
+            "description": "向量化结束"
           },
           "start_extracting_time": {
             "anyOf": [
@@ -5536,7 +5650,8 @@
               }
             ],
             "default": null,
-            "title": "Start Extracting Time"
+            "title": "Start Extracting Time",
+            "description": "抽取开始"
           },
           "end_extracting_time": {
             "anyOf": [
@@ -5549,7 +5664,8 @@
               }
             ],
             "default": null,
-            "title": "End Extracting Time"
+            "title": "End Extracting Time",
+            "description": "抽取结束"
           },
           "start_analyzing_time": {
             "anyOf": [
@@ -5562,7 +5678,8 @@
               }
             ],
             "default": null,
-            "title": "Start Analyzing Time"
+            "title": "Start Analyzing Time",
+            "description": "分析开始"
           },
           "end_analyzing_time": {
             "anyOf": [
@@ -5575,7 +5692,8 @@
               }
             ],
             "default": null,
-            "title": "End Analyzing Time"
+            "title": "End Analyzing Time",
+            "description": "分析结束"
           }
         },
         "required": [
@@ -5585,29 +5703,35 @@
           "progress"
         ],
         "title": "FileDetailResponse",
-        "type": "object"
+        "type": "object",
+        "description": "文件完整详情（含六阶段起止时间戳，可算每阶段耗时）。"
       },
       "FileTableItem": {
         "properties": {
           "file_id": {
             "title": "File Id",
-            "type": "string"
+            "type": "string",
+            "description": "文件唯一 ID"
           },
           "table_index": {
             "title": "Table Index",
-            "type": "integer"
+            "type": "integer",
+            "description": "表序号（从 0）"
           },
           "total_table": {
             "title": "Total Table",
-            "type": "integer"
+            "type": "integer",
+            "description": "表总数"
           },
           "table_name": {
             "title": "Table Name",
-            "type": "string"
+            "type": "string",
+            "description": "表名（tableing 阶段 LLM 识别，截断 30 字）"
           },
           "table_content": {
             "title": "Table Content",
-            "type": "string"
+            "type": "string",
+            "description": "表格 HTML 内容"
           },
           "page_num": {
             "anyOf": [
@@ -5619,7 +5743,8 @@
               }
             ],
             "default": null,
-            "title": "Page Num"
+            "title": "Page Num",
+            "description": "所在页（可能为范围如 3-4，可空）"
           }
         },
         "required": [
@@ -5630,29 +5755,35 @@
           "table_content"
         ],
         "title": "FileTableItem",
-        "type": "object"
+        "type": "object",
+        "description": "文件表格项。"
       },
       "FileChunkItem": {
         "properties": {
           "file_id": {
             "title": "File Id",
-            "type": "string"
+            "type": "string",
+            "description": "文件唯一 ID"
           },
           "chunk_id": {
             "title": "Chunk Id",
-            "type": "string"
+            "type": "string",
+            "description": "分块 ID"
           },
           "chunk_index": {
             "title": "Chunk Index",
-            "type": "integer"
+            "type": "integer",
+            "description": "分块序号"
           },
           "total_chunks": {
             "title": "Total Chunks",
-            "type": "integer"
+            "type": "integer",
+            "description": "分块总数"
           },
           "chunk_content": {
             "title": "Chunk Content",
-            "type": "string"
+            "type": "string",
+            "description": "分块正文"
           },
           "page_num": {
             "anyOf": [
@@ -5664,7 +5795,8 @@
               }
             ],
             "default": null,
-            "title": "Page Num"
+            "title": "Page Num",
+            "description": "所在页（可空）"
           }
         },
         "required": [
@@ -5675,17 +5807,20 @@
           "chunk_content"
         ],
         "title": "FileChunkItem",
-        "type": "object"
+        "type": "object",
+        "description": "文件分块项。"
       },
       "ExtractionResultItem": {
         "properties": {
           "file_id": {
             "title": "File Id",
-            "type": "string"
+            "type": "string",
+            "description": "文件唯一 ID"
           },
           "field_id": {
             "title": "Field Id",
-            "type": "string"
+            "type": "string",
+            "description": "字段 ID"
           },
           "field_name": {
             "anyOf": [
@@ -5697,11 +5832,13 @@
               }
             ],
             "default": null,
-            "title": "Field Name"
+            "title": "Field Name",
+            "description": "字段名（配置删除则 null）"
           },
           "extracted_value": {
             "title": "Extracted Value",
-            "type": "string"
+            "type": "string",
+            "description": "抽取值"
           },
           "reason": {
             "anyOf": [
@@ -5713,7 +5850,8 @@
               }
             ],
             "default": null,
-            "title": "Reason"
+            "title": "Reason",
+            "description": "抽取理由（可空）"
           },
           "source_refs": {
             "anyOf": [
@@ -5726,7 +5864,8 @@
               }
             ],
             "default": null,
-            "title": "Source Refs"
+            "title": "Source Refs",
+            "description": "溯源（结构见 source-refs 指南）"
           }
         },
         "required": [
@@ -5735,17 +5874,20 @@
           "extracted_value"
         ],
         "title": "ExtractionResultItem",
-        "type": "object"
+        "type": "object",
+        "description": "字段提取结果行。"
       },
       "AnalysisResultItem": {
         "properties": {
           "file_id": {
             "title": "File Id",
-            "type": "string"
+            "type": "string",
+            "description": "文件唯一 ID"
           },
           "rule_id": {
             "title": "Rule Id",
-            "type": "string"
+            "type": "string",
+            "description": "规则 ID"
           },
           "rule_name": {
             "anyOf": [
@@ -5757,11 +5899,13 @@
               }
             ],
             "default": null,
-            "title": "Rule Name"
+            "title": "Rule Name",
+            "description": "规则名（配置删除则 null）"
           },
           "result_value": {
             "title": "Result Value",
-            "type": "string"
+            "type": "string",
+            "description": "分析结果"
           },
           "input_values": {
             "anyOf": [
@@ -5776,7 +5920,8 @@
               }
             ],
             "default": null,
-            "title": "Input Values"
+            "title": "Input Values",
+            "description": "依赖字段取值"
           },
           "reason": {
             "anyOf": [
@@ -5788,7 +5933,8 @@
               }
             ],
             "default": null,
-            "title": "Reason"
+            "title": "Reason",
+            "description": "判断/计算理由（可空）"
           },
           "source_refs": {
             "anyOf": [
@@ -5801,7 +5947,8 @@
               }
             ],
             "default": null,
-            "title": "Source Refs"
+            "title": "Source Refs",
+            "description": "溯源（judge 启用网络搜索时含 _web_search）"
           }
         },
         "required": [
@@ -5810,7 +5957,8 @@
           "result_value"
         ],
         "title": "AnalysisResultItem",
-        "type": "object"
+        "type": "object",
+        "description": "逻辑分析结果行。"
       },
       "ExtractionFieldResponse": {
         "properties": {
@@ -6031,7 +6179,8 @@
               }
             ],
             "default": null,
-            "title": "Created At"
+            "title": "Created At",
+            "description": "创建时间"
           },
           "updated_at": {
             "anyOf": [
@@ -6044,7 +6193,8 @@
               }
             ],
             "default": null,
-            "title": "Updated At"
+            "title": "Updated At",
+            "description": "更新时间"
           }
         },
         "required": [
@@ -6053,7 +6203,8 @@
           "source_type"
         ],
         "title": "ExtractionFieldResponse",
-        "type": "object"
+        "type": "object",
+        "description": "字段提取配置（含时间戳）；各字段含义同「新增/更新字段配置」请求体。"
       },
       "ExtractionTestResponse": {
         "properties": {
@@ -6064,31 +6215,37 @@
               "type": "object"
             },
             "title": "Search Results",
-            "type": "array"
+            "type": "array",
+            "description": "检索结果（形态随 source_type/search_type 不同）"
           },
           "llm_input": {
             "default": "",
             "title": "Llm Input",
-            "type": "string"
+            "type": "string",
+            "description": "渲染后的 prompt"
           },
           "llm_output": {
             "default": "",
             "title": "Llm Output",
-            "type": "string"
+            "type": "string",
+            "description": "LLM/VL 原始输出"
           },
           "extracted_value": {
             "default": "",
             "title": "Extracted Value",
-            "type": "string"
+            "type": "string",
+            "description": "解析后的值"
           },
           "reason": {
             "default": "",
             "title": "Reason",
-            "type": "string"
+            "type": "string",
+            "description": "抽取理由"
           }
         },
         "title": "ExtractionTestResponse",
-        "type": "object"
+        "type": "object",
+        "description": "字段提取调试结果。"
       },
       "AnalysisRuleResponse": {
         "properties": {
@@ -6178,7 +6335,8 @@
               }
             ],
             "default": null,
-            "title": "Created At"
+            "title": "Created At",
+            "description": "创建时间"
           },
           "updated_at": {
             "anyOf": [
@@ -6191,7 +6349,8 @@
               }
             ],
             "default": null,
-            "title": "Updated At"
+            "title": "Updated At",
+            "description": "更新时间"
           }
         },
         "required": [
@@ -6201,7 +6360,8 @@
           "expression"
         ],
         "title": "AnalysisRuleResponse",
-        "type": "object"
+        "type": "object",
+        "description": "逻辑分析规则配置（含时间戳）；各字段含义同「新增/更新分析规则」请求体。"
       },
       "AnalysisTestResponse": {
         "properties": {
@@ -6211,59 +6371,71 @@
             },
             "default": {},
             "title": "Input Values",
-            "type": "object"
+            "type": "object",
+            "description": "依赖字段取值"
           },
           "expression_resolved": {
             "default": "",
             "title": "Expression Resolved",
-            "type": "string"
+            "type": "string",
+            "description": "占位符替换后的表达式"
           },
           "result_value": {
             "default": "",
             "title": "Result Value",
-            "type": "string"
+            "type": "string",
+            "description": "结果"
           },
           "reason": {
             "default": "",
             "title": "Reason",
-            "type": "string"
+            "type": "string",
+            "description": "理由"
           }
         },
         "title": "AnalysisTestResponse",
-        "type": "object"
+        "type": "object",
+        "description": "逻辑分析调试结果。"
       },
       "AnalysisRunItemResult": {
         "properties": {
           "item_index": {
             "title": "Item Index",
-            "type": "integer"
+            "type": "integer",
+            "description": "item 序号"
           },
           "biz_id": {
             "title": "Biz Id",
-            "type": "string"
+            "type": "string",
+            "description": "业务 ID"
           },
           "type_id": {
             "title": "Type Id",
-            "type": "string"
+            "type": "string",
+            "description": "文档类型"
           },
           "total": {
             "title": "Total",
-            "type": "integer"
+            "type": "integer",
+            "description": "规则数"
           },
           "succeeded": {
             "title": "Succeeded",
-            "type": "integer"
+            "type": "integer",
+            "description": "成功数"
           },
           "failed": {
             "title": "Failed",
-            "type": "integer"
+            "type": "integer",
+            "description": "失败数"
           },
           "results": {
             "items": {
               "$ref": "#/components/schemas/AnalysisRunRuleResult"
             },
             "title": "Results",
-            "type": "array"
+            "type": "array",
+            "description": "逐规则结果"
           }
         },
         "required": [
@@ -6275,38 +6447,45 @@
           "failed"
         ],
         "title": "AnalysisRunItemResult",
-        "type": "object"
+        "type": "object",
+        "description": "独立分析单 item 结果。"
       },
       "AnalysisRunRuleResult": {
         "properties": {
           "rule_id": {
             "title": "Rule Id",
-            "type": "string"
+            "type": "string",
+            "description": "规则 ID"
           },
           "rule_name": {
             "title": "Rule Name",
-            "type": "string"
+            "type": "string",
+            "description": "规则名"
           },
           "rule_type": {
             "title": "Rule Type",
-            "type": "string"
+            "type": "string",
+            "description": "judge/calc"
           },
           "result": {
             "default": "",
             "title": "Result",
-            "type": "string"
+            "type": "string",
+            "description": "结果"
           },
           "reason": {
             "default": "",
             "title": "Reason",
-            "type": "string"
+            "type": "string",
+            "description": "理由"
           },
           "input_values": {
             "additionalProperties": {
               "type": "string"
             },
             "title": "Input Values",
-            "type": "object"
+            "type": "object",
+            "description": "依赖字段取值"
           },
           "source_refs": {
             "anyOf": [
@@ -6319,19 +6498,23 @@
               }
             ],
             "default": null,
-            "title": "Source Refs"
+            "title": "Source Refs",
+            "description": "溯源（可空）"
           },
           "success": {
             "title": "Success",
-            "type": "boolean"
+            "type": "boolean",
+            "description": "是否成功"
           },
           "index": {
             "title": "Index",
-            "type": "integer"
+            "type": "integer",
+            "description": "序号"
           },
           "total": {
             "title": "Total",
-            "type": "integer"
+            "type": "integer",
+            "description": "规则总数"
           }
         },
         "required": [
@@ -6343,49 +6526,58 @@
           "total"
         ],
         "title": "AnalysisRunRuleResult",
-        "type": "object"
+        "type": "object",
+        "description": "独立分析单规则结果。"
       },
       "AnalysisRunResponse": {
         "properties": {
           "total_items": {
             "title": "Total Items",
-            "type": "integer"
+            "type": "integer",
+            "description": "item 总数"
           },
           "items": {
             "items": {
               "$ref": "#/components/schemas/AnalysisRunItemResult"
             },
             "title": "Items",
-            "type": "array"
+            "type": "array",
+            "description": "逐 item 结果"
           }
         },
         "required": [
           "total_items"
         ],
         "title": "AnalysisRunResponse",
-        "type": "object"
+        "type": "object",
+        "description": "独立逻辑分析结果（sync）。"
       },
       "SearchResultItem": {
         "properties": {
           "chunk_id": {
             "title": "Chunk Id",
-            "type": "string"
+            "type": "string",
+            "description": "分块 ID"
           },
           "file_id": {
             "title": "File Id",
-            "type": "string"
+            "type": "string",
+            "description": "文件唯一 ID"
           },
           "chunk_index": {
             "title": "Chunk Index",
-            "type": "integer"
+            "type": "integer",
+            "description": "分块序号"
           },
           "chunk_content": {
             "title": "Chunk Content",
-            "type": "string"
+            "type": "string",
+            "description": "分块正文"
           },
           "score": {
             "title": "Score",
-            "type": "number"
+            "type": "number",
+            "description": "COSINE 相似度（越大越相似）"
           },
           "page_num": {
             "anyOf": [
@@ -6397,7 +6589,8 @@
               }
             ],
             "default": null,
-            "title": "Page Num"
+            "title": "Page Num",
+            "description": "所在页（可空）"
           }
         },
         "required": [
@@ -6408,7 +6601,8 @@
           "score"
         ],
         "title": "SearchResultItem",
-        "type": "object"
+        "type": "object",
+        "description": "向量检索命中项。"
       }
     }
   },

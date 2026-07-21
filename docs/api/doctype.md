@@ -31,19 +31,19 @@ _data 为数组，每个元素：_
 
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| type_id | string | 否 |  |
-| type_name | string | 否 |  |
-| description | string | 是 |  |
-| max_parse_pages | integer | 是 |  |
-| enable_embedding | integer | 是 |  |
-| is_default | integer | 是 |  |
-| enabled | integer | 是 |  |
-| is_template | integer | 是 |  |
-| parent_type_id | string | 是 |  |
-| project_id | string | 是 |  |
-| project_name | string | 是 |  |
-| created_at | string | 是 |  |
-| updated_at | string | 是 |  |
+| type_id | string | 否 | 类型 ID |
+| type_name | string | 否 | 类型名 |
+| description | string | 是 | 描述（可空） |
+| max_parse_pages | integer | 是 | 最大解析页数（可空） |
+| enable_embedding | integer | 是 | 是否启用向量化 |
+| is_default | integer | 是 | 是否默认类型 |
+| enabled | integer | 是 | 是否启用 |
+| is_template | integer | 是 | 是否模板 |
+| parent_type_id | string | 是 | 复制来源类型 ID（血缘，可空） |
+| project_id | string | 是 | 所属项目 ID（可空） |
+| project_name | string | 是 | 所属项目名（可空） |
+| created_at | string | 是 | 创建时间 |
+| updated_at | string | 是 | 更新时间 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -262,11 +262,11 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 <!-- AUTOGEN:response POST /doctype/{type_id}/copy_from status=200 -->
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| copied_fields | integer | 是 |  |
-| skipped_fields | integer | 是 |  |
-| copied_rules | integer | 是 |  |
-| skipped_rules | integer | 是 |  |
-| missing_dependencies | array[string] | 是 |  |
+| copied_fields | integer | 是 | 复制字段数 |
+| skipped_fields | integer | 是 | 跳过字段数 |
+| copied_rules | integer | 是 | 复制规则数 |
+| skipped_rules | integer | 是 | 跳过规则数 |
+| missing_dependencies | array[string] | 是 | 丢失的依赖（格式 规则名::源field_id） |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -338,13 +338,13 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 <!-- AUTOGEN:response POST /doctype/import status=200 -->
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| target_type_id | string | 否 |  |
-| created_type | boolean | 是 |  |
-| copied_fields | integer | 是 |  |
-| skipped_fields | integer | 是 |  |
-| copied_rules | integer | 是 |  |
-| skipped_rules | integer | 是 |  |
-| missing_dependencies | array[string] | 是 |  |
+| target_type_id | string | 否 | 目标类型 ID |
+| created_type | boolean | 是 | 是否自动创建了类型 |
+| copied_fields | integer | 是 | 导入字段数 |
+| skipped_fields | integer | 是 | 跳过字段数 |
+| copied_rules | integer | 是 | 导入规则数 |
+| skipped_rules | integer | 是 | 跳过规则数 |
+| missing_dependencies | array[string] | 是 | 丢失的依赖 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -431,12 +431,12 @@ _data 为数组，每个元素：_
 
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| project_id | string | 否 |  |
-| project_name | string | 否 |  |
-| description | string | 是 |  |
-| type_count | integer | 是 |  |
-| created_at | string | 是 |  |
-| updated_at | string | 是 |  |
+| project_id | string | 否 | 项目 ID |
+| project_name | string | 否 | 项目名 |
+| description | string | 是 | 项目描述（可空） |
+| type_count | integer | 是 | 该项目下类型数 |
+| created_at | string | 是 | 创建时间 |
+| updated_at | string | 是 | 更新时间 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**

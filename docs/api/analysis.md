@@ -36,8 +36,8 @@ _data 为数组，每个元素：_
 | web_search | object | 是 | 结构详见 [web_search](../guides/analysis-config.md) |
 | enabled | integer | 是 |  |
 | priority | integer | 是 |  |
-| created_at | string | 是 |  |
-| updated_at | string | 是 |  |
+| created_at | string | 是 | 创建时间 |
+| updated_at | string | 是 | 更新时间 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -178,10 +178,10 @@ _data 为数组，每个元素：_
 <!-- AUTOGEN:response POST /analysis/test status=200 -->
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| input_values | object | 是 | 结构详见 [input_values](../reference/data-model.md#analysis_result) |
-| expression_resolved | string | 是 |  |
-| result_value | string | 是 |  |
-| reason | string | 是 |  |
+| input_values | object | 是 | 依赖字段取值（结构详见 [input_values](../reference/data-model.md#analysis_result)） |
+| expression_resolved | string | 是 | 占位符替换后的表达式 |
+| result_value | string | 是 | 结果 |
+| reason | string | 是 | 理由 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -253,8 +253,8 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge：[`web_
 <!-- AUTOGEN:response POST /analysis/run status=200 -->
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| total_items | integer | 否 |  |
-| items | array[AnalysisRunItemResult] | 是 |  |
+| total_items | integer | 否 | item 总数 |
+| items | array[AnalysisRunItemResult] | 是 | 逐 item 结果 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**

@@ -45,12 +45,12 @@ _data 为数组，每个元素：_
 
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| chunk_id | string | 否 |  |
-| file_id | string | 否 |  |
-| chunk_index | integer | 否 |  |
-| chunk_content | string | 否 |  |
-| score | number | 否 |  |
-| page_num | string | 是 |  |
+| chunk_id | string | 否 | 分块 ID |
+| file_id | string | 否 | 文件唯一 ID |
+| chunk_index | integer | 否 | 分块序号 |
+| chunk_content | string | 否 | 分块正文 |
+| score | number | 否 | COSINE 相似度（越大越相似） |
+| page_num | string | 是 | 所在页（可空） |
 <!-- /AUTOGEN:response -->
 
 ```jsonc

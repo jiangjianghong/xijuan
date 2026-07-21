@@ -47,8 +47,8 @@ _data 为数组，每个元素：_
 | vl_config | object | 是 | 结构详见 [vl_config](../reference/data-model.md#extraction_field) |
 | vl_system_prompt | string | 是 |  |
 | vl_extract_prompt | string | 是 |  |
-| created_at | string | 是 |  |
-| updated_at | string | 是 |  |
+| created_at | string | 是 | 创建时间 |
+| updated_at | string | 是 | 更新时间 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
@@ -217,11 +217,11 @@ curl -X POST http://localhost:5019/extraction/fields \
 <!-- AUTOGEN:response POST /extraction/test status=200 -->
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| search_results | array[object] | 是 |  |
-| llm_input | string | 是 |  |
-| llm_output | string | 是 |  |
-| extracted_value | string | 是 |  |
-| reason | string | 是 |  |
+| search_results | array[object] | 是 | 检索结果（形态随 source_type/search_type 不同） |
+| llm_input | string | 是 | 渲染后的 prompt |
+| llm_output | string | 是 | LLM/VL 原始输出 |
+| extracted_value | string | 是 | 解析后的值 |
+| reason | string | 是 | 抽取理由 |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**
