@@ -200,12 +200,15 @@ class AnalysisRule(Base):
     type_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     rule_name: Mapped[str] = mapped_column(String(200), nullable=False)
     rule_type: Mapped[str] = mapped_column(
-        Enum("judge", "calc", name="rule_type_enum"), nullable=False
+        Enum("judge", "calc", "custom", name="rule_type_enum"), nullable=False
     )
     expression: Mapped[str] = mapped_column(Text, nullable=False)
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     depend_fields: Mapped[list | None] = mapped_column(JSON, nullable=True)
     web_search: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 自定义规则专用：格式化输出开关 + 字段树
+    is_formatted: Mapped[int] = mapped_column(TINYINT, nullable=False, default=0)
+    output_schema: Mapped[list | None] = mapped_column(JSON, nullable=True)
     enabled: Mapped[int] = mapped_column(TINYINT, default=1)
     priority: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -241,7 +244,8 @@ class AnalysisResult(Base):
 
     file_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     rule_id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    result_value: Mapped[str] = mapped_column(String(500), default="")
+    # 格式化输出的 JSON 可能超 500 字符，用 TEXT
+    result_value: Mapped[str] = mapped_column(Text, default="")
     input_values: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_refs: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 依赖字段的参考块

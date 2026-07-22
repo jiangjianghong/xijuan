@@ -73,6 +73,8 @@ async def init_database() -> None:
             ("analysis_rule", "web_search", "JSON NULL"),
             ("files", "start_extracting_time", "DATETIME NULL"),
             ("files", "start_analyzing_time", "DATETIME NULL"),
+            ("analysis_rule", "is_formatted", "TINYINT NOT NULL DEFAULT 0"),
+            ("analysis_rule", "output_schema", "JSON NULL"),
         ]
         for table_name, column_name, column_type in migrations:
             result = await conn.execute(
@@ -122,6 +124,39 @@ async def init_database() -> None:
                 )
             )
             logger.info("已扩展 extraction_field.search_type 枚举：加入 'page'")
+
+        # rule_type enum 扩展：('judge','calc') → 加 'custom'
+        result = await conn.execute(
+            text(
+                "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'analysis_rule' "
+                "AND COLUMN_NAME = 'rule_type'"
+            )
+        )
+        col_type = (result.scalar() or "").lower()
+        if col_type and "'custom'" not in col_type:
+            await conn.execute(
+                text(
+                    "ALTER TABLE `analysis_rule` "
+                    "MODIFY COLUMN `rule_type` ENUM('judge','calc','custom') NOT NULL"
+                )
+            )
+            logger.info("已扩展 analysis_rule.rule_type 枚举：加入 'custom'")
+
+        # result_value 扩容：VARCHAR(500) → TEXT（格式化 JSON 可能超长）
+        result = await conn.execute(
+            text(
+                "SELECT DATA_TYPE FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'analysis_result' "
+                "AND COLUMN_NAME = 'result_value'"
+            )
+        )
+        data_type = (result.scalar() or "").lower()
+        if data_type and data_type != "text":
+            await conn.execute(
+                text("ALTER TABLE `analysis_result` MODIFY COLUMN `result_value` TEXT")
+            )
+            logger.info("已将 analysis_result.result_value 扩容为 TEXT")
 
         # 索引补充：type_id 索引（IF NOT EXISTS 兼容方式）
         index_migrations = [
