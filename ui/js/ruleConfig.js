@@ -1571,12 +1571,12 @@ const RuleConfig = {
             return false;
         }
         if (!data.expression) {
-            const label = data.rule_type === 'judge' ? '用户提示词' : '计算表达式';
+            const label = data.rule_type === 'calc' ? '计算表达式' : '用户提示词';
             Toast.error(label + '不能为空');
             return false;
         }
         if (!data.expression.includes('<field_result>')) {
-            const label = data.rule_type === 'judge' ? '用户提示词' : '计算表达式';
+            const label = data.rule_type === 'calc' ? '计算表达式' : '用户提示词';
             Toast.error(label + '须包含 <field_result>...</field_result> 占位符');
             return false;
         }
@@ -1602,6 +1602,16 @@ const RuleConfig = {
             );
             if (missingKey(data.output_schema)) {
                 Toast.error('输出字段的名称(key)不能为空');
+                return false;
+            }
+            // 对象/数组类型必须含非空子字段（与后端 validate_output_schema 一致，避免 422）
+            const emptyContainer = (nodes) => nodes.some(n =>
+                ((n.type === 'object' || n.type === 'array') &&
+                    (!Array.isArray(n.children) || n.children.length === 0)) ||
+                (Array.isArray(n.children) && emptyContainer(n.children))
+            );
+            if (emptyContainer(data.output_schema)) {
+                Toast.error('对象/数组类型的字段必须至少添加一个子字段');
                 return false;
             }
         }

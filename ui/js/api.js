@@ -42,10 +42,30 @@ const API = {
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({}));
-            throw new Error(error.detail || `请求失败: ${response.status}`);
+            throw new Error(this._formatError(error.detail) || `请求失败: ${response.status}`);
         }
 
         return response.json();
+    },
+
+    /**
+     * 归一化后端错误 detail。FastAPI 校验错误（422）的 detail 是数组
+     * [{loc, msg, type}, ...]，直接拼进 Error 会变成 [object Object]。
+     * 这里提取为可读文本；字符串 detail（业务 HTTPException）原样返回。
+     */
+    _formatError(detail) {
+        if (!detail) return '';
+        if (typeof detail === 'string') return detail;
+        if (Array.isArray(detail)) {
+            return detail
+                .map(e => {
+                    const loc = Array.isArray(e.loc) ? e.loc.filter(x => x !== 'body').join('.') : '';
+                    const msg = e && e.msg ? e.msg : JSON.stringify(e);
+                    return loc ? `${loc}: ${msg}` : msg;
+                })
+                .join('；');
+        }
+        return typeof detail === 'object' ? JSON.stringify(detail) : String(detail);
     },
 
     /**

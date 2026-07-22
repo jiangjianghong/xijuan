@@ -88,12 +88,12 @@ const SchemaBuilder = {
             html += `
                 <div class="sb-node" style="border-left:2px solid var(--border-color,#e0e0e0);padding-left:8px;margin:4px 0;">
                     <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-                        <input class="form-input" style="width:130px" placeholder="字段名"
+                        <input class="form-input" style="width:130px;flex:0 0 auto" placeholder="字段名"
                                value="${Utils.escapeHtml(n.key || '')}"
                                oninput="SchemaBuilder.update('${path}','key',this.value)">
-                        <select class="form-select" style="width:92px"
+                        <select class="form-select" style="width:96px;flex:0 0 auto"
                                 onchange="SchemaBuilder.update('${path}','type',this.value)">${typeOptions}</select>
-                        ${isContainer ? '' : `<input class="form-input" style="width:120px" placeholder="示例值"
+                        ${isContainer ? '' : `<input class="form-input" style="width:120px;flex:0 0 auto" placeholder="示例值"
                                value="${Utils.escapeHtml(n.example || '')}"
                                oninput="SchemaBuilder.update('${path}','example',this.value)">`}
                         <input class="form-input" style="flex:1;min-width:120px" placeholder="说明"
@@ -104,7 +104,9 @@ const SchemaBuilder = {
                     </div>
                     ${isContainer ? `<div style="margin-left:12px">
                         ${this._renderNodes(n.children || [], path)}
-                        <button type="button" class="insert-tag-btn" onclick="SchemaBuilder.addChild('${path}')">+ 子字段</button>
+                        <button type="button" class="insert-tag-btn" title="添加子字段"
+                                style="width:28px;padding:2px 0;text-align:center"
+                                onclick="SchemaBuilder.addChild('${path}')">+</button>
                     </div>` : ''}
                 </div>`;
         });
