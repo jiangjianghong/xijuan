@@ -622,6 +622,8 @@ async def copy_configs(
             expression=new_expression,
             system_prompt=src.system_prompt,
             web_search=new_web_search,
+            is_formatted=getattr(src, "is_formatted", 0) or 0,
+            output_schema=getattr(src, "output_schema", None),
             depend_fields=new_depend_fields if new_depend_fields else None,
             enabled=src.enabled,
             priority=src.priority,
@@ -718,6 +720,8 @@ async def export_configs(type_id: str, db: AsyncSession = Depends(get_db)):
                 expression=r.expression,
                 system_prompt=r.system_prompt,
                 web_search=r.web_search,
+                is_formatted=r.is_formatted if r.is_formatted is not None else 0,
+                output_schema=r.output_schema,
                 depend_field_names=[
                     field_id_to_name[fid]
                     for fid in (r.depend_fields or [])
@@ -934,6 +938,8 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
             expression=new_expression,
             system_prompt=src.system_prompt,
             web_search=new_web_search,
+            is_formatted=getattr(src, "is_formatted", 0) or 0,
+            output_schema=getattr(src, "output_schema", None),
             depend_fields=new_depend_fields if new_depend_fields else None,
             enabled=src.enabled,
             priority=src.priority,
