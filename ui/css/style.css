@@ -2008,7 +2008,7 @@ h1, h2, h3, h4, h5, h6,
 /* 字段结构「添加」按钮：+ 图标，按嵌套层级配色（根深、子浅） */
 .sb-add-btn {
     width: 26px;
-    height: 26px;
+    height: 20px;
     border: 1px solid var(--border);
     border-radius: 4px;
     font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;

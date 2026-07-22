@@ -1214,7 +1214,7 @@ const RuleConfig = {
                 </div>
                 <div class="form-group" id="fm-custom-schema-group" style="display:none">
                     <label class="form-label">输出字段结构</label>
-                    <div id="fm-custom-schema-area">
+                    <div id="fm-custom-schema-area" style="padding-left:13px">
                         <textarea class="sb-json" id="fm-custom-schema-json" style="display:none">${schemaJson}</textarea>
                         <div class="sb-editor"></div>
                         <button type="button" class="sb-add-btn sb-add-lvl0" style="margin-top:8px;margin-left:-13px" title="添加字段" onclick="SchemaBuilder.addRootField()">+</button>
