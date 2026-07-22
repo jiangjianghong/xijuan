@@ -25,7 +25,7 @@ from model.schemas import (
     ResponseWrapper,
 )
 from model.tables import AnalysisRule, ExtractionResult
-from service.analysis_service import apply_web_search, execute_calc, execute_judge, resolve_expression, test_rule_analysis_stream
+from service.analysis_service import apply_web_search, execute_calc, execute_custom, execute_judge, resolve_expression, test_rule_analysis_stream
 from service.analysis_run_service import run_analysis_batch
 from utils.callback import build_analysis_task_payload, notify_analysis_task_callback
 from utils.config import get_config
@@ -53,6 +53,8 @@ async def list_rules(type_id: str = "", db: AsyncSession = Depends(get_db)):
                 system_prompt=r.system_prompt,
                 depend_fields=r.depend_fields,
                 web_search=r.web_search,
+                is_formatted=r.is_formatted if r.is_formatted is not None else 0,
+                output_schema=r.output_schema,
                 enabled=r.enabled,
                 priority=r.priority,
                 created_at=r.created_at,
@@ -94,6 +96,8 @@ async def upsert_rule(
         existing.system_prompt = rule.system_prompt
         existing.depend_fields = rule.depend_fields
         existing.web_search = rule.web_search
+        existing.is_formatted = rule.is_formatted
+        existing.output_schema = rule.output_schema
         existing.enabled = rule.enabled
         existing.priority = rule.priority
         await db.commit()
@@ -109,6 +113,8 @@ async def upsert_rule(
             system_prompt=rule.system_prompt,
             depend_fields=rule.depend_fields,
             web_search=rule.web_search,
+            is_formatted=rule.is_formatted,
+            output_schema=rule.output_schema,
             enabled=rule.enabled,
             priority=rule.priority,
         )
@@ -171,6 +177,8 @@ async def test_analysis(
         system_prompt = rule.system_prompt or ""
         depend_fields = rule.depend_fields or []
         web_search = rule.web_search
+        is_formatted = rule.is_formatted
+        output_schema = rule.output_schema
     elif req.config:
         # 模式 2: 使用临时配置
         config = req.config
@@ -179,6 +187,8 @@ async def test_analysis(
         system_prompt = config.get("system_prompt", "")
         depend_fields = config.get("depend_fields", [])
         web_search = config.get("web_search")
+        is_formatted = config.get("is_formatted", 0)
+        output_schema = config.get("output_schema")
     else:
         raise HTTPException(status_code=400, detail="必须提供 rule_id 或 config")
 
@@ -207,6 +217,16 @@ async def test_analysis(
             result_value, reason = await execute_judge(expression_resolved, system_prompt=system_prompt)
         elif rule_type == "calc":
             result_value, reason = await execute_calc(expression_resolved, cfg.calc_precision)
+        elif rule_type == "custom":
+            expression_resolved, _ws_ref = await apply_web_search(
+                expression_resolved, web_search, field_values
+            )
+            result_value, reason = await execute_custom(
+                expression_resolved,
+                is_formatted=bool(is_formatted),
+                output_schema=output_schema,
+                system_prompt=system_prompt,
+            )
         else:
             result_value = f"未知规则类型: {rule_type}"
             reason = ""
@@ -441,6 +461,8 @@ async def test_analysis_stream(
         system_prompt = rule.system_prompt or ""
         depend_fields = rule.depend_fields or []
         web_search = rule.web_search
+        is_formatted = rule.is_formatted
+        output_schema = rule.output_schema
     elif req.config:
         config = req.config
         rule_type = config.get("rule_type", "judge")
@@ -448,13 +470,15 @@ async def test_analysis_stream(
         system_prompt = config.get("system_prompt", "")
         depend_fields = config.get("depend_fields", [])
         web_search = config.get("web_search")
+        is_formatted = config.get("is_formatted", 0)
+        output_schema = config.get("output_schema")
     else:
         raise HTTPException(status_code=400, detail="必须提供 rule_id 或 config")
 
     async def event_generator():
         async for item in test_rule_analysis_stream(
             file_id, rule_type, expression, depend_fields, system_prompt, db,
-            web_search=web_search,
+            web_search=web_search, is_formatted=is_formatted, output_schema=output_schema,
         ):
             yield _sse_event(item["event"], item["data"])
 
