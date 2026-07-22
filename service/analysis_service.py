@@ -900,20 +900,25 @@ async def test_rule_analysis_stream(
     system_prompt: str,
     session: AsyncSession,
     web_search: Optional[dict] = None,
+    is_formatted: int = 0,
+    output_schema: Optional[list] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """单条规则调试流式接口，分步 yield 各阶段结果。
 
     Judge 类型事件序列：input_values → resolved_expression → [web_search] → prompt → llm_response → result → done
     Calc 类型事件序列：input_values → resolved_expression → result → done
+    Custom 类型事件序列：input_values → resolved_expression → [web_search] → prompt → llm_response → result → done
 
     Args:
         file_id: 文件 ID。
-        rule_type: 规则类型 (judge/calc)。
+        rule_type: 规则类型 (judge/calc/custom)。
         expression: 规则表达式（含占位符）。
         depend_fields: 依赖的字段 ID 列表。
-        system_prompt: 系统提示词（仅 judge 使用）。
+        system_prompt: 系统提示词（judge/custom 使用）。
         session: 数据库会话。
-        web_search: 可选的网络搜索配置（仅 judge 使用）。
+        web_search: 可选的网络搜索配置（judge/custom 使用）。
+        is_formatted: custom 是否格式化输出（1 时按 output_schema 注入结构）。
+        output_schema: custom 格式化输出结构定义。
 
     Yields:
         Dict: {"event": str, "data": dict}
@@ -1100,6 +1105,52 @@ async def test_rule_analysis_stream(
         except Exception as e:
             logger.error("规则调试 - 计算失败: {}", e)
             yield {"event": "error", "data": {"message": f"计算失败: {e}"}}
+            return
+
+    # ── Custom 类型：LLM 自由生成（含格式化） ──
+    elif rule_type == "custom":
+        # Step 2.5: 网络搜索（启用时）
+        if web_search and web_search.get("enabled"):
+            resolved, ws_ref = await apply_web_search(resolved, web_search, field_values)
+            yield {"event": "web_search", "data": ws_ref or {}}
+
+        # Step 3: 组装 prompt（复用 execute_custom 的组装逻辑）
+        try:
+            user_prompt = _build_custom_prompt(resolved, bool(is_formatted), output_schema)
+            sys_prompt = (system_prompt or "").strip()
+            yield {
+                "event": "prompt",
+                "data": {"system_prompt": sys_prompt, "user_prompt": user_prompt},
+            }
+        except Exception as e:
+            logger.error("规则调试 - 组装 custom prompt 失败: {}", e)
+            yield {"event": "error", "data": {"message": f"组装 prompt 失败: {e}"}}
+            return
+
+        # Step 4: 调用 LLM
+        try:
+            if sys_prompt:
+                messages = [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+                raw_response = await chat_completion("", messages=messages)
+            else:
+                raw_response = await chat_completion(user_prompt)
+            raw_response = raw_response.strip()
+            yield {"event": "llm_response", "data": {"raw_response": raw_response}}
+        except Exception as e:
+            logger.error("规则调试 - custom LLM 调用失败: {}", e)
+            yield {"event": "error", "data": {"message": f"LLM 调用失败: {e}"}}
+            return
+
+        # Step 5: 解析结果
+        try:
+            value, reason = parse_custom_json_response(raw_response)
+            yield {"event": "result", "data": {"result_value": value, "reason": reason}}
+        except Exception as e:
+            logger.error("规则调试 - custom 结果解析失败: {}", e)
+            yield {"event": "error", "data": {"message": f"结果解析失败: {e}"}}
             return
 
     else:
