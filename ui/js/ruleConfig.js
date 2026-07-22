@@ -158,7 +158,7 @@ const RuleConfig = {
         }
         this.els.ruleEmpty.style.display = 'none';
 
-        const ruleTypeText = { judge: '判断', calc: '计算' };
+        const ruleTypeText = { judge: '判断', calc: '计算', custom: '自定义' };
         let html = '';
         rules.forEach(r => {
             html += `
@@ -302,7 +302,7 @@ const RuleConfig = {
             } else {
                 labels = this.getKeywordTags('fm-sc-keywords');
             }
-        } else if (textareaId === 'fm-expression' || textareaId === 'fm-expression-calc' || textareaId === 'fm-ws-query') {
+        } else if (textareaId === 'fm-expression' || textareaId === 'fm-expression-calc' || textareaId === 'fm-ws-query' || textareaId === 'fm-custom-expression') {
             labels = this.getDependFields();
         }
 
@@ -1094,14 +1094,16 @@ const RuleConfig = {
         this.showModal();
 
         this.onRuleTypeChange((rule && rule.rule_type) || 'judge');
+        SchemaBuilder.mount('fm-custom-schema-area');
     },
 
     buildRuleForm(rule) {
         const isEdit = !!rule.rule_id;
         const ruleType = rule.rule_type || 'judge';
         const ws = rule.web_search || {};
+        const fmtChecked = rule.is_formatted ? 'checked' : '';
+        const schemaJson = rule.output_schema ? Utils.escapeHtml(JSON.stringify(rule.output_schema)) : '[]';
 
-        // 依赖字段标签：按 field_id 映射字段名，已删除的字段标灰提示
         const fieldNameMap = {};
         (this.state.fields || []).forEach(f => { fieldNameMap[f.field_id] = f.field_name; });
         let dependTagsHtml = '';
@@ -1127,6 +1129,7 @@ const RuleConfig = {
                     <select class="form-select" id="fm-rule-type" onchange="RuleConfig.onRuleTypeChange(this.value)">
                         <option value="judge" ${ruleType === 'judge' ? 'selected' : ''}>判断 (judge)</option>
                         <option value="calc" ${ruleType === 'calc' ? 'selected' : ''}>计算 (calc)</option>
+                        <option value="custom" ${ruleType === 'custom' ? 'selected' : ''}>自定义 (custom)</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -1163,9 +1166,67 @@ const RuleConfig = {
                             <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-expression','field_result',this)" title="插入占位符">{x}</button>
                         </div>
                     </div>
-                    <textarea class="form-textarea" id="fm-expression" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(rule.expression || '')}</textarea>
-                    <div class="form-hint">作为 user message 发送给 LLM，用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，LLM 返回 true/false 及原因</div>
+                    <textarea class="form-textarea" id="fm-expression" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(ruleType === 'judge' ? (rule.expression || '') : '')}</textarea>
+                    <div class="form-hint">用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，LLM 返回 true/false 及原因</div>
                 </div>
+            </div>
+
+            <!-- 计算型配置区 -->
+            <div id="fm-calc-section">
+                <div class="form-section-divider"></div>
+                <div class="form-section-title">计算配置</div>
+                <div class="form-group">
+                    <div class="form-label-row">
+                        <label class="form-label">计算表达式</label>
+                        <div class="insert-tag-wrap">
+                            <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-expression-calc','field_result',this)" title="插入占位符">{x}</button>
+                        </div>
+                    </div>
+                    <textarea class="form-textarea" id="fm-expression-calc" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(ruleType === 'calc' ? (rule.expression || '') : '')}</textarea>
+                    <div class="form-hint">用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，系统执行数值计算并返回结果</div>
+                </div>
+            </div>
+
+            <!-- 自定义型配置区 -->
+            <div id="fm-custom-section">
+                <div class="form-section-divider"></div>
+                <div class="form-section-title">自定义配置</div>
+                <div class="form-group">
+                    <label class="form-label">系统提示词</label>
+                    <textarea class="form-textarea" id="fm-custom-system-prompt" rows="3" placeholder="可选，设置 LLM 的角色和行为约束">${Utils.escapeHtml(ruleType === 'custom' ? (rule.system_prompt || '') : '')}</textarea>
+                </div>
+                <div class="form-group">
+                    <div class="form-label-row">
+                        <label class="form-label">用户提示词</label>
+                        <div class="insert-tag-wrap">
+                            <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-custom-expression','field_result',this)" title="插入占位符">{x}</button>
+                        </div>
+                    </div>
+                    <textarea class="form-textarea" id="fm-custom-expression" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(ruleType === 'custom' ? (rule.expression || '') : '')}</textarea>
+                    <div class="form-hint">用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，让模型自由生成结果</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" id="fm-custom-formatted" ${fmtChecked} onchange="RuleConfig.onCustomFormattedToggle()">
+                        格式化输出（按字段结构返回 JSON）
+                    </label>
+                    <div class="form-hint">关闭时模型返回纯文本值；开启时按下方字段结构返回结构化 JSON</div>
+                </div>
+                <div class="form-group" id="fm-custom-schema-group" style="display:none">
+                    <label class="form-label">输出字段结构</label>
+                    <div id="fm-custom-schema-area">
+                        <textarea class="sb-json" id="fm-custom-schema-json" style="display:none">${schemaJson}</textarea>
+                        <div class="sb-editor"></div>
+                        <button type="button" class="insert-tag-btn" style="margin-top:6px" onclick="SchemaBuilder.addRootField()">+ 添加字段</button>
+                        <div class="form-label" style="margin-top:10px">实时预览</div>
+                        <pre class="sb-preview debug-code-block" style="white-space:pre-wrap;max-height:220px;overflow:auto"></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 网络搜索配置区（judge / custom 共享） -->
+            <div id="fm-websearch-section">
+                <div class="form-section-divider"></div>
                 <div class="form-group">
                     <div class="form-label-row">
                         <label class="form-label">网络搜索</label>
@@ -1174,7 +1235,7 @@ const RuleConfig = {
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
-                    <div class="form-hint">开启后执行判断前先联网搜索（博查），结果替换提示词中的 &lt;web_search_result/&gt; 占位符</div>
+                    <div class="form-hint">开启后执行前先联网搜索（博查），结果替换提示词中的 &lt;web_search_result/&gt; 占位符</div>
                 </div>
                 <div id="fm-ws-config" style="display:${ws.enabled ? 'block' : 'none'}">
                     <div class="form-group">
@@ -1204,41 +1265,37 @@ const RuleConfig = {
                     </div>
                 </div>
             </div>
-
-            <!-- 计算型配置区 -->
-            <div id="fm-calc-section">
-                <div class="form-section-divider"></div>
-                <div class="form-section-title">计算配置</div>
-                <div class="form-group">
-                    <div class="form-label-row">
-                        <label class="form-label">计算表达式</label>
-                        <div class="insert-tag-wrap">
-                            <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-expression-calc','field_result',this)" title="插入占位符">{x}</button>
-                        </div>
-                    </div>
-                    <textarea class="form-textarea" id="fm-expression-calc" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(rule.expression || '')}</textarea>
-                    <div class="form-hint">用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，系统执行数值计算并返回结果</div>
-                </div>
-            </div>
         `;
     },
 
     onRuleTypeChange(type) {
         const judgeSection = document.getElementById('fm-judge-section');
         const calcSection = document.getElementById('fm-calc-section');
+        const customSection = document.getElementById('fm-custom-section');
+        const wsSection = document.getElementById('fm-websearch-section');
         if (!judgeSection || !calcSection) return;
 
         judgeSection.style.display = type === 'judge' ? 'block' : 'none';
         calcSection.style.display = type === 'calc' ? 'block' : 'none';
+        if (customSection) customSection.style.display = type === 'custom' ? 'block' : 'none';
+        if (wsSection) wsSection.style.display = (type === 'judge' || type === 'custom') ? 'block' : 'none';
+        if (type === 'custom') this.onCustomFormattedToggle();
+    },
+
+    onCustomFormattedToggle() {
+        const fmt = document.getElementById('fm-custom-formatted');
+        const group = document.getElementById('fm-custom-schema-group');
+        if (group) group.style.display = (fmt && fmt.checked) ? 'block' : 'none';
     },
 
     onWebSearchToggle(checked) {
         const area = document.getElementById('fm-ws-config');
         if (area) area.style.display = checked ? 'block' : 'none';
 
-        // 开启时若用户提示词缺少占位符，自动追加
         if (checked) {
-            const expr = document.getElementById('fm-expression');
+            const ruleType = (document.getElementById('fm-rule-type') || {}).value;
+            const exprId = ruleType === 'custom' ? 'fm-custom-expression' : 'fm-expression';
+            const expr = document.getElementById(exprId);
             if (expr && !expr.value.includes('<web_search_result/>')) {
                 expr.value = expr.value ? expr.value + '\n<web_search_result/>' : '<web_search_result/>';
             }
@@ -1361,24 +1418,41 @@ const RuleConfig = {
         const existingRule = this.state.editingRule;
         const ruleType = document.getElementById('fm-rule-type').value;
 
-        // judge 用 fm-expression, calc 用 fm-expression-calc
-        const expression = ruleType === 'calc'
-            ? document.getElementById('fm-expression-calc').value.trim()
-            : document.getElementById('fm-expression').value.trim();
+        let expression;
+        if (ruleType === 'calc') {
+            expression = document.getElementById('fm-expression-calc').value.trim();
+        } else if (ruleType === 'custom') {
+            expression = document.getElementById('fm-custom-expression').value.trim();
+        } else {
+            expression = document.getElementById('fm-expression').value.trim();
+        }
 
-        // 网络搜索配置（仅 judge）
         let webSearch = null;
         const wsEnabledEl = document.getElementById('fm-ws-enabled');
-        if (ruleType === 'judge' && wsEnabledEl && wsEnabledEl.checked) {
+        if ((ruleType === 'judge' || ruleType === 'custom') && wsEnabledEl && wsEnabledEl.checked) {
             const wsQueryEl = document.getElementById('fm-ws-query');
-            const wsCountEl = document.getElementById('fm-ws-count');
             const wsFreshnessEl = document.getElementById('fm-ws-freshness');
             webSearch = {
                 enabled: true,
                 query: wsQueryEl ? wsQueryEl.value.trim() : '',
-                count: wsCountEl ? this.parseIntOrDefault('fm-ws-count', 5) : 5,
+                count: this.parseIntOrDefault('fm-ws-count', 5),
                 freshness: wsFreshnessEl ? (wsFreshnessEl.value || 'noLimit') : 'noLimit',
             };
+        }
+
+        let systemPrompt = null;
+        if (ruleType === 'judge') {
+            systemPrompt = document.getElementById('fm-system-prompt').value.trim() || null;
+        } else if (ruleType === 'custom') {
+            systemPrompt = document.getElementById('fm-custom-system-prompt').value.trim() || null;
+        }
+
+        let isFormatted = 0;
+        let outputSchema = null;
+        if (ruleType === 'custom') {
+            const fmt = document.getElementById('fm-custom-formatted');
+            isFormatted = fmt && fmt.checked ? 1 : 0;
+            if (isFormatted) outputSchema = SchemaBuilder.collect();
         }
 
         return {
@@ -1386,11 +1460,11 @@ const RuleConfig = {
             rule_name: document.getElementById('fm-rule-name').value.trim(),
             rule_type: ruleType,
             expression: expression,
-            system_prompt: ruleType === 'judge'
-                ? (document.getElementById('fm-system-prompt').value.trim() || null)
-                : null,
+            system_prompt: systemPrompt,
             depend_fields: this.getDependFields(),
             web_search: webSearch,
+            is_formatted: isFormatted,
+            output_schema: outputSchema,
             enabled: existingRule ? existingRule.enabled : 1,
             priority: this.parseIntOrDefault('fm-rule-priority', 0),
         };
@@ -1513,6 +1587,21 @@ const RuleConfig = {
             }
             if (!data.expression.includes('<web_search_result/>')) {
                 Toast.error('开启网络搜索时用户提示词须包含 <web_search_result/> 占位符');
+                return false;
+            }
+        }
+
+        if (data.rule_type === 'custom' && data.is_formatted) {
+            if (!data.output_schema || data.output_schema.length === 0) {
+                Toast.error('开启格式化输出时请至少添加一个输出字段');
+                return false;
+            }
+            const missingKey = (nodes) => nodes.some(n =>
+                !n.key || !n.key.trim() ||
+                ((n.type === 'object' || n.type === 'array') && missingKey(n.children || []))
+            );
+            if (missingKey(data.output_schema)) {
+                Toast.error('输出字段的名称(key)不能为空');
                 return false;
             }
         }
@@ -1712,6 +1801,7 @@ const RuleConfig = {
         const ruleType = document.getElementById('fm-rule-type');
         if (ruleType) {
             this.onRuleTypeChange(ruleType.value);
+            SchemaBuilder.mount('fm-custom-schema-area');
         }
 
         const wsEnabled = document.getElementById('fm-ws-enabled');
