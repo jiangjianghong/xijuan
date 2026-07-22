@@ -154,7 +154,7 @@ async def init_database() -> None:
         data_type = (result.scalar() or "").lower()
         if data_type and data_type != "text":
             await conn.execute(
-                text("ALTER TABLE `analysis_result` MODIFY COLUMN `result_value` TEXT")
+                text("ALTER TABLE `analysis_result` MODIFY COLUMN `result_value` TEXT NOT NULL")
             )
             logger.info("已将 analysis_result.result_value 扩容为 TEXT")
 
