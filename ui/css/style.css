@@ -2034,11 +2034,12 @@ h1, h2, h3, h4, h5, h6,
 .sb-add-lvl4 { background: #F2F7F4; color: var(--bio-med); }
 
 /* 字段结构编辑器内的输入框：压低高度，与 + 按钮协调 */
+/* 字段结构编辑器内的输入框：高度交给 flex stretch 统一拉伸，
+   input 与 select 因此严格等高，绕开 select 原生 UA 高度差异 */
 .sb-node .form-input,
 .sb-node .form-select {
-    height: 28px;
-    padding-top: 0;
-    padding-bottom: 0;
+    padding-top: 5px;
+    padding-bottom: 5px;
     font-size: 13px;
 }
 

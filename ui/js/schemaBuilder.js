@@ -84,7 +84,7 @@ const SchemaBuilder = {
                 .join('');
             html += `
                 <div class="sb-node" style="border-left:2px solid var(--border-color,#e0e0e0);padding-left:8px;margin:4px 0;">
-                    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                    <div style="display:flex;gap:6px;align-items:stretch;flex-wrap:wrap;">
                         <input class="form-input" style="width:130px;flex:0 0 auto" placeholder="字段名"
                                value="${Utils.escapeHtml(n.key || '')}"
                                oninput="SchemaBuilder.update('${path}','key',this.value)">
@@ -96,7 +96,7 @@ const SchemaBuilder = {
                         <input class="form-input" style="flex:1;min-width:120px" placeholder="说明"
                                value="${Utils.escapeHtml(n.desc || '')}"
                                oninput="SchemaBuilder.update('${path}','desc',this.value)">
-                        <button type="button" class="action-btn delete" title="删除"
+                        <button type="button" class="action-btn delete" title="删除" style="align-self:center"
                                 onclick="SchemaBuilder.remove('${path}')">✕</button>
                     </div>
                     ${isContainer ? `<div style="margin-left:12px">
