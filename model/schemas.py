@@ -99,6 +99,8 @@ class ExportRuleItem(BaseModel):
     expression: str
     system_prompt: Optional[str] = None
     web_search: Optional[Dict[str, Any]] = None
+    is_formatted: int = 0
+    output_schema: Optional[List[Dict[str, Any]]] = None
     depend_field_names: List[str] = []
     enabled: int = 1
     priority: int = 0
@@ -434,6 +436,7 @@ class ExtractionFieldResponse(ExtractionFieldCreate):
 class RuleTypeEnum(str, Enum):
     judge = "judge"
     calc = "calc"
+    custom = "custom"
 
 
 class AnalysisRuleCreate(BaseModel):
@@ -445,6 +448,9 @@ class AnalysisRuleCreate(BaseModel):
     system_prompt: Optional[str] = None
     depend_fields: Optional[List[str]] = None
     web_search: Optional[Dict[str, Any]] = None
+    # 自定义规则：格式化输出开关 + 字段树
+    is_formatted: int = 0
+    output_schema: Optional[List[Dict[str, Any]]] = None
     enabled: int = 1
     priority: int = 0
 
@@ -457,15 +463,28 @@ class AnalysisRuleCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_web_search(self):
-        """启用网络搜索时校验：仅 judge 类型、query 非空、expression 含占位符。"""
+        """启用网络搜索时校验：judge 或 custom、query 非空、expression 含占位符。"""
         ws = self.web_search
         if ws and ws.get("enabled"):
-            if self.rule_type != RuleTypeEnum.judge:
-                raise ValueError("仅 judge 类型规则支持网络搜索")
+            if self.rule_type not in (RuleTypeEnum.judge, RuleTypeEnum.custom):
+                raise ValueError("仅 judge / custom 类型规则支持网络搜索")
             if not (ws.get("query") or "").strip():
                 raise ValueError("启用网络搜索时 query 不能为空")
             if "<web_search_result/>" not in self.expression:
                 raise ValueError("启用网络搜索时 expression 必须包含 <web_search_result/> 占位符")
+        return self
+
+    @model_validator(mode="after")
+    def validate_output_schema_when_formatted(self):
+        """custom 且开启格式化时，output_schema 必须存在且结构合法。"""
+        if self.rule_type == RuleTypeEnum.custom and self.is_formatted == 1:
+            if not self.output_schema:
+                raise ValueError("custom 规则开启格式化输出时 output_schema 不能为空")
+            from utils.output_schema import OutputSchemaError, validate_output_schema
+            try:
+                validate_output_schema(self.output_schema)
+            except OutputSchemaError as e:
+                raise ValueError(f"output_schema 结构非法：{e}")
         return self
 
 
