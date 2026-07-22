@@ -2005,6 +2005,34 @@ h1, h2, h3, h4, h5, h6,
     border-color: var(--bio-light);
 }
 
+/* 字段结构「添加」按钮：+ 图标，按嵌套层级配色（根深、子浅） */
+.sb-add-btn {
+    width: 26px;
+    height: 22px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: var(--transition);
+}
+
+.sb-add-btn:hover {
+    filter: brightness(0.93);
+}
+
+.sb-add-lvl0 { background: #BCD4C6; color: var(--bio-dark); }
+.sb-add-lvl1 { background: #CDE0D5; color: var(--bio-dark); }
+.sb-add-lvl2 { background: #DBE9E1; color: var(--bio-med); }
+.sb-add-lvl3 { background: #E8F1EC; color: var(--bio-med); }
+.sb-add-lvl4 { background: #F2F7F4; color: var(--bio-med); }
+
 .insert-tag-dropdown {
     position: absolute;
     top: 100%;

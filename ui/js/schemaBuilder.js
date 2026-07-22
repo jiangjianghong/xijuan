@@ -77,7 +77,8 @@ const SchemaBuilder = {
         this._sync();
     },
 
-    _renderNodes(nodes, prefix) {
+    _renderNodes(nodes, prefix, depth) {
+        depth = depth || 0;
         let html = '';
         (nodes || []).forEach((n, i) => {
             const path = prefix === '' ? String(i) : `${prefix}.${i}`;
@@ -103,9 +104,8 @@ const SchemaBuilder = {
                                 onclick="SchemaBuilder.remove('${path}')">✕</button>
                     </div>
                     ${isContainer ? `<div style="margin-left:12px">
-                        ${this._renderNodes(n.children || [], path)}
-                        <button type="button" class="insert-tag-btn" title="添加子字段"
-                                style="width:28px;padding:2px 0;text-align:center"
+                        ${this._renderNodes(n.children || [], path, depth + 1)}
+                        <button type="button" class="sb-add-btn sb-add-lvl${Math.min(depth + 1, 4)}" title="添加子字段"
                                 onclick="SchemaBuilder.addChild('${path}')">+</button>
                     </div>` : ''}
                 </div>`;
