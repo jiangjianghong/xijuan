@@ -13,10 +13,6 @@ const SchemaBuilder = {
         return { key: '', type: 'string', example: '', desc: '', children: [] };
     },
 
-    _typeCn(t) {
-        return { string: '字符串', number: '数字', boolean: '布尔', object: '对象', array: '数组' }[t] || t;
-    },
-
     mount(areaId) {
         const area = document.getElementById(areaId);
         if (!area) return;
@@ -84,7 +80,7 @@ const SchemaBuilder = {
             const path = prefix === '' ? String(i) : `${prefix}.${i}`;
             const isContainer = n.type === 'object' || n.type === 'array';
             const typeOptions = ['string', 'number', 'boolean', 'object', 'array']
-                .map(t => `<option value="${t}" ${n.type === t ? 'selected' : ''}>${this._typeCn(t)}</option>`)
+                .map(t => `<option value="${t}" ${n.type === t ? 'selected' : ''}>${t}</option>`)
                 .join('');
             html += `
                 <div class="sb-node" style="border-left:2px solid var(--border-color,#e0e0e0);padding-left:8px;margin:4px 0;">
@@ -106,6 +102,7 @@ const SchemaBuilder = {
                     ${isContainer ? `<div style="margin-left:12px">
                         ${this._renderNodes(n.children || [], path, depth + 1)}
                         <button type="button" class="sb-add-btn sb-add-lvl${Math.min(depth + 1, 4)}" title="添加子字段"
+                                style="margin-top:8px;margin-left:-13px"
                                 onclick="SchemaBuilder.addChild('${path}')">+</button>
                     </div>` : ''}
                 </div>`;

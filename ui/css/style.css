@@ -2008,7 +2008,7 @@ h1, h2, h3, h4, h5, h6,
 /* 字段结构「添加」按钮：+ 图标，按嵌套层级配色（根深、子浅） */
 .sb-add-btn {
     width: 26px;
-    height: 22px;
+    height: 26px;
     border: 1px solid var(--border);
     border-radius: 4px;
     font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
@@ -2032,6 +2032,15 @@ h1, h2, h3, h4, h5, h6,
 .sb-add-lvl2 { background: #DBE9E1; color: var(--bio-med); }
 .sb-add-lvl3 { background: #E8F1EC; color: var(--bio-med); }
 .sb-add-lvl4 { background: #F2F7F4; color: var(--bio-med); }
+
+/* 字段结构编辑器内的输入框：压低高度，与 + 按钮协调 */
+.sb-node .form-input,
+.sb-node .form-select {
+    height: 30px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    font-size: 13px;
+}
 
 .insert-tag-dropdown {
     position: absolute;
