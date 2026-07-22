@@ -514,6 +514,19 @@ async def run_analysis(
                 result_value, reason = await execute_judge(resolved_expression, system_prompt=rule.system_prompt or "")
             elif rule.rule_type == "calc":
                 result_value, reason = await execute_calc(resolved_expression, cfg.calc_precision)
+            elif rule.rule_type == "custom":
+                # custom 也支持网络搜索
+                resolved_expression, ws_ref = await apply_web_search(
+                    resolved_expression, rule.web_search, field_values
+                )
+                if ws_ref:
+                    source_refs["_web_search"] = ws_ref
+                result_value, reason = await execute_custom(
+                    resolved_expression,
+                    is_formatted=bool(rule.is_formatted),
+                    output_schema=rule.output_schema,
+                    system_prompt=rule.system_prompt or "",
+                )
             else:
                 logger.warning("未知规则类型: {}", rule.rule_type)
                 result_value = ""
@@ -764,6 +777,19 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
                 result_value, reason = await execute_judge(resolved_expression, system_prompt=rule.system_prompt or "")
             elif rule.rule_type == "calc":
                 result_value, reason = await execute_calc(resolved_expression, cfg.calc_precision)
+            elif rule.rule_type == "custom":
+                # custom 也支持网络搜索
+                resolved_expression, ws_ref = await apply_web_search(
+                    resolved_expression, rule.web_search, field_values
+                )
+                if ws_ref:
+                    source_refs["_web_search"] = ws_ref
+                result_value, reason = await execute_custom(
+                    resolved_expression,
+                    is_formatted=bool(rule.is_formatted),
+                    output_schema=rule.output_schema,
+                    system_prompt=rule.system_prompt or "",
+                )
             else:
                 logger.warning("未知规则类型: {}", rule.rule_type)
                 result_value = ""
