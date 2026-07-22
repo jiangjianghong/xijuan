@@ -449,7 +449,7 @@ class AnalysisRuleCreate(BaseModel):
     depend_fields: Optional[List[str]] = None
     web_search: Optional[Dict[str, Any]] = None
     # 自定义规则：格式化输出开关 + 字段树
-    is_formatted: int = 0
+    is_formatted: int = Field(0, ge=0, le=1)
     output_schema: Optional[List[Dict[str, Any]]] = None
     enabled: int = 1
     priority: int = 0

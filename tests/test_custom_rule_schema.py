@@ -51,6 +51,11 @@ def test_custom_formatted_rejects_bad_schema():
         AnalysisRuleCreate(**_payload(is_formatted=1, output_schema=[{"key": "", "type": "string"}]))
 
 
+def test_is_formatted_rejects_out_of_range():
+    with pytest.raises(ValidationError):
+        AnalysisRuleCreate(**_payload(is_formatted=2))
+
+
 def test_custom_allows_web_search():
     rule = AnalysisRuleCreate(**_payload(
         expression="结合<web_search_result/>与<field_result>a</field_result>生成",
