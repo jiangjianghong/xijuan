@@ -15,7 +15,8 @@ from model.tables import AnalysisResult, AnalysisRule, ExtractionResult, File
 from utils.callback import notify_callback
 from utils.config import get_config
 from utils.llm_client import chat_completion
-from utils.text_utils import normalize_cjk_quotes, salvage_reason
+from utils.text_utils import normalize_cjk_quotes, salvage_reason, salvage_value_reason
+from utils.output_schema import render_schema_prompt
 from utils.web_search import bocha_web_search
 
 
@@ -280,6 +281,100 @@ async def execute_calc(resolved_expression: str, precision: int = 2) -> Tuple[st
     except Exception as e:
         logger.error("numexpr 计算失败: expr={}, error={}", cleaned_expr, e)
         raise ValueError(f"计算失败: {e}")
+
+
+# ── custom 自定义规则 ────────────────────────────────────────
+
+CUSTOM_JSON_INSTRUCTION_PLAIN = """
+
+请根据以上内容生成结果，以 JSON 格式返回，包含 value（结果内容）和 reason（生成依据）两个字段：
+{"value": "生成的结果内容", "reason": "说明依据"}
+重点关注：只输出 JSON 结果不要带有```等标识；value 与 reason 的值中不得含有英文双引号，需引用文字请一律使用中文引号“”，否则会破坏 JSON 结构。"""
+
+
+def _extract_custom_value_reason(data: Dict[str, Any]) -> Tuple[str, str]:
+    """从 dict 取出 (value, reason)。value 为对象/数组时转 JSON 字符串。"""
+    raw_value = data.get("value", "")
+    if isinstance(raw_value, (list, dict)):
+        value = json.dumps(raw_value, ensure_ascii=False)
+    else:
+        value = normalize_cjk_quotes(str(raw_value).strip())
+    reason = normalize_cjk_quotes(str(data.get("reason", "")).strip())
+    return value, reason
+
+
+def parse_custom_json_response(response: str) -> Tuple[str, str]:
+    """解析 custom LLM 返回的 {value, reason}。
+
+    value 为对象/数组时 json.dumps 成字符串（即格式化输出的 JSON 字符串）；
+    标量转字符串并归一化中文标点。解析失败时用 salvage 兜底。
+    """
+    response = (response or "").strip()
+
+    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response, re.DOTALL)
+    if json_match:
+        response = json_match.group(1)
+
+    try:
+        data = json.loads(response)
+        if isinstance(data, dict):
+            return _extract_custom_value_reason(data)
+    except json.JSONDecodeError:
+        pass
+
+    json_obj_match = re.search(r"\{[^{}]*\"value\"[^{}]*\}", response, re.DOTALL)
+    if json_obj_match:
+        try:
+            data = json.loads(json_obj_match.group())
+            return _extract_custom_value_reason(data)
+        except json.JSONDecodeError:
+            pass
+
+    salvaged_value, salvaged_reason = salvage_value_reason(response)
+    if salvaged_value or salvaged_reason:
+        return salvaged_value, salvaged_reason
+    return response.strip(), ""
+
+
+def _build_custom_prompt(
+    resolved_expression: str,
+    is_formatted: bool,
+    output_schema: Optional[list],
+) -> str:
+    """组装 custom 用户提示词。"""
+    if is_formatted and output_schema:
+        schema_block = render_schema_prompt(output_schema)
+        return (
+            f"{resolved_expression}\n\n{schema_block}\n\n"
+            '以 JSON 格式返回：{"value": <上面结构的 JSON>, "reason": "生成依据"}\n'
+            "重点关注：只输出 JSON 结果不要带有```等标识。"
+        )
+    return f"{resolved_expression}{CUSTOM_JSON_INSTRUCTION_PLAIN}"
+
+
+async def execute_custom(
+    resolved_expression: str,
+    *,
+    is_formatted: bool = False,
+    output_schema: Optional[list] = None,
+    system_prompt: str = "",
+) -> Tuple[str, str]:
+    """执行自定义规则：LLM 自由生成，返回 (value, reason)。
+
+    is_formatted=True 时把 output_schema 渲染成结构说明+示例 JSON 注入提示词，
+    要求模型输出符合结构的 JSON（value 落库为 JSON 字符串）。
+    """
+    prompt = _build_custom_prompt(resolved_expression, is_formatted, output_schema)
+    sys_prompt = (system_prompt or "").strip()
+    if sys_prompt:
+        messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": prompt},
+        ]
+        response = await chat_completion("", messages=messages)
+    else:
+        response = await chat_completion(prompt)
+    return parse_custom_json_response(response)
 
 
 async def run_analysis(
