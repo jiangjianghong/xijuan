@@ -88,7 +88,7 @@ const SchemaBuilder = {
                         <input class="form-input" style="width:130px;flex:0 0 auto" placeholder="字段名"
                                value="${Utils.escapeHtml(n.key || '')}"
                                oninput="SchemaBuilder.update('${path}','key',this.value)">
-                        <select class="form-select" style="width:110px;height:28px;flex:0 0 auto;padding-top:0;padding-bottom:0;padding-right:22px;background-position:right 6px center"
+                        <select class="form-select" style="width:110px;flex:0 0 auto;padding-right:22px;background-position:right 6px center"
                                 onchange="SchemaBuilder.update('${path}','type',this.value)">${typeOptions}</select>
                         ${isContainer ? '' : `<input class="form-input" style="width:120px;flex:0 0 auto" placeholder="示例值"
                                value="${Utils.escapeHtml(n.example || '')}"

@@ -2036,9 +2036,9 @@ h1, h2, h3, h4, h5, h6,
 /* 字段结构编辑器内的输入框：压低高度，与 + 按钮协调 */
 .sb-node .form-input,
 .sb-node .form-select {
-    height: 30px;
-    padding-top: 4px;
-    padding-bottom: 4px;
+    height: 28px;
+    padding-top: 0;
+    padding-bottom: 0;
     font-size: 13px;
 }
 
