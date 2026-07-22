@@ -51,9 +51,10 @@ def validate_output_schema(schema: Any, *, _path: str = "") -> None:
         key = node.get("key")
         if not isinstance(key, str) or not key.strip():
             raise OutputSchemaError(f"{p} 的 key 不能为空")
-        if key in seen:
+        norm_key = key.strip()
+        if norm_key in seen:
             raise OutputSchemaError(f"{p} 的 key『{key}』在同级重复")
-        seen.add(key)
+        seen.add(norm_key)
         typ = node.get("type")
         if typ not in VALID_TYPES:
             raise OutputSchemaError(
@@ -66,7 +67,10 @@ def validate_output_schema(schema: Any, *, _path: str = "") -> None:
 
 
 def build_example_json(schema: List[Dict[str, Any]]) -> Any:
-    """把字段树构建成示例 JSON 对象（供预览与提示词）。"""
+    """把字段树构建成示例 JSON 对象（供预览与提示词）。
+
+    入参须为已校验的字段树（未经 validate_output_schema 的畸形树可能触发 KeyError）。
+    """
     return _build_object(schema)
 
 
@@ -95,7 +99,10 @@ def _scalar_example(node: Dict[str, Any]) -> Any:
 
 
 def render_schema_prompt(schema: List[Dict[str, Any]]) -> str:
-    """渲染成「字段说明清单 + 示例 JSON」，附加到 custom 提示词。"""
+    """渲染成「字段说明清单 + 示例 JSON」，附加到 custom 提示词。
+
+    入参须为已校验的字段树（未经 validate_output_schema 的畸形树可能触发 KeyError）。
+    """
     lines = _render_lines(schema, 0)
     example = json.dumps(build_example_json(schema), ensure_ascii=False)
     return (

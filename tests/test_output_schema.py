@@ -54,6 +54,14 @@ def test_validate_rejects_duplicate_key():
         ])
 
 
+def test_validate_rejects_duplicate_key_after_strip():
+    with pytest.raises(OutputSchemaError, match="重复"):
+        validate_output_schema([
+            {"key": "a", "type": "string"},
+            {"key": "a ", "type": "string"},
+        ])
+
+
 def test_validate_rejects_container_without_children():
     with pytest.raises(OutputSchemaError, match="children"):
         validate_output_schema([{"key": "s", "type": "object", "children": []}])
