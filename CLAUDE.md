@@ -174,3 +174,25 @@ Two rule types:
 ## Configuration
 
 Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`, `storage`. Each maps to a Pydantic model in `utils/config.py`. `storage`（`max_total_bytes` / `max_retention_minutes` / `cleanup_interval_minutes`，默认 `0/0/10`，0=关闭）治理 `uploads` 下 PDF：启动时 + 每 `cleanup_interval_minutes` 分钟 + 每次上传后触发 `service/retention_service.py:enforce_pdf_retention`，只删物理 PDF（按 `create_time` 最旧优先淘汰 / 超时删除），不动数据库；被清文件的 PDF 预览与 VL 抽取返回 404。
+
+## API Documentation
+
+接口文档在 `docs/`，采用「README 枢纽 + 四层多文件」结构，配套「手写 Markdown + 生成 OpenAPI」双权威 + 机器化一致性校验：
+
+- **`docs/README.md`** — 导航枢纽 + AUTOGEN 生成的 50 接口总览表。
+- **`docs/api/`** — 接口参考，按资源前缀分文件（`overview`/`doctype`/`file`/`extraction`/`analysis`/`search`/`logs`）+ `callbacks.md`（异步回调契约）+ `sse.md`（流式事件）。每个 REST 接口套统一 9 段排布模板；参数/请求体/响应表由 AUTOGEN 从 openapi 生成（`<!-- AUTOGEN:<kind> METHOD /path -->` 区块，kind ∈ path-params/query-params/request-body/response/endpoint-index），回调/SSE 载荷表人写（openapi 不含）。
+- **`docs/guides/`** — 任务导向手册（`extraction-config`/`analysis-config`/`source-refs`/`configuration`）。
+- **`docs/reference/`** — `data-model.md`（DB schema 唯一权威）、`enums.md`（枚举 + progress 状态机）。
+- **`docs/architecture/`** — `mineru-integration.md`。
+
+**OpenAPI 单一来源**：富化逻辑集中在 `utils/openapi_enrich.py`（`ENRICHMENTS`/`PARAM_OVERRIDES`/`SCHEMA_DOCS`/`RESPONSE_DATA` 四类字典 + `enrich()`）。`app.py` 覆盖 `app.openapi` 复用它，使**活的 `/docs` Swagger 与导出的 `docs/openapi.json` 同源**；版本单源于 `pyproject.toml`（`get_version()`）。响应统一包在 `ResponseWrapper{data:Any}`，故各接口响应形态经 `RESPONSE_DATA` 映射把响应模型注入 `components`+`responses.200`（纯文档增强，不改运行时）。
+
+**改了接口后的维护流程（三步）：**
+
+```bash
+uv run python scripts/gen_openapi.py        # 从 app 重生成 docs/openapi.json
+uv run python scripts/gen_doc_tables.py      # 用 openapi 刷新所有 AUTOGEN 表格
+uv run python scripts/check_docs_sync.py     # 校验:接口全集/版本/AUTOGEN 新鲜度,全绿才算同步
+```
+
+`check_docs_sync` 保证 md 与 openapi 一致（每个 openapi 接口都被 AUTOGEN 引用、无幽灵接口、pyproject/openapi/md 三处版本一致）；`gen_doc_tables`/`check_docs_sync` 均有单测（`tests/test_gen_doc_tables.py` / `tests/test_check_docs_sync.py`，fixture 在 `tests/fixtures/doc_tools/`）。
