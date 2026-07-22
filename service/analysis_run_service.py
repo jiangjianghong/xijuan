@@ -14,6 +14,7 @@ from model.tables import AnalysisRule
 from service.analysis_service import (
     apply_web_search,
     execute_calc,
+    execute_custom,
     execute_judge,
     resolve_expression,
     validate_field_values,
@@ -34,6 +35,8 @@ class AnalysisRuleSnapshot:
     depend_fields: list[str]
     web_search: Optional[dict]
     priority: int
+    is_formatted: int = 0
+    output_schema: Optional[list] = None
 
     @classmethod
     def from_orm(cls, rule: AnalysisRule) -> "AnalysisRuleSnapshot":
@@ -47,6 +50,8 @@ class AnalysisRuleSnapshot:
             depend_fields=list(rule.depend_fields or []),
             web_search=rule.web_search,
             priority=int(rule.priority or 0),
+            is_formatted=int(getattr(rule, "is_formatted", 0) or 0),
+            output_schema=getattr(rule, "output_schema", None),
         )
 
 
@@ -130,6 +135,20 @@ async def execute_rule(
             value, reason = await execute_calc(
                 resolved,
                 get_config().analysis.calc_precision,
+            )
+        elif rule.rule_type == "custom":
+            resolved, web_ref = await apply_web_search(
+                resolved,
+                rule.web_search,
+                values,
+            )
+            if web_ref:
+                source_refs["_web_search"] = web_ref
+            value, reason = await execute_custom(
+                resolved,
+                is_formatted=bool(rule.is_formatted),
+                output_schema=rule.output_schema,
+                system_prompt=rule.system_prompt,
             )
         else:
             raise ValueError(f"未知规则类型: {rule.rule_type}")

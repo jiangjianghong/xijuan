@@ -228,3 +228,53 @@ async def test_run_analysis_batch_returns_empty_item_when_no_rule_is_covered():
         "failed": 0,
         "results": [],
     }
+
+
+def _custom_rule(rule_id, depend_fields, *, is_formatted=0, output_schema=None):
+    return AnalysisRuleSnapshot(
+        rule_id=rule_id,
+        type_id="contract",
+        rule_name=rule_id,
+        rule_type="custom",
+        expression="根据<field_result>amount</field_result>生成",
+        system_prompt="",
+        depend_fields=depend_fields,
+        web_search=None,
+        priority=0,
+        is_formatted=is_formatted,
+        output_schema=output_schema,
+    )
+
+
+@pytest.mark.anyio
+async def test_execute_rule_dispatches_custom(monkeypatch):
+    captured = {}
+
+    async def fake_custom(resolved, *, is_formatted, output_schema, system_prompt):
+        captured["is_formatted"] = is_formatted
+        captured["output_schema"] = output_schema
+        return "生成值", "理由"
+
+    monkeypatch.setattr(analysis_run_service, "execute_custom", fake_custom)
+    schema = [{"key": "k", "type": "string"}]
+    result = await analysis_run_service.execute_rule(
+        _custom_rule("c1", ["amount"], is_formatted=1, output_schema=schema),
+        {"amount": "120"},
+    )
+    assert result["success"] is True
+    assert result["result"] == "生成值"
+    assert captured["is_formatted"] is True
+    assert captured["output_schema"] == schema
+
+
+@pytest.mark.anyio
+async def test_snapshot_from_orm_reads_custom_fields():
+    orm = SimpleNamespace(
+        rule_id="c1", type_id="contract", rule_name="c1", rule_type="custom",
+        expression="<field_result>amount</field_result>", system_prompt="",
+        depend_fields=["amount"], web_search=None, priority=0,
+        is_formatted=1, output_schema=[{"key": "k", "type": "string"}],
+    )
+    snap = AnalysisRuleSnapshot.from_orm(orm)
+    assert snap.is_formatted == 1
+    assert snap.output_schema == [{"key": "k", "type": "string"}]
