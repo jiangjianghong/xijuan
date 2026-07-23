@@ -315,6 +315,105 @@ def collect_depend_fields(field: Any) -> List[str]:
     return list(seen.keys())
 
 
+def _clean_str_list(items: List[Any]) -> List[Any]:
+    """去掉 str 元素首尾空白并剔除空串；非 str 元素原样保留。"""
+    out: List[Any] = []
+    for it in items:
+        if isinstance(it, str):
+            s = it.strip()
+            if s:
+                out.append(s)
+        else:
+            out.append(it)
+    return out
+
+
+def _clone_field_transient(field: "ExtractionField", **overrides: Any) -> "ExtractionField":
+    """基于已加载字段构造一个游离（未入会话）副本，仅覆盖指定属性。
+
+    避免直接改动会话内对象（否则 commit 时会把解析后的配置误写回 extraction_field）。
+    """
+    from sqlalchemy import inspect as sa_inspect
+    data = {c.key: getattr(field, c.key) for c in sa_inspect(field).mapper.column_attrs}
+    data.update(overrides)
+    from model.tables import ExtractionField as _EF
+    return _EF(**data)
+
+
+def resolve_advanced_field(
+    field: "ExtractionField",
+    field_values: Dict[str, str],
+    field_model_pages: Dict[str, Optional[List[int]]],
+) -> Tuple["ExtractionField", Dict[str, Any]]:
+    """把进阶字段解析为「等价普通字段」：占位符→值、page_source_field→page_range。
+
+    Returns:
+        (resolved_field, provenance)。provenance 含 _resolved_refs（各引用实际填入值）
+        与（page 联动时）_page_link。page 来源无模型页码时抛 ValueError。
+    """
+    import copy as _copy
+
+    resolved_refs: Dict[str, str] = {}
+    provenance: Dict[str, Any] = {}
+
+    def _res(text: Any) -> Any:
+        if not isinstance(text, str) or not text:
+            return text
+        for fid in collect_field_refs(text):
+            resolved_refs[fid] = field_values.get(fid, "") or ""
+        return resolve_field_refs(text, field_values)
+
+    # search_config 深拷贝后就地解析
+    sc = _copy.deepcopy(field.search_config) if isinstance(field.search_config, dict) else field.search_config
+    if isinstance(sc, dict):
+        for key, val in list(sc.items()):
+            if isinstance(val, str):
+                sc[key] = _res(val)
+            elif isinstance(val, list):
+                sc[key] = _clean_str_list([_res(x) for x in val])
+        # Feature B：page 联动
+        if field.search_type == "page" and sc.get("page_source_field"):
+            src = sc["page_source_field"]
+            pages = (field_model_pages or {}).get(src) or []
+            if not pages:
+                raise ValueError(f"来源字段 {src} 未产出模型自报页码，无法按页码联动取文")
+            start, end, capped = derive_page_range_from_model_pages(pages, sc.get("max_pages"))
+            sc["page_range"] = f"{start}-{end}"
+            provenance["_page_link"] = {
+                "source_field": src, "model_pages": pages,
+                "derived_range": [start, end], "capped": capped,
+            }
+
+    # table_match_keywords 解析 + 去空
+    tmk = field.table_match_keywords
+    if isinstance(tmk, list):
+        tmk = _clean_str_list([_res(k) for k in tmk])
+
+    # vl_config 解析（field_hints + 模板）
+    vc = _copy.deepcopy(field.vl_config) if isinstance(field.vl_config, dict) else field.vl_config
+    if isinstance(vc, dict):
+        for key in ("field_hints", "batch_prompt_template", "locate_prompt_template"):
+            if isinstance(vc.get(key), str):
+                vc[key] = _res(vc[key])
+
+    resolved = _clone_field_transient(
+        field,
+        search_config=sc,
+        table_match_keywords=tmk,
+        vl_config=vc,
+        table_extract_prompt=_res(field.table_extract_prompt),
+        table_system_prompt=_res(field.table_system_prompt),
+        text_extract_prompt=_res(field.text_extract_prompt),
+        text_system_prompt=_res(field.text_system_prompt),
+        vl_extract_prompt=_res(field.vl_extract_prompt),
+        vl_system_prompt=_res(field.vl_system_prompt),
+    )
+
+    if resolved_refs:
+        provenance["_resolved_refs"] = resolved_refs
+    return resolved, provenance
+
+
 # ── 页码区间解析（page 检索方式） ─────────────────────────────
 
 
