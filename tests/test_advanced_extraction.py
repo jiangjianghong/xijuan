@@ -79,3 +79,40 @@ def test_derive_range_cap_not_needed():
 def test_derive_range_empty_raises():
     with pytest.raises(ValueError):
         derive_page_range_from_model_pages([], 5)
+
+
+# ── Task 5: 依赖扫描 ──────────────────────────────────────
+
+from types import SimpleNamespace
+from service.extraction_service import collect_depend_fields
+
+
+def _field(**kw):
+    base = dict(
+        source_type="text", search_type="context", search_config=None,
+        table_match_keywords=None, table_extract_prompt=None, table_system_prompt=None,
+        text_extract_prompt=None, text_system_prompt=None,
+        vl_extract_prompt=None, vl_system_prompt=None, vl_config=None,
+    )
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def test_collect_depend_fields_from_keywords_and_prompt():
+    f = _field(
+        search_config={"keywords": ["普通词", "<field_result>a</field_result>"]},
+        text_extract_prompt="用 <search_result>x</search_result> 和 <field_result>b</field_result>",
+    )
+    assert set(collect_depend_fields(f)) == {"a", "b"}
+
+
+def test_collect_depend_fields_page_source():
+    f = _field(search_type="page",
+               search_config={"page_source_field": "src", "max_pages": 5})
+    assert collect_depend_fields(f) == ["src"]
+
+
+def test_collect_depend_fields_none_when_basic():
+    f = _field(search_config={"keywords": ["纯文本"]},
+               text_extract_prompt="<search_result>x</search_result>")
+    assert collect_depend_fields(f) == []

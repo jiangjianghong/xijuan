@@ -271,6 +271,50 @@ def derive_page_range_from_model_pages(
     return start, end, capped
 
 
+def collect_depend_fields(field: Any) -> List[str]:
+    """扫描字段所有可能承载 <field_result> 占位符的位置 + page_source_field，
+    汇总被引用的字段 ID（按出现顺序去重）。供保存时写 depend_fields 与校验。
+    """
+    seen: Dict[str, None] = {}
+
+    def _add_from(text: Any) -> None:
+        for fid in collect_field_refs(text):
+            seen.setdefault(fid, None)
+
+    # 提示词
+    for attr in (
+        "table_extract_prompt", "table_system_prompt",
+        "text_extract_prompt", "text_system_prompt",
+        "vl_extract_prompt", "vl_system_prompt",
+    ):
+        _add_from(getattr(field, attr, None))
+
+    # 表格匹配词
+    for kw in (getattr(field, "table_match_keywords", None) or []):
+        _add_from(kw)
+
+    # search_config：所有字符串值 + keywords 列表 + page_source_field
+    sc = getattr(field, "search_config", None) or {}
+    if isinstance(sc, dict):
+        for key, val in sc.items():
+            if isinstance(val, str):
+                _add_from(val)
+            elif isinstance(val, list):
+                for item in val:
+                    _add_from(item)
+        src = sc.get("page_source_field")
+        if isinstance(src, str) and src.strip():
+            seen.setdefault(src.strip(), None)
+
+    # vl_config：field_hints + 模板
+    vc = getattr(field, "vl_config", None) or {}
+    if isinstance(vc, dict):
+        for key in ("field_hints", "batch_prompt_template", "locate_prompt_template"):
+            _add_from(vc.get(key))
+
+    return list(seen.keys())
+
+
 # ── 页码区间解析（page 检索方式） ─────────────────────────────
 
 
