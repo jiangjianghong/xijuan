@@ -75,6 +75,8 @@ async def init_database() -> None:
             ("files", "start_analyzing_time", "DATETIME NULL"),
             ("analysis_rule", "is_formatted", "TINYINT NOT NULL DEFAULT 0"),
             ("analysis_rule", "output_schema", "JSON NULL"),
+            ("extraction_field", "is_advanced", "TINYINT NOT NULL DEFAULT 0"),
+            ("extraction_field", "depend_fields", "JSON NULL"),
         ]
         for table_name, column_name, column_type in migrations:
             result = await conn.execute(

@@ -153,6 +153,10 @@ class ExtractionField(Base):
     )
     enabled: Mapped[int] = mapped_column(TINYINT, default=1)
     priority: Mapped[int] = mapped_column(Integer, default=0)
+    # 进阶字段：1=依赖前序普通字段的进阶字段，0=普通字段（NULL/0 视为普通）
+    is_advanced: Mapped[int] = mapped_column(TINYINT, nullable=False, default=0)
+    # 进阶字段引用的普通字段 ID 列表（服务端由占位符/page_source_field 扫描汇总）
+    depend_fields: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # 是否走 LLM 二次抽取；0 表示跳过 LLM 直接返回检索原文（仅 text/table 生效，NULL/1 视为启用）
     use_llm: Mapped[int] = mapped_column(TINYINT, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
