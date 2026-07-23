@@ -60,11 +60,11 @@
 |---|---|:--:|---|
 | rule_id | string | 否 | 规则 ID |
 | rule_name | string | 是 | 规则名 |
-| rule_type | string | 否 | judge / calc |
+| rule_type | string | 否 | judge / calc / custom |
 | result | string | 否 | 结果 |
 | reason | string | 是 | 理由 |
 | input_values | object | 否 | 依赖字段取值 |
-| source_refs | object | 是 | 溯源（judge 网络搜索时含 `_web_search`） |
+| source_refs | object | 是 | 溯源（judge / custom 网络搜索时含 `_web_search`） |
 | success | boolean | 否 | 是否成功 |
 | index | integer | 否 | 序号 |
 | total | integer | 否 | 规则总数 |

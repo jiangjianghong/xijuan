@@ -621,9 +621,11 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 | `rule_name` | VARCHAR(200) | NOT NULL | - | 规则显示名称 |
 | `rule_type` | ENUM | NOT NULL | - | 规则类型 |
 | `expression` | TEXT | NOT NULL | - | 表达式/提示词 |
-| `system_prompt` | TEXT | NULLABLE | NULL | LLM system 提示词（judge 类可选） |
+| `system_prompt` | TEXT | NULLABLE | NULL | LLM system 提示词（judge / custom 类可选） |
 | `depend_fields` | JSON | NULLABLE | NULL | 依赖的字段 ID 列表 |
-| `web_search` | JSON | NULLABLE | NULL | 网络搜索配置（judge 类可选，见下） |
+| `web_search` | JSON | NULLABLE | NULL | 网络搜索配置（judge / custom 类可选，见下） |
+| `is_formatted` | TINYINT | NOT NULL | 0 | 格式化输出开关（custom 类，1=按 `output_schema` 返回结构化 JSON） |
+| `output_schema` | JSON | NULLABLE | NULL | 格式化输出的字段树（custom 且 `is_formatted=1` 时必填，见下） |
 | `enabled` | TINYINT | - | 1 | 是否启用 |
 | `priority` | INT | - | 0 | 执行优先级 |
 | `created_at` | DATETIME | - | CURRENT_TIMESTAMP | 创建时间 |
@@ -643,6 +645,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 |----|------|-----------------|
 | `judge` | 判断类 | 发送给 LLM 进行判断的完整提示词 |
 | `calc` | 计算类 | 数学表达式（支持 +、-、*、/、()） |
+| `custom` | 自定义类 | 发送给 LLM 自由生成的完整提示词（返回 `{value, reason}`；`is_formatted=1` 时按 `output_schema` 产出结构化 JSON） |
 
 #### depend_fields JSON 结构
 
@@ -654,7 +657,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 
 #### web_search JSON 结构
 
-judge 类规则可选的联网检索增强（`service/analysis_service.py:apply_web_search`，博查 API）：
+judge / custom 类规则可选的联网检索增强（`service/analysis_service.py:apply_web_search`，博查 API）：
 
 ```json
 {
@@ -668,6 +671,25 @@ judge 类规则可选的联网检索增强（`service/analysis_service.py:apply_
 - `query` 支持 `<field_result>field_id</field_result>` 占位符，先用提取结果解析再搜索
 - 搜索结果替换 `expression` 中的 `<web_search_result/>` 占位符后送 LLM
 - 溯源数据写入 `analysis_result.source_refs` 的 `_web_search` 键
+
+#### output_schema JSON 结构
+
+custom 类规则 `is_formatted=1` 时的输出字段树（`utils/output_schema.py` 校验并渲染成结构说明 + 示例 JSON 注入提示词）：
+
+```json
+[
+  { "key": "总股东数", "type": "number", "example": "3" },
+  { "key": "主要股东", "type": "array", "children": [
+    { "key": "名称", "type": "string", "example": "张三" },
+    { "key": "持股比例", "type": "string", "example": "51%" }
+  ]}
+]
+```
+
+- `key`（必填）：字段名，同级不可重名；`type` ∈ `string`/`number`/`boolean`/`object`/`array`
+- `example` / `desc`（可选）：标量节点的示例值与说明，仅用于拼接示例 JSON
+- `object` / `array` 必须含非空 `children`；标量节点不得有 `children`
+- 校验失败（空 `children`、缺 `key`、同级重名等）保存时返回 **422**
 
 #### 示例数据
 
@@ -824,6 +846,7 @@ judge 类规则可选的联网检索增强（`service/analysis_service.py:apply_
 - 复合主键：`file_id` + `rule_id`
 - `result_value` 对于 judge 类型为 `"true"` 或 `"false"`
 - `result_value` 对于 calc 类型为计算结果（保留2位小数）
+- `result_value` 对于 custom 类型为模型自由生成的 `value`（`is_formatted=1` 时为按 `output_schema` 组织的结构化 JSON 字符串）
 - `input_values` 记录分析时使用的字段值，便于追溯
 
 #### input_values JSON 结构
@@ -1022,11 +1045,13 @@ CREATE TABLE IF NOT EXISTS analysis_rule (
   rule_id VARCHAR(100) PRIMARY KEY,
   type_id VARCHAR(64) NOT NULL DEFAULT 'default',
   rule_name VARCHAR(200) NOT NULL,
-  rule_type ENUM('judge', 'calc') NOT NULL,
+  rule_type ENUM('judge', 'calc', 'custom') NOT NULL,
   expression TEXT NOT NULL,
   system_prompt TEXT NULL,
   depend_fields JSON NULL,
   web_search JSON NULL,
+  is_formatted TINYINT NOT NULL DEFAULT 0,
+  output_schema JSON NULL,
   enabled TINYINT DEFAULT 1,
   priority INT DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

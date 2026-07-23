@@ -14,7 +14,7 @@
 | [TableMatchType](#tablematchtype) | `table` 来源的 `table_match_type` | `exact` · `fuzzy` · `contains` · `llm` |
 | [SearchType](#searchtype) | `text` 来源的 `search_type` | `context` · `section` · `rule` · `chunk_db` · `vector_db` · `page` |
 | [VLMethod](#vlmethod) | `vl` 来源的 `vl_method` | `vl_model` · `vl_progressive` · `vl_locate` |
-| [RuleType](#ruletype) | `analysis_rule.rule_type` | `judge` · `calc` |
+| [RuleType](#ruletype) | `analysis_rule.rule_type` | `judge` · `calc` · `custom` |
 | [progress](#progress) | `files.progress` | 见 [progress 状态机](#progress-状态机) |
 
 ---
@@ -81,6 +81,7 @@
 |----|------|
 | `judge` | LLM 判断，返回 `true`/`false`（也可能是 LLM 自由文本判断结果） |
 | `calc` | `numexpr` 计算表达式，按 `analysis.calc_precision`（默认 2 位）保留小数 |
+| `custom` | LLM 自由生成，返回 `{value, reason}`；`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串 |
 
 ---
 

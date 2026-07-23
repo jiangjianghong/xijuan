@@ -1135,7 +1135,7 @@
           "file"
         ],
         "summary": "逻辑分析结果",
-        "description": "返回 `analysis_result` 全表行（LEFT JOIN `analysis_rule` 获取规则名称）：\n`data=[{file_id, rule_id, rule_name, result_value, input_values, reason, source_refs}]`（含 `input_values` 字典）。\n\n`rule_name` 来自规则配置表，若配置已被删除则为 `null`。\n\n`source_refs` 目前仅 judge 规则启用网络搜索时携带 `_web_search` 键：`{query, results: [{name, url, siteName, datePublished, summary}], error?}`；未启用搜索的规则与存量老数据为 `null`，消费方需容错。",
+        "description": "返回 `analysis_result` 全表行（LEFT JOIN `analysis_rule` 获取规则名称）：\n`data=[{file_id, rule_id, rule_name, result_value, input_values, reason, source_refs}]`（含 `input_values` 字典）。\n\n`rule_name` 来自规则配置表，若配置已被删除则为 `null`。\n\n`source_refs` 目前仅 judge / custom 规则启用网络搜索时携带 `_web_search` 键：`{query, results: [{name, url, siteName, datePublished, summary}], error?}`；未启用搜索的规则与存量老数据为 `null`，消费方需容错。",
         "operationId": "get_analysis_results_file__file_id__analysis_get",
         "parameters": [
           {
@@ -1626,7 +1626,7 @@
           "analysis"
         ],
         "summary": "新增/更新分析规则（upsert）",
-        "description": "按 `rule_id` **全局唯一** upsert。`rule_id` 已被其它 `type_id` 占用时返回 **409**。\n\n**校验（Pydantic 层，违反返回 422）**\n- `expression` 必须包含至少一个 `<field_result>字段ID</field_result>` 占位符\n- `web_search.enabled=true` 时：仅 `judge` 类型可启用、`web_search.query` 不能为空、`expression` 必须包含 `<web_search_result/>` 占位符\n\n`system_prompt` 仅 `judge` 类型生效；`calc` 类型直接用 `numexpr` 计算，结果按 `analysis.calc_precision`（默认 2 位）保留小数。返回 `data={rule_id}`。",
+        "description": "按 `rule_id` **全局唯一** upsert。`rule_id` 已被其它 `type_id` 占用时返回 **409**。\n\n**校验（Pydantic 层，违反返回 422）**\n- `expression` 必须包含至少一个 `<field_result>字段ID</field_result>` 占位符\n- `web_search.enabled=true` 时：仅 `judge` / `custom` 类型可启用、`web_search.query` 不能为空、`expression` 必须包含 `<web_search_result/>` 占位符\n- `custom` 类型 `is_formatted=1` 时：`output_schema` 不能为空且结构须合法（每个节点含非空 `key`，`object` / `array` 须有非空 `children`）\n\n`system_prompt` 对 `judge` / `custom` 生效；`calc` 类型直接用 `numexpr` 计算，结果按 `analysis.calc_precision`（默认 2 位）保留小数。`custom` 类型走 LLM 自由生成，返回 `{value, reason}`（`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串）。返回 `data={rule_id}`。",
         "operationId": "upsert_rule_analysis_rules_post",
         "requestBody": {
           "required": true,
@@ -1792,7 +1792,7 @@
           "analysis"
         ],
         "summary": "逻辑分析调试（同步）",
-        "description": "两种模式（二选一）：传 `rule_id` 加载已保存规则，或传 `config` 用临时配置。\n\n依赖字段值来自该 `file_id` 已有的 `extraction_result`；`depend_fields` 中缺失提取结果的字段取空串。\n\n**返回字段**（`data=AnalysisTestResponse`）：\n- `input_values`：依赖字段（`depend_fields`）的提取值字典；缺失字段值为空串\n- `expression_resolved`：`<field_result>...</field_result>` 占位符替换后的表达式\n- `result_value`：最终结果\n  - `judge`：调用 LLM 判断（受 `system_prompt` 控制），通常返回 `true` / `false`\n  - `calc`：`numexpr` 计算，按 `analysis.calc_precision`（默认 2 位）保留小数\n- `reason`：LLM 给出的判断理由（calc 类型为计算说明）\n\n**状态码**：200 / 400（既未传 `rule_id` 也未传 `config`）/ 404（规则不存在）/ 500（分析异常）。",
+        "description": "两种模式（二选一）：传 `rule_id` 加载已保存规则，或传 `config` 用临时配置。\n\n依赖字段值来自该 `file_id` 已有的 `extraction_result`；`depend_fields` 中缺失提取结果的字段取空串。\n\n**返回字段**（`data=AnalysisTestResponse`）：\n- `input_values`：依赖字段（`depend_fields`）的提取值字典；缺失字段值为空串\n- `expression_resolved`：`<field_result>...</field_result>` 占位符替换后的表达式\n- `result_value`：最终结果\n  - `judge`：调用 LLM 判断（受 `system_prompt` 控制），通常返回 `true` / `false`\n  - `calc`：`numexpr` 计算，按 `analysis.calc_precision`（默认 2 位）保留小数\n  - `custom`：调用 LLM 自由生成，返回 `value`（`is_formatted=1` 时为按 `output_schema` 组织的结构化 JSON 字符串）\n- `reason`：LLM 给出的判断理由（calc 类型为计算说明）\n\n**状态码**：200 / 400（既未传 `rule_id` 也未传 `config`）/ 404（规则不存在）/ 500（分析异常）。",
         "operationId": "test_analysis_analysis_test_post",
         "requestBody": {
           "content": {
@@ -1900,7 +1900,7 @@
           "analysis"
         ],
         "summary": "逻辑分析流式调试（SSE）",
-        "description": "SSE 分步推送：`input_values` → `resolved_expression` → （judge：[启用网络搜索时 `web_search`] → `prompt` → `llm_response`）→ `result` → `done`。calc 类型无 `prompt` / `llm_response` 步骤。入参与 `/analysis/test` 相同。\n\n`web_search` 事件 data 即溯源结构 `{query, results: [{name, url, siteName, datePublished, summary}], error?}`（搜索失败不中断流，error 字段说明原因）。\n\n**状态码**：200（SSE 流）/ 400 / 404。",
+        "description": "SSE 分步推送：`input_values` → `resolved_expression` → （judge / custom：[启用网络搜索时 `web_search`] → `prompt` → `llm_response`）→ `result` → `done`。calc 类型无 `prompt` / `llm_response` 步骤。入参与 `/analysis/test` 相同。\n\n`web_search` 事件 data 即溯源结构 `{query, results: [{name, url, siteName, datePublished, summary}], error?}`（搜索失败不中断流，error 字段说明原因）。\n\n**状态码**：200（SSE 流）/ 400 / 404。",
         "operationId": "test_analysis_stream_analysis_test_stream_post",
         "requestBody": {
           "content": {
@@ -3223,12 +3223,12 @@
           },
           "rule_type": {
             "$ref": "#/components/schemas/RuleTypeEnum",
-            "description": "规则类型：`judge`（LLM 判断）/ `calc`（numexpr 计算）。"
+            "description": "规则类型：`judge`（LLM 判断）/ `calc`（numexpr 计算）/ `custom`（LLM 自由生成，返回 `{value, reason}`）。"
           },
           "expression": {
             "type": "string",
             "title": "Expression",
-            "description": "表达式，须含至少一个 `<field_result>字段ID</field_result>` 占位符（渲染时替换为字段提取值）。"
+            "description": "表达式 / 提示词，须含至少一个 `<field_result>字段ID</field_result>` 占位符（渲染时替换为字段提取值）。"
           },
           "system_prompt": {
             "anyOf": [
@@ -3240,7 +3240,7 @@
               }
             ],
             "title": "System Prompt",
-            "description": "[judge] 调控 LLM 判断的 system prompt；`calc` 类型忽略。"
+            "description": "[judge/custom] 调控 LLM 的 system prompt；`calc` 类型忽略。"
           },
           "depend_fields": {
             "anyOf": [
@@ -3268,7 +3268,31 @@
               }
             ],
             "title": "Web Search",
-            "description": "[judge] 网络搜索配置（自由 JSON）：`{enabled: bool, query: str, count?: int, freshness?: str}`。启用时判断前先调博查搜索，`query` 支持 `<field_result>字段ID</field_result>` 占位符，搜索结果文本替换 `expression` 中的 `<web_search_result/>` 占位符（启用时必须存在）。搜索失败不致命（占位符替换为失败提示继续判断）。"
+            "description": "[judge/custom] 网络搜索配置（自由 JSON）：`{enabled: bool, query: str, count?: int, freshness?: str}`。启用时判断前先调博查搜索，`query` 支持 `<field_result>字段ID</field_result>` 占位符，搜索结果文本替换 `expression` 中的 `<web_search_result/>` 占位符（启用时必须存在）。搜索失败不致命（占位符替换为失败提示继续判断）。"
+          },
+          "is_formatted": {
+            "type": "integer",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Is Formatted",
+            "default": 0,
+            "description": "[custom] 格式化输出开关（0/1，默认 0）。0=模型返回纯文本 `value`；1=按 `output_schema` 返回结构化 JSON 字符串。仅 `custom` 生效。"
+          },
+          "output_schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Schema",
+            "description": "[custom] 格式化输出的字段树（`is_formatted=1` 时必填）。节点结构 `{key, type, example?, desc?, children?}`，`type` ∈ `string`/`number`/`boolean`/`object`/`array`，`object`/`array` 须含非空 `children`；渲染为结构说明 + 示例 JSON 注入提示词。"
           },
           "enabled": {
             "type": "integer",
@@ -3301,6 +3325,42 @@
             "expression": "<field_result>total_assets</field_result> > 0",
             "depend_fields": [
               "total_assets"
+            ],
+            "enabled": 1,
+            "priority": 0
+          },
+          {
+            "rule_id": "shareholder_summary",
+            "type_id": "financial_report",
+            "rule_name": "股东结构摘要",
+            "rule_type": "custom",
+            "expression": "根据以下信息汇总股东结构：<field_result>shareholders</field_result>",
+            "depend_fields": [
+              "shareholders"
+            ],
+            "is_formatted": 1,
+            "output_schema": [
+              {
+                "key": "总股东数",
+                "type": "number",
+                "example": "3"
+              },
+              {
+                "key": "主要股东",
+                "type": "array",
+                "children": [
+                  {
+                    "key": "名称",
+                    "type": "string",
+                    "example": "张三"
+                  },
+                  {
+                    "key": "持股比例",
+                    "type": "string",
+                    "example": "51%"
+                  }
+                ]
+              }
             ],
             "enabled": 1,
             "priority": 0
@@ -3411,7 +3471,7 @@
               }
             ],
             "title": "Config",
-            "description": "临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`）；与 `rule_id` 二选一。"
+            "description": "临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`；custom 另含 `is_formatted` / `output_schema`）；与 `rule_id` 二选一。"
           }
         },
         "type": "object",
@@ -3989,7 +4049,7 @@
           "rule_type": {
             "type": "string",
             "title": "Rule Type",
-            "description": "规则类型：`judge` / `calc`。"
+            "description": "规则类型：`judge` / `calc` / `custom`。"
           },
           "expression": {
             "type": "string",
@@ -4006,7 +4066,7 @@
               }
             ],
             "title": "System Prompt",
-            "description": "[judge] LLM system prompt。"
+            "description": "[judge/custom] LLM system prompt。"
           },
           "web_search": {
             "anyOf": [
@@ -4019,7 +4079,29 @@
               }
             ],
             "title": "Web Search",
-            "description": "[judge] 网络搜索配置（`{enabled, query, count, freshness}`），导出/导入原样携带（占位符不重映射）。"
+            "description": "[judge/custom] 网络搜索配置（`{enabled, query, count, freshness}`），导出/导入原样携带（占位符不重映射）。"
+          },
+          "is_formatted": {
+            "type": "integer",
+            "title": "Is Formatted",
+            "default": 0,
+            "description": "[custom] 是否格式化输出（1=按 `output_schema` 返回结构化 JSON）。"
+          },
+          "output_schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Schema",
+            "description": "[custom] 格式化输出的字段树（`is_formatted=1` 时必填）。"
           },
           "depend_field_names": {
             "items": {
@@ -4542,10 +4624,11 @@
         "type": "string",
         "enum": [
           "judge",
-          "calc"
+          "calc",
+          "custom"
         ],
         "title": "RuleTypeEnum",
-        "description": "规则类型：`judge`（LLM 真假判断，用 `system_prompt` 调控）/ `calc`（numexpr 数学计算）。"
+        "description": "规则类型：`judge`（LLM 真假判断，用 `system_prompt` 调控）/ `calc`（numexpr 数学计算）/ `custom`（LLM 自由生成，返回 `{value, reason}`；`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON）。"
       },
       "SearchRequest": {
         "properties": {
@@ -6314,6 +6397,29 @@
             "default": null,
             "title": "Web Search"
           },
+          "is_formatted": {
+            "default": 0,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Is Formatted",
+            "type": "integer"
+          },
+          "output_schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Output Schema"
+          },
           "enabled": {
             "default": 1,
             "title": "Enabled",
@@ -6465,7 +6571,7 @@
           "rule_type": {
             "title": "Rule Type",
             "type": "string",
-            "description": "judge/calc"
+            "description": "judge/calc/custom"
           },
           "result": {
             "default": "",

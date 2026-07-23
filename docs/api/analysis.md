@@ -2,7 +2,7 @@
 
 > 对应服务版本 0.3.0
 
-管理逻辑分析规则（judge / calc 两类）与调试。详细配置配方（表达式占位符 `<field_result>`、`web_search` 网络搜索、`depend_fields` 依赖）见 [analysis-config 指南](../guides/analysis-config.md)。
+管理逻辑分析规则（judge / calc / custom 三类）与调试。详细配置配方（表达式占位符 `<field_result>`、`web_search` 网络搜索、`depend_fields` 依赖、custom 的 `is_formatted` / `output_schema`）见 [analysis-config 指南](../guides/analysis-config.md)。
 
 ## 列出分析规则
 
@@ -34,6 +34,8 @@ _data 为数组，每个元素：_
 | system_prompt | string | 是 |  |
 | depend_fields | array[string] | 是 |  |
 | web_search | object | 是 | 结构详见 [web_search](../guides/analysis-config.md) |
+| is_formatted | integer | 是 |  |
+| output_schema | array[object] | 是 |  |
 | enabled | integer | 是 |  |
 | priority | integer | 是 |  |
 | created_at | string | 是 | 创建时间 |
@@ -62,11 +64,13 @@ _data 为数组，每个元素：_
 | rule_id | string | 是 | — | 规则 ID，匹配 `^[a-zA-Z0-9_]+$`（最长 100），**全局唯一**。 |
 | type_id | string | 否 | default | 归属文档类型，默认 `default`。 |
 | rule_name | string | 是 | — | 规则显示名（最长 200）。 |
-| rule_type | RuleTypeEnum | 是 | — | 规则类型：`judge`（LLM 判断）/ `calc`（numexpr 计算）。 |
-| expression | string | 是 | — | 表达式，须含至少一个 `<field_result>字段ID</field_result>` 占位符（渲染时替换为字段提取值）。 |
-| system_prompt | string | 否 | — | [judge] 调控 LLM 判断的 system prompt；`calc` 类型忽略。 |
+| rule_type | RuleTypeEnum | 是 | — | 规则类型：`judge`（LLM 判断）/ `calc`（numexpr 计算）/ `custom`（LLM 自由生成，返回 `{value, reason}`）。 |
+| expression | string | 是 | — | 表达式 / 提示词，须含至少一个 `<field_result>字段ID</field_result>` 占位符（渲染时替换为字段提取值）。 |
+| system_prompt | string | 否 | — | [judge/custom] 调控 LLM 的 system prompt；`calc` 类型忽略。 |
 | depend_fields | array[string] | 否 | — | 依赖的字段 ID 列表（用于取值并填充占位符）。 |
-| web_search | object | 否 | — | [judge] 网络搜索配置（自由 JSON）：`{enabled: bool, query: str, count?: int, freshness?: str}`。启用时判断前先调博查搜索，`query` 支持 `<field_result>字段ID</field_result>` 占位符，搜索结果文本替换 `expression` 中的 `<web_search_result/>` 占位符（启用时必须存在）。搜索失败不致命（占位符替换为失败提示继续判断）。（结构详见 [web_search](../guides/analysis-config.md)） |
+| web_search | object | 否 | — | [judge/custom] 网络搜索配置（自由 JSON）：`{enabled: bool, query: str, count?: int, freshness?: str}`。启用时判断前先调博查搜索，`query` 支持 `<field_result>字段ID</field_result>` 占位符，搜索结果文本替换 `expression` 中的 `<web_search_result/>` 占位符（启用时必须存在）。搜索失败不致命（占位符替换为失败提示继续判断）。（结构详见 [web_search](../guides/analysis-config.md)） |
+| is_formatted | integer | 否 | 0 | [custom] 格式化输出开关（0/1，默认 0）。0=模型返回纯文本 `value`；1=按 `output_schema` 返回结构化 JSON 字符串。仅 `custom` 生效。 |
+| output_schema | array[object] | 否 | — | [custom] 格式化输出的字段树（`is_formatted=1` 时必填）。节点结构 `{key, type, example?, desc?, children?}`，`type` ∈ `string`/`number`/`boolean`/`object`/`array`，`object`/`array` 须含非空 `children`；渲染为结构说明 + 示例 JSON 注入提示词。 |
 | enabled | integer | 否 | 1 | 是否启用（1/0）。 |
 | priority | integer | 否 | 0 | 执行优先级（升序）。 |
 <!-- /AUTOGEN:request-body -->
@@ -79,6 +83,27 @@ _data 为数组，每个元素：_
   "rule_type": "calc",
   "expression": "<field_result>total_assets</field_result> > 0",
   "depend_fields": ["total_assets"]
+}
+```
+
+`custom`（格式化输出）示例——`output_schema` 定义结构，模型据此产出 `value`：
+
+```jsonc
+{
+  "rule_id": "shareholder_summary",
+  "type_id": "financial_report",
+  "rule_name": "股东结构摘要",
+  "rule_type": "custom",
+  "expression": "根据以下信息汇总股东结构：<field_result>shareholders</field_result>",
+  "depend_fields": ["shareholders"],
+  "is_formatted": 1,
+  "output_schema": [
+    { "key": "总股东数", "type": "number", "example": "3" },
+    { "key": "主要股东", "type": "array", "children": [
+      { "key": "名称", "type": "string", "example": "张三" },
+      { "key": "持股比例", "type": "string", "example": "51%" }
+    ]}
+  ]
 }
 ```
 
@@ -98,7 +123,7 @@ _data 为数组，每个元素：_
 | 409 | `rule_id` 已被其它 `type_id` 占用 | ResponseWrapper |
 | 422 | `expression` 缺 `<field_result>` 占位符 / 启用 `web_search` 时的校验失败 | Pydantic 错误体 |
 
-> `system_prompt` 仅 `judge` 生效；`calc` 用 `numexpr` 计算，结果按 `analysis.calc_precision`（默认 2 位）保留小数。
+> `system_prompt` 对 `judge` / `custom` 生效；`calc` 用 `numexpr` 计算，结果按 `analysis.calc_precision`（默认 2 位）保留小数。`custom` 走 LLM 自由生成 `{value, reason}`，`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串；开启格式化但 `output_schema` 为空 / 结构非法 → **422**。
 
 ## 删除分析规则
 
@@ -166,7 +191,7 @@ _data 为数组，每个元素：_
 |---|---|:--:|---|---|
 | file_id | string | 是 | — | 目标文件 ID（其 `extraction_result` 提供依赖字段值）。 |
 | rule_id | string | 否 | — | 已保存规则 ID；与 `config` 二选一。 |
-| config | object | 否 | — | 临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`）；与 `rule_id` 二选一。 |
+| config | object | 否 | — | 临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`；custom 另含 `is_formatted` / `output_schema`）；与 `rule_id` 二选一。 |
 <!-- /AUTOGEN:request-body -->
 
 ```jsonc
@@ -195,7 +220,7 @@ _data 为数组，每个元素：_
 
 ## 逻辑分析流式调试（SSE）
 
-SSE 分步推送：`input_values` → `resolved_expression` →（judge：[`web_search`] → `prompt` → `llm_response`）→ `result` → `done`。入参与 `/analysis/test` 相同。
+SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom：[`web_search`] → `prompt` → `llm_response`）→ `result` → `done`。入参与 `/analysis/test` 相同。
 
 - 方法路径：`POST /analysis/test/stream`
 - 认证：无（内网部署）
@@ -208,7 +233,7 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge：[`web_
 |---|---|:--:|---|---|
 | file_id | string | 是 | — | 目标文件 ID（其 `extraction_result` 提供依赖字段值）。 |
 | rule_id | string | 否 | — | 已保存规则 ID；与 `config` 二选一。 |
-| config | object | 否 | — | 临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`）；与 `rule_id` 二选一。 |
+| config | object | 否 | — | 临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`；custom 另含 `is_formatted` / `output_schema`）；与 `rule_id` 二选一。 |
 <!-- /AUTOGEN:request-body -->
 
 响应为 `text/event-stream`，事件清单见 [sse.md](sse.md)。

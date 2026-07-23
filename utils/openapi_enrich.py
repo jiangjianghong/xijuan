@@ -511,7 +511,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "`data=[{file_id, rule_id, rule_name, result_value, input_values, reason, source_refs}]`"
                 "（含 `input_values` 字典）。\n\n"
                 "`rule_name` 来自规则配置表，若配置已被删除则为 `null`。\n\n"
-                "`source_refs` 目前仅 judge 规则启用网络搜索时携带 `_web_search` 键："
+                "`source_refs` 目前仅 judge / custom 规则启用网络搜索时携带 `_web_search` 键："
                 "`{query, results: [{name, url, siteName, datePublished, summary}], error?}`；"
                 "未启用搜索的规则与存量老数据为 `null`，消费方需容错。"
             ),
@@ -623,10 +623,14 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "按 `rule_id` **全局唯一** upsert。`rule_id` 已被其它 `type_id` 占用时返回 **409**。\n\n"
                 "**校验（Pydantic 层，违反返回 422）**\n"
                 "- `expression` 必须包含至少一个 `<field_result>字段ID</field_result>` 占位符\n"
-                "- `web_search.enabled=true` 时：仅 `judge` 类型可启用、`web_search.query` 不能为空、"
-                "`expression` 必须包含 `<web_search_result/>` 占位符\n\n"
-                "`system_prompt` 仅 `judge` 类型生效；`calc` 类型直接用 `numexpr` 计算，结果按 "
-                "`analysis.calc_precision`（默认 2 位）保留小数。返回 `data={rule_id}`。"
+                "- `web_search.enabled=true` 时：仅 `judge` / `custom` 类型可启用、`web_search.query` 不能为空、"
+                "`expression` 必须包含 `<web_search_result/>` 占位符\n"
+                "- `custom` 类型 `is_formatted=1` 时：`output_schema` 不能为空且结构须合法"
+                "（每个节点含非空 `key`，`object` / `array` 须有非空 `children`）\n\n"
+                "`system_prompt` 对 `judge` / `custom` 生效；`calc` 类型直接用 `numexpr` 计算，结果按 "
+                "`analysis.calc_precision`（默认 2 位）保留小数。`custom` 类型走 LLM 自由生成，返回 "
+                "`{value, reason}`（`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串）。"
+                "返回 `data={rule_id}`。"
             ),
         }
     },
@@ -662,6 +666,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "- `result_value`：最终结果\n"
                 "  - `judge`：调用 LLM 判断（受 `system_prompt` 控制），通常返回 `true` / `false`\n"
                 "  - `calc`：`numexpr` 计算，按 `analysis.calc_precision`（默认 2 位）保留小数\n"
+                "  - `custom`：调用 LLM 自由生成，返回 `value`（`is_formatted=1` 时为按 `output_schema` 组织的结构化 JSON 字符串）\n"
                 "- `reason`：LLM 给出的判断理由（calc 类型为计算说明）\n\n"
                 "**状态码**：200 / 400（既未传 `rule_id` 也未传 `config`）/ 404（规则不存在）/ 500（分析异常）。"
             ),
@@ -672,7 +677,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "summary": "逻辑分析流式调试（SSE）",
             "description": (
                 "SSE 分步推送：`input_values` → `resolved_expression` → "
-                "（judge：[启用网络搜索时 `web_search`] → `prompt` → `llm_response`）→ `result` → `done`。"
+                "（judge / custom：[启用网络搜索时 `web_search`] → `prompt` → `llm_response`）→ `result` → `done`。"
                 "calc 类型无 `prompt` / `llm_response` 步骤。入参与 `/analysis/test` 相同。\n\n"
                 "`web_search` 事件 data 即溯源结构 `{query, results: [{name, url, siteName, "
                 "datePublished, summary}], error?}`（搜索失败不中断流，error 字段说明原因）。\n\n"
@@ -889,7 +894,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         "description": "VL 抽取方法：`vl_model` 指定页一次出 JSON / `vl_progressive` 分批扫描+伪历史累积 / `vl_locate` 缩略图网格定位+关键页高清提取。",
     },
     "RuleTypeEnum": {
-        "description": "规则类型：`judge`（LLM 真假判断，用 `system_prompt` 调控）/ `calc`（numexpr 数学计算）。",
+        "description": "规则类型：`judge`（LLM 真假判断，用 `system_prompt` 调控）/ `calc`（numexpr 数学计算）/ `custom`（LLM 自由生成，返回 `{value, reason}`；`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON）。",
     },
     # ── 文档类型 ──
     "DocTypeCreate": {
@@ -967,10 +972,12 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         "properties": {
             "rule_id": "源端规则 ID（导入时不复用，会生成新 ID）。",
             "rule_name": "规则显示名（导入时的同名判定依据）。",
-            "rule_type": "规则类型：`judge` / `calc`。",
+            "rule_type": "规则类型：`judge` / `calc` / `custom`。",
             "expression": "表达式，含 `<field_result>字段ID</field_result>` 占位符。",
-            "system_prompt": "[judge] LLM system prompt。",
-            "web_search": "[judge] 网络搜索配置（`{enabled, query, count, freshness}`），导出/导入原样携带（占位符不重映射）。",
+            "system_prompt": "[judge/custom] LLM system prompt。",
+            "web_search": "[judge/custom] 网络搜索配置（`{enabled, query, count, freshness}`），导出/导入原样携带（占位符不重映射）。",
+            "is_formatted": "[custom] 是否格式化输出（1=按 `output_schema` 返回结构化 JSON）。",
+            "output_schema": "[custom] 格式化输出的字段树（`is_formatted=1` 时必填）。",
             "depend_field_names": "依赖字段的**名称**列表（导入时按名重映射到目标类型的 `field_id`）。",
             "enabled": "是否启用（1/0）。",
             "priority": "执行优先级（升序）。",
@@ -1082,15 +1089,24 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "rule_id": "规则 ID，匹配 `^[a-zA-Z0-9_]+$`（最长 100），**全局唯一**。",
             "type_id": "归属文档类型，默认 `default`。",
             "rule_name": "规则显示名（最长 200）。",
-            "rule_type": "规则类型：`judge`（LLM 判断）/ `calc`（numexpr 计算）。",
-            "expression": "表达式，须含至少一个 `<field_result>字段ID</field_result>` 占位符（渲染时替换为字段提取值）。",
-            "system_prompt": "[judge] 调控 LLM 判断的 system prompt；`calc` 类型忽略。",
+            "rule_type": "规则类型：`judge`（LLM 判断）/ `calc`（numexpr 计算）/ `custom`（LLM 自由生成，返回 `{value, reason}`）。",
+            "expression": "表达式 / 提示词，须含至少一个 `<field_result>字段ID</field_result>` 占位符（渲染时替换为字段提取值）。",
+            "system_prompt": "[judge/custom] 调控 LLM 的 system prompt；`calc` 类型忽略。",
             "depend_fields": "依赖的字段 ID 列表（用于取值并填充占位符）。",
             "web_search": (
-                "[judge] 网络搜索配置（自由 JSON）：`{enabled: bool, query: str, count?: int, freshness?: str}`。"
+                "[judge/custom] 网络搜索配置（自由 JSON）：`{enabled: bool, query: str, count?: int, freshness?: str}`。"
                 "启用时判断前先调博查搜索，`query` 支持 `<field_result>字段ID</field_result>` 占位符，"
                 "搜索结果文本替换 `expression` 中的 `<web_search_result/>` 占位符（启用时必须存在）。"
                 "搜索失败不致命（占位符替换为失败提示继续判断）。"
+            ),
+            "is_formatted": (
+                "[custom] 格式化输出开关（0/1，默认 0）。0=模型返回纯文本 `value`；"
+                "1=按 `output_schema` 返回结构化 JSON 字符串。仅 `custom` 生效。"
+            ),
+            "output_schema": (
+                "[custom] 格式化输出的字段树（`is_formatted=1` 时必填）。节点结构 "
+                "`{key, type, example?, desc?, children?}`，`type` ∈ `string`/`number`/`boolean`/`object`/`array`，"
+                "`object`/`array` 须含非空 `children`；渲染为结构说明 + 示例 JSON 注入提示词。"
             ),
             "enabled": "是否启用（1/0）。",
             "priority": "执行优先级（升序）。",
@@ -1105,6 +1121,28 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
                 "depend_fields": ["total_assets"],
                 "enabled": 1,
                 "priority": 0,
+            },
+            {
+                "rule_id": "shareholder_summary",
+                "type_id": "financial_report",
+                "rule_name": "股东结构摘要",
+                "rule_type": "custom",
+                "expression": "根据以下信息汇总股东结构：<field_result>shareholders</field_result>",
+                "depend_fields": ["shareholders"],
+                "is_formatted": 1,
+                "output_schema": [
+                    {"key": "总股东数", "type": "number", "example": "3"},
+                    {
+                        "key": "主要股东",
+                        "type": "array",
+                        "children": [
+                            {"key": "名称", "type": "string", "example": "张三"},
+                            {"key": "持股比例", "type": "string", "example": "51%"},
+                        ],
+                    },
+                ],
+                "enabled": 1,
+                "priority": 0,
             }
         ],
     },
@@ -1113,7 +1151,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         "properties": {
             "file_id": "目标文件 ID（其 `extraction_result` 提供依赖字段值）。",
             "rule_id": "已保存规则 ID；与 `config` 二选一。",
-            "config": "临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`）；与 `rule_id` 二选一。",
+            "config": "临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`；custom 另含 `is_formatted` / `output_schema`）；与 `rule_id` 二选一。",
         },
         "examples": [{"file_id": "a1b2c3...", "rule_id": "assets_positive"}],
     },
@@ -1275,7 +1313,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
     "AnalysisRunRuleResult": {
         "description": "独立分析单规则结果。",
         "properties": {
-            "rule_id": "规则 ID", "rule_name": "规则名", "rule_type": "judge/calc", "result": "结果",
+            "rule_id": "规则 ID", "rule_name": "规则名", "rule_type": "judge/calc/custom", "result": "结果",
             "reason": "理由", "input_values": "依赖字段取值", "source_refs": "溯源（可空）",
             "success": "是否成功", "index": "序号", "total": "规则总数",
         },
