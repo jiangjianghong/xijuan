@@ -56,3 +56,26 @@ def test_resolve_field_refs_replaces_values():
 
 def test_resolve_field_refs_missing_to_empty():
     assert resolve_field_refs("<field_result>x</field_result>尾", {}) == "尾"
+
+
+# ── Task 4: 页码派生 ──────────────────────────────────────
+
+from service.extraction_service import derive_page_range_from_model_pages
+import pytest
+
+
+def test_derive_range_min_max():
+    assert derive_page_range_from_model_pages([7, 3, 5], None) == (3, 7, False)
+
+
+def test_derive_range_cap():
+    assert derive_page_range_from_model_pages([3, 7], 3) == (3, 5, True)
+
+
+def test_derive_range_cap_not_needed():
+    assert derive_page_range_from_model_pages([3, 4], 5) == (3, 4, False)
+
+
+def test_derive_range_empty_raises():
+    with pytest.raises(ValueError):
+        derive_page_range_from_model_pages([], 5)

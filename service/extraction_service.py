@@ -252,6 +252,25 @@ def resolve_field_refs(text: str, field_values: Dict[str, str]) -> str:
     return FIELD_REF_PATTERN.sub(_repl, text)
 
 
+def derive_page_range_from_model_pages(
+    pages: List[int], max_pages: Optional[int]
+) -> Tuple[int, int, bool]:
+    """由模型自报页码列表派生连续取文区间。
+
+    区间 = [min(pages), max(pages)]；若设置 max_pages 且跨度超限，则从最小页起
+    收敛为 max_pages 页。返回 (start, end, capped)。pages 为空抛 ValueError。
+    """
+    if not pages:
+        raise ValueError("模型自报页码为空，无法派生取文区间")
+    start = min(pages)
+    end = max(pages)
+    capped = False
+    if max_pages and (end - start + 1) > max_pages:
+        end = start + max_pages - 1
+        capped = True
+    return start, end, capped
+
+
 # ── 页码区间解析（page 检索方式） ─────────────────────────────
 
 
