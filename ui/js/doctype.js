@@ -575,13 +575,24 @@ const DocTypeManager = {
         maxPagesEl.value = maxParsePages || '';
         enableEmbeddingEl.checked = enableEmbedding !== 0;
 
-        // 来源区仅新建可见
+        // 所属项目 + 来源区仅新建可见
+        document.getElementById('typeform-project-block').style.display = isEdit ? 'none' : '';
         document.getElementById('typeform-source-block').style.display = isEdit ? 'none' : '';
         document.getElementById('typeform-derive-block').style.display = 'none';
         document.getElementById('typeform-import-block').style.display = 'none';
         document.getElementById('typeform-conflict-block').style.display = 'none';
 
         if (!isEdit) {
+            // 所属项目下拉：未分组 + 各项目，默认选中当前项目
+            const projSel = document.getElementById('typeform-project');
+            const currentProject = API.getCurrentProjectId();
+            projSel.innerHTML =
+                '<option value="__ungrouped__">未分组</option>' +
+                (this.projects || []).map(p =>
+                    `<option value="${escapeAttr(p.project_id)}">${escapeHtml(p.project_name)}</option>`
+                ).join('');
+            projSel.value = (currentProject === '__ungrouped__' || (this.projects || []).some(p => p.project_id === currentProject))
+                ? currentProject : '__ungrouped__';
             // 源类型下拉：当前页全部类型（含默认/模板），排除将要新建的（提交时再校验不等于自身）
             const pool = this.manage.items.length ? this.manage.items : this.selectorTypes;
             const sourceType = sourceId ? pool.find(t => t.type_id === sourceId) : null;
@@ -635,15 +646,15 @@ const DocTypeManager = {
             Toast.error('最大解析页数必须是大于 0 的整数');
             return;
         }
-        const currentProject = API.getCurrentProjectId();
+        // 所属项目：新建取表单下拉（未分组→null）；编辑走 PUT 会忽略该字段
+        const projectVal = document.getElementById('typeform-project').value;
         const typePayload = {
             type_id: id,
             type_name: name,
             enabled: 1,
             max_parse_pages: maxParsePages,
             enable_embedding: enableEmbedding,
-            // 新建时落在当前项目（未分组则为 null）；编辑走 PUT 会忽略该字段
-            project_id: currentProject && currentProject !== '__ungrouped__' ? currentProject : null,
+            project_id: projectVal && projectVal !== '__ungrouped__' ? projectVal : null,
         };
 
         // 编辑：upsert 类型基础配置

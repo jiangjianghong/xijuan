@@ -123,7 +123,7 @@ Multi-type configuration support: each file is bound to one `type_id` (default `
 - 项目接口:`GET/POST /doctype/projects`(列出带 `type_count` / 按 `project_id` upsert)、`DELETE /doctype/projects/{id}`(成员 `project_id` 置空、**不删 type**)、`POST /doctype/batch_assign_project`(`{type_ids, project_id}`,`project_id=null` 移出未分组)。**归类级联血缘**:入参每个 type 的所有 `parent_type_id` 传递后代(`_lineage_closure`)一并归入同一项目,`default` 跳过,返回 `{requested, affected, project_id}`(`affected` 含级联带入数)。`copy_from`/派生的新 type 未分组时**继承源项目**;`POST /doctype` 建档时写 `project_id`(仅新建生效,PUT 更新忽略)。
 - `GET /doctype/list` 支持 `q/scope(all|template|copy)/project_id(`__ungrouped__`=未分组)/page/page_size/sort`;**传齐 page+page_size 返回 `{items,total}`,否则原样返回数组**(向后兼容)。计数用 3 条 GROUP BY 避免 N+1;响应含 `project_id/project_name`。
 - 批量接口:`POST /doctype/batch_delete`(`{type_ids,force}`)、`POST /doctype/batch_assign_project`(见上)。
-- 顶部导航**两级**:项目下拉(未分组 + 各项目) → **文档类型下拉只显示当前项目的 type**;切项目会把当前 type 重置为该项目首个(未分组回退 `default`)并联动刷新文件列表 + 字段/规则配置。管理弹窗(全屏单栏)每行「选用」=设为当前类型(同步当前项目);含**项目列 + 项目筛选下拉 + 批量「归入项目」+「管理项目」子弹窗**(建/改名/删项目);「+ 新建类型」统一三条造类型路径(空白/从类型派生/导入 JSON),新建落在当前项目;行内 ⋯ 菜单含查看配置/复制为新类型/改名/模板标记/导出/删除。「只读查看配置」复用 `GET /doctype/{id}/export`。
+- 顶部导航**两级**:项目下拉(未分组 + 各项目) → **文档类型下拉只显示当前项目的 type**;切项目会把当前 type 重置为该项目首个(未分组回退 `default`)并联动刷新文件列表 + 字段/规则配置。管理弹窗(全屏单栏)每行「选用」=设为当前类型(同步当前项目);含**项目列 + 项目筛选下拉 + 批量「归入项目」+「管理项目」子弹窗**(建/改名/删项目);「+ 新建类型」统一三条造类型路径(空白/从类型派生/导入 JSON),新建默认落在当前项目(表单内「所属项目」下拉可改选,仅新建可见);行内 ⋯ 菜单含查看配置/复制为新类型/改名/模板标记/导出/删除。「只读查看配置」复用 `GET /doctype/{id}/export`。
 - 存量副本若无 `parent_type_id`,初期需手工标模板;此后经 `copy_from`/派生新建的类型自动记录来源。
 
 ### Extraction System (`service/extraction_service.py`)
