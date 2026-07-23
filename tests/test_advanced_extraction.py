@@ -31,3 +31,28 @@ def test_field_create_defaults_basic():
     )
     assert m.is_advanced == 0
     assert m.depend_fields is None
+
+
+# ── Task 3: 占位符解析 ──────────────────────────────────────
+
+from service.extraction_service import collect_field_refs, resolve_field_refs
+
+
+def test_collect_field_refs_dedup_order():
+    s = "关于<field_result>b</field_result>与<field_result>a</field_result>及<field_result>b</field_result>"
+    assert collect_field_refs(s) == ["b", "a"]
+
+
+def test_collect_field_refs_empty():
+    assert collect_field_refs("没有占位符") == []
+    assert collect_field_refs("") == []
+    assert collect_field_refs(None) == []
+
+
+def test_resolve_field_refs_replaces_values():
+    s = "合同<field_result>a</field_result>"
+    assert resolve_field_refs(s, {"a": "甲方协议"}) == "合同甲方协议"
+
+
+def test_resolve_field_refs_missing_to_empty():
+    assert resolve_field_refs("<field_result>x</field_result>尾", {}) == "尾"

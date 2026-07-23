@@ -223,6 +223,35 @@ def _attach_model_pages(source_refs: Optional[Dict], pages: List[int]) -> Option
     return source_refs
 
 
+# ── 进阶字段：字段间引用解析（<field_result>字段ID</field_result>） ──
+
+FIELD_REF_PATTERN = re.compile(r"<field_result>(.+?)</field_result>")
+
+
+def collect_field_refs(text: Any) -> List[str]:
+    """从字符串中抽出被引用的字段 ID，按出现顺序去重。非字符串返回 []。"""
+    if not isinstance(text, str) or not text:
+        return []
+    seen: Dict[str, None] = {}
+    for m in FIELD_REF_PATTERN.finditer(text):
+        fid = m.group(1).strip()
+        if fid and fid not in seen:
+            seen[fid] = None
+    return list(seen.keys())
+
+
+def resolve_field_refs(text: str, field_values: Dict[str, str]) -> str:
+    """把字符串中的 <field_result>id</field_result> 替换为 field_values[id]。
+
+    缺失 / 空值替换为空串（未命中的引用消失，避免污染关键词检索）。
+    """
+    def _repl(m: "re.Match") -> str:
+        fid = m.group(1).strip()
+        return field_values.get(fid, "") or ""
+
+    return FIELD_REF_PATTERN.sub(_repl, text)
+
+
 # ── 页码区间解析（page 检索方式） ─────────────────────────────
 
 
