@@ -479,6 +479,61 @@ def _remap_field_placeholders(text: Optional[str], mapping: dict) -> Optional[st
     return re.sub(r"<field_result>(.+?)</field_result>", replacer, text)
 
 
+def _remap_advanced_field_config(src_field, mapping: dict) -> dict:
+    """复制/导入进阶字段时，把其配置内所有 <field_result> 占位符与
+    search_config.page_source_field 按「源 field_id -> 新 field_id」重映射。
+
+    Returns:
+        可直接 setattr 到新字段对象上的属性字典。
+    """
+    import copy as _copy
+
+    def _remap(text):
+        return _remap_field_placeholders(text, mapping)
+
+    sc = (
+        _copy.deepcopy(src_field.search_config)
+        if isinstance(src_field.search_config, dict)
+        else src_field.search_config
+    )
+    if isinstance(sc, dict):
+        for k, v in list(sc.items()):
+            if isinstance(v, str):
+                sc[k] = _remap(v)
+            elif isinstance(v, list):
+                sc[k] = [_remap(x) if isinstance(x, str) else x for x in v]
+        if isinstance(sc.get("page_source_field"), str):
+            sc["page_source_field"] = mapping.get(sc["page_source_field"], sc["page_source_field"])
+
+    tmk = src_field.table_match_keywords
+    if isinstance(tmk, list):
+        tmk = [_remap(x) if isinstance(x, str) else x for x in tmk]
+
+    vc = (
+        _copy.deepcopy(src_field.vl_config)
+        if isinstance(src_field.vl_config, dict)
+        else src_field.vl_config
+    )
+    if isinstance(vc, dict):
+        for key in ("field_hints", "batch_prompt_template", "locate_prompt_template"):
+            if isinstance(vc.get(key), str):
+                vc[key] = _remap(vc[key])
+
+    new_depend = [mapping.get(d, d) for d in (getattr(src_field, "depend_fields", None) or [])]
+    return dict(
+        search_config=sc,
+        table_match_keywords=tmk,
+        vl_config=vc,
+        table_extract_prompt=_remap(src_field.table_extract_prompt),
+        table_system_prompt=_remap(src_field.table_system_prompt),
+        text_extract_prompt=_remap(src_field.text_extract_prompt),
+        text_system_prompt=_remap(src_field.text_system_prompt),
+        vl_extract_prompt=_remap(src_field.vl_extract_prompt),
+        vl_system_prompt=_remap(src_field.vl_system_prompt),
+        depend_fields=new_depend if new_depend else None,
+    )
+
+
 @router.post("/{type_id}/copy_from", response_model=ResponseWrapper)
 async def copy_configs(
     type_id: str,
@@ -532,6 +587,8 @@ async def copy_configs(
 
     # 源 field_id -> 新 field_id 映射，用于规则的 depend_fields 重映射
     source_to_new_field_id: dict = {}
+    # 进阶字段待重映射（映射需全部字段复制完才完整）：[(新字段对象, 源字段)]
+    advanced_to_remap: list = []
 
     for src in src_fields:
         if on_conflict == "skip" and _has_copy_id(src.field_id, target_field_ids):
@@ -561,11 +618,22 @@ async def copy_configs(
             vl_config=src.vl_config,
             vl_system_prompt=src.vl_system_prompt,
             vl_extract_prompt=src.vl_extract_prompt,
+            is_advanced=getattr(src, "is_advanced", 0) or 0,
+            depend_fields=getattr(src, "depend_fields", None),
         )
         db.add(new_field)
         target_field_ids.add(new_field_id)
         source_to_new_field_id[src.field_id] = new_field_id
+        if getattr(src, "is_advanced", 0):
+            advanced_to_remap.append((new_field, src))
         resp.copied_fields += 1
+
+    # 全部字段复制完，映射表才完整：回填进阶字段内的引用占位符与 page_source_field
+    for new_obj, src in advanced_to_remap:
+        for k, v in _remap_advanced_field_config(src, source_to_new_field_id).items():
+            setattr(new_obj, k, v)
+    if advanced_to_remap:
+        await db.flush()
 
     # ── 2. 复制规则 ──
     rule_stmt = select(AnalysisRule).where(AnalysisRule.type_id == req.source_type_id)
