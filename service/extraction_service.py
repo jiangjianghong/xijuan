@@ -2131,6 +2131,33 @@ async def test_field_extraction_stream(
     try:
         source_type = field.source_type or "text"
 
+        # ── 进阶字段：先载入同类型普通字段结果，解析引用/页码联动 ──
+        if getattr(field, "is_advanced", 0):
+            frow = (await session.execute(
+                select(File).where(File.file_id == file_id)
+            )).scalar_one_or_none()
+            tid = (frow.type_id if frow else None) or "default"
+            rows = (await session.execute(
+                select(ExtractionField, ExtractionResult)
+                .join(ExtractionResult, ExtractionField.field_id == ExtractionResult.field_id)
+                .where(
+                    ExtractionResult.file_id == file_id,
+                    ExtractionField.type_id == tid,
+                    ExtractionField.is_advanced == 0,
+                )
+            )).all()
+            fv: Dict[str, str] = {}
+            fmp: Dict[str, Any] = {}
+            for ef, er in rows:
+                fv[ef.field_id] = er.extracted_value
+                fmp[ef.field_id] = (er.source_refs or {}).get("_model_pages") if er.source_refs else None
+            try:
+                field, prov = resolve_advanced_field(field, fv, fmp)
+            except ValueError as e:
+                yield {"event": "error", "data": {"message": str(e)}}
+                return
+            yield {"event": "resolved_refs", "data": prov}
+
         # ── VL 模式：单独走通 4 步骤，结束后直接 return ───────
         if source_type == "vl":
             async for evt in _vl_field_extraction_stream(file_id, field):
