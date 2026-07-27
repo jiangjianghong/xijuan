@@ -21,6 +21,7 @@ from model.schemas import (
 )
 from model.tables import ExtractionField, ExtractionResult, FileContent, FileTable
 from service.extraction_service import (
+    collect_depend_fields,
     extract_table_field,
     extract_text_field,
     extract_vl_field,
@@ -68,6 +69,8 @@ async def list_fields(type_id: str = "", db: AsyncSession = Depends(get_db)):
                 vl_config=f.vl_config,
                 vl_system_prompt=f.vl_system_prompt,
                 vl_extract_prompt=f.vl_extract_prompt,
+                is_advanced=f.is_advanced if f.is_advanced is not None else 0,
+                depend_fields=f.depend_fields,
                 created_at=f.created_at,
                 updated_at=f.updated_at,
             ).model_dump()
@@ -89,6 +92,31 @@ async def upsert_field(
     existing = result.scalar_one_or_none()
 
     target_type_id = field.type_id or "default"
+
+    # 进阶字段：扫描实际配置算出依赖，并校验引用必须是同类型的普通字段
+    computed_depend: List[str] = []
+    if field.is_advanced:
+        computed_depend = collect_depend_fields(field)
+        if computed_depend:
+            rows = (await db.execute(
+                select(ExtractionField.field_id, ExtractionField.is_advanced)
+                .where(
+                    ExtractionField.type_id == target_type_id,
+                    ExtractionField.field_id.in_(computed_depend),
+                )
+            )).all()
+            found = {fid: adv for fid, adv in rows}
+            for dep in computed_depend:
+                if dep not in found:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"引用的字段 {dep} 不存在于类型 {target_type_id}",
+                    )
+                if found[dep]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"进阶字段只能引用普通字段，{dep} 也是进阶字段",
+                    )
 
     if existing:
         if (existing.type_id or "default") != target_type_id:
@@ -120,6 +148,8 @@ async def upsert_field(
         existing.vl_config = field.vl_config
         existing.vl_system_prompt = field.vl_system_prompt
         existing.vl_extract_prompt = field.vl_extract_prompt
+        existing.is_advanced = field.is_advanced
+        existing.depend_fields = computed_depend if field.is_advanced else None
         await db.commit()
         return ResponseWrapper(message="字段配置已更新", data={"field_id": field.field_id})
     else:
@@ -146,6 +176,8 @@ async def upsert_field(
             vl_config=field.vl_config,
             vl_system_prompt=field.vl_system_prompt,
             vl_extract_prompt=field.vl_extract_prompt,
+            is_advanced=field.is_advanced,
+            depend_fields=computed_depend if field.is_advanced else None,
         )
         db.add(new_field)
         await db.commit()
