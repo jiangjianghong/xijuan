@@ -1470,6 +1470,8 @@ const RuleConfig = {
             enabled: existingField ? existingField.enabled : 1,
             priority: this.parseIntOrDefault('fm-priority', 0),
             use_llm: (sourceType === 'vl' || !document.getElementById('fm-skip-llm').checked) ? 1 : 0,
+            // 进阶字段标志（depend_fields 由服务端扫描配置算出，前端不传）
+            is_advanced: this.state.formIsAdvanced ? 1 : 0,
             table_name_pattern: null,
             table_match_type: null,
             table_match_keywords: null,
@@ -1562,6 +1564,13 @@ const RuleConfig = {
             case 'page':
                 config.page_range = getVal('fm-sc-page-range');
                 config.max_length = getInt('fm-sc-page-max-length', 30000);
+                // 进阶字段：按来源字段的模型自报页码联动取文
+                if (this.state.formIsAdvanced) {
+                    const src = getVal('fm-sc-page-source');
+                    if (src) config.page_source_field = src;
+                    const mp = this.parseIntOrNull('fm-sc-page-max-pages');
+                    if (mp) config.max_pages = mp;
+                }
                 break;
         }
 
