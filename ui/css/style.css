@@ -4014,3 +4014,27 @@ input[type="checkbox"] {
 .table-split-name.outline-item .outline-num {
     color: #2563eb;
 }
+
+/* ── 进阶字段区（浅绿）：依赖前序普通字段的第二层字段 ── */
+.advanced-field-section {
+    background: #f2fbf4;
+    border: 1px solid #cdeccf;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-top: 20px;
+}
+
+.advanced-field-section .advanced-field-title {
+    color: #2f7a3f;
+}
+
+.advanced-field-section .rule-empty {
+    padding: 24px;
+}
+
+/* 进阶表单里的字段引用 chip（与关键词标签同形，绿色系区分） */
+.field-ref-tag {
+    background: #e3f6e7;
+    border-color: #a9d9b1;
+    color: #2f7a3f;
+}

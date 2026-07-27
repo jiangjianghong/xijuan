@@ -210,6 +210,31 @@
                 </table>
             </div>
             <div id="field-empty" class="rule-empty" style="display:none;">暂无字段提取配置</div>
+
+            <!-- 进阶字段区：依赖前序普通字段的结果 -->
+            <div class="advanced-field-section">
+                <div class="rule-section-header">
+                    <h2 class="section-title advanced-field-title">进阶字段提取配置 · 依赖前序字段</h2>
+                    <button class="btn btn-primary" onclick="RuleConfig.openFieldForm(null, true)">+ 新建进阶字段</button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="rule-table">
+                        <thead>
+                            <tr>
+                                <th>字段 ID</th>
+                                <th>字段名称</th>
+                                <th>来源类型</th>
+                                <th>优先级</th>
+                                <th>启用</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="advanced-field-list-body">
+                        </tbody>
+                    </table>
+                </div>
+                <div id="advanced-field-empty" class="rule-empty" style="display:none;">暂无进阶字段，进阶字段可引用普通字段的提取结果</div>
+            </div>
         </section>
 
         <!-- Rules Section -->

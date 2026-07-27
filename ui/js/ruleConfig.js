@@ -101,24 +101,22 @@ const RuleConfig = {
     // ─────────────────────────────────────────────────────────
 
     renderFieldList() {
-        const fields = this.state.fields;
-        if (fields.length === 0) {
-            this.els.fieldListBody.innerHTML = '';
-            this.els.fieldEmpty.style.display = 'block';
-            return;
-        }
-        this.els.fieldEmpty.style.display = 'none';
+        const all = this.state.fields || [];
+        const basic = all.filter(f => !f.is_advanced);
+        const advanced = all.filter(f => f.is_advanced);
 
         const sourceTypeText = { table: '表格', text: '文本', vl: 'VL' };
-        let html = '';
-        fields.forEach(f => {
+        const rowHtml = (f) => {
             const sourceTypeCell = f.source_type === 'vl'
                 ? `VL · ${Utils.escapeHtml(f.vl_method || '')}`
                 : (sourceTypeText[f.source_type] || f.source_type);
-            html += `
+            const dependCell = (f.depend_fields && f.depend_fields.length)
+                ? `<div class="form-hint">引用: ${Utils.escapeHtml(f.depend_fields.join(', '))}</div>`
+                : '';
+            return `
                 <tr class="${f.enabled ? '' : 'row-disabled'}">
                     <td>${Utils.escapeHtml(f.field_id)}</td>
-                    <td>${Utils.escapeHtml(f.field_name)}</td>
+                    <td>${Utils.escapeHtml(f.field_name)}${dependCell}</td>
                     <td>${sourceTypeCell}</td>
                     <td>${f.priority}</td>
                     <td>
@@ -145,8 +143,17 @@ const RuleConfig = {
                     </td>
                 </tr>
             `;
-        });
-        this.els.fieldListBody.innerHTML = html;
+        };
+
+        // 普通字段
+        this.els.fieldListBody.innerHTML = basic.map(rowHtml).join('');
+        this.els.fieldEmpty.style.display = basic.length ? 'none' : 'block';
+
+        // 进阶字段
+        const advBody = document.getElementById('advanced-field-list-body');
+        const advEmpty = document.getElementById('advanced-field-empty');
+        if (advBody) advBody.innerHTML = advanced.map(rowHtml).join('');
+        if (advEmpty) advEmpty.style.display = advanced.length ? 'none' : 'block';
     },
 
     renderRuleList() {
