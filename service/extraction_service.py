@@ -622,7 +622,7 @@ def _result_page_num(r: Dict[str, Any], page_mapping: List[Dict[str, Any]]) -> A
 
 # source_refs 中非 ref 列表的保留键，排序时跳过
 # （_model_pages 是模型自报页码的 int 数组，非 ref 列表，不可当 ref 排序）
-_NON_REF_KEYS = frozenset({"_texts", "_vl", "_web_search", "_model_pages"})
+_NON_REF_KEYS = frozenset({"_texts", "_vl", "_web_search", "_model_pages", "_resolved_refs", "_page_link"})
 
 
 def _norm_for_match(s: str) -> str:
@@ -1772,6 +1772,37 @@ async def _vl_field_extraction_stream(
     yield {"event": "done", "data": {}}
 
 
+async def _extract_field_result(
+    file_id: str,
+    field: ExtractionField,
+    session: AsyncSession,
+    field_values: Dict[str, str],
+    field_model_pages: Dict[str, Optional[List[int]]],
+) -> Tuple[str, str, Optional[Dict]]:
+    """按字段层级分派抽取。进阶字段先解析引用/页码，再走现有抽取核心。
+
+    普通字段（is_advanced=0）走原有分派；进阶字段（is_advanced=1）经
+    resolve_advanced_field 解析占位符与 page 联动后，用等价普通字段抽取，
+    最后把 provenance（_resolved_refs / _page_link）合并进 source_refs。
+    """
+    if getattr(field, "is_advanced", 0):
+        run_field, provenance = resolve_advanced_field(field, field_values, field_model_pages)
+    else:
+        run_field, provenance = field, {}
+
+    if run_field.source_type == "table":
+        value, reason, source_refs = await extract_table_field(file_id, run_field, session)
+    elif run_field.source_type == "vl":
+        value, reason, source_refs = await extract_vl_field(file_id, run_field, session)
+    else:
+        value, reason, source_refs = await extract_text_field(file_id, run_field, session)
+
+    if provenance:
+        source_refs = source_refs or {}
+        source_refs.update(provenance)
+    return value, reason, source_refs
+
+
 async def run_extraction(
     file_id: str,
     session: AsyncSession,
@@ -1806,28 +1837,32 @@ async def run_extraction(
             for p in split_md_by_pages(fc_row.file_content, fc_row.page_mapping or [])
         }
 
-    # 获取所有启用的字段配置，按 priority 排序
+    # 获取全部启用字段（两层），按 priority 排序；普通字段先于进阶字段执行
     stmt = (
         select(ExtractionField)
         .where(ExtractionField.enabled == 1, ExtractionField.type_id == type_id)
         .order_by(ExtractionField.priority)
     )
     result = await session.execute(stmt)
-    fields = result.scalars().all()
+    all_fields = result.scalars().all()
+    basic_fields = [f for f in all_fields if not getattr(f, "is_advanced", 0)]
+    advanced_fields = [f for f in all_fields if getattr(f, "is_advanced", 0)]
+    ordered_fields = basic_fields + advanced_fields
 
-    total = len(fields)
+    total = len(ordered_fields)
     succeeded = 0
     failed = 0
     aggregated: List[Dict[str, Any]] = []
 
-    for idx, field in enumerate(fields):
+    # 阶段间共享：普通字段的值与模型页码，供进阶字段引用解析
+    field_values: Dict[str, str] = {}
+    field_model_pages: Dict[str, Optional[List[int]]] = {}
+
+    for idx, field in enumerate(ordered_fields):
         try:
-            if field.source_type == "table":
-                extracted_value, reason, source_refs = await extract_table_field(file_id, field, session)
-            elif field.source_type == "vl":
-                extracted_value, reason, source_refs = await extract_vl_field(file_id, field, session)
-            else:
-                extracted_value, reason, source_refs = await extract_text_field(file_id, field, session)
+            extracted_value, reason, source_refs = await _extract_field_result(
+                file_id, field, session, field_values, field_model_pages
+            )
 
             _ensure_valid_extraction_result(field, extracted_value, reason, source_refs)
 
@@ -1857,6 +1892,13 @@ async def run_extraction(
 
             await session.commit()
             logger.info("字段提取成功: field_id={}, value={}", field.field_id, extracted_value[:100] if extracted_value else "")
+
+            # 仅普通字段进入引用映射（进阶字段不可被引用）
+            if not getattr(field, "is_advanced", 0):
+                field_values[field.field_id] = extracted_value
+                field_model_pages[field.field_id] = (
+                    (source_refs or {}).get("_model_pages") if source_refs else None
+                )
 
             succeeded += 1
             item = {
@@ -1960,25 +2002,29 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
             for p in split_md_by_pages(fc_row.file_content, fc_row.page_mapping or [])
         }
 
-    # 获取所有启用的字段配置，按 priority 排序
+    # 获取全部启用字段（两层），按 priority 排序；普通字段先于进阶字段执行
     stmt = (
         select(ExtractionField)
         .where(ExtractionField.enabled == 1, ExtractionField.type_id == type_id)
         .order_by(ExtractionField.priority)
     )
     result = await session.execute(stmt)
-    fields = result.scalars().all()
+    all_fields = result.scalars().all()
+    basic_fields = [f for f in all_fields if not getattr(f, "is_advanced", 0)]
+    advanced_fields = [f for f in all_fields if getattr(f, "is_advanced", 0)]
+    ordered_fields = basic_fields + advanced_fields
 
-    total_fields = len(fields)
+    total_fields = len(ordered_fields)
 
-    for idx, field in enumerate(fields):
+    # 阶段间共享：普通字段的值与模型页码，供进阶字段引用解析
+    field_values: Dict[str, str] = {}
+    field_model_pages: Dict[str, Optional[List[int]]] = {}
+
+    for idx, field in enumerate(ordered_fields):
         try:
-            if field.source_type == "table":
-                extracted_value, reason, source_refs = await extract_table_field(file_id, field, session)
-            elif field.source_type == "vl":
-                extracted_value, reason, source_refs = await extract_vl_field(file_id, field, session)
-            else:
-                extracted_value, reason, source_refs = await extract_text_field(file_id, field, session)
+            extracted_value, reason, source_refs = await _extract_field_result(
+                file_id, field, session, field_values, field_model_pages
+            )
 
             _ensure_valid_extraction_result(field, extracted_value, reason, source_refs)
 
@@ -2008,6 +2054,13 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
 
             await session.commit()
             logger.info("字段提取成功: field_id={}, value={}", field.field_id, extracted_value[:100] if extracted_value else "")
+
+            # 仅普通字段进入引用映射（进阶字段不可被引用）
+            if not getattr(field, "is_advanced", 0):
+                field_values[field.field_id] = extracted_value
+                field_model_pages[field.field_id] = (
+                    (source_refs or {}).get("_model_pages") if source_refs else None
+                )
 
             # yield 提取结果
             yield {
