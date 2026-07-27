@@ -13,6 +13,8 @@ const RuleConfig = {
         loaded: { fields: false, rules: false },
         debugMode: false,
         debugTestRunning: false,
+        // 当前字段表单是否为「进阶字段」（可引用普通字段的提取结果）
+        formIsAdvanced: false,
     },
 
     els: {},
@@ -226,15 +228,20 @@ const RuleConfig = {
     // Tag 标签式输入
     // ─────────────────────────────────────────────────────────
 
-    buildKeywordTagsHtml(id, label, values, placeholder) {
+    buildKeywordTagsHtml(id, label, values, placeholder, allowRef) {
         values = values || [];
         let tagsHtml = '';
         for (const v of values) {
-            tagsHtml += `<span class="keyword-tag">${Utils.escapeHtml(v)}<button type="button" class="keyword-tag-remove" onclick="RuleConfig.removeKeywordTag(this)">&times;</button></span>`;
+            const isRef = /^<field_result>.+<\/field_result>$/.test(v);
+            tagsHtml += `<span class="keyword-tag${isRef ? ' field-ref-tag' : ''}">${Utils.escapeHtml(v)}<button type="button" class="keyword-tag-remove" onclick="RuleConfig.removeKeywordTag(this)">&times;</button></span>`;
         }
+        // 进阶字段：关键词可引用普通字段的提取结果
+        const labelHtml = allowRef
+            ? `<div class="form-label-row"><label class="form-label">${Utils.escapeHtml(label)}</label>${this.fieldRefBtnHtml('tag', id)}</div>`
+            : `<label class="form-label">${Utils.escapeHtml(label)}</label>`;
         return `
             <div class="form-group">
-                <label class="form-label">${Utils.escapeHtml(label)}</label>
+                ${labelHtml}
                 <div class="keyword-tags-container" id="${id}">
                     <div class="keyword-tags-list">${tagsHtml}</div>
                     <div class="keyword-input-row">
@@ -256,7 +263,9 @@ const RuleConfig = {
         const existing = this.getKeywordTags(containerId);
         if (existing.includes(value)) return;
         const span = document.createElement('span');
-        span.className = 'keyword-tag';
+        span.className = /^<field_result>.+<\/field_result>$/.test(value)
+            ? 'keyword-tag field-ref-tag'
+            : 'keyword-tag';
         span.innerHTML = `${Utils.escapeHtml(value)}<button type="button" class="keyword-tag-remove" onclick="RuleConfig.removeKeywordTag(this)">&times;</button>`;
         list.appendChild(span);
     },
@@ -478,12 +487,102 @@ const RuleConfig = {
     // 字段表单
     // ─────────────────────────────────────────────────────────
 
-    openFieldForm(field) {
+    /**
+     * 进阶字段：引用普通字段的提取结果。
+     * mode='tag'  → 往关键词标签容器插一个 <field_result>id</field_result> 标签
+     * mode='text' → 往输入框 / 文本域光标处插占位符
+     */
+    showFieldRefDropdown(btnEl, mode, targetId) {
+        this.closeInsertTagDropdown();
+
+        // 只能引用普通字段（进阶不能引用进阶），且不能引用自己
+        const selfId = (document.getElementById('fm-field-id') || {}).value || '';
+        const basics = (this.state.fields || []).filter(
+            f => !f.is_advanced && f.field_id !== selfId
+        );
+
+        const dropdown = document.createElement('div');
+        dropdown.className = 'insert-tag-dropdown';
+        dropdown.id = '_insert-tag-dropdown';
+
+        if (basics.length === 0) {
+            dropdown.innerHTML = '<div class="dropdown-empty">暂无可引用的普通字段</div>';
+        } else {
+            const search = document.createElement('input');
+            search.type = 'text';
+            search.className = 'dropdown-search';
+            search.placeholder = '搜索字段名称 / ID…';
+            dropdown.appendChild(search);
+
+            const itemsWrap = document.createElement('div');
+            itemsWrap.className = 'dropdown-items';
+            dropdown.appendChild(itemsWrap);
+
+            const emptyHint = document.createElement('div');
+            emptyHint.className = 'dropdown-empty';
+            emptyHint.textContent = '无匹配字段';
+            emptyHint.style.display = 'none';
+            dropdown.appendChild(emptyHint);
+
+            basics.forEach(f => {
+                const item = document.createElement('div');
+                item.className = 'dropdown-item';
+                item.textContent = `${f.field_name} (${f.field_id})`;
+                item._search = `${f.field_name} ${f.field_id}`.toLowerCase();
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (mode === 'tag') {
+                        RuleConfig.addKeywordTag(targetId, `<field_result>${f.field_id}</field_result>`);
+                    } else {
+                        RuleConfig.insertTagAtCursor(targetId, 'field_result', f.field_id);
+                    }
+                    RuleConfig.closeInsertTagDropdown();
+                });
+                itemsWrap.appendChild(item);
+            });
+
+            search.addEventListener('input', () => {
+                const kw = search.value.trim().toLowerCase();
+                let visible = 0;
+                itemsWrap.querySelectorAll('.dropdown-item').forEach(item => {
+                    const hit = !kw || item._search.includes(kw);
+                    item.style.display = hit ? '' : 'none';
+                    if (hit) visible++;
+                });
+                emptyHint.style.display = visible === 0 ? '' : 'none';
+            });
+            search.addEventListener('click', (e) => e.stopPropagation());
+        }
+
+        const wrap = btnEl.closest('.insert-tag-wrap');
+        if (wrap) wrap.appendChild(dropdown);
+
+        const searchEl = dropdown.querySelector('.dropdown-search');
+        if (searchEl) setTimeout(() => searchEl.focus(), 0);
+
+        const closeHandler = (e) => {
+            if (!dropdown.contains(e.target) && e.target !== btnEl) {
+                RuleConfig.closeInsertTagDropdown();
+            }
+        };
+        document.addEventListener('click', closeHandler, true);
+        dropdown._closeHandler = closeHandler;
+    },
+
+    async openFieldForm(field, forceAdvanced) {
         this.state.modalType = 'field';
         this.state.editingField = field || null;
+        this.state.formIsAdvanced = field ? !!field.is_advanced : !!forceAdvanced;
         const isEdit = !!field;
 
-        this.els.modalTitle.textContent = isEdit ? '编辑字段配置' : '新增字段配置';
+        // 进阶表单需要普通字段列表供「引用字段」下拉使用
+        if (this.state.formIsAdvanced && !this.state.loaded.fields) {
+            await this.loadFields();
+        }
+
+        this.els.modalTitle.textContent = this.state.formIsAdvanced
+            ? (isEdit ? '编辑进阶字段配置' : '新增进阶字段配置')
+            : (isEdit ? '编辑字段配置' : '新增字段配置');
         this.els.modalBody.innerHTML = this.buildFieldForm(field || {});
         if (this.els.debugBtn) this.els.debugBtn.style.display = '';
         this.showModal();
@@ -498,13 +597,26 @@ const RuleConfig = {
         }
     },
 
+    // 进阶表单里「引用字段」按钮的 HTML（普通表单返回空串）
+    fieldRefBtnHtml(mode, targetId) {
+        if (!this.state.formIsAdvanced) return '';
+        const icon = mode === 'tag' ? '◇字段' : '◇';
+        return `<div class="insert-tag-wrap"><button type="button" class="insert-tag-btn" onclick="RuleConfig.showFieldRefDropdown(this,'${mode}','${targetId}')" title="引用普通字段的提取结果">${icon}</button></div>`;
+    },
+
     buildFieldForm(field) {
         const isEdit = !!field.field_id;
         const sourceType = field.source_type || 'table';
         const searchType = field.search_type || 'context';
         const skipLlmChecked = field.use_llm === 0 ? 'checked' : '';
+        // 进阶字段：在普通字段全部抽完后执行，可引用普通字段结果
+        const advancedBanner = this.state.formIsAdvanced ? `
+            <div class="advanced-form-banner">
+                进阶字段：在全部普通字段抽取完成后执行，可用 ◇ 按钮引用普通字段的提取结果（仅能引用普通字段）
+            </div>
+        ` : '';
 
-        return `
+        return advancedBanner + `
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">字段 ID</label>
@@ -560,7 +672,7 @@ const RuleConfig = {
                         </select>
                     </div>
                 </div>
-                ${this.buildKeywordTagsHtml('fm-table-match-keywords', '表格匹配词', field.table_match_keywords || [], '输入匹配词后按回车或点击添加，支持多个匹配词检索表格')}
+                ${this.buildKeywordTagsHtml('fm-table-match-keywords', '表格匹配词', field.table_match_keywords || [], '输入匹配词后按回车或点击添加，支持多个匹配词检索表格', this.state.formIsAdvanced)}
                 <div class="form-group">
                     <label class="form-label">最大返回数量</label>
                     <input class="form-input" type="number" id="fm-table-match-max-results" min="0" placeholder="0 表示不限制" value="${field.table_match_max_results ?? ''}">
@@ -578,6 +690,7 @@ const RuleConfig = {
                         <div class="insert-tag-wrap">
                             <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-table-extract-prompt','search_result',this)" title="插入占位符">{x}</button>
                         </div>
+                        ${this.fieldRefBtnHtml('text', 'fm-table-extract-prompt')}
                     </div>
                     <textarea class="form-textarea" id="fm-table-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.table_extract_prompt || (isEdit ? '' : this.EXTRACT_DEFAULTS.USER_PROMPT))}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
@@ -615,6 +728,7 @@ const RuleConfig = {
                         <div class="insert-tag-wrap">
                             <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-text-extract-prompt','search_result',this)" title="插入占位符">{x}</button>
                         </div>
+                        ${this.fieldRefBtnHtml('text', 'fm-text-extract-prompt')}
                     </div>
                     <textarea class="form-textarea" id="fm-text-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.text_extract_prompt || (isEdit ? '' : this.EXTRACT_DEFAULTS.USER_PROMPT))}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
@@ -638,11 +752,17 @@ const RuleConfig = {
                     ${this.buildVLConfigFields(field.vl_method || 'vl_locate', field.vl_config || {})}
                 </div>
                 <div class="form-group">
-                    <label class="form-label">系统提示词（可选）</label>
+                    <div class="form-label-row">
+                        <label class="form-label">系统提示词（可选）</label>
+                        ${this.fieldRefBtnHtml('text', 'fm-vl-system-prompt')}
+                    </div>
                     <textarea class="form-textarea" id="fm-vl-system-prompt" rows="3" placeholder="可选，VL 调用的系统提示">${Utils.escapeHtml(field.vl_system_prompt || '')}</textarea>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">最终提取提示词</label>
+                    <div class="form-label-row">
+                        <label class="form-label">最终提取提示词</label>
+                        ${this.fieldRefBtnHtml('text', 'fm-vl-extract-prompt')}
+                    </div>
                     <textarea class="form-textarea" id="fm-vl-extract-prompt" rows="6" placeholder='必须含 value/reason 关键字，要求 VL 直接输出 {"value":..., "reason":...} JSON'>${Utils.escapeHtml(field.vl_extract_prompt || this.VL_DEFAULTS.EXTRACT_PROMPT)}</textarea>
                     <div class="form-hint">VL 直接产出 JSON，不再走第二次文本 LLM。提示词中需明确要求 value/reason 两个键。</div>
                 </div>
@@ -657,7 +777,7 @@ const RuleConfig = {
         switch (searchType) {
             case 'context':
                 html = `
-                    ${this.buildKeywordTagsHtml('fm-sc-keywords', '关键词', config.keywords || [], '输入关键词后按回车或点击添加')}
+                    ${this.buildKeywordTagsHtml('fm-sc-keywords', '关键词', config.keywords || [], '输入关键词后按回车或点击添加', this.state.formIsAdvanced)}
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">上文字数</label>
@@ -688,7 +808,10 @@ const RuleConfig = {
                 const sectionMatchType = config.section_match_type || 'contains';
                 html = `
                     <div class="form-group">
-                        <label class="form-label">章节模式</label>
+                        <div class="form-label-row">
+                            <label class="form-label">章节模式</label>
+                            ${this.fieldRefBtnHtml('text', 'fm-sc-section-pattern')}
+                        </div>
                         <input class="form-input" id="fm-sc-section-pattern" value="${Utils.escapeHtml(config.section_pattern || '')}" placeholder="章节标题或关键词">
                     </div>
                     <div class="form-row">
@@ -724,8 +847,8 @@ const RuleConfig = {
 
             case 'rule':
                 html = `
-                    ${this.buildKeywordTagsHtml('fm-sc-keywords', '关键词', config.keywords || [], '输入关键词后按回车或点击添加')}
-                    ${this.buildKeywordTagsHtml('fm-sc-stop-words', '停用词', config.stop_words || [], '输入停用词后按回车或点击添加')}
+                    ${this.buildKeywordTagsHtml('fm-sc-keywords', '关键词', config.keywords || [], '输入关键词后按回车或点击添加', this.state.formIsAdvanced)}
+                    ${this.buildKeywordTagsHtml('fm-sc-stop-words', '停用词', config.stop_words || [], '输入停用词后按回车或点击添加', this.state.formIsAdvanced)}
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">方向</label>
@@ -767,7 +890,7 @@ const RuleConfig = {
                     chunkKeywords = config.keyword_filter.split(/[,，]/).map(s => s.trim()).filter(Boolean);
                 }
                 html = `
-                    ${this.buildKeywordTagsHtml('fm-sc-keywords', '关键词', chunkKeywords, '输入关键词后按回车或点击添加')}
+                    ${this.buildKeywordTagsHtml('fm-sc-keywords', '关键词', chunkKeywords, '输入关键词后按回车或点击添加', this.state.formIsAdvanced)}
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">最大结果数</label>
@@ -788,7 +911,10 @@ const RuleConfig = {
             case 'vector_db':
                 html = `
                     <div class="form-group">
-                        <label class="form-label">查询文本</label>
+                        <div class="form-label-row">
+                            <label class="form-label">查询文本</label>
+                            ${this.fieldRefBtnHtml('text', 'fm-sc-query-text')}
+                        </div>
                         <input class="form-input" id="fm-sc-query-text" value="${Utils.escapeHtml(config.query_text || '')}" placeholder="用于向量检索的查询文本">
                         <div class="form-hint">查询文本同时作为 &lt;search_result&gt; 占位符的标签，检索结果会填充到该标签中</div>
                     </div>
@@ -805,13 +931,33 @@ const RuleConfig = {
                 `;
                 break;
 
-            case 'page':
-                html = `
+            case 'page': {
+                // 进阶字段：可由前序普通字段的模型自报页码派生取文区间
+                const advExtra = this.state.formIsAdvanced ? `
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">页码来源字段（进阶）</label>
+                            <select class="form-select" id="fm-sc-page-source">
+                                <option value="">（不联动，手填页码）</option>
+                                ${(this.state.fields || [])
+                                    .filter(f => !f.is_advanced && (f.source_type === 'text' || f.source_type === 'table'))
+                                    .map(f => `<option value="${Utils.escapeHtml(f.field_id)}" ${config.page_source_field === f.field_id ? 'selected' : ''}>${Utils.escapeHtml(f.field_name)} (${Utils.escapeHtml(f.field_id)})</option>`)
+                                    .join('')}
+                            </select>
+                            <div class="form-hint">取该字段模型自报页码（_model_pages）派生取文区间</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">最大页数</label>
+                            <input class="form-input" id="fm-sc-page-max-pages" type="number" min="1" value="${config.max_pages ?? ''}" placeholder="不限">
+                            <div class="form-hint">派生区间跨度超过该值时，从最小页起收敛</div>
+                        </div>
+                    </div>` : '';
+                html = advExtra + `
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">页码范围</label>
                             <input class="form-input" id="fm-sc-page-range" value="${Utils.escapeHtml(config.page_range || '')}" placeholder="如 5-7 或单页 5">
-                            <div class="form-hint">单一连续区间，1 起。直接把这些页的解析文本喂给 LLM</div>
+                            <div class="form-hint">单一连续区间，1 起。直接把这些页的解析文本喂给 LLM${this.state.formIsAdvanced ? '（已选来源字段时此项被忽略）' : ''}</div>
                         </div>
                         <div class="form-group">
                             <label class="form-label">最大字符数</label>
@@ -821,6 +967,7 @@ const RuleConfig = {
                     </div>
                 `;
                 break;
+            }
         }
 
         return html;

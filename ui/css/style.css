@@ -4038,3 +4038,14 @@ input[type="checkbox"] {
     border-color: #a9d9b1;
     color: #2f7a3f;
 }
+
+/* 进阶字段表单顶部说明条 */
+.advanced-form-banner {
+    background: #f2fbf4;
+    border: 1px solid #cdeccf;
+    border-radius: 6px;
+    color: #2f7a3f;
+    font-size: 13px;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+}
