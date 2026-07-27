@@ -777,6 +777,8 @@ async def export_configs(type_id: str, db: AsyncSession = Depends(get_db)):
                 vl_config=f.vl_config,
                 vl_system_prompt=f.vl_system_prompt,
                 vl_extract_prompt=f.vl_extract_prompt,
+                is_advanced=f.is_advanced if f.is_advanced is not None else 0,
+                depend_fields=f.depend_fields,
             )
             for f in fields
         ],
@@ -858,6 +860,8 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
 
     name_to_new_field_id: dict = {}
     source_to_new_field_id: dict = {}
+    # 进阶字段待重映射（映射需全部字段建完 + 同名回退补全后才完整）
+    advanced_to_remap: list = []
 
     for src in payload.fields:
         new_name = src.field_name
@@ -921,12 +925,16 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
             vl_config=src.vl_config,
             vl_system_prompt=src.vl_system_prompt,
             vl_extract_prompt=src.vl_extract_prompt,
+            is_advanced=getattr(src, "is_advanced", 0) or 0,
+            depend_fields=getattr(src, "depend_fields", None),
         )
         db.add(new_field)
         target_field_names.add(new_name)
         # 用源字段名做映射键（导出时已是源端原名）
         name_to_new_field_id[src.field_name] = new_field_id
         source_to_new_field_id[src.field_id] = new_field_id
+        if getattr(src, "is_advanced", 0):
+            advanced_to_remap.append((new_field, src))
         resp.copied_fields += 1
 
     # 把目标类型已存在的同名字段也纳入映射（用于规则依赖回退）
@@ -941,6 +949,13 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
     for src in payload.fields:
         if src.field_id not in source_to_new_field_id and src.field_name in name_to_target_field_id:
             source_to_new_field_id[src.field_id] = name_to_target_field_id[src.field_name]
+
+    # 映射（含同名回退）完整后，回填进阶字段内的引用占位符与 page_source_field
+    for new_obj, src in advanced_to_remap:
+        for k, v in _remap_advanced_field_config(src, source_to_new_field_id).items():
+            setattr(new_obj, k, v)
+    if advanced_to_remap:
+        await db.flush()
 
     # 3. 复制规则
     target_rule_names = set(
