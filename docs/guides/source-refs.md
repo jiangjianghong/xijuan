@@ -65,7 +65,11 @@ def classify_source_refs(refs):
 | `_vl` | vl | `{method,total_pages,key_pages,...}` | VL 视觉抽取元信息 | 是（`key_pages`） |
 | `_model_pages` | text / table（可选） | `int[]` | 模型自报参考页（去重升序，见 §7） | 是（模型自报） |
 | `_web_search` | analysis judge（可选） | `{query,results,error?}` | 联网搜索溯源（见 §8） | 否（外部网页） |
+| `_resolved_refs` | 进阶字段（`is_advanced=1`，可选） | `{field_id: string}` | 各 `<field_result>` 引用实际填入的值 | 否 |
+| `_page_link` | 进阶字段 + `page` 检索联动（可选） | `{source_field,model_pages,derived_range,capped}` | 由来源字段模型自报页码派生的取文区间 | 是（`model_pages` / `derived_range`） |
 | `bboxes` | text / table 的**单条 ref 内**（可选，非顶层） | `[{page_num:int,bbox,page_size}]` | PDF 块级高亮框（见 §9.4） | 是（int，恒单页） |
+
+> `_resolved_refs` / `_page_link` 是**进阶字段**的解析溯源，与该字段自身的检索 ref 并存（进阶字段解析完仍走普通抽取核心，布局判定不变）。配置方法见 [extraction-config §6](extraction-config.md#6-进阶字段字段引用--页码联动)。
 
 > 存量老数据可能缺 `text` / `_texts` / `bboxes` / `_model_pages` 等键（老 `page_mapping` 无 bbox，重新解析后才有）——消费方一律用 `.get()` 容错，缺键不代表整条无效。
 

@@ -355,6 +355,9 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 | `source_type` | ENUM | NOT NULL | - | 数据源类型 |
 | `enabled` | TINYINT | - | 1 | 是否启用（1=启用, 0=禁用） |
 | `priority` | INT | - | 0 | 执行优先级（越小越优先） |
+| `use_llm` | TINYINT | NOT NULL | 1 | 是否走 LLM 二次抽取（0=直接返回检索原文；仅 text / table 生效，vl 恒需模型） |
+| `is_advanced` | TINYINT | NOT NULL | 0 | 是否进阶字段（1=依赖前序普通字段，在普通字段全部抽完后执行；NULL/0=普通字段） |
+| `depend_fields` | JSON | NULLABLE | NULL | 进阶字段引用的普通字段 ID 数组（保存时由服务端扫描配置算出，非调用方指定） |
 | `created_at` | DATETIME | - | CURRENT_TIMESTAMP | 创建时间 |
 | `updated_at` | DATETIME | - | CURRENT_TIMESTAMP | 更新时间（自动更新） |
 | `table_name_pattern` | VARCHAR(500) | NULLABLE | NULL | 【表格类】表格名称匹配模式（兼容旧配置；也作为占位符 label） |
@@ -482,6 +485,10 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 ```
 - `page_range`：`"3"` / `"3-5"`，按 page_mapping 切出对应页的 markdown
 - `max_length`：注入 prompt 的最大字符数，超出从末尾截断（默认 30000）
+- `page_source_field`（仅 `is_advanced=1`）：来源普通字段的 `field_id`。抽取时取该字段
+  `source_refs._model_pages`（模型自报页码）派生 `page_range = [min, max]`，**覆盖**手填的
+  `page_range`；来源字段无模型自报页码时该进阶字段直接失败
+- `max_pages`（仅 `is_advanced=1`）：派生区间的最大跨度，超出时从最小页起收敛为该页数
 
 #### vl_config JSON 结构
 
@@ -806,6 +813,7 @@ custom 类规则 `is_formatted=1` 时的输出字段树（`utils/output_schema.p
 - 顶层 `_texts` 键 = `{label: 拼接后实际注入 <search_result> 占位符的完整文本}`（多条命中以 `\n---\n` 拼接）。
 - `bboxes` = `[{page_num(int), bbox, page_size}]`，由 `lookup_bboxes` 从 `file_content.page_mapping` 查得，text 5 种检索（context/section/rule/chunk_db/vector_db）与 table 类携带（**非空才挂键**）；page 检索（整页切片）与 vl 类不挂。
 - **容错**：提取失败时整个 `source_refs` 为 NULL；存量老数据无 `text` / `_texts` / `bboxes` 键（老文件 page_mapping 无 bbox，重新解析后才有），消费方读取时需容错。
+- **进阶字段专属键**（`is_advanced=1` 才可能出现）：`_resolved_refs` = `{被引用 field_id: 实际填入的值}`；`_page_link` = `{source_field, model_pages, derived_range: [start, end], capped}`（仅 `page` 检索且配了 `page_source_field` 时）。
 
 #### 示例数据
 
@@ -1018,6 +1026,9 @@ CREATE TABLE IF NOT EXISTS extraction_field (
   source_type ENUM('table', 'text', 'vl') NOT NULL,
   enabled TINYINT DEFAULT 1,
   priority INT DEFAULT 0,
+  use_llm TINYINT NOT NULL DEFAULT 1,
+  is_advanced TINYINT NOT NULL DEFAULT 0,
+  depend_fields JSON NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   table_name_pattern VARCHAR(500) NULL,

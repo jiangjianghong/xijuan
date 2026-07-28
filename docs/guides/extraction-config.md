@@ -11,6 +11,7 @@ JSON 示例和排错清单为主。
 - **接口出入参 / 状态码**（`POST /extraction/fields`、调试接口）见 [api/extraction](../api/extraction.md)。
 - **溯源结构**（`source_refs`、命中片段、bbox、模型自报页码）见 [source-refs](source-refs.md)。
 - **逻辑分析**（`<field_result>` 占位符、judge / calc 规则）是另一份手册 [analysis-config](analysis-config.md)。
+- **进阶字段**（引用其他字段的提取结果 / 按前序字段页码联动取文）见本页 [§6](#6-进阶字段字段引用--页码联动)。
 
 ---
 
@@ -282,9 +283,93 @@ JSON 示例和排错清单为主。
 
 ---
 
-## 6. 占位符规范
+## 6. 进阶字段（字段引用 + 页码联动）
 
-### 6.1 `<search_result>标签</search_result>`（检索结果）
+普通字段各自独立抽取；**进阶字段**（`is_advanced=1`）在**全部普通字段抽完之后**才执行，
+它的检索配置可以引用前面已抽出来的值。典型场景：先抽出「甲方公司名」，再用这个名字去正文里
+定位「该公司的注册资本」。
+
+**两条硬规则：**
+1. 进阶字段**只能引用普通字段**（不支持进阶引用进阶）。引用了不存在或本身是进阶的字段 → 保存 **400**。
+2. `depend_fields` 由服务端扫描配置自动算出，**请求里传什么都会被覆盖**；`GET /extraction/fields` 回传它。
+
+### 6.1 字段引用 `<field_result>字段ID</field_result>`
+
+在进阶字段的配置里写占位符，抽取前会被替换为被引用字段的**提取值**。支持的位置：
+
+| 位置 | 例 |
+|---|---|
+| `search_config` 里的字符串值 | `query_text` / `section_pattern` |
+| `search_config` 里的字符串列表 | `keywords` / `stop_words` |
+| `table_match_keywords` | 表格匹配词 |
+| 各类提示词 | `text_extract_prompt` / `table_extract_prompt` / `*_system_prompt` / `vl_extract_prompt` |
+| `vl_config` | `field_hints` / `batch_prompt_template` / `locate_prompt_template` |
+
+```json
+{
+  "field_id": "registered_capital",
+  "field_name": "注册资本",
+  "source_type": "text",
+  "is_advanced": 1,
+  "search_type": "context",
+  "search_config": {
+    "keywords": ["<field_result>party_a</field_result>"],
+    "context_after": 60,
+    "max_results": 3
+  },
+  "text_extract_prompt": "从 <search_result><field_result>party_a</field_result></search_result> 中提取注册资本"
+}
+```
+
+被引用字段没抽到值（空串）时，该引用被替换为空串；列表类配置（`keywords` 等）里因此变空的项**会被剔除**，
+避免空关键词命中全文。注意 `<search_result>` 标签名同样会被替换 —— 上例最终标签是「甲方公司名的值」，
+与检索关键词一致，占位符才对得上。
+
+### 6.2 页码联动（`search_type=page`）
+
+让进阶字段只读「前一个字段所在的那几页」：
+
+```json
+{
+  "field_id": "capital_by_page",
+  "source_type": "text",
+  "is_advanced": 1,
+  "search_type": "page",
+  "search_config": {
+    "page_source_field": "party_a",
+    "max_pages": 3,
+    "max_length": 30000
+  },
+  "text_extract_prompt": "从 <search_result>page_content</search_result> 提取注册资本"
+}
+```
+
+- `page_source_field`：来源**普通**字段的 `field_id`。取它的 `source_refs._model_pages`（模型自报页码，
+  见 §7.3）派生区间 `[min, max]`，**覆盖**手填的 `page_range`。
+- `max_pages`：区间跨度上限，超了就从最小页起收敛（如自报 `[3, 7]` + `max_pages=3` → 取 `3-5`）。
+- 来源字段**没有**模型自报页码（没在 prompt 里要 `pages`，或模型没给）→ 该进阶字段**直接失败**。
+  所以来源字段的 prompt 必须要求返回 `pages`。
+
+### 6.3 溯源与调试
+
+进阶字段的解析过程会写进 `source_refs`（与检索 ref 同级）：
+
+| 键 | 内容 |
+|---|---|
+| `_resolved_refs` | `{被引用 field_id: 实际填入的值}` |
+| `_page_link` | `{source_field, model_pages, derived_range: [start, end], capped}`（仅页码联动时） |
+
+调试接口 `POST /extraction/test/stream` 对进阶字段会**先推一个 `resolved_refs` 事件**再进入常规流程；
+它读的是该文件**已落库**的普通字段结果，所以要先完整跑过一次提取。
+
+复制类型（`copy_from`）/ 导出 / 导入时，占位符与 `page_source_field` 会按新旧 `field_id` 映射**自动重写**，
+副本之间互不影响。
+
+---
+
+## 7. 占位符规范
+
+### 7.1 `<search_result>标签</search_result>`（检索结果）
 
 用于 `text_extract_prompt` / `table_extract_prompt`。**标签内容不是随便写的**，必须与检索配置对应，命中内容才会被注入到该占位符：
 
@@ -298,7 +383,7 @@ JSON 示例和排错清单为主。
 
 无命中时占位符被替换为 `（未找到 '标签' 的相关内容）`，LLM 仍会执行、通常返回空值。
 
-### 6.2 校验规则（配错即 422）
+### 7.2 校验规则（配错即 422）
 
 | 配置 | 规则 |
 |---|---|
@@ -309,7 +394,7 @@ JSON 示例和排错清单为主。
 | `batch_prompt_template`（vl_progressive 自定义时） | 含 `{history}` `{field_hints}` `{page_label}` `{total_pages}` |
 | `locate_prompt_template`（vl_locate 自定义时） | 含 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}` |
 
-### 6.3 让模型自报参考页码（可选）
+### 7.3 让模型自报参考页码（可选）
 
 text / table 抽取时，可在 prompt 里要求 LLM 除 `value` / `reason` 外再返回 `pages`（参考到的页码整数数组）。后端会归一化并挂到 `source_refs._model_pages`，前端 PDF 定位（📍）优先跳这些页。这是模型自报，区别于程序算的 `ref.page_num`。细节见 [source-refs](source-refs.md)。
 
@@ -317,7 +402,7 @@ text / table 抽取时，可在 prompt 里要求 LLM 除 `value` / `reason` 外�
 
 ---
 
-## 7. 端到端范例（财报场景 · 提取部分）
+## 8. 端到端范例（财报场景 · 提取部分）
 
 一次配好一组字段，供后续逻辑分析引用（分析规则的配法见 [analysis-config](analysis-config.md)）：
 
@@ -366,16 +451,16 @@ text / table 抽取时，可在 prompt 里要求 LLM 除 `value` / `reason` 外�
 
 ---
 
-## 8. 常见错误与排查
+## 9. 常见错误与排查
 
-### 8.1 保存报 422（占位符）
+### 9.1 保存报 422（占位符）
 
-对照 §6.2。最常见：
+对照 §7.2。最常见：
 - text/table 的提取 prompt 忘了写 `<search_result>标签</search_result>`，或标签与检索配置对不上（如 vector_db 标签没用 `query_text` 的值）。
 - vl 的 `vl_extract_prompt` 里没有 `value` / `reason` 字样。
 - 自定义 VL 模板缺占位符，或字面花括号没转义成 `{{ }}`（§4.3）。
 
-### 8.2 提取结果为空
+### 9.2 提取结果为空
 
 多半是**没检索到内容**，而非 LLM 出错。逐步排查：
 1. 用 `POST /extraction/test`（同步）或 `POST /extraction/test/stream`（SSE）传 `file_id` + `field_id`/`config` 调试，看返回的 `search_results` / `llm_input` 是不是空——占位符被替换成了「未找到」就说明检索没命中。
@@ -383,12 +468,12 @@ text / table 抽取时，可在 prompt 里要求 LLM 除 `value` / `reason` 外�
 3. text：确认 `keywords` / `section_pattern` / `query_text` 在文档里确实存在；关键词太生僻或写法不一致时多给几个近义词。
 4. 文档本身是扫描图、Markdown 里根本没有该文字 → 改用 `vl`。
 
-### 8.3 VL 抽取报 404 / 无输出
+### 9.3 VL 抽取报 404 / 无输出
 
 - `uploads/{file_id}.pdf` 不存在：文件未成功上传，或被 `storage` 保留策略按容量/时长清理了。重新上传即可，保留策略见 [configuration](configuration.md)。
 - 相关页没渲进去：检查 `page_range`（vl_model）或加大 `grid_pages` / `key_pages_limit`（vl_locate）、`batch_size`（vl_progressive）。
 
-### 8.4 抽出来的值不是纯数字 / 后续计算出错
+### 9.4 抽出来的值不是纯数字 / 后续计算出错
 
 在提取 prompt 里明确要求「仅返回数值，不含单位和千分位」。数值字段被 [逻辑分析](analysis-config.md) 的 calc 规则引用时，非数字字符会导致计算失败——排查用 `POST /analysis/test` 看 `input_values`。
 

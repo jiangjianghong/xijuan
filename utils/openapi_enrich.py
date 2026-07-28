@@ -858,6 +858,8 @@ _SEARCH_CONFIG_DOC = (
     "- `chunk_db`：`keywords`[必] / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)\n"
     "- `vector_db`：`query_text` / `top_k`(5) / `score_threshold`\n"
     "- `page`：`page_range`（如 `\"1-3\"` / `\"all\"` / `\"2\"`）/ `max_length`(30000，末尾截断)"
+    "；进阶字段另可配 `page_source_field`（来源普通字段 ID，取其模型自报页码派生区间并覆盖 `page_range`）"
+    "/ `max_pages`（派生区间最大跨度）"
 )
 
 _VL_CONFIG_DOC = (
@@ -1022,6 +1024,16 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "source_type": "来源类型：`table` / `text` / `vl`（决定下面哪组字段生效）。",
             "enabled": "是否启用（1/0）。",
             "priority": "执行优先级，数字越小越先（升序）。",
+            "use_llm": "是否走 LLM 二次抽取（1/0，默认 1）。置 0 时跳过占位符校验与 LLM 调用，直接返回检索原文；**仅 text / table 生效**，vl 恒需模型。",
+            "is_advanced": (
+                "是否进阶字段（1/0，默认 0）。置 1 时该字段在**全部普通字段抽完后**执行，"
+                "配置内可用 `<field_result>字段ID</field_result>` 引用普通字段的提取值；"
+                "**只能引用同类型的普通字段**，否则 400。"
+            ),
+            "depend_fields": (
+                "进阶字段引用的普通字段 ID 列表。**由服务端扫描配置算出并覆盖**，请求传入无效；"
+                "`GET /extraction/fields` 回传。"
+            ),
             "table_name_pattern": "[table] 表名匹配模式（配合 `table_match_type`）。",
             "table_match_type": "[table] 匹配方式：`exact` / `fuzzy` / `contains` / `llm`。",
             "table_match_keywords": "[table] 匹配关键词列表。",

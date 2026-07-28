@@ -31,7 +31,9 @@ parsing → tableing → chunking → embedding
 
 ## 2. 字段提取调试流（/extraction/test/stream）
 
-事件：`search_result`（检索结果）→ `prompt`（渲染后提示词）→ `llm_response`（LLM/VL 输出）→ `result` → `done`。
+事件：[`resolved_refs`] → `search_result`（检索结果）→ `prompt`（渲染后提示词）→ `llm_response`（LLM/VL 输出）→ `result` → `done`。
+
+`resolved_refs` **仅进阶字段（`is_advanced=1`）推送**，位于最前，`data` 为解析溯源 `{_resolved_refs?: {field_id: 填入值}, _page_link?: {source_field, model_pages, derived_range, capped}}`；解析失败改推 `error` 并终止。
 
 VL 字段另有进度事件：`pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`（**仅** SSE 推送，不走异步回调）。
 

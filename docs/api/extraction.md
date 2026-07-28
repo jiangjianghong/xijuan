@@ -47,6 +47,8 @@ _data 为数组，每个元素：_
 | vl_config | object | 是 | 结构详见 [vl_config](../reference/data-model.md#extraction_field) |
 | vl_system_prompt | string | 是 |  |
 | vl_extract_prompt | string | 是 |  |
+| is_advanced | integer | 是 |  |
+| depend_fields | array[string] | 是 |  |
 | created_at | string | 是 | 创建时间 |
 | updated_at | string | 是 | 更新时间 |
 <!-- /AUTOGEN:response -->
@@ -76,7 +78,7 @@ _data 为数组，每个元素：_
 | source_type | SourceTypeEnum | 是 | — | 来源类型：`table` / `text` / `vl`（决定下面哪组字段生效）。 |
 | enabled | integer | 否 | 1 | 是否启用（1/0）。 |
 | priority | integer | 否 | 0 | 执行优先级，数字越小越先（升序）。 |
-| use_llm | integer | 否 | 1 |  |
+| use_llm | integer | 否 | 1 | 是否走 LLM 二次抽取（1/0，默认 1）。置 0 时跳过占位符校验与 LLM 调用，直接返回检索原文；**仅 text / table 生效**，vl 恒需模型。 |
 | table_name_pattern | string | 否 | — | [table] 表名匹配模式（配合 `table_match_type`）。 |
 | table_match_type | TableMatchTypeEnum | 否 | — | [table] 匹配方式：`exact` / `fuzzy` / `contains` / `llm`。 |
 | table_match_keywords | array[string] | 否 | — | [table] 匹配关键词列表。 |
@@ -90,7 +92,7 @@ _data 为数组，每个元素：_
 - `rule`：`keywords`[必] / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)
 - `chunk_db`：`keywords`[必] / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)
 - `vector_db`：`query_text` / `top_k`(5) / `score_threshold`
-- `page`：`page_range`（如 `"1-3"` / `"all"` / `"2"`）/ `max_length`(30000，末尾截断)（结构详见 [search_config](../reference/data-model.md#extraction_field)） |
+- `page`：`page_range`（如 `"1-3"` / `"all"` / `"2"`）/ `max_length`(30000，末尾截断)；进阶字段另可配 `page_source_field`（来源普通字段 ID，取其模型自报页码派生区间并覆盖 `page_range`）/ `max_pages`（派生区间最大跨度）（结构详见 [search_config](../reference/data-model.md#extraction_field)） |
 | text_system_prompt | string | 否 | — | [text] LLM system prompt（可空）。 |
 | text_extract_prompt | string | 否 | — | [text] 抽取 prompt；`source_type=text` 时须含至少一个 `<search_result>标签</search_result>`。 |
 | vl_method | VLMethodEnum | 否 | — | [vl] 方法：`vl_model` / `vl_progressive` / `vl_locate`；`source_type=vl` 时必填。 |
@@ -100,6 +102,8 @@ _data 为数组，每个元素：_
 - `vl_locate`：`field_hints`("") / `grid_pages`(6) / `grid_cols`(3) / `max_concurrent`(20) / 可选 `locate_prompt_template`（占位符 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`）（结构详见 [vl_config](../reference/data-model.md#extraction_field)） |
 | vl_system_prompt | string | 否 | — | [vl] LLM system prompt（可空）。 |
 | vl_extract_prompt | string | 否 | — | [vl] 抽取 prompt；`source_type=vl` 时必填，且须含 `value` 与 `reason` 关键字（大小写不敏感）。 |
+| is_advanced | integer | 否 | 0 | 是否进阶字段（1/0，默认 0）。置 1 时该字段在**全部普通字段抽完后**执行，配置内可用 `<field_result>字段ID</field_result>` 引用普通字段的提取值；**只能引用同类型的普通字段**，否则 400。 |
+| depend_fields | array[string] | 否 | — | 进阶字段引用的普通字段 ID 列表。**由服务端扫描配置算出并覆盖**，请求传入无效；`GET /extraction/fields` 回传。 |
 <!-- /AUTOGEN:request-body -->
 
 ```jsonc
@@ -138,6 +142,13 @@ curl -X POST http://localhost:5019/extraction/fields \
 | 422 | 提示词缺 `<search_result>` 占位符 / vl 缺 `value`·`reason` 等校验失败 | Pydantic 错误体 |
 
 > 校验规则详见 [extraction-config 指南](../guides/extraction-config.md)。`use_llm=0` 时放宽提示词必填。
+
+**进阶字段（`is_advanced=1`）**
+
+- `is_advanced=1` 表示该字段在**全部普通字段抽完后**执行，其配置里可用 `<field_result>字段ID</field_result>` 引用普通字段的提取结果（关键词、表格匹配词、`search_config` 内字符串、各类提示词、`vl_config.field_hints`/模板均支持）。
+- **只能引用同类型的普通字段**：引用的 `field_id` 不存在于该 `type_id`、或本身是进阶字段，返回 **400**。
+- `depend_fields` 由服务端扫描配置算出后写库并在 `GET /extraction/fields` 回传，**请求体传入的值会被覆盖**。
+- `search_type=page` 时可配 `search_config.page_source_field`（+ 可选 `max_pages`）按来源字段的模型自报页码联动取文，详见 [extraction-config 指南](../guides/extraction-config.md#6-进阶字段字段引用--页码联动)。
 
 ## 删除字段配置
 
@@ -254,6 +265,8 @@ SSE 分步推送：检索结果 → prompt → LLM/VL 响应 → 最终结果。
 <!-- /AUTOGEN:request-body -->
 
 响应为 `text/event-stream`，事件清单见 [sse.md](sse.md)。VL 进度事件（`pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`）**仅** SSE 推送。
+
+调试进阶字段（`is_advanced=1`）时，流首先推 `resolved_refs` 事件（`data` 即 provenance：`_resolved_refs` / `_page_link`），再进入常规事件序列；引用解析失败（如页码来源字段无模型自报页码）直接推 `error` 并终止。调试用的是该文件**已落库**的普通字段提取结果，故需先跑过一次提取。
 
 **状态码 / 错误**
 
