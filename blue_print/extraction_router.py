@@ -25,6 +25,7 @@ from service.extraction_service import (
     extract_table_field,
     extract_text_field,
     extract_vl_field,
+    resolve_advanced_field_from_db,
     search_chunk_db,
     search_context,
     search_rule,
@@ -79,6 +80,29 @@ async def list_fields(type_id: str = "", db: AsyncSession = Depends(get_db)):
     )
 
 
+async def _referencing_advanced_fields(
+    db: AsyncSession, type_id: str, field_id: str
+) -> List[ExtractionField]:
+    """反查同类型下有哪些进阶字段引用了 field_id（读 depend_fields）。
+
+    depend_fields 是 JSON 数组，跨库的 JSON 查询语法不统一，且单个类型下字段量很小，
+    因此拉回来在 Python 里过滤。
+    """
+    rows = (
+        await db.execute(
+            select(ExtractionField).where(
+                ExtractionField.type_id == type_id,
+                ExtractionField.is_advanced == 1,
+            )
+        )
+    ).scalars().all()
+    return [f for f in rows if field_id in (f.depend_fields or [])]
+
+
+def _describe_fields(fields: List[ExtractionField]) -> str:
+    return "、".join(f"{f.field_name}({f.field_id})" for f in fields)
+
+
 @router.post("/fields", response_model=ResponseWrapper)
 async def upsert_field(
     field: ExtractionFieldCreate, db: AsyncSession = Depends(get_db)
@@ -118,6 +142,31 @@ async def upsert_field(
                         detail=f"进阶字段只能引用普通字段，{dep} 也是进阶字段",
                     )
 
+    # 反向保护：已被进阶字段引用的普通字段，不能改成进阶字段
+    # （否则「进阶只能引用普通」的不变量被绕过，且两者同阶段执行，引用方拿不到值）
+    warn_msg = ""
+    if existing and field.is_advanced and not (existing.is_advanced or 0):
+        referrers = await _referencing_advanced_fields(db, target_type_id, field.field_id)
+        if referrers:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"字段 {field.field_id} 正被进阶字段 {_describe_fields(referrers)} 引用，"
+                    "不能改为进阶字段；请先解除引用"
+                ),
+            )
+    # 禁用被引用的普通字段不拦截（可能是临时操作），但要让调用方知道后果
+    if existing and not field.enabled and not field.is_advanced:
+        referrers = await _referencing_advanced_fields(db, target_type_id, field.field_id)
+        if referrers:
+            warn_msg = (
+                f"；注意：进阶字段 {_describe_fields(referrers)} 引用了该字段，"
+                "禁用后它们的引用会解析为空"
+            )
+            logger.warning(
+                "禁用了被引用的普通字段 {}，引用方: {}", field.field_id, _describe_fields(referrers)
+            )
+
     if existing:
         if (existing.type_id or "default") != target_type_id:
             raise HTTPException(
@@ -151,7 +200,7 @@ async def upsert_field(
         existing.is_advanced = field.is_advanced
         existing.depend_fields = computed_depend if field.is_advanced else None
         await db.commit()
-        return ResponseWrapper(message="字段配置已更新", data={"field_id": field.field_id})
+        return ResponseWrapper(message="字段配置已更新" + warn_msg, data={"field_id": field.field_id})
     else:
         # 新增
         new_field = ExtractionField(
@@ -185,14 +234,36 @@ async def upsert_field(
 
 
 @router.delete("/fields/{field_id}", response_model=ResponseWrapper)
-async def delete_field(field_id: str, db: AsyncSession = Depends(get_db)):
-    """删除字段提取配置。"""
+async def delete_field(
+    field_id: str, force: bool = False, db: AsyncSession = Depends(get_db)
+):
+    """删除字段提取配置。
+
+    若该字段正被同类型的进阶字段引用，默认返回 **409**（避免留下悬空引用——
+    运行时会静默解析为空串）；确实要删可加 `force=true`。
+    """
     stmt = select(ExtractionField).where(ExtractionField.field_id == field_id)
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
 
     if not existing:
         raise HTTPException(status_code=404, detail="字段配置不存在")
+
+    referrers = await _referencing_advanced_fields(
+        db, existing.type_id or "default", field_id
+    )
+    if referrers and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"字段 {field_id} 正被进阶字段 {_describe_fields(referrers)} 引用，"
+                "删除会造成悬空引用；请先解除引用，或加 force=true 强制删除"
+            ),
+        )
+    if referrers:
+        logger.warning(
+            "强制删除被引用的字段 {}，引用方将解析为空: {}", field_id, _describe_fields(referrers)
+        )
 
     await db.delete(existing)
     await db.commit()
@@ -207,6 +278,35 @@ async def check_field(field_id: str, db: AsyncSession = Depends(get_db)):
     existing = result.scalar_one_or_none()
 
     return ResponseWrapper(data={"exists": existing is not None})
+
+
+def _build_temp_field(config: Dict[str, Any]) -> ExtractionField:
+    """由调试请求里的临时配置构造一个游离 ExtractionField（不入库）。
+
+    `/test` 与 `/test/stream` 共用；`is_advanced` 必须透传，否则进阶字段在调试时
+    不会解析 `<field_result>` 引用与页码联动，调出来的结果与正式抽取不一致。
+    """
+    return ExtractionField(
+        field_id=config.get("field_id") or "__test__",
+        field_name=config.get("field_name", "测试字段"),
+        source_type=config.get("source_type", "text"),
+        use_llm=config.get("use_llm", 1),
+        is_advanced=config.get("is_advanced", 0) or 0,
+        table_name_pattern=config.get("table_name_pattern"),
+        table_match_type=config.get("table_match_type"),
+        table_match_keywords=config.get("table_match_keywords"),
+        table_match_max_results=config.get("table_match_max_results"),
+        table_system_prompt=config.get("table_system_prompt"),
+        table_extract_prompt=config.get("table_extract_prompt"),
+        search_type=config.get("search_type"),
+        search_config=config.get("search_config"),
+        text_system_prompt=config.get("text_system_prompt"),
+        text_extract_prompt=config.get("text_extract_prompt"),
+        vl_method=config.get("vl_method"),
+        vl_config=config.get("vl_config"),
+        vl_system_prompt=config.get("vl_system_prompt"),
+        vl_extract_prompt=config.get("vl_extract_prompt"),
+    )
 
 
 @router.post("/test", response_model=ResponseWrapper)
@@ -237,28 +337,17 @@ async def test_extraction(
     elif req.config:
         # 模式 2: 使用临时配置
         config = req.config
-        field = ExtractionField(
-            field_id="__test__",
-            field_name=config.get("field_name", "测试字段"),
-            source_type=config.get("source_type", "text"),
-            use_llm=config.get("use_llm", 1),
-            table_name_pattern=config.get("table_name_pattern"),
-            table_match_type=config.get("table_match_type"),
-            table_match_keywords=config.get("table_match_keywords"),
-            table_match_max_results=config.get("table_match_max_results"),
-            table_system_prompt=config.get("table_system_prompt"),
-            table_extract_prompt=config.get("table_extract_prompt"),
-            search_type=config.get("search_type"),
-            search_config=config.get("search_config"),
-            text_system_prompt=config.get("text_system_prompt"),
-            text_extract_prompt=config.get("text_extract_prompt"),
-            vl_method=config.get("vl_method"),
-            vl_config=config.get("vl_config"),
-            vl_system_prompt=config.get("vl_system_prompt"),
-            vl_extract_prompt=config.get("vl_extract_prompt"),
-        )
+        field = _build_temp_field(config)
     else:
         raise HTTPException(status_code=400, detail="必须提供 field_id 或 config")
+
+    # 进阶字段：用该文件已落库的普通字段结果解析引用 / 页码联动后再调试
+    resolved_refs_info: Dict[str, Any] = {}
+    if getattr(field, "is_advanced", 0):
+        try:
+            field, resolved_refs_info = await resolve_advanced_field_from_db(file_id, field, db)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     try:
         if field.source_type == "table":
@@ -336,6 +425,7 @@ async def test_extraction(
             llm_output=llm_output,
             extracted_value=extracted_value,
             reason=reason,
+            resolved_refs=resolved_refs_info or None,
         ).model_dump()
     )
 
@@ -361,26 +451,7 @@ async def test_extraction_stream(
             raise HTTPException(status_code=404, detail="字段配置不存在")
     elif req.config:
         config = req.config
-        field = ExtractionField(
-            field_id="__test__",
-            field_name=config.get("field_name", "测试字段"),
-            source_type=config.get("source_type", "text"),
-            use_llm=config.get("use_llm", 1),
-            table_name_pattern=config.get("table_name_pattern"),
-            table_match_type=config.get("table_match_type"),
-            table_match_keywords=config.get("table_match_keywords"),
-            table_match_max_results=config.get("table_match_max_results"),
-            table_system_prompt=config.get("table_system_prompt"),
-            table_extract_prompt=config.get("table_extract_prompt"),
-            search_type=config.get("search_type"),
-            search_config=config.get("search_config"),
-            text_system_prompt=config.get("text_system_prompt"),
-            text_extract_prompt=config.get("text_extract_prompt"),
-            vl_method=config.get("vl_method"),
-            vl_config=config.get("vl_config"),
-            vl_system_prompt=config.get("vl_system_prompt"),
-            vl_extract_prompt=config.get("vl_extract_prompt"),
-        )
+        field = _build_temp_field(config)
     else:
         raise HTTPException(status_code=400, detail="必须提供 field_id 或 config")
 

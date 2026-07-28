@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
@@ -46,6 +46,7 @@ from model.tables import (
     FileTable,
     Project,
 )
+from service.extraction_service import collect_depend_fields
 from utils.milvus_client import MilvusClient
 
 router = APIRouter(prefix="/doctype", tags=["doctype"])
@@ -479,14 +480,19 @@ def _remap_field_placeholders(text: Optional[str], mapping: dict) -> Optional[st
     return re.sub(r"<field_result>(.+?)</field_result>", replacer, text)
 
 
-def _remap_advanced_field_config(src_field, mapping: dict) -> dict:
+def _remap_advanced_field_config(src_field, mapping: dict) -> Tuple[dict, List[str]]:
     """复制/导入进阶字段时，把其配置内所有 <field_result> 占位符与
     search_config.page_source_field 按「源 field_id -> 新 field_id」重映射。
 
     Returns:
-        可直接 setattr 到新字段对象上的属性字典。
+        (可直接 setattr 到新字段对象上的属性字典, 未随之复制的源 field_id 列表)。
+        未命中的引用原样保留（指向源类型的 id，运行时解析为空串），由调用方
+        通过 missing_dependencies 上报，不静默吞掉。
     """
     import copy as _copy
+
+    # 该进阶字段引用了哪些源字段（含 page_source_field），哪些没被一起复制
+    missing = [fid for fid in collect_depend_fields(src_field) if fid not in mapping]
 
     def _remap(text):
         return _remap_field_placeholders(text, mapping)
@@ -520,17 +526,22 @@ def _remap_advanced_field_config(src_field, mapping: dict) -> dict:
                 vc[key] = _remap(vc[key])
 
     new_depend = [mapping.get(d, d) for d in (getattr(src_field, "depend_fields", None) or [])]
-    return dict(
-        search_config=sc,
-        table_match_keywords=tmk,
-        vl_config=vc,
-        table_extract_prompt=_remap(src_field.table_extract_prompt),
-        table_system_prompt=_remap(src_field.table_system_prompt),
-        text_extract_prompt=_remap(src_field.text_extract_prompt),
-        text_system_prompt=_remap(src_field.text_system_prompt),
-        vl_extract_prompt=_remap(src_field.vl_extract_prompt),
-        vl_system_prompt=_remap(src_field.vl_system_prompt),
-        depend_fields=new_depend if new_depend else None,
+    return (
+        dict(
+            search_config=sc,
+            table_match_keywords=tmk,
+            vl_config=vc,
+            # table_name_pattern 同时充当表格抽取的占位符 label，也要跟着重映射
+            table_name_pattern=_remap(src_field.table_name_pattern),
+            table_extract_prompt=_remap(src_field.table_extract_prompt),
+            table_system_prompt=_remap(src_field.table_system_prompt),
+            text_extract_prompt=_remap(src_field.text_extract_prompt),
+            text_system_prompt=_remap(src_field.text_system_prompt),
+            vl_extract_prompt=_remap(src_field.vl_extract_prompt),
+            vl_system_prompt=_remap(src_field.vl_system_prompt),
+            depend_fields=new_depend if new_depend else None,
+        ),
+        missing,
     )
 
 
@@ -629,9 +640,13 @@ async def copy_configs(
         resp.copied_fields += 1
 
     # 全部字段复制完，映射表才完整：回填进阶字段内的引用占位符与 page_source_field
+    # 引用的普通字段没被一起复制时，占位符原样保留并记入 missing_dependencies
+    advanced_missing_deps: List[str] = []
     for new_obj, src in advanced_to_remap:
-        for k, v in _remap_advanced_field_config(src, source_to_new_field_id).items():
+        attrs, missing = _remap_advanced_field_config(src, source_to_new_field_id)
+        for k, v in attrs.items():
             setattr(new_obj, k, v)
+        advanced_missing_deps.extend(f"{src.field_name}::{fid}" for fid in missing)
     if advanced_to_remap:
         await db.flush()
 
@@ -658,7 +673,7 @@ async def copy_configs(
         ).fetchall()
     )
 
-    missing_deps: List[str] = []
+    missing_deps: List[str] = list(advanced_missing_deps)
 
     for src in src_rules:
         if on_conflict == "skip" and _has_copy_id(src.rule_id, target_rule_ids):
@@ -951,9 +966,13 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
             source_to_new_field_id[src.field_id] = name_to_target_field_id[src.field_name]
 
     # 映射（含同名回退）完整后，回填进阶字段内的引用占位符与 page_source_field
+    # 源 payload 缺了被引用的普通字段时，占位符原样保留并记入 missing_dependencies
+    advanced_missing_deps: List[str] = []
     for new_obj, src in advanced_to_remap:
-        for k, v in _remap_advanced_field_config(src, source_to_new_field_id).items():
+        attrs, missing = _remap_advanced_field_config(src, source_to_new_field_id)
+        for k, v in attrs.items():
             setattr(new_obj, k, v)
+        advanced_missing_deps.extend(f"{src.field_name}::{fid}" for fid in missing)
     if advanced_to_remap:
         await db.flush()
 
@@ -967,7 +986,7 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
         ).fetchall()
     )
 
-    missing_deps: List[str] = []
+    missing_deps: List[str] = list(advanced_missing_deps)
     # 查询全局已有 rule_id，用于冲突检测
     existing_rule_ids = set(
         row[0]

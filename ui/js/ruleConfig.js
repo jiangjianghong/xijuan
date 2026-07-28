@@ -48,6 +48,7 @@ const RuleConfig = {
             modalTitle: document.getElementById('rule-modal-title'),
             modalBody: document.getElementById('rule-modal-body'),
             sectionFields: document.getElementById('section-fields'),
+            sectionAdvancedFields: document.getElementById('section-advanced-fields'),
             sectionRules: document.getElementById('section-rules'),
             debugBtn: document.getElementById('debug-field-btn'),
         };
@@ -64,7 +65,9 @@ const RuleConfig = {
             btn.classList.toggle('active', btn.dataset.rtab === tab);
         });
 
+        // 进阶字段是独立卡片，与普通字段区同属「字段提取配置」标签页，一起显隐
         this.els.sectionFields.classList.toggle('active', tab === 'fields');
+        this.els.sectionAdvancedFields.classList.toggle('active', tab === 'fields');
         this.els.sectionRules.classList.toggle('active', tab === 'rules');
 
         if (tab === 'fields' && !this.state.loaded.fields) {
@@ -112,8 +115,11 @@ const RuleConfig = {
             const sourceTypeCell = f.source_type === 'vl'
                 ? `VL · ${Utils.escapeHtml(f.vl_method || '')}`
                 : (sourceTypeText[f.source_type] || f.source_type);
+            // 依赖列表按字段中文名展示（找不到的退回 ID）
+            const nameById = {};
+            all.forEach(x => { nameById[x.field_id] = x.field_name; });
             const dependCell = (f.depend_fields && f.depend_fields.length)
-                ? `<div class="form-hint">引用: ${Utils.escapeHtml(f.depend_fields.join(', '))}</div>`
+                ? `<div class="form-hint">引用: ${Utils.escapeHtml(f.depend_fields.map(d => nameById[d] || d).join('、'))}</div>`
                 : '';
             return `
                 <tr class="${f.enabled ? '' : 'row-disabled'}">
@@ -228,12 +234,27 @@ const RuleConfig = {
     // Tag 标签式输入
     // ─────────────────────────────────────────────────────────
 
+    /**
+     * 把文本里的 <field_result>字段ID</field_result> 换成「字段中文名」用于**展示**。
+     * 仅影响界面显示，实际提交的值始终是原始占位符（存在 data-value 里）。
+     */
+    displayFieldRefs(text) {
+        if (typeof text !== 'string' || text.indexOf('<field_result>') === -1) return text;
+        const byId = {};
+        (this.state.fields || []).forEach(f => { byId[f.field_id] = f.field_name; });
+        return text.replace(/<field_result>(.+?)<\/field_result>/g, (m, fid) => {
+            const key = String(fid).trim();
+            return byId[key] ? `「${byId[key]}」` : `「${key}?」`;
+        });
+    },
+
     buildKeywordTagsHtml(id, label, values, placeholder, allowRef) {
         values = values || [];
         let tagsHtml = '';
         for (const v of values) {
-            const isRef = /^<field_result>.+<\/field_result>$/.test(v);
-            tagsHtml += `<span class="keyword-tag${isRef ? ' field-ref-tag' : ''}">${Utils.escapeHtml(v)}<button type="button" class="keyword-tag-remove" onclick="RuleConfig.removeKeywordTag(this)">&times;</button></span>`;
+            const isRef = typeof v === 'string' && v.indexOf('<field_result>') !== -1;
+            const shown = isRef ? this.displayFieldRefs(v) : v;
+            tagsHtml += `<span class="keyword-tag${isRef ? ' field-ref-tag' : ''}" data-value="${Utils.escapeHtml(v)}">${Utils.escapeHtml(shown)}<button type="button" class="keyword-tag-remove" onclick="RuleConfig.removeKeywordTag(this)">&times;</button></span>`;
         }
         // 进阶字段：关键词可引用普通字段的提取结果
         const labelHtml = allowRef
@@ -262,11 +283,13 @@ const RuleConfig = {
         // Avoid duplicates
         const existing = this.getKeywordTags(containerId);
         if (existing.includes(value)) return;
+        const isRef = value.indexOf('<field_result>') !== -1;
         const span = document.createElement('span');
-        span.className = /^<field_result>.+<\/field_result>$/.test(value)
-            ? 'keyword-tag field-ref-tag'
-            : 'keyword-tag';
-        span.innerHTML = `${Utils.escapeHtml(value)}<button type="button" class="keyword-tag-remove" onclick="RuleConfig.removeKeywordTag(this)">&times;</button>`;
+        span.className = isRef ? 'keyword-tag field-ref-tag' : 'keyword-tag';
+        // 原始值放 data-value，界面只显示字段中文名，提交时按 data-value 取
+        span.dataset.value = value;
+        const shown = isRef ? this.displayFieldRefs(value) : value;
+        span.innerHTML = `${Utils.escapeHtml(shown)}<button type="button" class="keyword-tag-remove" onclick="RuleConfig.removeKeywordTag(this)">&times;</button>`;
         list.appendChild(span);
     },
 
@@ -281,6 +304,11 @@ const RuleConfig = {
         const tags = container.querySelectorAll('.keyword-tag');
         const values = [];
         tags.forEach(tag => {
+            // 字段引用 chip 显示的是中文名，真实值在 data-value 里
+            if (tag.dataset && tag.dataset.value) {
+                values.push(tag.dataset.value);
+                return;
+            }
             // Get text content excluding the remove button
             const clone = tag.cloneNode(true);
             const btn = clone.querySelector('.keyword-tag-remove');
@@ -299,11 +327,13 @@ const RuleConfig = {
         // 先关闭已有 dropdown
         this.closeInsertTagDropdown();
 
-        // 收集标签列表
+        // 收集标签列表；emptyHint 说明"为什么没有"以及该去哪儿填
         let labels = [];
+        let emptyHint = '暂无可用标签';
         if (textareaId === 'fm-table-extract-prompt') {
             const val = (document.getElementById('fm-table-name-pattern') || {}).value;
-            if (val && val.trim()) labels = [val.trim()];
+            // 后端 label = table_name_pattern or "表格"，表名留空时占位符标签就是"表格"
+            labels = (val && val.trim()) ? [val.trim()] : ['表格'];
         } else if (textareaId === 'fm-text-extract-prompt') {
             const searchTypeEl = document.getElementById('fm-search-type');
             const searchType = searchTypeEl ? searchTypeEl.value : '';
@@ -312,11 +342,14 @@ const RuleConfig = {
             } else if (searchType === 'section') {
                 const val = (document.getElementById('fm-sc-section-pattern') || {}).value;
                 if (val && val.trim()) labels = [val.trim()];
+                emptyHint = '请先填写上方「章节模式」';
             } else if (searchType === 'vector_db') {
                 const val = (document.getElementById('fm-sc-query-text') || {}).value;
                 if (val && val.trim()) labels = [val.trim()];
+                emptyHint = '请先填写上方「查询文本」';
             } else {
                 labels = this.getKeywordTags('fm-sc-keywords');
+                emptyHint = '请先在上方「关键词」里添加关键词（输入后按回车或点「+ 添加」）';
             }
         } else if (textareaId === 'fm-expression' || textareaId === 'fm-expression-calc' || textareaId === 'fm-ws-query' || textareaId === 'fm-custom-expression') {
             labels = this.getDependFields();
@@ -328,12 +361,13 @@ const RuleConfig = {
         dropdown.id = '_insert-tag-dropdown';
 
         if (labels.length === 0) {
-            dropdown.innerHTML = '<div class="dropdown-empty">暂无可用标签</div>';
+            dropdown.innerHTML = `<div class="dropdown-empty">${Utils.escapeHtml(emptyHint)}</div>`;
         } else {
             labels.forEach(label => {
                 const item = document.createElement('div');
                 item.className = 'dropdown-item';
-                item.textContent = label;
+                // 含字段引用的标签显示成中文名，插入的仍是原始占位符
+                item.textContent = this.displayFieldRefs(label);
                 item.addEventListener('click', (e) => {
                     e.stopPropagation();
                     RuleConfig.insertTagAtCursor(textareaId, tagType, label);
@@ -600,8 +634,7 @@ const RuleConfig = {
     // 进阶表单里「引用字段」按钮的 HTML（普通表单返回空串）
     fieldRefBtnHtml(mode, targetId) {
         if (!this.state.formIsAdvanced) return '';
-        const icon = mode === 'tag' ? '◇字段' : '◇';
-        return `<div class="insert-tag-wrap"><button type="button" class="insert-tag-btn" onclick="RuleConfig.showFieldRefDropdown(this,'${mode}','${targetId}')" title="引用普通字段的提取结果">${icon}</button></div>`;
+        return `<div class="insert-tag-wrap"><button type="button" class="insert-tag-btn" onclick="RuleConfig.showFieldRefDropdown(this,'${mode}','${targetId}')" title="引用普通字段的提取结果">K</button></div>`;
     },
 
     buildFieldForm(field) {
@@ -612,7 +645,7 @@ const RuleConfig = {
         // 进阶字段：在普通字段全部抽完后执行，可引用普通字段结果
         const advancedBanner = this.state.formIsAdvanced ? `
             <div class="advanced-form-banner">
-                进阶字段：在全部普通字段抽取完成后执行，可用 ◇ 按钮引用普通字段的提取结果（仅能引用普通字段）
+                进阶字段：在全部普通字段抽取完成后执行，可用 K 按钮引用普通字段的提取结果（仅能引用普通字段）
             </div>
         ` : '';
 
@@ -1859,7 +1892,20 @@ const RuleConfig = {
             Toast.success('字段配置已删除');
             await this.loadFields();
         } catch (error) {
-            Toast.error('删除失败: ' + error.message);
+            // 被进阶字段引用时后端返回 409，确认后可强制删除
+            const msg = error.message || '';
+            if (msg.includes('正被进阶字段')) {
+                if (!confirm(msg + '\n\n仍要强制删除吗？')) return;
+                try {
+                    await API.deleteExtractionField(id, true);
+                    Toast.success('字段配置已强制删除');
+                    await this.loadFields();
+                } catch (e2) {
+                    Toast.error('删除失败: ' + e2.message);
+                }
+                return;
+            }
+            Toast.error('删除失败: ' + msg);
         }
     },
 
@@ -2064,6 +2110,11 @@ const RuleConfig = {
                     </div>
                 </div>
 
+                <div class="debug-section" id="debug-sec-resolved-refs" style="display:none;">
+                    <div class="debug-section-header">进阶字段引用解析</div>
+                    <div class="debug-section-body" id="debug-resolved-refs-content"></div>
+                </div>
+
                 <div class="debug-section" id="debug-sec-match-llm" style="display:none;">
                     <div class="debug-section-header">LLM 表格匹配</div>
                     <div class="debug-section-body" id="debug-match-llm-content"></div>
@@ -2206,6 +2257,9 @@ const RuleConfig = {
     handleDebugEvent(evt) {
         const { event, data } = evt;
         switch (event) {
+            case 'resolved_refs':
+                this.renderDebugResolvedRefs(data);
+                break;
             case 'search_results':
                 this._hideDebugLoading();
                 this.renderDebugSearchResults(data);
@@ -2245,6 +2299,33 @@ const RuleConfig = {
                 this._hideDebugLoading();
                 break;
         }
+    },
+
+    // 进阶字段调试：展示各引用实际填入的值与页码联动派生结果
+    renderDebugResolvedRefs(data) {
+        const section = document.getElementById('debug-sec-resolved-refs');
+        const container = document.getElementById('debug-resolved-refs-content');
+        if (!section || !container) return;
+        section.style.display = '';
+
+        const refs = (data && data._resolved_refs) || {};
+        const link = data && data._page_link;
+        let rows = Object.keys(refs).map(fid => {
+            const val = refs[fid];
+            const shown = (val === null || val === undefined || val === '')
+                ? '<span style="color:#c00;">（空 — 该字段未抽到值）</span>'
+                : Utils.escapeHtml(String(val));
+            return `<div class="debug-result-item-content" style="font-size:12px;">${Utils.escapeHtml(fid)} → ${shown}</div>`;
+        }).join('');
+
+        if (link) {
+            const pages = (link.model_pages || []).join(', ');
+            const range = (link.derived_range || []).join('-');
+            rows += `<div class="debug-result-item-content" style="font-size:12px;">页码联动：${Utils.escapeHtml(link.source_field || '')} 自报 [${Utils.escapeHtml(pages)}] → 取 ${Utils.escapeHtml(range)} 页${link.capped ? '（已按最大页数收敛）' : ''}</div>`;
+        }
+        if (!rows) rows = '<div class="debug-result-item-content" style="font-size:12px;">无字段引用</div>';
+
+        container.innerHTML = rows;
     },
 
     renderVLProgress(event, data) {
@@ -2444,7 +2525,7 @@ const RuleConfig = {
 
     resetDebugResults() {
         // 隐藏所有结果区块
-        ['debug-sec-match-llm', 'debug-sec-search', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
+        ['debug-sec-resolved-refs', 'debug-sec-match-llm', 'debug-sec-search', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
         });

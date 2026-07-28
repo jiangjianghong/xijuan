@@ -1380,6 +1380,16 @@
               "title": "Field Id"
             },
             "description": "字段配置 ID（全局唯一，匹配 `^[a-zA-Z0-9_]+$`，最长 100）。"
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
+            }
           }
         ],
         "responses": {
@@ -6385,6 +6395,19 @@
             "title": "Reason",
             "type": "string",
             "description": "抽取理由"
+          },
+          "resolved_refs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resolved Refs"
           }
         },
         "title": "ExtractionTestResponse",

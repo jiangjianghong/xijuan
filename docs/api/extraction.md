@@ -233,6 +233,7 @@ curl -X POST http://localhost:5019/extraction/fields \
 | llm_output | string | 是 | LLM/VL 原始输出 |
 | extracted_value | string | 是 | 解析后的值 |
 | reason | string | 是 | 抽取理由 |
+| resolved_refs | object | 是 |  |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**

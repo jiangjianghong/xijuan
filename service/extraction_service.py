@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from difflib import SequenceMatcher
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from loguru import logger
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -171,9 +173,31 @@ def validate_prompt_has_placeholder(prompt: str) -> bool:
     return bool(re.search(pattern, prompt))
 
 
+# source_refs 中非 ref 列表的保留键（元数据），遍历命中 / 判定成败时都要跳过
+# （_model_pages 是模型自报页码的 int 数组，非 ref 列表，不可当 ref 排序）
+_NON_REF_KEYS = frozenset(
+    {"_texts", "_vl", "_web_search", "_model_pages", "_resolved_refs", "_page_link", "_empty_refs"}
+)
+
+
+def _has_real_source_refs(source_refs: Optional[Dict]) -> bool:
+    """source_refs 里是否存在至少一组**真实命中**（而非纯元数据）。
+
+    `_resolved_refs` / `_page_link` / `_model_pages` / `_vl` 等 `_` 前缀键只是溯源元数据：
+    进阶字段哪怕一条都没检索到，只要解析过引用就会带 `_resolved_refs`，若按 `bool(source_refs)`
+    判定会把「什么都没抽到」误记成成功。故只认非元数据键下的非空内容。
+    """
+    if not isinstance(source_refs, dict):
+        return False
+    return any(
+        key not in _NON_REF_KEYS and refs
+        for key, refs in source_refs.items()
+    )
+
+
 def _is_extraction_success(value: Any, source_refs: Optional[Dict]) -> bool:
-    """正式抽取成功至少需要有值或可追溯来源。"""
-    return bool(source_refs) or bool(str(value or "").strip())
+    """正式抽取成功至少需要有值或可追溯来源（元数据键不算来源）。"""
+    return _has_real_source_refs(source_refs) or bool(str(value or "").strip())
 
 
 def _ensure_valid_extraction_result(
@@ -281,8 +305,9 @@ def collect_depend_fields(field: Any) -> List[str]:
         for fid in collect_field_refs(text):
             seen.setdefault(fid, None)
 
-    # 提示词
+    # 提示词 + table_name_pattern（后者同时充当表格抽取的占位符 label）
     for attr in (
+        "table_name_pattern",
         "table_extract_prompt", "table_system_prompt",
         "text_extract_prompt", "text_system_prompt",
         "vl_extract_prompt", "vl_system_prompt",
@@ -302,9 +327,12 @@ def collect_depend_fields(field: Any) -> List[str]:
             elif isinstance(val, list):
                 for item in val:
                     _add_from(item)
-        src = sc.get("page_source_field")
-        if isinstance(src, str) and src.strip():
-            seen.setdefault(src.strip(), None)
+        # page_source_field 只在 page 检索下才真正生效，其它检索方式下的残留键
+        # 不算依赖（否则会产生幻影依赖，甚至因该 id 不存在被保存校验拒绝）
+        if getattr(field, "search_type", None) == "page":
+            src = sc.get("page_source_field")
+            if isinstance(src, str) and src.strip():
+                seen.setdefault(src.strip(), None)
 
     # vl_config：field_hints + 模板
     vc = getattr(field, "vl_config", None) or {}
@@ -315,16 +343,23 @@ def collect_depend_fields(field: Any) -> List[str]:
     return list(seen.keys())
 
 
-def _clean_str_list(items: List[Any]) -> List[Any]:
-    """去掉 str 元素首尾空白并剔除空串；非 str 元素原样保留。"""
+def _resolve_str_list(items: List[Any], resolve) -> List[Any]:
+    """逐项解析列表里的字符串，**只剔除「本来含引用、解析后变空」的项**。
+
+    不含 `<field_result>` 的项原样保留（含刻意留的空白项，例如 `stop_words`），
+    这样进阶字段与普通字段对同一份配置的行为保持一致；被剔除的只有那些因为
+    上游字段没抽到值而变成空串的项——留着会让关键词退化成全文命中。
+    """
     out: List[Any] = []
     for it in items:
-        if isinstance(it, str):
-            s = it.strip()
-            if s:
-                out.append(s)
-        else:
+        if not isinstance(it, str):
             out.append(it)
+            continue
+        had_ref = bool(collect_field_refs(it))
+        val = resolve(it)
+        if had_ref and not str(val).strip():
+            continue
+        out.append(val)
     return out
 
 
@@ -333,11 +368,9 @@ def _clone_field_transient(field: "ExtractionField", **overrides: Any) -> "Extra
 
     避免直接改动会话内对象（否则 commit 时会把解析后的配置误写回 extraction_field）。
     """
-    from sqlalchemy import inspect as sa_inspect
     data = {c.key: getattr(field, c.key) for c in sa_inspect(field).mapper.column_attrs}
     data.update(overrides)
-    from model.tables import ExtractionField as _EF
-    return _EF(**data)
+    return ExtractionField(**data)
 
 
 def resolve_advanced_field(
@@ -351,8 +384,6 @@ def resolve_advanced_field(
         (resolved_field, provenance)。provenance 含 _resolved_refs（各引用实际填入值）
         与（page 联动时）_page_link。page 来源无模型页码时抛 ValueError。
     """
-    import copy as _copy
-
     resolved_refs: Dict[str, str] = {}
     provenance: Dict[str, Any] = {}
 
@@ -364,13 +395,13 @@ def resolve_advanced_field(
         return resolve_field_refs(text, field_values)
 
     # search_config 深拷贝后就地解析
-    sc = _copy.deepcopy(field.search_config) if isinstance(field.search_config, dict) else field.search_config
+    sc = copy.deepcopy(field.search_config) if isinstance(field.search_config, dict) else field.search_config
     if isinstance(sc, dict):
         for key, val in list(sc.items()):
             if isinstance(val, str):
                 sc[key] = _res(val)
             elif isinstance(val, list):
-                sc[key] = _clean_str_list([_res(x) for x in val])
+                sc[key] = _resolve_str_list(val, _res)
         # Feature B：page 联动
         if field.search_type == "page" and sc.get("page_source_field"):
             src = sc["page_source_field"]
@@ -384,13 +415,13 @@ def resolve_advanced_field(
                 "derived_range": [start, end], "capped": capped,
             }
 
-    # table_match_keywords 解析 + 去空
+    # table_match_keywords 解析（只剔除因引用变空的项）
     tmk = field.table_match_keywords
     if isinstance(tmk, list):
-        tmk = _clean_str_list([_res(k) for k in tmk])
+        tmk = _resolve_str_list(tmk, _res)
 
     # vl_config 解析（field_hints + 模板）
-    vc = _copy.deepcopy(field.vl_config) if isinstance(field.vl_config, dict) else field.vl_config
+    vc = copy.deepcopy(field.vl_config) if isinstance(field.vl_config, dict) else field.vl_config
     if isinstance(vc, dict):
         for key in ("field_hints", "batch_prompt_template", "locate_prompt_template"):
             if isinstance(vc.get(key), str):
@@ -401,6 +432,9 @@ def resolve_advanced_field(
         search_config=sc,
         table_match_keywords=tmk,
         vl_config=vc,
+        # table_name_pattern 同时是表格抽取的占位符 label，必须与 prompt 一起解析，
+        # 否则 label 仍是占位符原文、prompt 已是实际值，两边对不上导致「未找到」
+        table_name_pattern=_res(field.table_name_pattern),
         table_extract_prompt=_res(field.table_extract_prompt),
         table_system_prompt=_res(field.table_system_prompt),
         text_extract_prompt=_res(field.text_extract_prompt),
@@ -411,7 +445,61 @@ def resolve_advanced_field(
 
     if resolved_refs:
         provenance["_resolved_refs"] = resolved_refs
+    # 引用解析成空串 = 上游字段没抽到值（或被删/被禁用），下游几乎必然空手而归，
+    # 记一条 warning，避免用户只看到「进阶字段抽出来是空的」而无从排查
+    empty_refs = [fid for fid, val in resolved_refs.items() if not str(val).strip()]
+    if empty_refs:
+        logger.warning(
+            "进阶字段 {} 的引用未取到值: {}（来源字段未抽到 / 被删除 / 被禁用）",
+            field.field_id, ", ".join(empty_refs),
+        )
+        provenance["_empty_refs"] = empty_refs
     return resolved, provenance
+
+
+async def load_basic_field_results(
+    file_id: str, session: AsyncSession
+) -> Tuple[Dict[str, str], Dict[str, Optional[List[int]]]]:
+    """载入某文件**已落库**的普通字段提取结果，供调试接口解析进阶字段引用。
+
+    Returns:
+        (field_values, field_model_pages)，键为普通字段 field_id。
+    """
+    frow = (
+        await session.execute(select(File).where(File.file_id == file_id))
+    ).scalar_one_or_none()
+    type_id = (frow.type_id if frow else None) or "default"
+    rows = (
+        await session.execute(
+            select(ExtractionField, ExtractionResult)
+            .join(ExtractionResult, ExtractionField.field_id == ExtractionResult.field_id)
+            .where(
+                ExtractionResult.file_id == file_id,
+                ExtractionField.type_id == type_id,
+                ExtractionField.is_advanced == 0,
+            )
+        )
+    ).all()
+
+    field_values: Dict[str, str] = {}
+    field_model_pages: Dict[str, Optional[List[int]]] = {}
+    for ef, er in rows:
+        field_values[ef.field_id] = er.extracted_value
+        field_model_pages[ef.field_id] = (
+            (er.source_refs or {}).get("_model_pages") if er.source_refs else None
+        )
+    return field_values, field_model_pages
+
+
+async def resolve_advanced_field_from_db(
+    file_id: str, field: ExtractionField, session: AsyncSession
+) -> Tuple[ExtractionField, Dict[str, Any]]:
+    """调试场景下解析进阶字段：用该文件已落库的普通字段结果填充引用。
+
+    正式抽取走 `run_extraction` 的内存映射，不用这个（那里普通字段刚跑完，结果更新）。
+    """
+    field_values, field_model_pages = await load_basic_field_results(file_id, session)
+    return resolve_advanced_field(field, field_values, field_model_pages)
 
 
 # ── 页码区间解析（page 检索方式） ─────────────────────────────
@@ -619,10 +707,6 @@ def _result_page_num(r: Dict[str, Any], page_mapping: List[Dict[str, Any]]) -> A
 
 
 # ── source_refs 按「抽取值 ↔ 命中页内容」包含相似度排序 ────────────
-
-# source_refs 中非 ref 列表的保留键，排序时跳过
-# （_model_pages 是模型自报页码的 int 数组，非 ref 列表，不可当 ref 排序）
-_NON_REF_KEYS = frozenset({"_texts", "_vl", "_web_search", "_model_pages", "_resolved_refs", "_page_link"})
 
 
 def _norm_for_match(s: str) -> str:
@@ -1800,6 +1884,14 @@ async def _extract_field_result(
     if provenance:
         source_refs = source_refs or {}
         source_refs.update(provenance)
+
+    # 进阶字段抽空时补一句可排查的 reason：多数情况是上游字段没抽到值，
+    # 引用被替换成空串后检索必然落空，只报「未提取到结果」会让用户查错方向
+    if provenance.get("_empty_refs") and not _is_extraction_success(value, source_refs):
+        empty = "、".join(provenance["_empty_refs"])
+        hint = f"引用的字段 {empty} 未取到值，进阶字段无法据此检索"
+        reason = f"{reason}；{hint}" if reason else hint
+
     return value, reason, source_refs
 
 
@@ -2133,26 +2225,8 @@ async def test_field_extraction_stream(
 
         # ── 进阶字段：先载入同类型普通字段结果，解析引用/页码联动 ──
         if getattr(field, "is_advanced", 0):
-            frow = (await session.execute(
-                select(File).where(File.file_id == file_id)
-            )).scalar_one_or_none()
-            tid = (frow.type_id if frow else None) or "default"
-            rows = (await session.execute(
-                select(ExtractionField, ExtractionResult)
-                .join(ExtractionResult, ExtractionField.field_id == ExtractionResult.field_id)
-                .where(
-                    ExtractionResult.file_id == file_id,
-                    ExtractionField.type_id == tid,
-                    ExtractionField.is_advanced == 0,
-                )
-            )).all()
-            fv: Dict[str, str] = {}
-            fmp: Dict[str, Any] = {}
-            for ef, er in rows:
-                fv[ef.field_id] = er.extracted_value
-                fmp[ef.field_id] = (er.source_refs or {}).get("_model_pages") if er.source_refs else None
             try:
-                field, prov = resolve_advanced_field(field, fv, fmp)
+                field, prov = await resolve_advanced_field_from_db(file_id, field, session)
             except ValueError as e:
                 yield {"event": "error", "data": {"message": str(e)}}
                 return

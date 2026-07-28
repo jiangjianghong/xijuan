@@ -358,3 +358,300 @@ async def test_export_import_roundtrip_advanced(client: AsyncClient):
         await client.post(
             "/doctype/batch_delete", json={"type_ids": ["impadv", "expadv"], "force": True}
         )
+
+
+async def test_advanced_empty_upstream_marks_failed(seeded_file, monkeypatch):
+    """P0 回归：上游普通字段抽空 → 进阶字段必须记为失败，而不是「成功但值为空」。"""
+
+    async def fake_search_context(content, config):
+        # 关键词被剔空（上游没值）→ 无命中
+        if not config.get("keywords"):
+            return []
+        return [
+            {
+                "keyword": config["keywords"][0],
+                "context": "片段",
+                "start_pos": 0,
+                "end_pos": 2,
+                "position": 0,
+            }
+        ]
+
+    async def fake_chat(prompt, messages=None):
+        # 普通字段抽不到值
+        return '{"value": "", "reason": "未找到", "pages": []}'
+
+    monkeypatch.setattr(es, "search_context", fake_search_context)
+    monkeypatch.setattr(es, "chat_completion", fake_chat)
+
+    from model.database import get_session_factory
+
+    sf = get_session_factory()
+    async with sf() as s:
+        await es.run_extraction(seeded_file, s)
+
+    async with sf() as s:
+        adv = await s.get(ExtractionResult, (ADV_FILE, "adv_b"))
+        # 失败分支落的是「空值 + 失败原因 + 无来源」，而不是带 _resolved_refs 的成功记录
+        assert adv is not None
+        assert adv.extracted_value == ""
+        assert adv.source_refs is None
+        # 原因要指出是上游字段没取到值，而不是笼统的「未提取到结果」
+        assert "basic_a" in (adv.reason or "")
+
+
+async def test_test_endpoint_resolves_advanced_refs(seeded_file, client: AsyncClient, monkeypatch):
+    """非流式 /extraction/test 对进阶字段也要先解析引用（审查 §2.2）。"""
+    seen = {}
+
+    async def fake_search_context(content, config):
+        seen["kw"] = list(config.get("keywords", []))
+        return [
+            {"keyword": config["keywords"][0], "context": "注册资本为100万",
+             "start_pos": 0, "end_pos": 8, "position": 0}
+        ]
+
+    async def fake_chat(prompt, messages=None):
+        return '{"value": "100万", "reason": "r", "pages": [2]}'
+
+    monkeypatch.setattr(es, "search_context", fake_search_context)
+    monkeypatch.setattr(es, "chat_completion", fake_chat)
+
+    # 先写一条普通字段的已有结果，供调试解析引用
+    from model.database import get_session_factory
+
+    sf = get_session_factory()
+    async with sf() as s:
+        await s.merge(ExtractionResult(
+            file_id=ADV_FILE, field_id="basic_a", extracted_value="华为公司",
+            reason="r", source_refs={"_model_pages": [2, 4]},
+        ))
+        await s.commit()
+
+    r = await client.post("/extraction/test", json={
+        "file_id": ADV_FILE,
+        "config": {
+            "field_name": "注册资本",
+            "source_type": "text",
+            "is_advanced": 1,
+            "search_type": "context",
+            "search_config": {"keywords": ["<field_result>basic_a</field_result>"]},
+            "text_extract_prompt": "从 <search_result><field_result>basic_a</field_result></search_result> 提取",
+        },
+    })
+    assert r.status_code == 200
+    data = r.json()["data"]
+    # 关键词已被替换为普通字段的值，且溯源透出
+    assert seen["kw"] == ["华为公司"]
+    assert data["resolved_refs"]["_resolved_refs"] == {"basic_a": "华为公司"}
+
+
+async def test_copy_from_reports_missing_advanced_refs(client: AsyncClient):
+    """只复制进阶字段、不复制它引用的普通字段 → 缺失依赖要上报（审查 §2.3）。"""
+    await client.post("/doctype", json={"type_id": "misssrc", "type_name": "源"})
+    await client.post("/doctype", json={"type_id": "missdst", "type_name": "目标"})
+    try:
+        await client.post("/extraction/fields", json={
+            "field_id": "miss_A", "type_id": "misssrc", "field_name": "甲方",
+            "source_type": "text", "search_type": "context",
+            "search_config": {"keywords": ["甲方"]},
+            "text_extract_prompt": "从 <search_result>甲方</search_result> 提取",
+        })
+        await client.post("/extraction/fields", json={
+            "field_id": "miss_B", "type_id": "misssrc", "field_name": "资本",
+            "source_type": "text", "is_advanced": 1, "search_type": "context",
+            "search_config": {"keywords": ["<field_result>miss_A</field_result>"]},
+            "text_extract_prompt": "从 <search_result>x</search_result> 提取",
+        })
+
+        # 只复制进阶字段 B，不带它依赖的 A
+        r = await client.post("/doctype/missdst/copy_from", json={
+            "source_type_id": "misssrc", "field_ids": ["miss_B"],
+        })
+        assert r.status_code == 200
+        missing = r.json()["data"]["missing_dependencies"]
+        assert any("miss_A" in m for m in missing), missing
+    finally:
+        await client.post(
+            "/doctype/batch_delete", json={"type_ids": ["missdst", "misssrc"], "force": True}
+        )
+
+
+async def test_delete_referenced_basic_field_blocked(client: AsyncClient):
+    """被进阶字段引用的普通字段默认不可删（409），force=true 可强删（审查 §3.1）。"""
+    await client.post("/doctype", json={"type_id": "delref", "type_name": "删除保护"})
+    try:
+        await client.post("/extraction/fields", json={
+            "field_id": "delref_A", "type_id": "delref", "field_name": "甲方",
+            "source_type": "text", "search_type": "context",
+            "search_config": {"keywords": ["甲方"]},
+            "text_extract_prompt": "从 <search_result>甲方</search_result> 提取",
+        })
+        await client.post("/extraction/fields", json={
+            "field_id": "delref_B", "type_id": "delref", "field_name": "资本",
+            "source_type": "text", "is_advanced": 1, "search_type": "context",
+            "search_config": {"keywords": ["<field_result>delref_A</field_result>"]},
+            "text_extract_prompt": "从 <search_result>x</search_result> 提取",
+        })
+
+        r = await client.delete("/extraction/fields/delref_A")
+        assert r.status_code == 409
+        assert "delref_B" in r.json()["detail"]
+
+        r = await client.delete("/extraction/fields/delref_A?force=true")
+        assert r.status_code == 200
+    finally:
+        await client.post(
+            "/doctype/batch_delete", json={"type_ids": ["delref"], "force": True}
+        )
+
+
+async def test_referenced_basic_field_cannot_become_advanced(client: AsyncClient):
+    """被引用的普通字段不能改成进阶字段（审查 §3.1）。"""
+    await client.post("/doctype", json={"type_id": "promref", "type_name": "改层级"})
+    try:
+        base = {
+            "field_id": "promref_A", "type_id": "promref", "field_name": "甲方",
+            "source_type": "text", "search_type": "context",
+            "search_config": {"keywords": ["甲方"]},
+            "text_extract_prompt": "从 <search_result>甲方</search_result> 提取",
+        }
+        await client.post("/extraction/fields", json=base)
+        await client.post("/extraction/fields", json={
+            "field_id": "promref_B", "type_id": "promref", "field_name": "资本",
+            "source_type": "text", "is_advanced": 1, "search_type": "context",
+            "search_config": {"keywords": ["<field_result>promref_A</field_result>"]},
+            "text_extract_prompt": "从 <search_result>x</search_result> 提取",
+        })
+
+        r = await client.post("/extraction/fields", json={**base, "is_advanced": 1})
+        assert r.status_code == 400
+        assert "promref_B" in r.json()["detail"]
+    finally:
+        await client.post(
+            "/doctype/batch_delete", json={"type_ids": ["promref"], "force": True}
+        )
+
+
+PAGE_TYPE = "advpage_type"
+PAGE_FILE = "advpage_file"
+# 5 页文档，每页一个 block、每块 9 字符
+_MD_5P = "PAGE1_AAAPAGE2_BBBPAGE3_CCCPAGE4_DDDPAGE5_EEE"
+_MAPPING_5P = [
+    {"start_pos": 0, "end_pos": 9, "page_num": 1},
+    {"start_pos": 9, "end_pos": 18, "page_num": 2},
+    {"start_pos": 18, "end_pos": 27, "page_num": 3},
+    {"start_pos": 27, "end_pos": 36, "page_num": 4},
+    {"start_pos": 36, "end_pos": 45, "page_num": 5},
+]
+
+
+@pytest.fixture
+async def seeded_page_file():
+    """建「普通字段（会自报页码）+ page 联动的进阶字段」。"""
+    from model.database import get_session_factory
+
+    sf = get_session_factory()
+    async with sf() as s:
+        await s.merge(DocType(type_id=PAGE_TYPE, type_name="页码联动测试"))
+        await s.merge(
+            File(file_id=PAGE_FILE, type_id=PAGE_TYPE, file_name="p.pdf", progress="extracting")
+        )
+        await s.merge(
+            FileContent(file_id=PAGE_FILE, file_content=_MD_5P, page_mapping=_MAPPING_5P)
+        )
+        await s.merge(ExtractionField(
+            field_id="pg_basic", type_id=PAGE_TYPE, field_name="锚点", source_type="text",
+            enabled=1, priority=1, is_advanced=0, search_type="context",
+            search_config={"keywords": ["PAGE2"], "context_before": 0,
+                           "context_after": 5, "max_results": 1},
+            text_extract_prompt="从 <search_result>PAGE2</search_result> 提取，并返回 pages",
+        ))
+        await s.merge(ExtractionField(
+            field_id="pg_adv", type_id=PAGE_TYPE, field_name="联动取文", source_type="text",
+            enabled=1, priority=2, is_advanced=1, depend_fields=["pg_basic"],
+            search_type="page",
+            search_config={"page_source_field": "pg_basic", "max_pages": 2, "max_length": 30000},
+            text_extract_prompt="从 <search_result>page_content</search_result> 提取",
+        ))
+        await s.commit()
+
+    yield PAGE_FILE
+
+    async with sf() as s:
+        await s.execute(delete(ExtractionResult).where(ExtractionResult.file_id == PAGE_FILE))
+        await s.execute(delete(ExtractionField).where(ExtractionField.type_id == PAGE_TYPE))
+        for table, key in ((FileContent, PAGE_FILE), (File, PAGE_FILE), (DocType, PAGE_TYPE)):
+            obj = await s.get(table, key)
+            if obj:
+                await s.delete(obj)
+        await s.commit()
+
+
+async def test_page_link_end_to_end(seeded_page_file, monkeypatch):
+    """普通字段自报页码 [2,4] + max_pages=2 → 进阶字段只读第 2-3 页。"""
+    prompts: list[str] = []
+
+    async def fake_search_context(content, config):
+        return [{"keyword": "PAGE2", "context": "PAGE2_BBB",
+                 "start_pos": 9, "end_pos": 18, "position": 9}]
+
+    async def fake_chat(prompt, messages=None):
+        prompts.append(prompt)
+        if len(prompts) == 1:  # 普通字段：自报参考了第 2、4 页
+            return '{"value": "锚点值", "reason": "r", "pages": [2, 4]}'
+        return '{"value": "联动值", "reason": "r", "pages": []}'
+
+    monkeypatch.setattr(es, "search_context", fake_search_context)
+    monkeypatch.setattr(es, "chat_completion", fake_chat)
+
+    from model.database import get_session_factory
+
+    sf = get_session_factory()
+    async with sf() as s:
+        await es.run_extraction(seeded_page_file, s)
+
+    # 进阶字段的 prompt 里只应有第 2、3 页内容（[2,4] 跨 3 页，被 max_pages=2 收敛为 2-3）
+    adv_prompt = prompts[1]
+    assert "PAGE2_BBB" in adv_prompt and "PAGE3_CCC" in adv_prompt
+    assert "PAGE4_DDD" not in adv_prompt and "PAGE1_AAA" not in adv_prompt
+
+    async with sf() as s:
+        row = await s.get(ExtractionResult, (PAGE_FILE, "pg_adv"))
+        assert row is not None and row.extracted_value == "联动值"
+        assert row.source_refs["_page_link"] == {
+            "source_field": "pg_basic", "model_pages": [2, 4],
+            "derived_range": [2, 3], "capped": True,
+        }
+
+
+async def test_stream_extraction_runs_two_phases(seeded_file, monkeypatch):
+    """run_extraction_stream 同样两阶段：普通字段先跑，进阶字段拿到它的值。"""
+    calls: list[list[str]] = []
+
+    async def fake_search_context(content, config):
+        kws = list(config.get("keywords", []))
+        calls.append(kws)
+        return [{"keyword": kws[0] if kws else "", "context": "注册资本为100万",
+                 "start_pos": 0, "end_pos": 8, "position": 0}]
+
+    async def fake_chat(prompt, messages=None):
+        return '{"value": "华为公司", "reason": "r", "pages": []}'
+
+    monkeypatch.setattr(es, "search_context", fake_search_context)
+    monkeypatch.setattr(es, "chat_completion", fake_chat)
+
+    from model.database import get_session_factory
+
+    sf = get_session_factory()
+    events = []
+    async with sf() as s:
+        async for evt in es.run_extraction_stream(seeded_file, s):
+            events.append(evt)
+
+    assert calls == [["甲方"], ["华为公司"]]
+    # 流里每个字段一条结果（无 event 包装，直接是结果 dict）
+    assert [e["field_id"] for e in events] == ["basic_a", "adv_b"]
+    adv_evt = events[1]
+    assert adv_evt["success"] is True
+    assert adv_evt["source_refs"]["_resolved_refs"] == {"basic_a": "华为公司"}

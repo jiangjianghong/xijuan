@@ -145,7 +145,11 @@ Three source types:
   - **页码联动**：`search_type=page` 的进阶字段可配 `search_config.page_source_field`（来源普通字段 ID）+ 可选 `max_pages`。抽取时取来源字段的 `_model_pages` 经 `derive_page_range_from_model_pages` 派生 `page_range=[min,max]`（超 `max_pages` 则从最小页起收敛），**覆盖**手填 `page_range`；来源字段无模型自报页码则该进阶字段直接失败。
   - **provenance**：解析结果并入 `source_refs`，键为 `_resolved_refs`（`{field_id: 实际填入值}`）与 `_page_link`（`{source_field, model_pages, derived_range, capped}`），已加入 `_NON_REF_KEYS` 不被当作 ref 列表。
   - **依赖列**：`depend_fields`（JSON）由服务端 `collect_depend_fields` 扫描配置算出，非调用方指定；`list_fields` 回传。`copy_from` / 导出 / 导入均按新 field_id 重映射占位符与 `page_source_field`（`_remap_advanced_field_config`，在全部字段 id 映射建好后回填）。调试流 `test_field_extraction_stream` 对进阶字段先载入同类型普通字段的已有结果解析引用，并先推一个 `resolved_refs` 事件。
-  - 前端：字段配置页拆「普通字段」白框 + 「进阶字段」浅绿框两区，进阶表单用 ◇ 按钮插入字段引用，`page` 检索多出「页码来源字段 + 最大页数」。
+  - **成败判定**：`_is_extraction_success` 只认非元数据键（`_has_real_source_refs` 跳过 `_NON_REF_KEYS`）。否则进阶字段只要解析过引用就带 `_resolved_refs`，`bool(source_refs)` 恒真，「什么都没抽到」会被误记成成功。空引用记 `_empty_refs` + `logger.warning`，失败 reason 会点名是哪个上游字段没取到值。
+  - **引用方保护**：`DELETE /extraction/fields/{id}` 在该字段被同类型进阶字段引用时返回 **409**（可 `force=true` 强删）；被引用的普通字段**不能**改成进阶字段（400）；禁用被引用字段放行但回 warning 文案。反查走 `_referencing_advanced_fields`（读 `depend_fields`）。
+  - **调试接口**：`/extraction/test` 与 `/test/stream` 共用 `_build_temp_field`（透传 `is_advanced`），进阶字段先经 `resolve_advanced_field_from_db`（读该文件**已落库**的普通字段结果）解析再调试；非流式在响应里多回 `resolved_refs`，流式先推 `resolved_refs` 事件。
+  - **复制/导入**：`_remap_advanced_field_config` 返回 `(attrs, missing)`，未被一起复制的引用记入 `missing_dependencies`（格式 `字段名::源field_id`），不静默留悬空引用。
+  - 前端：字段配置页拆「普通字段」白框 + 「进阶字段」浅绿框两区，进阶表单用 K 按钮插入字段引用（chip 显示被引字段中文名，原始占位符存 `data-value`），`page` 检索多出「页码来源字段 + 最大页数」。
 
 ### Analysis System (`service/analysis_service.py`)
 Two rule types:

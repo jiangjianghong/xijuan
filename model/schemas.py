@@ -600,6 +600,8 @@ class ExtractionTestResponse(BaseModel):
     llm_output: str = ""
     extracted_value: str = ""
     reason: str = ""
+    # 进阶字段（is_advanced=1）专属：引用解析溯源 {_resolved_refs?, _page_link?}；普通字段为 None
+    resolved_refs: Optional[Dict[str, Any]] = None
 
 
 class AnalysisTestRequest(BaseModel):

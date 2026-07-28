@@ -321,8 +321,9 @@ const API = {
     /**
      * 删除字段提取配置
      */
-    async deleteExtractionField(id) {
-        return this.request(`/extraction/fields/${id}`, { method: 'DELETE' });
+    async deleteExtractionField(id, force) {
+        const qs = force ? '?force=true' : '';
+        return this.request(`/extraction/fields/${id}${qs}`, { method: 'DELETE' });
     },
 
     /**
