@@ -4018,37 +4018,35 @@ input[type="checkbox"] {
     color: #2563eb;
 }
 
-/* ── 进阶字段区（浅绿）：与普通字段卡片平级的独立卡片，不再嵌套在白卡内 ── */
+/* ── 进阶字段区：与普通字段卡片平级的独立卡片 ──
+   规格（圆角/阴影/模糊/hover）完全复用 .glass-card，此处只换底色：
+   把 --bio-pale 按 --surface 同样的方式玻璃化，得到一张淡橄榄绿卡片，
+   与白卡拉开层级又不脱离主题色板。 */
 .advanced-field-section {
-    background: #f2fbf4;
-    border: 1px solid #cdeccf;
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    padding: 20px;
+    background: rgba(232, 239, 230, 0.9);
     margin-top: 20px;
+    padding: 20px;
 }
 
+/* 次级标题：比主卡标题的 --bio-dark 浅一档，暗示「派生自普通字段」 */
 .advanced-field-section .advanced-field-title {
-    color: #2f7a3f;
+    color: var(--bio-med);
 }
 
-.advanced-field-section .rule-empty {
-    padding: 24px;
-}
-
-/* 进阶表单里的字段引用 chip（与关键词标签同形，绿色系区分） */
+/* 进阶表单里的字段引用 chip：与普通关键词标签同为 --bio-pale 底，
+   靠一圈 --bio-light 描边区分；padding 减 1px 抵消边框，保证并排时等高。 */
 .field-ref-tag {
-    background: #e3f6e7;
-    border-color: #a9d9b1;
-    color: #2f7a3f;
+    border: 1px solid var(--bio-light);
+    padding: 2px 7px;
+    color: var(--bio-dark);
 }
 
 /* 进阶字段表单顶部说明条 */
 .advanced-form-banner {
-    background: #f2fbf4;
-    border: 1px solid #cdeccf;
-    border-radius: 6px;
-    color: #2f7a3f;
+    background: var(--bio-pale);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--bio-dark);
     font-size: 13px;
     padding: 10px 12px;
     margin-bottom: 16px;
