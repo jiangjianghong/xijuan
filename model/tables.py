@@ -232,7 +232,10 @@ class ExtractionResult(Base):
 
     file_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     field_id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    extracted_value: Mapped[str] = mapped_column(Text, default="")
+    # LONGTEXT 而非 TEXT：TEXT 上限 65535 字节，utf8mb4 中文只能存约 21845 字，
+    # 而 page 检索 + use_llm=0 会把整章原文直接当字段值落库（max_length 默认 30000
+    # 字符即已超限）。字符与字节的单位错配曾导致 2026-07-28 线上 DataError 1406。
+    extracted_value: Mapped[str] = mapped_column(LONGTEXT, default="")
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_refs: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 参考块列表
 
@@ -248,8 +251,9 @@ class AnalysisResult(Base):
 
     file_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     rule_id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    # 格式化输出的 JSON 可能超 500 字符，用 TEXT
-    result_value: Mapped[str] = mapped_column(Text, default="")
+    # LONGTEXT：judge/calc/custom 规则通过 <field_result> 引用字段值，
+    # is_formatted 的 JSON 输出会把超长字段值带进结果，TEXT 装不下。
+    result_value: Mapped[str] = mapped_column(LONGTEXT, default="")
     input_values: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_refs: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 依赖字段的参考块

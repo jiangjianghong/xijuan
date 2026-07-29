@@ -742,7 +742,7 @@ custom 类规则 `is_formatted=1` 时的输出字段树（`utils/output_schema.p
 |--------|------|------|--------|------|
 | `file_id` | VARCHAR(64) | PK, NOT NULL | - | 文件 ID |
 | `field_id` | VARCHAR(100) | PK, NOT NULL | - | 字段 ID（关联 extraction_field） |
-| `extracted_value` | TEXT | - | '' | 提取的值 |
+| `extracted_value` | LONGTEXT | NOT NULL | '' | 提取的值 |
 | `reason` | TEXT | NULLABLE | NULL | 提取理由/依据（LLM 返回） |
 | `source_refs` | JSON | NULLABLE | NULL | 参考块（检索来源/页码/检索原文/bboxes/VL 元数据），提取失败时为 NULL |
 
@@ -757,6 +757,12 @@ custom 类规则 `is_formatted=1` 时的输出字段树（`utils/output_schema.p
 - 复合主键：`file_id` + `field_id`
 - 每个文件的每个字段只有一条记录
 - 提取失败时 `extracted_value` 为空字符串，`source_refs` 为 NULL
+- `extracted_value` 用 **LONGTEXT** 而非 TEXT：TEXT 上限 65535 **字节**，utf8mb4 下中文只能存约
+  21845 字；而 `search_type=page` + `use_llm=0` 会把整段原文直接当字段值落库，`max_length`
+  默认 30000 **字符**（≈90000 字节）即已超 TEXT 上限。字符与字节的单位错配曾导致线上
+  `DataError 1406`（2026-07-28）。`analysis_result.result_value` 同理 —— 规则通过
+  `<field_result>` 引用超长字段时结果也会超限。旧库由 `service/init_service.py` 的
+  `longtext_migrations` 自动 `MODIFY COLUMN` 扩容，幂等。
 
 #### source_refs JSON 结构
 
@@ -838,7 +844,7 @@ custom 类规则 `is_formatted=1` 时的输出字段树（`utils/output_schema.p
 |--------|------|------|--------|------|
 | `file_id` | VARCHAR(64) | PK, NOT NULL | - | 文件 ID |
 | `rule_id` | VARCHAR(100) | PK, NOT NULL | - | 规则 ID（关联 analysis_rule） |
-| `result_value` | VARCHAR(500) | - | '' | 分析结果值 |
+| `result_value` | LONGTEXT | NOT NULL | '' | 分析结果值 |
 | `input_values` | JSON | NULLABLE | NULL | 输入字段值快照 |
 | `reason` | TEXT | NULLABLE | NULL | 分析理由/依据 |
 | `source_refs` | JSON | NULLABLE | NULL | 依赖字段的参考块，`{field_id: 该字段的 extraction_result.source_refs}`；启用网络搜索的规则另含 `_web_search` 键（query/结果列表溯源）。无依赖参考时为 NULL |
@@ -1074,7 +1080,7 @@ CREATE TABLE IF NOT EXISTS analysis_rule (
 CREATE TABLE IF NOT EXISTS extraction_result (
   file_id VARCHAR(64) NOT NULL,
   field_id VARCHAR(100) NOT NULL,
-  extracted_value TEXT DEFAULT '',
+  extracted_value LONGTEXT NOT NULL,
   reason TEXT NULL,
   source_refs JSON NULL,
   PRIMARY KEY (file_id, field_id),
@@ -1085,7 +1091,7 @@ CREATE TABLE IF NOT EXISTS extraction_result (
 CREATE TABLE IF NOT EXISTS analysis_result (
   file_id VARCHAR(64) NOT NULL,
   rule_id VARCHAR(100) NOT NULL,
-  result_value VARCHAR(500) DEFAULT '',
+  result_value LONGTEXT NOT NULL,
   input_values JSON NULL,
   reason TEXT NULL,
   source_refs JSON NULL,

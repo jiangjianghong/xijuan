@@ -14,11 +14,13 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from model.database import rollback_if_broken
 from model.tables import ExtractionField, ExtractionResult, File, FileChunk, FileContent, FileTable
 from service import vl_service
 from utils import vl_client
 from utils.callback import notify_callback
 from utils.config import get_config
+from utils.errors import format_exception
 from utils.llm_client import chat_completion, get_embeddings
 from utils.milvus_client import MilvusClient
 from utils.page_mapping import lookup_bboxes, lookup_page_num
@@ -215,6 +217,11 @@ def _ensure_valid_extraction_result(
 
 # 关闭 LLM 时写入的固定 reason
 NO_LLM_REASON = "未启用 LLM，直接返回检索原文"
+
+# page 检索未配 max_length 时的默认切片长度（字符）。注意这是字符不是字节：
+# 30000 个中文字在 utf8mb4 下达 90000 字节，故 extracted_value 必须是 LONGTEXT
+# 而非 TEXT（65535 字节上限），见 model/tables.py 的 ExtractionResult。
+_DEFAULT_PAGE_MAX_LENGTH = 30000
 
 
 def _is_llm_disabled(field: ExtractionField) -> bool:
@@ -1243,7 +1250,7 @@ async def _extract_page_field(
         return "", f"page_range 配置非法：{page_range_raw!r}", None
     start_page, end_page = parsed
 
-    max_length = (search_config or {}).get("max_length", 30000)
+    max_length = (search_config or {}).get("max_length", _DEFAULT_PAGE_MAX_LENGTH)
     if not isinstance(max_length, int) or max_length <= 0:
         return "", f"max_length 配置非法：{max_length!r}", None
 
@@ -2008,7 +2015,11 @@ async def run_extraction(
 
         except Exception as e:
             logger.error("字段提取失败: field_id={}, error={}", field.field_id, e)
-            failure_reason = str(e)
+            failure_reason = format_exception(e)
+            # 落库失败会把会话打成 DEACTIVE，不修复则下面的 execute 必抛
+            # PendingRollbackError，把单字段失败放大成整个文件卡死（2026-07-28 线上事故）。
+            # 只在真坏掉时回滚：无谓 rollback 会 expire field 等 ORM 对象。
+            await rollback_if_broken(session)
             # 保存空值
             stmt = select(ExtractionResult).where(
                 ExtractionResult.file_id == file_id,
@@ -2168,7 +2179,11 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
 
         except Exception as e:
             logger.error("字段提取失败: field_id={}, error={}", field.field_id, e)
-            failure_reason = str(e)
+            failure_reason = format_exception(e)
+            # 落库失败会把会话打成 DEACTIVE，不修复则下面的 execute 必抛
+            # PendingRollbackError，把单字段失败放大成整个文件卡死（2026-07-28 线上事故）。
+            # 只在真坏掉时回滚：无谓 rollback 会 expire field 等 ORM 对象。
+            await rollback_if_broken(session)
             # 保存空值
             stmt = select(ExtractionResult).where(
                 ExtractionResult.file_id == file_id,
@@ -2388,9 +2403,9 @@ async def test_field_extraction_stream(
                     parsed = _parse_page_range(page_range_raw)
                     if parsed:
                         start_p, end_p = parsed
-                        max_len = (search_config or {}).get("max_length", 30000)
+                        max_len = (search_config or {}).get("max_length", _DEFAULT_PAGE_MAX_LENGTH)
                         if not isinstance(max_len, int) or max_len <= 0:
-                            max_len = 30000
+                            max_len = _DEFAULT_PAGE_MAX_LENGTH
                         pages = slice_pages_in_range(content, page_mapping, start_p, end_p)
                         if pages:
                             parts_pg = []

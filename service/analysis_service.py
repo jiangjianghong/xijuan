@@ -11,6 +11,7 @@ from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from model.database import rollback_if_broken
 from model.tables import AnalysisResult, AnalysisRule, ExtractionResult, File
 from utils.callback import notify_callback
 from utils.config import get_config
@@ -576,6 +577,10 @@ async def run_analysis(
 
         except Exception as e:
             logger.error("规则分析失败: rule_id={}, error={}", rule.rule_id, e)
+            # 落库失败会把会话打成 DEACTIVE，不修复则下面的 execute 必抛
+            # PendingRollbackError，把单规则失败放大成整个文件卡死（2026-07-28 线上事故）。
+            # 只在真坏掉时回滚：无谓 rollback 会 expire rule 等 ORM 对象。
+            await rollback_if_broken(session)
             # 保存空值
             stmt = select(AnalysisResult).where(
                 AnalysisResult.file_id == file_id,
@@ -837,6 +842,10 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
 
         except Exception as e:
             logger.error("规则分析失败: rule_id={}, error={}", rule.rule_id, e)
+            # 落库失败会把会话打成 DEACTIVE，不修复则下面的 execute 必抛
+            # PendingRollbackError，把单规则失败放大成整个文件卡死（2026-07-28 线上事故）。
+            # 只在真坏掉时回滚：无谓 rollback 会 expire rule 等 ORM 对象。
+            await rollback_if_broken(session)
             # 保存空值
             stmt = select(AnalysisResult).where(
                 AnalysisResult.file_id == file_id,

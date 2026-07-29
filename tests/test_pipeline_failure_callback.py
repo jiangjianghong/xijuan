@@ -31,12 +31,22 @@ class _FakeResult:
 
 
 class FakeSession:
-    """异步 session 桩:execute/commit 全部空操作。"""
+    """异步 session 桩:execute/commit/rollback 全部空操作。
+
+    is_active/rollback 是必需的:失败标记走 stage_status.mark_file_failed,它靠
+    is_active 判断会话是否已 DEACTIVE、需要时才 rollback。桩缺这些成员会被
+    helper 吞掉并记 error 日志,测试虽仍通过但不再真实走标记路径。
+    """
+
+    is_active = True
 
     async def execute(self, *args, **kwargs):
         return _FakeResult()
 
     async def commit(self):
+        pass
+
+    async def rollback(self):
         pass
 
 

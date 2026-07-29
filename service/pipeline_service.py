@@ -23,6 +23,7 @@ from service.chunk_service import chunk_content, save_chunks
 from service.embedding_service import embed_chunks, submit_to_milvus
 from service.extraction_service import run_extraction, run_extraction_stream
 from service.parse_service import parse_file, save_file_content
+from service.stage_status import mark_file_failed
 from service.table_service import parse_tables, save_tables
 from service.type_config_service import get_file_type_runtime_config
 from utils.callback import notify_callback
@@ -143,13 +144,7 @@ async def run_pipeline_stream(
                 "table_count": len(tables),
             })
         except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="tableing_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
+            await mark_file_failed(session, file_id, "tableing_failed", e)
             raise
 
         # ── 阶段 3: 分块 ──────────────────────────────────────────
@@ -197,13 +192,7 @@ async def run_pipeline_stream(
             await session.execute(stmt)
             await session.commit()
         except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="chunking_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
+            await mark_file_failed(session, file_id, "chunking_failed", e)
             raise
 
         # ── 阶段 4: 向量化 ────────────────────────────────────────
@@ -277,13 +266,7 @@ async def run_pipeline_stream(
                 await session.execute(stmt)
                 await session.commit()
             except Exception as e:
-                stmt = (
-                    update(File)
-                    .where(File.file_id == file_id)
-                    .values(progress="embedding_failed", error=_format_exception(e))
-                )
-                await session.execute(stmt)
-                await session.commit()
+                await mark_file_failed(session, file_id, "embedding_failed", e)
                 raise
 
         # ── 阶段 5: 字段提取 ──────────────────────────────────────
@@ -344,13 +327,7 @@ async def run_pipeline_stream(
             await session.execute(stmt)
             await session.commit()
         except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="extracting_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
+            await mark_file_failed(session, file_id, "extracting_failed", e)
             raise
 
         # ── 阶段 6: 逻辑分析 ──────────────────────────────────────
@@ -400,13 +377,7 @@ async def run_pipeline_stream(
             await session.execute(stmt)
             await session.commit()
         except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="analyzing_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
+            await mark_file_failed(session, file_id, "analyzing_failed", e)
             raise
 
         # 完成
@@ -498,13 +469,7 @@ async def run_pipeline(
             await session.execute(stmt)
             await session.commit()
         except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="tableing_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
+            await mark_file_failed(session, file_id, "tableing_failed", e)
             raise
 
         await notify_callback(
@@ -538,13 +503,7 @@ async def run_pipeline(
             await session.execute(stmt)
             await session.commit()
         except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="chunking_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
+            await mark_file_failed(session, file_id, "chunking_failed", e)
             raise
 
         await notify_callback(
@@ -594,13 +553,7 @@ async def run_pipeline(
                 await session.execute(stmt)
                 await session.commit()
             except Exception as e:
-                stmt = (
-                    update(File)
-                    .where(File.file_id == file_id)
-                    .values(progress="embedding_failed", error=_format_exception(e))
-                )
-                await session.execute(stmt)
-                await session.commit()
+                await mark_file_failed(session, file_id, "embedding_failed", e)
                 raise
 
         # embedding stage_done 不携带数据，仅作完成信号
@@ -628,13 +581,7 @@ async def run_pipeline(
             await session.execute(stmt)
             await session.commit()
         except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="extracting_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
+            await mark_file_failed(session, file_id, "extracting_failed", e)
             raise
 
         # ── 阶段 6: 逻辑分析 ──────────────────────────────────────
@@ -659,13 +606,7 @@ async def run_pipeline(
             await session.execute(stmt)
             await session.commit()
         except Exception as e:
-            stmt = (
-                update(File)
-                .where(File.file_id == file_id)
-                .values(progress="analyzing_failed", error=_format_exception(e))
-            )
-            await session.execute(stmt)
-            await session.commit()
+            await mark_file_failed(session, file_id, "analyzing_failed", e)
             raise
 
         await notify_callback(callback_url, file_id, "complete")
@@ -855,13 +796,7 @@ async def run_from_stage_stream(
                     "table_count": len(tables),
                 })
             except Exception as e:
-                stmt = (
-                    update(File)
-                    .where(File.file_id == file_id)
-                    .values(progress="tableing_failed", error=_format_exception(e))
-                )
-                await session.execute(stmt)
-                await session.commit()
+                await mark_file_failed(session, file_id, "tableing_failed", e)
                 raise
 
             current_stage = "chunking"
@@ -917,13 +852,7 @@ async def run_from_stage_stream(
                 await session.execute(stmt)
                 await session.commit()
             except Exception as e:
-                stmt = (
-                    update(File)
-                    .where(File.file_id == file_id)
-                    .values(progress="chunking_failed", error=_format_exception(e))
-                )
-                await session.execute(stmt)
-                await session.commit()
+                await mark_file_failed(session, file_id, "chunking_failed", e)
                 raise
 
             current_stage = "embedding"
@@ -1013,13 +942,7 @@ async def run_from_stage_stream(
                     await session.execute(stmt)
                     await session.commit()
                 except Exception as e:
-                    stmt = (
-                        update(File)
-                        .where(File.file_id == file_id)
-                        .values(progress="embedding_failed", error=_format_exception(e))
-                    )
-                    await session.execute(stmt)
-                    await session.commit()
+                    await mark_file_failed(session, file_id, "embedding_failed", e)
                     raise
 
             current_stage = "extracting"
@@ -1081,13 +1004,7 @@ async def run_from_stage_stream(
                 await session.execute(stmt)
                 await session.commit()
             except Exception as e:
-                stmt = (
-                    update(File)
-                    .where(File.file_id == file_id)
-                    .values(progress="extracting_failed", error=_format_exception(e))
-                )
-                await session.execute(stmt)
-                await session.commit()
+                await mark_file_failed(session, file_id, "extracting_failed", e)
                 raise
 
             current_stage = "analyzing"
@@ -1139,13 +1056,7 @@ async def run_from_stage_stream(
                 await session.execute(stmt)
                 await session.commit()
             except Exception as e:
-                stmt = (
-                    update(File)
-                    .where(File.file_id == file_id)
-                    .values(progress="analyzing_failed", error=_format_exception(e))
-                )
-                await session.execute(stmt)
-                await session.commit()
+                await mark_file_failed(session, file_id, "analyzing_failed", e)
                 raise
 
         # 完成
@@ -1299,13 +1210,7 @@ async def run_from_stage(
                 await session.execute(stmt)
                 await session.commit()
             except Exception as e:
-                stmt = (
-                    update(File)
-                    .where(File.file_id == file_id)
-                    .values(progress="tableing_failed", error=_format_exception(e))
-                )
-                await session.execute(stmt)
-                await session.commit()
+                await mark_file_failed(session, file_id, "tableing_failed", e)
                 raise
 
             await notify_callback(
@@ -1347,13 +1252,7 @@ async def run_from_stage(
                 await session.execute(stmt)
                 await session.commit()
             except Exception as e:
-                stmt = (
-                    update(File)
-                    .where(File.file_id == file_id)
-                    .values(progress="chunking_failed", error=_format_exception(e))
-                )
-                await session.execute(stmt)
-                await session.commit()
+                await mark_file_failed(session, file_id, "chunking_failed", e)
                 raise
 
             await notify_callback(
@@ -1423,13 +1322,7 @@ async def run_from_stage(
                     await session.execute(stmt)
                     await session.commit()
                 except Exception as e:
-                    stmt = (
-                        update(File)
-                        .where(File.file_id == file_id)
-                        .values(progress="embedding_failed", error=_format_exception(e))
-                    )
-                    await session.execute(stmt)
-                    await session.commit()
+                    await mark_file_failed(session, file_id, "embedding_failed", e)
                     raise
 
             # embedding stage_done 不携带数据，仅作完成信号
@@ -1459,13 +1352,7 @@ async def run_from_stage(
                 await session.execute(stmt)
                 await session.commit()
             except Exception as e:
-                stmt = (
-                    update(File)
-                    .where(File.file_id == file_id)
-                    .values(progress="extracting_failed", error=_format_exception(e))
-                )
-                await session.execute(stmt)
-                await session.commit()
+                await mark_file_failed(session, file_id, "extracting_failed", e)
                 raise
 
             stage = "analyzing"
@@ -1492,13 +1379,7 @@ async def run_from_stage(
                 await session.execute(stmt)
                 await session.commit()
             except Exception as e:
-                stmt = (
-                    update(File)
-                    .where(File.file_id == file_id)
-                    .values(progress="analyzing_failed", error=_format_exception(e))
-                )
-                await session.execute(stmt)
-                await session.commit()
+                await mark_file_failed(session, file_id, "analyzing_failed", e)
                 raise
 
         await notify_callback(callback_url, file_id, "complete")

@@ -66,3 +66,23 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+
+
+async def rollback_if_broken(session: AsyncSession) -> bool:
+    """会话因写入失败进入 DEACTIVE 时回滚，使其重新可用。
+
+    写入失败（如 DataError）后 SQLAlchemy 把会话置为 DEACTIVE，此后任何
+    execute 都抛 PendingRollbackError；异常处理里若直接写库，就会用次生异常
+    掩盖真正的失败原因。
+
+    只在真坏掉时回滚：rollback 会 expire 会话中所有 ORM 实例，对没碰过 DB 的
+    业务异常做无谓回滚，会让调用方后续访问 field/rule 等对象属性触发 lazy
+    refresh —— 多一次 IO，非 greenlet 上下文还会直接抛 MissingGreenlet。
+
+    Returns:
+        是否执行了回滚。
+    """
+    if session.is_active:
+        return False
+    await session.rollback()
+    return True

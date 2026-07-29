@@ -11,9 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.tables import File, FileContent
 from service.mineru_client import parse_pdf
+from service.stage_status import mark_file_failed
 from service.type_config_service import get_file_type_runtime_config
 from utils.config import get_config
-from utils.errors import format_exception as _format_exception
 
 
 async def parse_file(
@@ -67,13 +67,7 @@ async def parse_file(
         return content, middle_json_str
 
     except Exception as e:
-        stmt = (
-            update(File)
-            .where(File.file_id == file_id)
-            .values(progress="parsing_failed", error=_format_exception(e))
-        )
-        await session.execute(stmt)
-        await session.commit()
+        await mark_file_failed(session, file_id, "parsing_failed", e)
         logger.error("文件解析失败: {}, 错误: {}", file_id, e)
         raise
 

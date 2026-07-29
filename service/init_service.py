@@ -145,20 +145,28 @@ async def init_database() -> None:
             )
             logger.info("已扩展 analysis_rule.rule_type 枚举：加入 'custom'")
 
-        # result_value 扩容：VARCHAR(500) → TEXT（格式化 JSON 可能超长）
-        result = await conn.execute(
-            text(
-                "SELECT DATA_TYPE FROM information_schema.COLUMNS "
-                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'analysis_result' "
-                "AND COLUMN_NAME = 'result_value'"
+        # 大文本列扩容：→ LONGTEXT。TEXT 上限 65535 字节，utf8mb4 中文只能存约
+        # 21845 字，而 page 检索 + use_llm=0 会把整章原文直接当字段值落库
+        # （max_length 默认 30000 字符即已超限），2026-07-28 线上 DataError 1406。
+        # result_value 同理：规则通过 <field_result> 引用超长字段，结果也会超限
+        # （该列历史上已从 VARCHAR(500) 扩到过 TEXT，这里继续扩到 LONGTEXT）。
+        longtext_migrations = [
+            ("extraction_result", "extracted_value"),
+            ("analysis_result", "result_value"),
+        ]
+        for table_name, column_name in longtext_migrations:
+            result = await conn.execute(
+                text(f"SELECT DATA_TYPE FROM information_schema.COLUMNS "
+                     f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table_name}' "
+                     f"AND COLUMN_NAME = '{column_name}'")
             )
-        )
-        data_type = (result.scalar() or "").lower()
-        if data_type and data_type != "text":
-            await conn.execute(
-                text("ALTER TABLE `analysis_result` MODIFY COLUMN `result_value` TEXT NOT NULL")
-            )
-            logger.info("已将 analysis_result.result_value 扩容为 TEXT")
+            data_type = (result.scalar() or "").lower()
+            if data_type and data_type != "longtext":
+                await conn.execute(
+                    text(f"ALTER TABLE `{table_name}` "
+                         f"MODIFY COLUMN `{column_name}` LONGTEXT NOT NULL")
+                )
+                logger.info("已将 {}.{} 扩容为 LONGTEXT", table_name, column_name)
 
         # 索引补充：type_id 索引（IF NOT EXISTS 兼容方式）
         index_migrations = [
