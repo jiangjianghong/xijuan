@@ -9,11 +9,12 @@ from __future__ import annotations
 
 
 # vl_progressive 每批 prompt 模板。占位符：
-#   {history}, {field_hints}, {page_label}, {total_pages}
+#   {history}, {field_hints}, {page_label}, {total_pages}, {scan_scope}
+#   {scan_scope}：限页扫描时的范围说明；全文扫描时为空串
 DEFAULT_BATCH_PROMPT = (
     "{history}"
     "你正在逐页阅读一份文档，需要关注以下信息：{field_hints}\n\n"
-    "当前是{page_label}（共{total_pages}页）。\n"
+    "当前是{page_label}（共{total_pages}页）。{scan_scope}\n"
     "如果当前页包含上述相关信息，请输出精简摘要（保留关键数字、名称、金额等）。\n"
     "如果当前页无相关信息（如封面、目录、说明性文字），请仅输出\"无相关信息\"。"
 )

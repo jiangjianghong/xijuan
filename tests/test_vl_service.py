@@ -376,6 +376,168 @@ async def test_vl_progressive_extract_custom_batch_template(monkeypatch):
     assert captured_prompts[0].startswith("CUSTOM hints=X label=第1页 total=1 hist=")
 
 
+def test_format_page_label_variants():
+    from service.vl_service.progressive import _format_page_label
+
+    assert _format_page_label([0]) == "第1页"
+    assert _format_page_label([0, 1]) == "第1-2页"
+    assert _format_page_label([2, 8]) == "第3,9页"          # 不连续
+    assert _format_page_label([2, 3, 4]) == "第3-5页"
+
+
+async def test_vl_progressive_extract_respects_page_range(monkeypatch):
+    """只扫 page_range 指定的页，批次按目标页列表切片。"""
+    from service.vl_service import progressive as vl_progressive_module
+
+    labels = []
+
+    async def fake_vl_chat(messages, **kw):
+        content = messages[-1]["content"]
+        if isinstance(content, list):
+            for c in content:
+                if c.get("type") == "text":
+                    labels.append(c["text"])
+                    break
+            return {
+                "choices": [{"message": {"content": "有信息"}}],
+                "usage": {"total_tokens": 5},
+            }
+        # 最终聚合是纯文本消息
+        return {
+            "choices": [{"message": {"content": '{"value":"v","reason":"r"}'}}],
+            "usage": {"total_tokens": 5},
+        }
+
+    monkeypatch.setattr("service.vl_service.progressive.vl_chat", fake_vl_chat)
+
+    pdf = _make_pdf_bytes(10)
+    _, _, refs = await vl_progressive_module.vl_progressive_extract(
+        pdf,
+        vl_extract_prompt="final",
+        vl_system_prompt=None,
+        field_hints="hint",
+        batch_size=2,
+        page_range="3,4,9",
+        max_pixels=200_000,
+    )
+
+    # 3 个目标页 / batch_size=2 → 2 批
+    assert len(labels) == 2
+    assert "第3-4页" in labels[0]
+    assert "第9页" in labels[1]
+    assert refs["total_pages"] == 10          # 文档真实总页数不变
+    assert refs["target_pages"] == [3, 4, 9]
+    assert refs["pages_capped"] is False
+
+
+async def test_vl_progressive_extract_caps_by_max_pages(monkeypatch):
+    from service.vl_service import progressive as vl_progressive_module
+
+    async def fake_vl_chat(messages, **kw):
+        content = messages[-1]["content"]
+        if isinstance(content, list):
+            return {
+                "choices": [{"message": {"content": "有信息"}}],
+                "usage": {"total_tokens": 5},
+            }
+        return {
+            "choices": [{"message": {"content": '{"value":"v","reason":"r"}'}}],
+            "usage": {"total_tokens": 5},
+        }
+
+    monkeypatch.setattr("service.vl_service.progressive.vl_chat", fake_vl_chat)
+
+    pdf = _make_pdf_bytes(10)
+    _, _, refs = await vl_progressive_module.vl_progressive_extract(
+        pdf,
+        vl_extract_prompt="final",
+        vl_system_prompt=None,
+        field_hints="hint",
+        batch_size=5,
+        page_range="all",
+        max_pages=2,
+        max_pixels=200_000,
+    )
+    assert refs["target_pages"] == [1, 2]
+    assert refs["pages_capped"] is True
+
+
+async def test_vl_progressive_scan_scope_injected(monkeypatch):
+    """限页时 {scan_scope} 有内容；全文时为空串。"""
+    from service.vl_service import progressive as vl_progressive_module
+
+    prompts = []
+
+    async def fake_vl_chat(messages, **kw):
+        content = messages[-1]["content"]
+        if isinstance(content, list):
+            for c in content:
+                if c.get("type") == "text":
+                    prompts.append(c["text"])
+                    break
+            return {
+                "choices": [{"message": {"content": "有信息"}}],
+                "usage": {"total_tokens": 5},
+            }
+        return {
+            "choices": [{"message": {"content": '{"value":"v","reason":"r"}'}}],
+            "usage": {"total_tokens": 5},
+        }
+
+    monkeypatch.setattr("service.vl_service.progressive.vl_chat", fake_vl_chat)
+
+    tpl = "SCOPE[{scan_scope}] label={page_label} total={total_pages} hints={field_hints} hist={history}"
+    pdf = _make_pdf_bytes(4)
+
+    await vl_progressive_module.vl_progressive_extract(
+        pdf, vl_extract_prompt="f", vl_system_prompt=None, field_hints="H",
+        batch_size=1, page_range="2", batch_prompt_template=tpl, max_pixels=200_000,
+    )
+    assert prompts[0].startswith("SCOPE[")
+    assert "第 2 页" in prompts[0]
+    assert "total=4" in prompts[0]            # 仍是文档总页数
+
+    prompts.clear()
+    await vl_progressive_module.vl_progressive_extract(
+        pdf, vl_extract_prompt="f", vl_system_prompt=None, field_hints="H",
+        batch_size=4, page_range="all", batch_prompt_template=tpl, max_pixels=200_000,
+    )
+    assert prompts[0].startswith("SCOPE[]")   # 全文 → 空串
+
+
+async def test_vl_progressive_legacy_template_without_scan_scope(monkeypatch):
+    """老的自定义模板没有 {scan_scope} 占位符，必须仍能 format 不报错。"""
+    from service.vl_service import progressive as vl_progressive_module
+
+    prompts = []
+
+    async def fake_vl_chat(messages, **kw):
+        content = messages[-1]["content"]
+        if isinstance(content, list):
+            for c in content:
+                if c.get("type") == "text":
+                    prompts.append(c["text"])
+                    break
+            return {
+                "choices": [{"message": {"content": "有信息"}}],
+                "usage": {"total_tokens": 5},
+            }
+        return {
+            "choices": [{"message": {"content": '{"value":"v","reason":"r"}'}}],
+            "usage": {"total_tokens": 5},
+        }
+
+    monkeypatch.setattr("service.vl_service.progressive.vl_chat", fake_vl_chat)
+
+    legacy = "CUSTOM hints={field_hints} label={page_label} total={total_pages} hist={history}"
+    pdf = _make_pdf_bytes(1)
+    await vl_progressive_module.vl_progressive_extract(
+        pdf, vl_extract_prompt="final", vl_system_prompt=None, field_hints="X",
+        batch_size=1, batch_prompt_template=legacy, max_pixels=200_000,
+    )
+    assert prompts[0].startswith("CUSTOM hints=X label=第1页 total=1 hist=")
+
+
 # ── vl_locate_extract 测试 ─────────────────────────────────────
 
 
