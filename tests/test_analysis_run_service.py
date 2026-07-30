@@ -232,6 +232,7 @@ async def test_run_analysis_batch_returns_empty_item_when_no_rule_is_covered():
         "failed": 0,
         "results": [],
         "unknown_rule_ids": [],
+        "error": None,
     }
 
 
@@ -515,3 +516,177 @@ async def test_load_file_snapshots_skips_query_when_no_file_ids():
     session = MultiQuerySession([])
     assert await analysis_run_service.load_file_snapshots(set(), session) == {}
     assert session.execute_count == 0
+
+
+# ── file 模式：端到端 ────────────────────────────────────────
+
+
+class FileModeSession:
+    """按 run_analysis_batch 的实际查询顺序返回结果集。
+
+    file 模式下查询顺序是 files -> extraction_results -> rules
+    （load_file_snapshots 先跑，_load_rules_by_type 后跑），
+    persist 阶段的「查已有结果」是第 4 次及以后。
+    """
+
+    def __init__(self, rules, files, extractions):
+        self._batches = [files, extractions, rules]
+        self.execute_count = 0
+        self.added = []
+        self.commits = 0
+
+    async def execute(self, statement):
+        self.execute_count += 1
+        rows = self._batches.pop(0) if self._batches else []
+        return _Result(rows)
+
+    def add(self, value):
+        self.added.append(value)
+
+    async def commit(self):
+        self.commits += 1
+
+
+@pytest.mark.anyio
+async def test_run_analysis_batch_file_source_uses_db_values(monkeypatch):
+    captured = {}
+
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        captured["field_values"] = dict(field_values)
+        return _success(rule)
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    session = FileModeSession(
+        rules=[_orm_rule("amount_check", ["amount"], priority=1)],
+        files=[_orm_file("f1", "contract")],
+        extractions=[_orm_extraction("f1", "amount", "120")],
+    )
+
+    data = await analysis_run_service.run_analysis_batch(
+        [{"biz_id": "b0", "file_id": "f1"}],
+        session,
+        source="file",
+    )
+
+    assert captured["field_values"] == {"amount": "120"}
+    item = data["items"][0]
+    assert item["type_id"] == "contract"
+    assert item["total"] == 1
+    assert item["error"] is None
+
+
+@pytest.mark.anyio
+async def test_run_analysis_batch_file_source_merges_field_source_refs(monkeypatch):
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        return {**_success(rule), "source_refs": {"_web_search": {"query": "q"}}}
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    session = FileModeSession(
+        rules=[_orm_rule("amount_check", ["amount"], priority=1)],
+        files=[_orm_file("f1")],
+        extractions=[
+            _orm_extraction("f1", "amount", "120", {"bboxes": [{"page_num": "2"}]}),
+        ],
+    )
+
+    data = await analysis_run_service.run_analysis_batch(
+        [{"biz_id": "b0", "file_id": "f1"}], session, source="file",
+    )
+
+    refs = data["items"][0]["results"][0]["source_refs"]
+    assert refs["amount"] == {"bboxes": [{"page_num": "2"}]}
+    assert refs["_web_search"] == {"query": "q"}
+
+
+@pytest.mark.anyio
+async def test_run_analysis_batch_file_source_reports_missing_file():
+    session = FileModeSession(
+        rules=[_orm_rule("amount_check", ["amount"], priority=1)],
+        files=[],
+        extractions=[],
+    )
+    data = await analysis_run_service.run_analysis_batch(
+        [{"biz_id": "b0", "file_id": "ghost"}], session, source="file",
+    )
+    item = data["items"][0]
+    assert item["total"] == 0
+    assert item["results"] == []
+    assert "文件不存在" in item["error"]
+
+
+@pytest.mark.anyio
+async def test_run_analysis_batch_file_source_rejects_type_id_mismatch():
+    session = FileModeSession(
+        rules=[_orm_rule("amount_check", ["amount"], priority=1)],
+        files=[_orm_file("f1", "contract")],
+        extractions=[_orm_extraction("f1", "amount", "120")],
+    )
+    data = await analysis_run_service.run_analysis_batch(
+        [{"biz_id": "b0", "file_id": "f1", "type_id": "invoice"}],
+        session,
+        source="file",
+    )
+    item = data["items"][0]
+    assert item["total"] == 0
+    assert "type_id 与文件不一致" in item["error"]
+
+
+@pytest.mark.anyio
+async def test_run_analysis_batch_file_source_reports_empty_extraction():
+    session = FileModeSession(
+        rules=[_orm_rule("amount_check", ["amount"], priority=1)],
+        files=[_orm_file("f1")],
+        extractions=[],
+    )
+    data = await analysis_run_service.run_analysis_batch(
+        [{"biz_id": "b0", "file_id": "f1"}], session, source="file",
+    )
+    item = data["items"][0]
+    assert item["total"] == 0
+    assert "无提取结果" in item["error"]
+
+
+@pytest.mark.anyio
+async def test_run_analysis_batch_file_source_honours_rule_ids(monkeypatch):
+    """file 模式与 rule_ids 点名可组合：只重跑指定规则。"""
+    called = []
+
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        called.append(rule.rule_id)
+        return _success(rule)
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    session = FileModeSession(
+        rules=[
+            _orm_rule("wanted", ["amount"], priority=10),
+            _orm_rule("ignored", ["amount"], priority=20),
+        ],
+        files=[_orm_file("f1")],
+        extractions=[_orm_extraction("f1", "amount", "120")],
+    )
+
+    data = await analysis_run_service.run_analysis_batch(
+        [{"biz_id": "b0", "file_id": "f1", "rule_ids": ["wanted"]}],
+        session,
+        source="file",
+    )
+
+    assert called == ["wanted"]
+    assert data["items"][0]["total"] == 1
+
+
+@pytest.mark.anyio
+async def test_values_source_keeps_error_none_and_skips_file_queries(monkeypatch):
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        return _success(rule)
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    session = ReadOnlySession([_orm_rule("amount_check", ["amount"], priority=1)])
+
+    data = await analysis_run_service.run_analysis_batch(
+        [{"type_id": "contract", "biz_id": "b0", "field_values": {"amount": "1"}}],
+        session,
+    )
+
+    assert session.execute_count == 1  # 只查规则，不查 files/extraction
+    assert data["items"][0]["error"] is None

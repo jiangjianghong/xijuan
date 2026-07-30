@@ -110,6 +110,26 @@ def plan_rules(
     )
 
 
+def merge_field_source_refs(
+    rule_source_refs: Optional[Dict[str, Any]],
+    depend_fields: Sequence[str],
+    field_source_refs: Mapping[str, dict],
+) -> Optional[Dict[str, Any]]:
+    """把依赖字段的提取溯源并进规则结果的 source_refs。
+
+    与管线版 run_analysis 对齐：键为 field_id，与 `_web_search` 等元数据键同级。
+    """
+
+    merged: Dict[str, Any] = {
+        field_id: field_source_refs[field_id]
+        for field_id in depend_fields
+        if field_id in field_source_refs
+    }
+    if rule_source_refs:
+        merged.update(rule_source_refs)
+    return merged or None
+
+
 def _rule_result(
     rule: AnalysisRuleSnapshot,
     value: str,
@@ -318,21 +338,81 @@ async def run_analysis_batch(
     session: AsyncSession,
     *,
     on_rule_done: Optional[RuleDoneHandler] = None,
+    source: str = "values",
+    persist: bool = False,
 ) -> Dict[str, Any]:
-    """批量执行独立分析：item 间并发，item 内规则顺序执行。"""
+    """批量执行独立分析：item 间并发，item 内规则顺序执行。
 
-    rules_by_type = await _load_rules_by_type(
-        {str(item["type_id"]) for item in items},
-        session,
-    )
+    `source="file"` 时字段值取自各 item `file_id` 已落库的 extraction_result。
+    所有读库在并发前完成、写库在并发后完成（AsyncSession 非并发安全）。
+    """
+
+    from_file = source == "file"
+
+    snapshots: dict[str, FileFieldSnapshot] = {}
+    if from_file:
+        snapshots = await load_file_snapshots(
+            {str(item["file_id"]) for item in items if item.get("file_id")},
+            session,
+        )
+        type_ids = {snapshot.type_id for snapshot in snapshots.values()}
+    else:
+        type_ids = {str(item["type_id"]) for item in items}
+
+    rules_by_type = await _load_rules_by_type(type_ids, session)
+
+    def _empty_item(
+        item_index: int,
+        biz_id: str,
+        type_id: str,
+        error: str,
+    ) -> Dict[str, Any]:
+        return {
+            "item_index": item_index,
+            "biz_id": biz_id,
+            "type_id": type_id,
+            "total": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "results": [],
+            "unknown_rule_ids": [],
+            "error": error,
+        }
 
     async def run_item(
         item_index: int,
         item: Mapping[str, Any],
     ) -> Dict[str, Any]:
-        type_id = str(item["type_id"])
         biz_id = str(item["biz_id"])
-        field_values = dict(item["field_values"])
+        requested_type = item.get("type_id")
+        field_source_refs: Mapping[str, dict] = {}
+
+        if from_file:
+            file_id = str(item["file_id"])
+            snapshot = snapshots.get(file_id)
+            if snapshot is None:
+                return _empty_item(
+                    item_index, biz_id, str(requested_type or ""),
+                    f"文件不存在: {file_id}",
+                )
+            if requested_type and str(requested_type) != snapshot.type_id:
+                return _empty_item(
+                    item_index, biz_id, snapshot.type_id,
+                    f"type_id 与文件不一致：请求 {requested_type}，"
+                    f"文件实际 {snapshot.type_id}",
+                )
+            if not snapshot.field_values:
+                return _empty_item(
+                    item_index, biz_id, snapshot.type_id,
+                    f"该文件无提取结果: {file_id}",
+                )
+            type_id = snapshot.type_id
+            field_values = dict(snapshot.field_values)
+            field_source_refs = snapshot.field_source_refs
+        else:
+            type_id = str(requested_type)
+            field_values = dict(item["field_values"])
+
         plan = plan_rules(
             rules_by_type.get(type_id, []),
             field_values,
@@ -348,6 +428,15 @@ async def run_analysis_batch(
                 field_values,
                 require_coverage=plan.require_coverage,
             )
+            if from_file:
+                result = {
+                    **result,
+                    "source_refs": merge_field_source_refs(
+                        result.get("source_refs"),
+                        rule.depend_fields,
+                        field_source_refs,
+                    ),
+                }
             result = {**result, "index": index, "total": total}
             results.append(result)
             if on_rule_done is not None:
@@ -367,12 +456,16 @@ async def run_analysis_batch(
             "failed": total - succeeded,
             "results": results,
             "unknown_rule_ids": plan.unknown_rule_ids,
+            "error": None,
         }
 
     ordered_items = await asyncio.gather(*(
         run_item(index, item)
         for index, item in enumerate(items)
     ))
+
+    # persist 分支在 Task 4 接入
+
     return {
         "total_items": len(items),
         "items": ordered_items,
