@@ -394,11 +394,12 @@ judge / custom 规则可在执行前先联网检索（博查 Bocha AI），把�
 
 | 维度 | 随管线执行（`analyzing` 阶段） | 独立分析 `POST /analysis/run` |
 |---|---|---|
-| 字段值来源 | 该文件的 `extraction_result`（库里已提取的） | 请求里外部传入的 `field_values` |
+| 字段值来源 | 该文件的 `extraction_result`（库里已提取的） | `source=values`（默认）用请求里的 `field_values`；`source=file` 也读该文件的 `extraction_result` |
 | 规则筛选 | `type_id` 匹配 + `enabled=1` | 同左，再按 item 级 `rule_ids` 收窄（不传=全部） |
 | 规则是否执行 | 依赖校验（≥1 非空即跑，见 2.3） | 未点名时**先按 `depend_fields` 的键做覆盖门控**，再走同一套依赖校验；点名的规则跳过门控 |
-| 写库 | upsert `analysis_result` | **不写库** |
-| 读提取结果 | 是 | **否** |
+| 写库 | upsert `analysis_result` | 默认**不写库**；`persist=true`（仅 `source=file`）才 upsert |
+| 读提取结果 | 是 | `source=values` 否 / `source=file` 是 |
+| `files.progress` | 走状态机（跑完置 `complete`） | **从不修改**，即便 `persist=true` |
 | 批量 | 单文件 | `items` 多组并发 |
 
 ### 7.1 随管线执行
@@ -407,7 +408,7 @@ judge / custom 规则可在执行前先联网检索（博查 Bocha AI），把�
 
 ### 7.2 独立分析（`/analysis/run`）
 
-不依赖文件、不落库，直接拿外部字段值跑规则，适合「已有字段值、只想要分析结论」的外部集成。
+按需触发的规则执行入口，默认不落库、**从不修改 `files.progress`**。适合「已有字段值、只想要分析结论」的外部集成，也适合「只想重跑某个文件的某几条规则」。
 
 ```jsonc
 {
@@ -422,6 +423,38 @@ judge / custom 规则可在执行前先联网检索（博查 Bocha AI），把�
   ]
 }
 ```
+
+**取值来源（`source`）**
+
+| `source` | 字段值来源 | `field_values` | `file_id` | `persist` |
+|---|---|:--:|:--:|:--:|
+| `values`（默认） | 请求里的 `field_values` | 必填 | 禁传 | 不可用 |
+| `file` | 该 `file_id` 已落库的 `extraction_result` | 禁传 | 必填 | 可用 |
+
+```jsonc
+{
+  "mode": "sync",
+  "source": "file",
+  "persist": true,                   // 仅 source=file 可用
+  "items": [
+    { "biz_id": "doc-001", "file_id": "3f2a...",
+      "rule_ids": ["profit_margin"] }   // 只重跑这一条
+  ]
+}
+```
+
+`source=file` 与 `POST /file/{file_id}/retry/analyzing` 的分工：
+
+| | `/analysis/run` + `source=file` | `retry/analyzing` |
+|---|---|---|
+| 规则范围 | 可用 `rule_ids` 点名少数几条 | 该类型全部启用规则 |
+| 落库 | 默认不落，`persist=true` 才落 | 必落 |
+| `files.progress` | 不动 | 走状态机（`analyzing` → `complete`） |
+| 适用 | 改了某条规则想单独验证 / 外部按需取结论 | 该阶段失败了要整体重跑 |
+
+`source=file` 的其它语义：`type_id` 省略时取 `files.type_id`（传了且不一致 → 该 item 报错）；结果的 `source_refs` 会并入各依赖字段的提取溯源（键为 `field_id`，与 `_web_search` 同级，与管线版一致）。
+
+**item 级 `error`**：文件不存在 / `type_id` 与文件不一致 / 该文件无提取结果，这三类查库才知道的问题不返回 422，而是把该 item 的 `error` 置为原因、`total` 记 0，**同批其它 item 照常执行**，整个请求仍是 200。能从请求体直接判断的问题（缺 `file_id`、`source=file` 还传了 `field_values`、`persist` 配 `source=values` 等）才是 422。
 
 关键语义：
 
@@ -545,6 +578,8 @@ calc 更短：`input_values → resolved_expression → result → done`。事�
 | web_search 无结果或走了失败提示 | `api_key`/网络问题、`query` 拼接后为空、`freshness` 过窄 | 看调试流 `web_search` 事件的 `query`/`error`；核对全局 `web_search` 配置 |
 | 独立分析 `/analysis/run` 某规则「没跑」 | 未点名 `rule_ids` 时，该规则 `depend_fields` 的键未被 item 的 `field_values` **完整覆盖**，被静默跳过 | 在 `field_values` 里补齐该规则依赖的全部键；或用 `rule_ids` 点名该规则，缺键会变成带 `reason` 的失败结果而非消失（见 [7.2](#72-独立分析analysisrun)） |
 | 独立分析点名的规则没出现在结果里 | 该 `rule_id` 在该 `type_id` 下不存在 / `enabled=0` | 查该 item 结果的 `unknown_rule_ids`，核对 `rule_id` 拼写与所属 `type_id` |
+| 独立分析 file 模式返回 `error: 该文件无提取结果` | 该文件还没跑完 `extracting`（或提取结果已被清理） | 先查 `GET /file/{id}` 的 `progress` 是否已过 `extracting`；必要时 `POST /file/{id}/retry/extracting` |
+| 独立分析 file 模式返回 `error: type_id 与文件不一致` | 请求里显式传的 `type_id` 与 `files.type_id` 不同 | 省略 `type_id` 让服务端取库里的值，或改成与文件一致 |
 | 规则改了不生效 | `enabled=0`，或规则 `type_id` 与文件类型不一致 | 确认 `enabled=1` 且 `type_id` 与目标文件一致 |
 
 通用调试顺序：`/analysis/test/stream` 看 `resolved_expression`（占位符替换对不对）→ judge 看 `prompt`/`llm_response`，calc 看 `result` 里的清洗后公式。

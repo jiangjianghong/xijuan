@@ -247,7 +247,7 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 
 ## 独立逻辑分析执行
 
-接收外部传入的 `field_values`（不读文件提取结果、不写 `analysis_result`），按 `type_id` 加载启用规则执行。支持 `sync` / `async` / `stream`，可批量 `items`。
+按 `type_id` 加载启用规则批量执行逻辑判断 / 计算。字段值可由调用方直接传入（`source=values`，默认），也可取自某个文件已落库的提取结果（`source=file`）。支持 `sync` / `async` / `stream`，可批量 `items`。
 
 - 方法路径：`POST /analysis/run`
 - 认证：无（内网部署）
@@ -258,19 +258,33 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 <!-- AUTOGEN:request-body POST /analysis/run -->
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
-| mode | AnalysisRunModeEnum | 是 | — |  |
-| callback_url | string | 否 | — |  |
-| items | array[AnalysisRunItem] | 是 | — |  |
+| mode | AnalysisRunModeEnum | 是 | — | 执行模式：`sync` 同步返回 / `async` 后台跑并回调 / `stream` SSE 流式 |
+| source | AnalysisRunSourceEnum | 否 | values | 字段值来源：`values`（默认）用请求里的 `field_values`；`file` 读各 item `file_id` 已落库的 `extraction_result` |
+| persist | boolean | 否 | False | 是否把结果 upsert 进 `analysis_result`；仅 `source=file` 可用，**不改 `files.progress`** |
+| callback_url | string | 否 | — | `async` 模式必填，用于推送 `rule_done` / `task_done` / `task_failed` |
+| items | array[AnalysisRunItem] | 是 | — | 待分析的输入组，item 间并发 |
 <!-- /AUTOGEN:request-body -->
 
 `items[]`（`AnalysisRunItem`）：
 
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
-| type_id | string | 是 | — | 文档类型 ID，决定加载哪批规则 |
-| biz_id | string | 是 | — | 调用方业务 ID，原样回传 |
-| field_values | object | 否 | `{}` | `{field_id: value}` 映射，替代文件提取结果 |
+| type_id | string | 视 `source` | — | `source=values` 必填；`source=file` 可省，取 `files.type_id` |
+| biz_id | string | 是 | — | 调用方业务 ID，原样回传（与 `file_id` 无关） |
+| field_values | object | 视 `source` | `{}` | `{field_id: value}` 映射；`source=values` 必填，`source=file` 禁传 |
 | rule_ids | array[string] \| null | 否 | `null` | 规则白名单，语义见下表 |
+| file_id | string \| null | 视 `source` | `null` | `source=file` 必填、`source=values` 禁传；取该文件已落库的 `extraction_result` 作字段值 |
+
+**取值来源**
+
+| `source` | 字段值来源 | `field_values` | `file_id` | `persist` |
+|---|---|:--:|:--:|:--:|
+| `values`（默认） | 请求里的 `field_values` | 必填 | 禁传 | 不可用 |
+| `file` | 该 `file_id` 的 `extraction_result` | 禁传 | 必填 | 可用 |
+
+`source=file` 时：`type_id` 取 `files.type_id`（请求传了且不一致 → 该 item 报错）；`source_refs` 会并入各依赖字段的提取溯源，键为 `field_id`，与 `_web_search` 等元数据键同级（与管线版一致）。`persist=true` 把结果 upsert 进 `analysis_result`，但**不改 `files.progress`** —— 管线状态机只由 pipeline / retry 维护。
+
+读库集中在 items 并发之前、`persist` 写库在并发之后（`AsyncSession` 非并发安全）。
 
 `rule_ids` 三种取值：
 
@@ -294,6 +308,20 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 }
 ```
 
+`source=file`：不传 `field_values`，字段值取自该文件已落库的提取结果，并把结果落库。
+
+```jsonc
+{
+  "mode": "sync",
+  "source": "file",
+  "persist": true,
+  "items": [
+    { "biz_id": "doc-001", "file_id": "3f2a...",
+      "rule_ids": ["profit_margin"] }
+  ]
+}
+```
+
 **响应体**
 
 <!-- AUTOGEN:response POST /analysis/run status=200 -->
@@ -313,6 +341,7 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 | total / succeeded / failed | integer | 实际执行的规则数与成败计数 |
 | results | array | 逐规则结果（`AnalysisRunRuleResult`） |
 | unknown_rule_ids | array[string] | 点名了但该类型下不存在或未启用的 rule_id；不点名时恒为空 |
+| error | string \| null | `source=file` 的 item 级错误（文件不存在 / `type_id` 与文件不一致 / 该文件无提取结果）；正常为 `null`。此时 `total` 为 0、`results` 为空，同批其它 item 不受影响 |
 
 **状态码 / 错误**
 
@@ -320,5 +349,8 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 |---|---|---|
 | 200 | sync 完成 / async 已受理 | ResponseWrapper |
 | 422 | `async` 模式缺 `callback_url` / 校验失败 | Pydantic 错误体 |
+| 422 | `source=file` 缺 `file_id`、`source=file` 传了 `field_values`、`source=values` 传了 `file_id`、`persist=true` 但 `source≠file` | Pydantic 错误体 |
+
+> 校验分层：能从请求体判断的问题返回 **422**；需查库才知道的问题（文件不存在 / `type_id` 不一致 / 无提取结果）记在 item 级 `error` 字段并返回 **200**，不让一个坏 item 拖垮整批。
 
 > 点名了不存在或未启用的 rule_id **不报错**，收进 `unknown_rule_ids` 回传，需调用方自行检查。items 间并发，单 item 内按 `priority, rule_id` 顺序执行。`async` 用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`（见 [callbacks.md](callbacks.md)），`stream` 走 SSE（见 [sse.md](sse.md)）。
