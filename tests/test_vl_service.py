@@ -657,3 +657,110 @@ async def test_vl_locate_extract_truncates_to_limit(monkeypatch):
     # 8 命中 → 排序去重后取前 5
     assert refs["key_pages"] == [1, 2, 3, 4, 7]
 
+
+
+async def test_vl_locate_extract_respects_page_range(monkeypatch):
+    """网格只覆盖 page_range 指定的页，不扫全文。"""
+    from service.vl_service import locate as vl_locate_module
+
+    locate_prompts = []
+
+    async def fake_vl_chat(messages, **kw):
+        if _is_locate_call(messages):
+            for c in messages[-1]["content"]:
+                if c.get("type") == "text":
+                    locate_prompts.append(c["text"])
+                    break
+            return {
+                "choices": [{"message": {"content": '{"found_pages": [7]}'}}],
+                "usage": {"total_tokens": 5},
+            }
+        return {
+            "choices": [{"message": {"content": '{"value": "ok", "reason": "r"}'}}],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setattr("service.vl_service.locate.vl_chat", fake_vl_chat)
+
+    pdf = _make_pdf_bytes(20)
+    _, _, refs = await vl_locate_module.vl_locate_extract(
+        pdf,
+        vl_extract_prompt="x",
+        vl_system_prompt=None,
+        field_hints="x",
+        page_range="6-8",
+        grid_pages=6,
+        max_pixels=200_000,
+    )
+
+    # 3 个目标页 → 1 个网格
+    assert len(locate_prompts) == 1
+    assert "第 6, 7, 8 页" in locate_prompts[0]
+    assert "第1行第1列=第6页" in locate_prompts[0]
+    assert refs["total_pages"] == 20
+    assert refs["target_pages"] == [6, 7, 8]
+    assert refs["key_pages"] == [7]
+
+
+async def test_vl_locate_fallback_uses_target_pages_not_doc_head(monkeypatch):
+    """定位全空时兜底取候选页前 N 个，而不是文档前 N 页。"""
+    from service.vl_service import locate as vl_locate_module
+
+    async def fake_vl_chat(messages, **kw):
+        if _is_locate_call(messages):
+            return {
+                "choices": [{"message": {"content": '{"found_pages": []}'}}],
+                "usage": {"total_tokens": 5},
+            }
+        return {
+            "choices": [{"message": {"content": '{"value": "fb", "reason": "r"}'}}],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setattr("service.vl_service.locate.vl_chat", fake_vl_chat)
+
+    pdf = _make_pdf_bytes(20)
+    _, _, refs = await vl_locate_module.vl_locate_extract(
+        pdf,
+        vl_extract_prompt="x",
+        vl_system_prompt=None,
+        field_hints="x",
+        page_range="11-15",
+        grid_pages=6,
+        fallback_pages=2,
+        max_pixels=200_000,
+    )
+    assert refs["key_pages"] == [11, 12]   # 不是 [1, 2]
+
+
+async def test_vl_locate_extract_caps_by_max_pages(monkeypatch):
+    """max_pages 限定定位前的候选页；与 key_pages_limit 是两个阶段的约束。"""
+    from service.vl_service import locate as vl_locate_module
+
+    async def fake_vl_chat(messages, **kw):
+        if _is_locate_call(messages):
+            return {
+                "choices": [{"message": {"content": '{"found_pages": [1, 2, 3]}'}}],
+                "usage": {"total_tokens": 5},
+            }
+        return {
+            "choices": [{"message": {"content": '{"value": "ok", "reason": "r"}'}}],
+            "usage": {"total_tokens": 10},
+        }
+
+    monkeypatch.setattr("service.vl_service.locate.vl_chat", fake_vl_chat)
+
+    pdf = _make_pdf_bytes(20)
+    _, _, refs = await vl_locate_module.vl_locate_extract(
+        pdf,
+        vl_extract_prompt="x",
+        vl_system_prompt=None,
+        field_hints="x",
+        page_range="all",
+        max_pages=3,
+        grid_pages=6,
+        max_pixels=200_000,
+    )
+    assert refs["target_pages"] == [1, 2, 3]
+    assert refs["pages_capped"] is True
+    assert refs["key_pages"] == [1, 2, 3]

@@ -19,6 +19,7 @@ from utils.vl_client import (
     make_grid_image,
     render_hires,
     render_thumbnail,
+    resolve_target_pages,
     vl_chat,
 )
 
@@ -29,6 +30,8 @@ async def vl_locate_extract(
     vl_system_prompt: str | None,
     *,
     field_hints: str,
+    page_range: str = "all",
+    max_pages: int | None = None,
     grid_pages: int = 6,
     grid_cols: int = 3,
     max_concurrent: int = 20,
@@ -39,18 +42,26 @@ async def vl_locate_extract(
     locate_prompt_template: str | None = None,
     progress_cb: Callable[[dict], Awaitable[None]] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
-    """两轮 VL 抽取：缩略图网格并行定位 → 关键页高清提取。"""
+    """两轮 VL 抽取：缩略图网格并行定位 → 关键页高清提取。
+
+    page_range / max_pages 限定**定位阶段**的候选页；key_pages_limit 限定
+    定位**之后**进入高清提取的页数。两者是不同阶段的约束，互不替代。
+    """
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     total_pages = len(doc)
+
+    target_pages, capped = resolve_target_pages(page_range, total_pages, max_pages)
 
     refs: dict[str, Any] = {
         "method": "vl_locate",
         "total_pages": total_pages,
         "key_pages": [],
+        "target_pages": [p + 1 for p in target_pages],
+        "pages_capped": capped,
         "vl_total_tokens": 0,
     }
 
-    if total_pages == 0:
+    if total_pages == 0 or not target_pages:
         doc.close()
         return "", "", refs
 
@@ -58,8 +69,8 @@ async def vl_locate_extract(
     grid_rows = (grid_pages + grid_cols - 1) // grid_cols
 
     grids: list[tuple[str, list[int]]] = []
-    for batch_start in range(0, total_pages, grid_pages):
-        page_indices = list(range(batch_start, min(batch_start + grid_pages, total_pages)))
+    for batch_start in range(0, len(target_pages), grid_pages):
+        page_indices = target_pages[batch_start : batch_start + grid_pages]
         thumbnails = [render_thumbnail(doc, idx, scale=thumb_scale) for idx in page_indices]
         b64 = make_grid_image(thumbnails, cols=grid_cols)
         grids.append((b64, page_indices))
@@ -133,7 +144,7 @@ async def vl_locate_extract(
         key_pages_0idx = key_pages_0idx[:key_pages_limit]
 
     if not key_pages_0idx:
-        key_pages_0idx = list(range(min(fallback_pages, total_pages)))
+        key_pages_0idx = target_pages[:fallback_pages]
 
     refs["key_pages"] = [p + 1 for p in key_pages_0idx]
 
