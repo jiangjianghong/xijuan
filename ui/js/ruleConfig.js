@@ -886,9 +886,9 @@ const RuleConfig = {
                         <div class="form-group">
                             <label class="form-label">方向</label>
                             <select class="form-select" id="fm-sc-direction">
-                                <option value="forward" ${(config.direction || 'forward') === 'forward' ? 'selected' : ''}>向前</option>
-                                <option value="backward" ${config.direction === 'backward' ? 'selected' : ''}>向后</option>
-                                <option value="both" ${config.direction === 'both' ? 'selected' : ''}>双向</option>
+                                <option value="forward" ${(config.direction || 'forward') === 'forward' ? 'selected' : ''}>向后（取关键词之后的内容）</option>
+                                <option value="backward" ${config.direction === 'backward' ? 'selected' : ''}>向前（取关键词之前的内容）</option>
+                                <option value="both" ${config.direction === 'both' ? 'selected' : ''}>双向（前后都取）</option>
                             </select>
                         </div>
                         <div class="form-group">
