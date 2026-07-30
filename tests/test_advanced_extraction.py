@@ -363,3 +363,24 @@ def test_collect_depend_fields_page_source_ignored_when_not_page():
     f = _field(search_type="context",
                search_config={"keywords": ["x"], "page_source_field": "stale"})
     assert collect_depend_fields(f) == []
+
+
+def test_collect_depend_fields_vl_page_source():
+    f = _field(source_type="vl", search_type=None,
+               vl_config={"page_source_field": "src", "field_hints": "x"})
+    assert collect_depend_fields(f) == ["src"]
+
+
+def test_collect_depend_fields_vl_page_source_ignored_when_not_vl():
+    """非 vl 来源类型下的残留 page_source_field 不算依赖（防幻影依赖）。"""
+    f = _field(source_type="text", search_type="context",
+               search_config={"keywords": ["x"]},
+               vl_config={"page_source_field": "stale"})
+    assert collect_depend_fields(f) == []
+
+
+def test_collect_depend_fields_vl_combines_hints_and_page_source():
+    f = _field(source_type="vl", search_type=None,
+               vl_config={"page_source_field": "src",
+                          "field_hints": "金额 <field_result>a</field_result>"})
+    assert set(collect_depend_fields(f)) == {"a", "src"}

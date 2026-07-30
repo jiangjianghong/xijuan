@@ -364,11 +364,17 @@ def collect_depend_fields(field: Any) -> List[str]:
             if isinstance(src, str) and src.strip():
                 seen.setdefault(src.strip(), None)
 
-    # vl_config：field_hints + 模板
+    # vl_config：field_hints + 模板 + page_source_field
     vc = getattr(field, "vl_config", None) or {}
     if isinstance(vc, dict):
         for key in ("field_hints", "batch_prompt_template", "locate_prompt_template"):
             _add_from(vc.get(key))
+        # 与 search_config.page_source_field 同理：只在真正生效的来源类型下算依赖，
+        # 否则其它来源类型下的残留键会产生幻影依赖而被保存校验拒绝
+        if getattr(field, "source_type", None) == "vl":
+            src = vc.get("page_source_field")
+            if isinstance(src, str) and src.strip():
+                seen.setdefault(src.strip(), None)
 
     return list(seen.keys())
 
