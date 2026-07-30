@@ -1700,12 +1700,15 @@ async def extract_vl_field(
     default_max_pixels = get_config().vl_model.default_max_pixels
 
     try:
+        page_range = cfg.get("page_range", "all")
+        max_pages = cfg.get("max_pages")
         if method == "vl_model":
             value, reason, refs = await vl_service.vl_model_extract(
                 file_bytes,
                 field.vl_extract_prompt or "",
                 field.vl_system_prompt,
-                page_range=cfg.get("page_range", "all"),
+                page_range=page_range,
+                max_pages=max_pages,
                 max_pixels=cfg.get("max_pixels", default_max_pixels),
             )
         elif method == "vl_progressive":
@@ -1714,6 +1717,8 @@ async def extract_vl_field(
                 field.vl_extract_prompt or "",
                 field.vl_system_prompt,
                 field_hints=cfg.get("field_hints", ""),
+                page_range=page_range,
+                max_pages=max_pages,
                 batch_size=cfg.get("batch_size", 2),
                 max_pixels=cfg.get("max_pixels", default_max_pixels),
                 batch_prompt_template=cfg.get("batch_prompt_template"),
@@ -1724,6 +1729,8 @@ async def extract_vl_field(
                 field.vl_extract_prompt or "",
                 field.vl_system_prompt,
                 field_hints=cfg.get("field_hints", ""),
+                page_range=page_range,
+                max_pages=max_pages,
                 grid_pages=cfg.get("grid_pages", 6),
                 grid_cols=cfg.get("grid_cols", 3),
                 max_concurrent=cfg.get("max_concurrent", 20),
@@ -1771,14 +1778,24 @@ async def _vl_field_extraction_stream(
     total_pages = len(doc)
     doc.close()
 
-    yield {
-        "event": "pdf_loaded",
-        "data": {"total_pages": total_pages, "vl_method": field.vl_method},
-    }
-
     cfg = field.vl_config or {}
     default_max_pixels = get_config().vl_model.default_max_pixels
     method = field.vl_method
+    page_range = cfg.get("page_range", "all")
+    max_pages = cfg.get("max_pages")
+    target_pages_0idx, pages_capped = vl_client.resolve_target_pages(
+        page_range, total_pages, max_pages
+    )
+
+    yield {
+        "event": "pdf_loaded",
+        "data": {
+            "total_pages": total_pages,
+            "vl_method": field.vl_method,
+            "target_pages": [p + 1 for p in target_pages_0idx],
+            "pages_capped": pages_capped,
+        },
+    }
 
     progress_queue: _asyncio.Queue = _asyncio.Queue()
     SENTINEL = object()
@@ -1796,7 +1813,8 @@ async def _vl_field_extraction_stream(
                     file_bytes,
                     field.vl_extract_prompt or "",
                     field.vl_system_prompt,
-                    page_range=cfg.get("page_range", "all"),
+                    page_range=page_range,
+                    max_pages=max_pages,
                     max_pixels=cfg.get("max_pixels", default_max_pixels),
                 )
             elif method == "vl_progressive":
@@ -1805,6 +1823,8 @@ async def _vl_field_extraction_stream(
                     field.vl_extract_prompt or "",
                     field.vl_system_prompt,
                     field_hints=cfg.get("field_hints", ""),
+                    page_range=page_range,
+                    max_pages=max_pages,
                     batch_size=cfg.get("batch_size", 2),
                     max_pixels=cfg.get("max_pixels", default_max_pixels),
                     batch_prompt_template=cfg.get("batch_prompt_template"),
@@ -1816,6 +1836,8 @@ async def _vl_field_extraction_stream(
                     field.vl_extract_prompt or "",
                     field.vl_system_prompt,
                     field_hints=cfg.get("field_hints", ""),
+                    page_range=page_range,
+                    max_pages=max_pages,
                     grid_pages=cfg.get("grid_pages", 6),
                     grid_cols=cfg.get("grid_cols", 3),
                     max_concurrent=cfg.get("max_concurrent", 20),
