@@ -262,6 +262,8 @@ async def _run_analysis_with_session(
     items: list[dict[str, Any]],
     *,
     on_rule_done=None,
+    source: str = "values",
+    persist: bool = False,
 ) -> Dict[str, Any]:
     session_factory = get_session_factory()
     async with session_factory() as session:
@@ -269,6 +271,8 @@ async def _run_analysis_with_session(
             items,
             session,
             on_rule_done=on_rule_done,
+            source=source,
+            persist=persist,
         )
 
 
@@ -276,6 +280,8 @@ async def _run_analysis_task_background(
     task_id: str,
     items: list[dict[str, Any]],
     callback_url: str,
+    source: str = "values",
+    persist: bool = False,
 ) -> None:
     """运行 async 模式任务并推送开始、逐规则和任务终态。"""
 
@@ -297,6 +303,8 @@ async def _run_analysis_task_background(
         result = await _run_analysis_with_session(
             items,
             on_rule_done=on_rule_done,
+            source=source,
+            persist=persist,
         )
         await notify_analysis_task_callback(
             callback_url,
@@ -324,6 +332,8 @@ async def _run_analysis_task_background(
 async def _analysis_run_stream(
     task_id: str,
     items: list[dict[str, Any]],
+    source: str = "values",
+    persist: bool = False,
 ):
     """把批量执行的异步回调桥接为 SSE 事件。"""
 
@@ -350,6 +360,8 @@ async def _analysis_run_stream(
             result = await _run_analysis_with_session(
                 items,
                 on_rule_done=on_rule_done,
+                source=source,
+                persist=persist,
             )
             await queue.put((
                 "task_done",
@@ -400,9 +412,13 @@ async def run_independent_analysis(
     """使用外部字段值批量执行逻辑规则，支持 sync/async/stream。"""
 
     items = _dump_run_items(req)
+    source = req.source.value
+    persist = req.persist
     if req.mode == AnalysisRunModeEnum.sync:
         try:
-            data = await _run_analysis_with_session(items)
+            data = await _run_analysis_with_session(
+                items, source=source, persist=persist,
+            )
         except Exception as exc:
             logger.exception(
                 "独立逻辑分析失败: type={}, error={}",
@@ -422,6 +438,8 @@ async def run_independent_analysis(
             task_id,
             items,
             str(req.callback_url),
+            source,
+            persist,
         )
         return ResponseWrapper(
             message="分析任务已提交（异步）",
@@ -429,7 +447,7 @@ async def run_independent_analysis(
         )
 
     return StreamingResponse(
-        _analysis_run_stream(task_id, items),
+        _analysis_run_stream(task_id, items, source, persist),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

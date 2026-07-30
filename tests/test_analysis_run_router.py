@@ -40,7 +40,7 @@ async def test_analysis_run_sync_returns_batch_result(
         }],
     }
 
-    async def fake_run(items, *, on_rule_done=None):
+    async def fake_run(items, *, on_rule_done=None, source="values", persist=False):
         assert items == [DUMPED_ITEM]
         assert on_rule_done is None
         return expected
@@ -62,7 +62,7 @@ async def test_analysis_run_passes_rule_ids_to_service(
     """点名的 rule_ids 必须原样透传到服务层。"""
     captured = {}
 
-    async def fake_run(items, *, on_rule_done=None):
+    async def fake_run(items, *, on_rule_done=None, source="values", persist=False):
         captured["items"] = items
         return {"total_items": 1, "items": []}
 
@@ -84,7 +84,7 @@ async def test_analysis_run_sync_exposes_unknown_rule_ids(
     monkeypatch,
 ):
     """坏 rule_id 不报错，经响应体 unknown_rule_ids 回传。"""
-    async def fake_run(items, *, on_rule_done=None):
+    async def fake_run(items, *, on_rule_done=None, source="values", persist=False):
         return {
             "total_items": 1,
             "items": [{
@@ -125,7 +125,9 @@ async def test_analysis_run_async_returns_task_id(
 ):
     calls = []
 
-    async def fake_background(task_id, items, callback_url):
+    async def fake_background(
+        task_id, items, callback_url, source="values", persist=False,
+    ):
         calls.append((task_id, items, callback_url))
 
     monkeypatch.setattr(
@@ -156,7 +158,7 @@ async def test_analysis_run_stream_uses_task_event_envelope(
     client: AsyncClient,
     monkeypatch,
 ):
-    async def fake_stream(task_id, items):
+    async def fake_stream(task_id, items, source="values", persist=False):
         yield analysis_router._sse_event(
             "analyzing",
             {"task_id": task_id, "status": "analyzing"},
@@ -202,7 +204,7 @@ async def test_analysis_run_background_failure_pushes_task_failed(monkeypatch):
     ):
         calls.append({"status": status, "event": event, "data": data})
 
-    async def boom(items, *, on_rule_done=None):
+    async def boom(items, *, on_rule_done=None, source="values", persist=False):
         raise RuntimeError("规则加载失败")
 
     monkeypatch.setattr(
@@ -223,3 +225,67 @@ async def test_analysis_run_background_failure_pushes_task_failed(monkeypatch):
         ("analysis_failed", "task_failed"),
     ]
     assert calls[-1]["data"] == {"error": "RuntimeError: 规则加载失败"}
+
+
+# ── source=file 模式 ────────────────────────────────────────
+
+
+FILE_ITEM = {"biz_id": "order-889", "file_id": "f" * 32}
+
+
+@pytest.mark.anyio
+async def test_analysis_run_passes_source_and_persist(
+    client: AsyncClient,
+    monkeypatch,
+):
+    captured = {}
+
+    async def fake_run(items, *, on_rule_done=None, source="values", persist=False):
+        captured["source"] = source
+        captured["persist"] = persist
+        captured["items"] = items
+        return {"total_items": 1, "items": []}
+
+    monkeypatch.setattr(analysis_router, "_run_analysis_with_session", fake_run)
+    response = await client.post(
+        "/analysis/run",
+        json={"mode": "sync", "source": "file", "persist": True,
+              "items": [FILE_ITEM]},
+    )
+    assert response.status_code == 200
+    assert captured["source"] == "file"
+    assert captured["persist"] is True
+    assert captured["items"][0]["file_id"] == "f" * 32
+
+
+@pytest.mark.anyio
+async def test_analysis_run_rejects_persist_without_file_source(client: AsyncClient):
+    response = await client.post(
+        "/analysis/run",
+        json={"mode": "sync", "persist": True, "items": [REQUEST_ITEM]},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_analysis_run_file_source_exposes_item_error(
+    client: AsyncClient,
+    monkeypatch,
+):
+    async def fake_run(items, *, on_rule_done=None, source="values", persist=False):
+        return {
+            "total_items": 1,
+            "items": [{
+                "item_index": 0, "biz_id": "order-889", "type_id": "contract",
+                "total": 0, "succeeded": 0, "failed": 0, "results": [],
+                "unknown_rule_ids": [], "error": "文件不存在: ffff",
+            }],
+        }
+
+    monkeypatch.setattr(analysis_router, "_run_analysis_with_session", fake_run)
+    response = await client.post(
+        "/analysis/run",
+        json={"mode": "sync", "source": "file", "items": [FILE_ITEM]},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["items"][0]["error"] == "文件不存在: ffff"
