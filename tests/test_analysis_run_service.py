@@ -773,6 +773,67 @@ async def test_persist_skips_errored_items():
 
 
 @pytest.mark.anyio
+async def test_file_source_combines_with_rule_ids(monkeypatch):
+    """file 模式与 rule_ids 点名可组合：只重跑指定规则。"""
+    executed = []
+
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        executed.append(rule.rule_id)
+        return _success(rule)
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    session = FileModeSession(
+        rules=[
+            _orm_rule("amount_check", ["amount"], priority=1),
+            _orm_rule("tax_check", ["tax"], priority=2),
+        ],
+        files=[_orm_file("f1")],
+        extractions=[
+            _orm_extraction("f1", "amount", "120"),
+            _orm_extraction("f1", "tax", "30"),
+        ],
+    )
+
+    data = await analysis_run_service.run_analysis_batch(
+        [{"biz_id": "b0", "file_id": "f1", "rule_ids": ["tax_check"]}],
+        session,
+        source="file",
+    )
+
+    assert executed == ["tax_check"]
+    assert data["items"][0]["total"] == 1
+
+
+@pytest.mark.anyio
+async def test_persist_does_not_touch_files_progress(monkeypatch):
+    """persist 只写 analysis_result，绝不碰 files.progress（状态机归管线管）。"""
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        return _success(rule)
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    file_row = _orm_file("f1")
+    file_row.progress = "complete"
+    session = FileModeSession(
+        rules=[_orm_rule("amount_check", ["amount"], priority=1)],
+        files=[file_row],
+        extractions=[_orm_extraction("f1", "amount", "120")],
+    )
+    session._batches.append([])
+
+    await analysis_run_service.run_analysis_batch(
+        [{"biz_id": "b0", "file_id": "f1"}],
+        session,
+        source="file",
+        persist=True,
+    )
+
+    assert file_row.progress == "complete"
+    assert all(
+        type(row).__name__ != "File" for row in session.added
+    )
+
+
+@pytest.mark.anyio
 async def test_persist_ignored_when_source_is_values(monkeypatch):
     """values 模式没有 file_id，不可能落库；即便传了 persist 也不写。"""
     async def fake_execute(rule, field_values, *, require_coverage=False):
