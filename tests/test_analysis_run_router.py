@@ -16,6 +16,9 @@ REQUEST_ITEM = {
     "field_values": {"amount": "1200000"},
 }
 
+# 请求体经 model_dump() 后必然补齐 rule_ids 默认值，服务层收到的是这一份
+DUMPED_ITEM = {**REQUEST_ITEM, "rule_ids": None}
+
 
 @pytest.mark.anyio
 async def test_analysis_run_sync_returns_batch_result(
@@ -32,11 +35,12 @@ async def test_analysis_run_sync_returns_batch_result(
             "succeeded": 0,
             "failed": 0,
             "results": [],
+            "unknown_rule_ids": [],
         }],
     }
 
     async def fake_run(items, *, on_rule_done=None):
-        assert items == [REQUEST_ITEM]
+        assert items == [DUMPED_ITEM]
         assert on_rule_done is None
         return expected
 
@@ -47,6 +51,61 @@ async def test_analysis_run_sync_returns_batch_result(
     )
     assert response.status_code == 200
     assert response.json()["data"] == expected
+
+
+@pytest.mark.anyio
+async def test_analysis_run_passes_rule_ids_to_service(
+    client: AsyncClient,
+    monkeypatch,
+):
+    """点名的 rule_ids 必须原样透传到服务层。"""
+    captured = {}
+
+    async def fake_run(items, *, on_rule_done=None):
+        captured["items"] = items
+        return {"total_items": 1, "items": []}
+
+    monkeypatch.setattr(analysis_router, "_run_analysis_with_session", fake_run)
+    response = await client.post(
+        "/analysis/run",
+        json={
+            "mode": "sync",
+            "items": [{**REQUEST_ITEM, "rule_ids": ["amount_check"]}],
+        },
+    )
+    assert response.status_code == 200
+    assert captured["items"][0]["rule_ids"] == ["amount_check"]
+
+
+@pytest.mark.anyio
+async def test_analysis_run_sync_exposes_unknown_rule_ids(
+    client: AsyncClient,
+    monkeypatch,
+):
+    """坏 rule_id 不报错，经响应体 unknown_rule_ids 回传。"""
+    async def fake_run(items, *, on_rule_done=None):
+        return {
+            "total_items": 1,
+            "items": [{
+                "item_index": 0,
+                "biz_id": "order-889",
+                "type_id": "contract",
+                "total": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "results": [],
+                "unknown_rule_ids": ["ghost"],
+            }],
+        }
+
+    monkeypatch.setattr(analysis_router, "_run_analysis_with_session", fake_run)
+    response = await client.post(
+        "/analysis/run",
+        json={"mode": "sync", "items": [{**REQUEST_ITEM, "rule_ids": ["ghost"]}]},
+    )
+    assert response.status_code == 200
+    item = response.json()["data"]["items"][0]
+    assert item["unknown_rule_ids"] == ["ghost"]
 
 
 @pytest.mark.anyio
@@ -88,7 +147,7 @@ async def test_analysis_run_async_returns_task_id(
     )
     assert response.status_code == 200
     assert response.json()["data"] == {"task_id": "task-fixed"}
-    assert calls == [("task-fixed", [REQUEST_ITEM], "http://callback.local/result")]
+    assert calls == [("task-fixed", [DUMPED_ITEM], "http://callback.local/result")]
 
 
 @pytest.mark.anyio

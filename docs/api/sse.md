@@ -43,7 +43,7 @@ VL 字段另有进度事件：`pdf_loaded` / `progressive_batch` / `locate_locat
 
 ## 4. 独立逻辑分析流（/analysis/run?mode=stream）
 
-按 item + rule 推送 `rule_done`，最后 `task_done`；失败 `task_failed`。
+按 item + rule 推送 `rule_done`，最后 `task_done`（`data` 为 `{total_items, items}`，每个 item 含 `unknown_rule_ids` —— 点名了但该类型下不存在/未启用的 rule_id）；失败 `task_failed`。
 
 ## ⚠️ 回调事件 vs SSE 事件的字段词汇差异
 

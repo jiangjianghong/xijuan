@@ -263,12 +263,33 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 | items | array[AnalysisRunItem] | 是 | — |  |
 <!-- /AUTOGEN:request-body -->
 
+`items[]`（`AnalysisRunItem`）：
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| type_id | string | 是 | — | 文档类型 ID，决定加载哪批规则 |
+| biz_id | string | 是 | — | 调用方业务 ID，原样回传 |
+| field_values | object | 否 | `{}` | `{field_id: value}` 映射，替代文件提取结果 |
+| rule_ids | array[string] \| null | 否 | `null` | 规则白名单，语义见下表 |
+
+`rule_ids` 三种取值：
+
+| 取值 | 执行范围 | 依赖字段没盖全时 |
+|---|---|---|
+| 不传 / `null` | 该类型全部启用规则 | 静默跳过，不出现在 `results` 里 |
+| `[]` | 不执行任何规则 | — |
+| `["a", "b"]` | 只跑点名的规则 | 产出 `success=false` 结果（`reason` 列出缺失字段），计入 `total` / `failed` |
+
 ```jsonc
 {
   "mode": "sync",
   "items": [
     { "type_id": "financial_report", "biz_id": "doc-001",
-      "field_values": { "total_assets": "1000" } }
+      "field_values": { "total_assets": "1000" } },
+    // 只跑指定的两条规则
+    { "type_id": "financial_report", "biz_id": "doc-002",
+      "field_values": { "total_assets": "1000" },
+      "rule_ids": ["assets_positive", "assets_ratio"] }
   ]
 }
 ```
@@ -282,6 +303,17 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 | items | array[AnalysisRunItemResult] | 是 | 逐 item 结果 |
 <!-- /AUTOGEN:response -->
 
+`items[]`（`AnalysisRunItemResult`）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| item_index | integer | 与请求 `items` 下标一致（并发执行但顺序保持） |
+| biz_id | string | 原样回传 |
+| type_id | string | 文档类型 |
+| total / succeeded / failed | integer | 实际执行的规则数与成败计数 |
+| results | array | 逐规则结果（`AnalysisRunRuleResult`） |
+| unknown_rule_ids | array[string] | 点名了但该类型下不存在或未启用的 rule_id；不点名时恒为空 |
+
 **状态码 / 错误**
 
 | 状态码 | 触发条件 | 响应体 |
@@ -289,4 +321,4 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 | 200 | sync 完成 / async 已受理 | ResponseWrapper |
 | 422 | `async` 模式缺 `callback_url` / 校验失败 | Pydantic 错误体 |
 
-> 要求每条 item 的 `field_values` 覆盖规则 `depend_fields`；items 间并发，单 item 内按 `priority, rule_id` 顺序执行。`async` 用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`（见 [callbacks.md](callbacks.md)），`stream` 走 SSE（见 [sse.md](sse.md)）。
+> 点名了不存在或未启用的 rule_id **不报错**，收进 `unknown_rule_ids` 回传，需调用方自行检查。items 间并发，单 item 内按 `priority, rule_id` 顺序执行。`async` 用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`（见 [callbacks.md](callbacks.md)），`stream` 走 SSE（见 [sse.md](sse.md)）。

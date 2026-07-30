@@ -71,7 +71,7 @@ analysis_rule     →  analysis_result     （判断/计算结论，本手册的
 1. **取值与留痕**：结果里的 `input_values` 只记录 `depend_fields` 列出的字段值，便于回溯规则「吃进了什么」。
 2. **依赖校验**（见 2.3）：只对 `depend_fields` 里的字段做「是否为空 / 是否为数字」检查。
 3. **溯源收集**：把这些字段的 `source_refs`（命中页码、bbox 等）挂进分析结果，供前端定位。
-4. **独立分析的门控**：`/analysis/run` 独立执行时，只有 `depend_fields` 被外部输入的键**完整覆盖**的规则才会跑（见 [7.2](#72-独立分析analysisrun)）。
+4. **独立分析的门控**：`/analysis/run` 独立执行时，未点名 `rule_ids` 的情况下，只有 `depend_fields` 被外部输入的键**完整覆盖**的规则才会跑（见 [7.2](#72-独立分析analysisrun)）。
 
 **结论**：把 `expression`（以及 `web_search.query`）中引用到的每一个 `<field_result>` 字段都写进 `depend_fields`，否则校验、留痕、溯源、独立执行会漏掉它。
 
@@ -395,8 +395,8 @@ judge / custom 规则可在执行前先联网检索（博查 Bocha AI），把�
 | 维度 | 随管线执行（`analyzing` 阶段） | 独立分析 `POST /analysis/run` |
 |---|---|---|
 | 字段值来源 | 该文件的 `extraction_result`（库里已提取的） | 请求里外部传入的 `field_values` |
-| 规则筛选 | `type_id` 匹配 + `enabled=1` | 同左 |
-| 规则是否执行 | 依赖校验（≥1 非空即跑，见 2.3） | **先按 `depend_fields` 的键做覆盖门控**，再走同一套依赖校验 |
+| 规则筛选 | `type_id` 匹配 + `enabled=1` | 同左，再按 item 级 `rule_ids` 收窄（不传=全部） |
+| 规则是否执行 | 依赖校验（≥1 非空即跑，见 2.3） | 未点名时**先按 `depend_fields` 的键做覆盖门控**，再走同一套依赖校验；点名的规则跳过门控 |
 | 写库 | upsert `analysis_result` | **不写库** |
 | 读提取结果 | 是 | **否** |
 | 批量 | 单文件 | `items` 多组并发 |
@@ -414,14 +414,27 @@ judge / custom 规则可在执行前先联网检索（博查 Bocha AI），把�
   "mode": "sync",                    // sync | async | stream
   "items": [
     { "type_id": "financial_report", "biz_id": "doc-001",
-      "field_values": { "net_profit": "1200000", "total_revenue": "8000000" } }
+      "field_values": { "net_profit": "1200000", "total_revenue": "8000000" } },
+    // 只跑点名的两条规则
+    { "type_id": "financial_report", "biz_id": "doc-002",
+      "field_values": { "net_profit": "1200000", "total_revenue": "8000000" },
+      "rule_ids": ["profit_margin", "is_profitable"] }
   ]
 }
 ```
 
 关键语义：
 
-- **覆盖门控（最易踩坑）**：某条规则只有当它的 `depend_fields` **每个键**都出现在该 item 的 `field_values` 里，才会被执行；否则**静默跳过**——不在结果中、不计入 `total`。注意门控只看**键是否存在**，值可以为空（空值会在后续依赖校验里被判无效）。所以想让一条规则跑起来，`field_values` 必须提供它 `depend_fields` 里的全部键。
+- **规则范围由 `rule_ids` 决定**：
+
+  | `rule_ids` | 执行范围 | 依赖字段没盖全时 |
+  |---|---|---|
+  | 不传 / `null` | 该类型全部启用规则 | **静默跳过**——不在结果中、不计入 `total` |
+  | `[]` | 不执行任何规则 | — |
+  | `["a","b"]` | 只跑点名的 | 产出 `success=false` 结果（`reason` 列出缺失字段），计入 `total` / `failed` |
+
+- **覆盖门控（不点名时最易踩坑）**：不传 `rule_ids` 时，某条规则只有当它的 `depend_fields` **每个键**都出现在该 item 的 `field_values` 里才会被执行，否则静默跳过。门控只看**键是否存在**，值可以为空（空值会在后续依赖校验里被判无效）。**显式点名的规则不受此门控**——缺键会得到一条失败结果而不是消失，便于调用方发现自己漏传了字段。
+- **点名了不存在 / 未启用 / 不属于该 `type_id` 的规则不报错**，这些 ID 收进该 item 结果的 `unknown_rule_ids` 数组回传，需调用方自行检查（配错 ID 不会让请求失败）。
 - `items` 之间**并发**，单个 item 内按 `priority, rule_id` 顺序执行。
 - judge / custom 的 `web_search` 在这里**同样生效**。
 - `async` 模式必须带 `callback_url`，用 `task_id` 推送 `rule_done` / `task_done` / `task_failed`；`stream` 走 SSE。字段签名与状态码见 [analysis 接口参考](../api/analysis.md)。
@@ -530,7 +543,8 @@ calc 更短：`input_values → resolved_expression → result → done`。事�
 | calc 结果错误或报「计算失败」 | 占位符解析成非数字（含逗号/货币符/「未找到…」提示）；或用了 `>` `<` 等被剥离的比较符 | 提取时要求「仅返回数值」；比较判断改用 judge |
 | judge 结果不稳定/不准 | 表达式描述不清、缺少判据 | 把已知条件和判断标准写明确；用 `system_prompt` 固化口径；必要时补 `web_search` |
 | web_search 无结果或走了失败提示 | `api_key`/网络问题、`query` 拼接后为空、`freshness` 过窄 | 看调试流 `web_search` 事件的 `query`/`error`；核对全局 `web_search` 配置 |
-| 独立分析 `/analysis/run` 某规则「没跑」 | 该规则 `depend_fields` 的键未被 item 的 `field_values` **完整覆盖**，被静默跳过 | 在 `field_values` 里补齐该规则依赖的全部键（见 [7.2](#72-独立分析analysisrun)） |
+| 独立分析 `/analysis/run` 某规则「没跑」 | 未点名 `rule_ids` 时，该规则 `depend_fields` 的键未被 item 的 `field_values` **完整覆盖**，被静默跳过 | 在 `field_values` 里补齐该规则依赖的全部键；或用 `rule_ids` 点名该规则，缺键会变成带 `reason` 的失败结果而非消失（见 [7.2](#72-独立分析analysisrun)） |
+| 独立分析点名的规则没出现在结果里 | 该 `rule_id` 在该 `type_id` 下不存在 / `enabled=0` | 查该 item 结果的 `unknown_rule_ids`，核对 `rule_id` 拼写与所属 `type_id` |
 | 规则改了不生效 | `enabled=0`，或规则 `type_id` 与文件类型不一致 | 确认 `enabled=1` 且 `type_id` 与目标文件一致 |
 
 通用调试顺序：`/analysis/test/stream` 看 `resolved_expression`（占位符替换对不对）→ judge 看 `prompt`/`llm_response`，calc 看 `result` 里的清洗后公式。

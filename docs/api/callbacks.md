@@ -108,7 +108,7 @@ complete
 `async` 模式的 `POST /analysis/run` 用 `task_id` 通过 `callback_url` 推送：
 
 - `rule_done` — 单条规则完成（结构同上，附 `item_index` / `biz_id`）
-- `task_done` — 全部 item 完成
+- `task_done` — 全部 item 完成；`data` 即 sync 模式的响应体（`{total_items, items}`，每个 item 含 `unknown_rule_ids`）
 - `task_failed` — 任务失败
 
 请求立即返回 `{task_id}`；后续结果全部经回调下发。详见 [analysis](analysis.md#独立逻辑分析执行)。

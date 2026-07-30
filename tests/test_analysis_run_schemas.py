@@ -69,3 +69,62 @@ def test_analysis_run_response_keeps_item_order():
         ],
     )
     assert [item.biz_id for item in response.items] == ["a", "b"]
+
+
+# ── item 级 rule_ids ────────────────────────────────────────
+
+
+def test_analysis_run_item_defaults_rule_ids_to_none():
+    """不传 rule_ids 必须是 None 而非空列表——两者语义相反。"""
+    request = AnalysisRunRequest(mode="sync", items=[_item()])
+    assert request.items[0].rule_ids is None
+
+
+def test_analysis_run_item_accepts_named_rule_ids():
+    request = AnalysisRunRequest(
+        mode="sync",
+        items=[{**_item(), "rule_ids": ["amount_check", "tax_check"]}],
+    )
+    assert request.items[0].rule_ids == ["amount_check", "tax_check"]
+
+
+def test_analysis_run_item_keeps_empty_rule_ids_distinct_from_none():
+    request = AnalysisRunRequest(
+        mode="sync",
+        items=[{**_item(), "rule_ids": []}],
+    )
+    assert request.items[0].rule_ids == []
+
+
+def test_analysis_run_item_result_defaults_unknown_rule_ids():
+    response = AnalysisRunResponse(
+        total_items=1,
+        items=[{
+            "item_index": 0,
+            "biz_id": "a",
+            "type_id": "t",
+            "total": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "results": [],
+        }],
+    )
+    assert response.items[0].unknown_rule_ids == []
+
+
+def test_analysis_run_response_preserves_unknown_rule_ids():
+    """服务层产出的 unknown_rule_ids 不能被 pydantic 静默丢弃。"""
+    response = AnalysisRunResponse.model_validate({
+        "total_items": 1,
+        "items": [{
+            "item_index": 0,
+            "biz_id": "a",
+            "type_id": "t",
+            "total": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "results": [],
+            "unknown_rule_ids": ["ghost"],
+        }],
+    })
+    assert response.model_dump()["items"][0]["unknown_rule_ids"] == ["ghost"]

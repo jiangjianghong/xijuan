@@ -507,11 +507,17 @@ class AnalysisRunModeEnum(str, Enum):
 
 
 class AnalysisRunItem(BaseModel):
-    """独立逻辑分析的单组外部字段值。"""
+    """独立逻辑分析的单组外部字段值。
+
+    rule_ids 不传或为 null 表示跑该类型下全部启用规则（仅执行依赖字段被
+    field_values 覆盖的那些）；空数组表示不执行任何规则；显式点名时只跑指定
+    规则，且缺依赖字段的规则会产出失败结果而非静默跳过。
+    """
 
     type_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$", max_length=64)
     biz_id: str = Field(..., min_length=1, max_length=200)
     field_values: Dict[str, str] = Field(default_factory=dict)
+    rule_ids: Optional[List[str]] = None
 
     @field_validator("biz_id")
     @classmethod
@@ -543,6 +549,8 @@ class AnalysisRunItemResult(BaseModel):
     succeeded: int
     failed: int
     results: List[AnalysisRunRuleResult] = Field(default_factory=list)
+    # 请求点名了但该类型下不存在或未启用的 rule_id；不点名时恒为空
+    unknown_rule_ids: List[str] = Field(default_factory=list)
 
 
 class AnalysisRunResponse(BaseModel):

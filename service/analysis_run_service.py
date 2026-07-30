@@ -69,6 +69,47 @@ def select_covered_rules(
     ]
 
 
+@dataclass(frozen=True)
+class RulePlan:
+    """一个 item 的规则执行计划。"""
+
+    rules: list[AnalysisRuleSnapshot]
+    unknown_rule_ids: list[str]
+    require_coverage: bool
+
+
+def plan_rules(
+    rules: Sequence[AnalysisRuleSnapshot],
+    field_values: Mapping[str, str],
+    rule_ids: Optional[Sequence[str]] = None,
+) -> RulePlan:
+    """规划一个 item 实际要执行的规则。
+
+    `rule_ids` 为 None（不传）时沿用隐式筛选：只跑依赖字段被输入覆盖的规则，
+    其余静默跳过。显式点名（含空数组）时只跑点名的规则，且**不做**覆盖过滤 ——
+    缺依赖字段交由 `execute_rule` 产出失败结果，避免规则从 results 里凭空消失。
+    点名了但该类型下不存在或未启用的 rule_id 收进 `unknown_rule_ids` 回传，不报错。
+    """
+
+    if rule_ids is None:
+        return RulePlan(
+            rules=select_covered_rules(rules, field_values),
+            unknown_rule_ids=[],
+            require_coverage=False,
+        )
+
+    named = list(dict.fromkeys(rule_ids))
+    wanted = set(named)
+    available = {rule.rule_id for rule in rules}
+    matched = [rule for rule in rules if rule.rule_id in wanted]
+    matched.sort(key=lambda rule: (rule.priority, rule.rule_id))
+    return RulePlan(
+        rules=matched,
+        unknown_rule_ids=[rid for rid in named if rid not in available],
+        require_coverage=True,
+    )
+
+
 def _rule_result(
     rule: AnalysisRuleSnapshot,
     value: str,
@@ -92,6 +133,8 @@ def _rule_result(
 async def execute_rule(
     rule: AnalysisRuleSnapshot,
     field_values: Mapping[str, str],
+    *,
+    require_coverage: bool = False,
 ) -> Dict[str, Any]:
     """执行一条规则；规则级异常转换为失败结果，不中断同组后续规则。"""
 
@@ -103,6 +146,22 @@ async def execute_rule(
     source_refs: Dict[str, Any] = {}
 
     try:
+        if require_coverage:
+            missing = [
+                field_id
+                for field_id in rule.depend_fields
+                if field_id not in values
+            ]
+            if missing:
+                return _rule_result(
+                    rule,
+                    "",
+                    f"缺少依赖字段: {', '.join(missing)}",
+                    input_values,
+                    None,
+                    False,
+                )
+
         valid, reason = validate_field_values(
             rule.rule_type,
             rule.depend_fields,
@@ -224,15 +283,21 @@ async def run_analysis_batch(
         type_id = str(item["type_id"])
         biz_id = str(item["biz_id"])
         field_values = dict(item["field_values"])
-        rules = select_covered_rules(
+        plan = plan_rules(
             rules_by_type.get(type_id, []),
             field_values,
+            item.get("rule_ids"),
         )
+        rules = plan.rules
         total = len(rules)
         results: list[Dict[str, Any]] = []
 
         for index, rule in enumerate(rules, start=1):
-            result = await execute_rule(rule, field_values)
+            result = await execute_rule(
+                rule,
+                field_values,
+                require_coverage=plan.require_coverage,
+            )
             result = {**result, "index": index, "total": total}
             results.append(result)
             if on_rule_done is not None:
@@ -251,6 +316,7 @@ async def run_analysis_batch(
             "succeeded": succeeded,
             "failed": total - succeeded,
             "results": results,
+            "unknown_rule_ids": plan.unknown_rule_ids,
         }
 
     ordered_items = await asyncio.gather(*(

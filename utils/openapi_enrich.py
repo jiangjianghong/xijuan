@@ -764,7 +764,11 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "description": (
                 "接收外部传入的 `field_values`（不读文件提取结果、不写 `analysis_result`），按 `type_id` "
                 "加载启用规则执行。支持 `sync` / `async` / `stream`，可批量 `items`。\n\n"
-                "- 要求每条 item 的 `field_values` 覆盖规则 `depend_fields`\n"
+                "- 规则范围由 item 级 `rule_ids` 决定：不传 / `null` = 该类型全部启用规则，且只执行 "
+                "`field_values` 覆盖了 `depend_fields` 的那些（其余静默跳过）；`[]` = 不执行任何规则；"
+                "显式点名 = 只跑指定规则，**不做**覆盖过滤，缺依赖字段的规则产出 `success=false` "
+                "结果（`reason` 列出缺失字段）并计入 `total` / `failed`，不会从 `results` 里消失\n"
+                "- 点名了该类型下不存在或未启用的 rule_id 不报错，收进 `AnalysisRunItemResult.unknown_rule_ids` 回传\n"
                 "- items 间并发，单 item 内按 `priority, rule_id` 顺序执行\n"
                 "- `async` 模式用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`\n\n"
                 "返回 `data=AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`（sync）。"
@@ -1330,11 +1334,24 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "success": "是否成功", "index": "序号", "total": "规则总数",
         },
     },
+    "AnalysisRunItem": {
+        "description": "独立分析的单组外部字段值。",
+        "properties": {
+            "type_id": "文档类型 ID（决定加载哪批规则）", "biz_id": "调用方业务 ID（原样回传）",
+            "field_values": "外部传入的 `{field_id: value}` 映射，替代文件提取结果",
+            "rule_ids": (
+                "可选的规则白名单。不传 / `null` = 跑该类型全部启用规则（仅执行 `depend_fields` "
+                "被 `field_values` 覆盖的，其余静默跳过）；`[]` = 不执行任何规则；显式点名 = 只跑指定"
+                "规则且不做覆盖过滤，缺依赖字段的规则会产出 `success=false` 结果而非消失"
+            ),
+        },
+    },
     "AnalysisRunItemResult": {
         "description": "独立分析单 item 结果。",
         "properties": {
             "item_index": "item 序号", "biz_id": "业务 ID", "type_id": "文档类型", "total": "规则数",
             "succeeded": "成功数", "failed": "失败数", "results": "逐规则结果",
+            "unknown_rule_ids": "请求点名了但该类型下不存在或未启用的 rule_id；不点名时恒为空",
         },
     },
     "AnalysisRunResponse": {
