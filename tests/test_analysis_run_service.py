@@ -773,6 +773,36 @@ async def test_persist_skips_errored_items():
 
 
 @pytest.mark.anyio
+async def test_file_source_bad_item_does_not_affect_siblings(monkeypatch):
+    """坏 item 只污染自己：同批其它 item 照常执行，顺序仍与请求一致。"""
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        return _success(rule)
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    session = FileModeSession(
+        rules=[_orm_rule("amount_check", ["amount"], priority=1)],
+        files=[_orm_file("f1")],
+        extractions=[_orm_extraction("f1", "amount", "120")],
+    )
+
+    data = await analysis_run_service.run_analysis_batch(
+        [
+            {"biz_id": "bad", "file_id": "ghost"},
+            {"biz_id": "good", "file_id": "f1"},
+        ],
+        session,
+        source="file",
+    )
+
+    bad, good = data["items"]
+    assert (bad["item_index"], bad["biz_id"]) == (0, "bad")
+    assert "文件不存在" in bad["error"]
+    assert (good["item_index"], good["biz_id"]) == (1, "good")
+    assert good["error"] is None
+    assert good["total"] == 1
+
+
+@pytest.mark.anyio
 async def test_file_source_combines_with_rule_ids(monkeypatch):
     """file 模式与 rule_ids 点名可组合：只重跑指定规则。"""
     executed = []
