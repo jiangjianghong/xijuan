@@ -436,3 +436,82 @@ async def test_run_analysis_batch_defaults_unknown_rule_ids_without_rule_ids():
         ReadOnlySession([_orm_rule("amount_check", ["amount"], priority=1)]),
     )
     assert data["items"][0]["unknown_rule_ids"] == []
+
+
+# ── file 模式：并发前批量加载 ─────────────────────────────────
+
+
+def _orm_file(file_id: str, type_id: str = "contract"):
+    return SimpleNamespace(file_id=file_id, type_id=type_id)
+
+
+def _orm_extraction(file_id: str, field_id: str, value: str, source_refs=None):
+    return SimpleNamespace(
+        file_id=file_id,
+        field_id=field_id,
+        extracted_value=value,
+        source_refs=source_refs,
+    )
+
+
+class MultiQuerySession:
+    """按调用顺序返回预置结果集，用于断言「只查了 N 次」。"""
+
+    def __init__(self, batches):
+        self._batches = list(batches)
+        self.execute_count = 0
+
+    async def execute(self, statement):
+        self.execute_count += 1
+        rows = self._batches.pop(0) if self._batches else []
+        return _Result(rows)
+
+    def add(self, value):
+        raise AssertionError("加载阶段不得写数据库")
+
+    async def commit(self):
+        raise AssertionError("加载阶段不得 commit")
+
+
+@pytest.mark.anyio
+async def test_load_file_snapshots_reads_files_and_extractions_in_two_queries():
+    session = MultiQuerySession([
+        [_orm_file("f1", "contract"), _orm_file("f2", "invoice")],
+        [
+            _orm_extraction("f1", "amount", "120", {"金额": [{"page_num": "1"}]}),
+            _orm_extraction("f1", "tax", "30"),
+            _orm_extraction("f2", "amount", "999"),
+        ],
+    ])
+
+    snapshots = await analysis_run_service.load_file_snapshots({"f1", "f2"}, session)
+
+    assert session.execute_count == 2
+    assert snapshots["f1"].type_id == "contract"
+    assert snapshots["f1"].field_values == {"amount": "120", "tax": "30"}
+    # 键是 field_id，值是该字段完整的 source_refs（键为检索 label）
+    assert snapshots["f1"].field_source_refs == {"amount": {"金额": [{"page_num": "1"}]}}
+    assert snapshots["f2"].field_values == {"amount": "999"}
+    assert snapshots["f2"].field_source_refs == {}
+
+
+@pytest.mark.anyio
+async def test_load_file_snapshots_omits_missing_files():
+    session = MultiQuerySession([[], []])
+    snapshots = await analysis_run_service.load_file_snapshots({"ghost"}, session)
+    assert snapshots == {}
+
+
+@pytest.mark.anyio
+async def test_load_file_snapshots_defaults_null_type_id():
+    session = MultiQuerySession([[_orm_file("f1", None)], []])
+    snapshots = await analysis_run_service.load_file_snapshots({"f1"}, session)
+    assert snapshots["f1"].type_id == "default"
+    assert snapshots["f1"].field_values == {}
+
+
+@pytest.mark.anyio
+async def test_load_file_snapshots_skips_query_when_no_file_ids():
+    session = MultiQuerySession([])
+    assert await analysis_run_service.load_file_snapshots(set(), session) == {}
+    assert session.execute_count == 0

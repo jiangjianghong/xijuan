@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from model.tables import AnalysisRule
+from model.tables import AnalysisResult, AnalysisRule, ExtractionResult, File
 from service.analysis_service import (
     apply_web_search,
     execute_calc,
@@ -258,6 +258,56 @@ async def _load_rules_by_type(
     for rules in grouped.values():
         rules.sort(key=lambda rule: (rule.priority, rule.rule_id))
     return dict(grouped)
+
+
+@dataclass(frozen=True)
+class FileFieldSnapshot:
+    """脱离 AsyncSession 生命周期的文件字段值快照。"""
+
+    file_id: str
+    type_id: str
+    field_values: dict[str, str]
+    field_source_refs: dict[str, dict]
+
+
+async def load_file_snapshots(
+    file_ids: set[str],
+    session: AsyncSession,
+) -> dict[str, FileFieldSnapshot]:
+    """并发启动前批量读取文件类型与提取结果，转为只读快照。
+
+    AsyncSession 非并发安全，故所有读库集中在此处一次做完（2 条查询），
+    并发段只碰快照。库里不存在的 file_id 不会出现在返回值里。
+    """
+
+    if not file_ids:
+        return {}
+
+    ordered = sorted(file_ids)
+    file_rows = (await session.execute(
+        select(File).where(File.file_id.in_(ordered))
+    )).scalars().all()
+
+    extraction_rows = (await session.execute(
+        select(ExtractionResult).where(ExtractionResult.file_id.in_(ordered))
+    )).scalars().all()
+
+    values: dict[str, dict[str, str]] = defaultdict(dict)
+    refs: dict[str, dict[str, dict]] = defaultdict(dict)
+    for row in extraction_rows:
+        values[row.file_id][row.field_id] = row.extracted_value or ""
+        if row.source_refs:
+            refs[row.file_id][row.field_id] = row.source_refs
+
+    return {
+        row.file_id: FileFieldSnapshot(
+            file_id=row.file_id,
+            type_id=row.type_id or "default",
+            field_values=dict(values.get(row.file_id, {})),
+            field_source_refs=dict(refs.get(row.file_id, {})),
+        )
+        for row in file_rows
+    }
 
 
 RuleDoneHandler = Callable[[Dict[str, Any]], Awaitable[None]]
