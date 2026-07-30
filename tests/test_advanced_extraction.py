@@ -202,7 +202,7 @@ def test_resolve_advanced_page_link():
     assert resolved.search_config["page_range"] == "3-5"
     assert prov["_page_link"] == {
         "source_field": "src", "model_pages": [3, 7],
-        "derived_range": [3, 5], "capped": True,
+        "mode": "range", "derived_range": [3, 5], "capped": True,
     }
 
 
@@ -215,6 +215,71 @@ def test_resolve_advanced_page_link_missing_pages_raises():
     )
     with pytest.raises(ValueError):
         resolve_advanced_field(field, {}, {"src": []})
+
+
+# ── VL 进阶字段页码联动 ────────────────────────────────────────
+
+
+def _adv_vl_field(**overrides):
+    cfg = {"page_source_field": "src", "field_hints": "金额 <field_result>a</field_result>"}
+    cfg.update(overrides.pop("vl_config", {}))
+    base = dict(
+        field_id="advvl", type_id="default", field_name="VL进阶", source_type="vl",
+        is_advanced=1, vl_method="vl_model", vl_config=cfg,
+        vl_extract_prompt="提取，输出 {value, reason}",
+    )
+    base.update(overrides)
+    return ExtractionField(**base)
+
+
+def test_resolve_advanced_vl_page_link_discrete():
+    """上游自报 [9,3,9,15] → 去重升序写成逗号串，refs 记 discrete。"""
+    field = _adv_vl_field()
+    resolved, prov = resolve_advanced_field(field, {"a": "甲"}, {"src": [9, 3, 9, 15]})
+
+    assert resolved.vl_config["page_range"] == "3,9,15"
+    assert prov["_page_link"] == {
+        "source_field": "src", "model_pages": [9, 3, 9, 15],
+        "mode": "discrete", "derived_pages": [3, 9, 15], "capped": False,
+    }
+    # 占位符照常解析
+    assert resolved.vl_config["field_hints"] == "金额 甲"
+    # 会话内原对象不被污染
+    assert "page_range" not in field.vl_config
+
+
+def test_resolve_advanced_vl_page_link_capped():
+    field = _adv_vl_field(vl_config={"max_pages": 2})
+    resolved, prov = resolve_advanced_field(field, {}, {"src": [3, 9, 15]})
+
+    assert resolved.vl_config["page_range"] == "3,9"
+    assert prov["_page_link"]["derived_pages"] == [3, 9]
+    assert prov["_page_link"]["capped"] is True
+
+
+def test_resolve_advanced_vl_page_link_overrides_manual_range():
+    """联动覆盖手填 page_range（与 text 一致）。"""
+    field = _adv_vl_field(vl_config={"page_range": "1-100"})
+    resolved, _ = resolve_advanced_field(field, {}, {"src": [4]})
+    assert resolved.vl_config["page_range"] == "4"
+
+
+def test_resolve_advanced_vl_page_link_missing_pages_raises():
+    field = _adv_vl_field()
+    with pytest.raises(ValueError):
+        resolve_advanced_field(field, {}, {"src": []})
+
+    with pytest.raises(ValueError):
+        resolve_advanced_field(field, {}, {})
+
+
+def test_resolve_advanced_vl_without_page_source_untouched():
+    """没配 page_source_field 的 VL 进阶字段不产生 _page_link。"""
+    field = _adv_vl_field(vl_config={"page_range": "2-4"})
+    field.vl_config.pop("page_source_field")
+    resolved, prov = resolve_advanced_field(field, {}, {})
+    assert resolved.vl_config["page_range"] == "2-4"
+    assert "_page_link" not in prov
 
 
 # ── 审查修复：成败判定不能被元数据键蒙混 ────────────────────────

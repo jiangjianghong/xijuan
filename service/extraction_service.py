@@ -442,6 +442,7 @@ def resolve_advanced_field(
             sc["page_range"] = f"{start}-{end}"
             provenance["_page_link"] = {
                 "source_field": src, "model_pages": pages,
+                "mode": "range",
                 "derived_range": [start, end], "capped": capped,
             }
 
@@ -456,6 +457,21 @@ def resolve_advanced_field(
         for key in ("field_hints", "batch_prompt_template", "locate_prompt_template"):
             if isinstance(vc.get(key), str):
                 vc[key] = _res(vc[key])
+        # VL 页码联动：取来源字段模型自报页码派生**离散**目标页，改写成
+        # page_range 逗号串复用现有通路（vl_service 三个方法无需感知联动）
+        if field.source_type == "vl" and vc.get("page_source_field"):
+            src = vc["page_source_field"]
+            pages = (field_model_pages or {}).get(src) or []
+            if not pages:
+                raise ValueError(
+                    f"来源字段 {src} 未产出模型自报页码，无法按页码联动 VL 抽取"
+                )
+            picked, capped = pick_model_pages(pages, vc.get("max_pages"))
+            vc["page_range"] = ",".join(str(p) for p in picked)
+            provenance["_page_link"] = {
+                "source_field": src, "model_pages": pages,
+                "mode": "discrete", "derived_pages": picked, "capped": capped,
+            }
 
     resolved = _clone_field_transient(
         field,
