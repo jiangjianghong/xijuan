@@ -6,6 +6,7 @@ import fitz
 import pytest
 
 from service.vl_service import _common
+from utils import vl_client
 
 
 def test_parse_vl_json_response_clean_json():
@@ -66,6 +67,58 @@ def test_build_image_messages_with_images_and_system():
     assert "data:image/png;base64,B64A" in content[0]["image_url"]["url"]
     assert content[1]["type"] == "image_url"
     assert content[2] == {"type": "text", "text": "describe"}
+
+
+# ── resolve_target_pages 测试 ──────────────────────────────────
+
+
+def test_resolve_target_pages_all():
+    pages, capped = vl_client.resolve_target_pages("all", 5)
+    assert pages == [0, 1, 2, 3, 4]
+    assert capped is False
+
+
+def test_resolve_target_pages_range_and_single():
+    pages, capped = vl_client.resolve_target_pages("2-3,5", 10)
+    assert pages == [1, 2, 4]
+    assert capped is False
+
+
+def test_resolve_target_pages_dedups_and_sorts():
+    """重复页不重复渲染，乱序输入归一为升序。"""
+    pages, _ = vl_client.resolve_target_pages("5-7,6,3", 10)
+    assert pages == [2, 4, 5, 6]
+
+
+def test_resolve_target_pages_filters_out_of_bounds():
+    pages, _ = vl_client.resolve_target_pages("1,99", 3)
+    assert pages == [0]
+
+
+def test_resolve_target_pages_empty_string():
+    pages, capped = vl_client.resolve_target_pages("", 5)
+    assert pages == []
+    assert capped is False
+
+
+def test_resolve_target_pages_caps_to_max_pages():
+    pages, capped = vl_client.resolve_target_pages("all", 10, max_pages=3)
+    assert pages == [0, 1, 2]
+    assert capped is True
+
+
+def test_resolve_target_pages_cap_not_triggered():
+    pages, capped = vl_client.resolve_target_pages("1-2", 10, max_pages=5)
+    assert pages == [0, 1]
+    assert capped is False
+
+
+def test_resolve_target_pages_max_pages_falsy_means_unlimited():
+    """None / 0 / 负数都视为不限制。"""
+    for mp in (None, 0, -1):
+        pages, capped = vl_client.resolve_target_pages("all", 4, max_pages=mp)
+        assert pages == [0, 1, 2, 3], f"max_pages={mp}"
+        assert capped is False
 
 
 # ── vl_model_extract 测试 ──────────────────────────────────────

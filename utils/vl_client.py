@@ -145,6 +145,29 @@ def parse_page_range(page_range: str, total_pages: int) -> list[int]:
     return [p for p in pages if 0 <= p < total_pages]
 
 
+def resolve_target_pages(
+    page_range: str, total_pages: int, max_pages: int | None = None
+) -> tuple[list[int], bool]:
+    """把 page_range 配置收敛为最终要看的 0-indexed 目标页列表。
+
+    三种 VL 方法共用的唯一入口：解析 → 去重升序 → 按 max_pages 截前 N 页。
+    去重是必要的：parse_page_range("5-7,6") 会返回 [4,5,6,5]，直接拿去渲染
+    等于同一页塞两张图白烧 token。
+
+    Args:
+        page_range: "all" / "1-3,5" 等；空串解析为空列表。
+        total_pages: 文档总页数，用于越界过滤与 "all" 展开。
+        max_pages: 候选页上限；None / 0 / 负数均视为不限制。
+
+    Returns:
+        (pages_0idx, capped)。capped 表示是否因 max_pages 被截断。
+    """
+    pages = sorted(set(parse_page_range(page_range, total_pages)))
+    if max_pages and max_pages > 0 and len(pages) > max_pages:
+        return pages[:max_pages], True
+    return pages, False
+
+
 def _compute_safe_scale(
     base_w: float, base_h: float, target_scale: float, max_pixels: int | None
 ) -> float:
