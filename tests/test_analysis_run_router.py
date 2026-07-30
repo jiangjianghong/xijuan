@@ -16,8 +16,8 @@ REQUEST_ITEM = {
     "field_values": {"amount": "1200000"},
 }
 
-# 请求体经 model_dump() 后必然补齐 rule_ids 默认值，服务层收到的是这一份
-DUMPED_ITEM = {**REQUEST_ITEM, "rule_ids": None}
+# 请求体经 model_dump() 后必然补齐 rule_ids / file_id 默认值，服务层收到的是这一份
+DUMPED_ITEM = {**REQUEST_ITEM, "rule_ids": None, "file_id": None}
 
 
 @pytest.mark.anyio
@@ -36,6 +36,7 @@ async def test_analysis_run_sync_returns_batch_result(
             "failed": 0,
             "results": [],
             "unknown_rule_ids": [],
+            "error": None,
         }],
     }
 

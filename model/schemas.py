@@ -506,18 +506,28 @@ class AnalysisRunModeEnum(str, Enum):
     stream = "stream"
 
 
-class AnalysisRunItem(BaseModel):
-    """独立逻辑分析的单组外部字段值。
+class AnalysisRunSourceEnum(str, Enum):
+    values = "values"   # 字段值由请求 field_values 提供
+    file = "file"       # 字段值取自该 file_id 已落库的 extraction_result
 
-    rule_ids 不传或为 null 表示跑该类型下全部启用规则（仅执行依赖字段被
-    field_values 覆盖的那些）；空数组表示不执行任何规则；显式点名时只跑指定
-    规则，且缺依赖字段的规则会产出失败结果而非静默跳过。
+
+class AnalysisRunItem(BaseModel):
+    """独立逻辑分析的单组输入。
+
+    `source=values`（默认）时 type_id + field_values 必填、不得传 file_id；
+    `source=file` 时 file_id 必填、不得传 field_values，type_id 省略则取
+    files.type_id（传了且不一致会在该 item 结果里报错）。
+    rule_ids 语义两种模式一致：不传/null=全部启用规则（仅跑依赖被覆盖的）、
+    []=不跑、显式点名=只跑指定的且缺依赖字段产出失败结果。
     """
 
-    type_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$", max_length=64)
+    type_id: Optional[str] = Field(
+        None, pattern=r"^[a-zA-Z0-9_-]+$", max_length=64,
+    )
     biz_id: str = Field(..., min_length=1, max_length=200)
     field_values: Dict[str, str] = Field(default_factory=dict)
     rule_ids: Optional[List[str]] = None
+    file_id: Optional[str] = Field(None, min_length=1, max_length=64)
 
     @field_validator("biz_id")
     @classmethod
@@ -551,6 +561,8 @@ class AnalysisRunItemResult(BaseModel):
     results: List[AnalysisRunRuleResult] = Field(default_factory=list)
     # 请求点名了但该类型下不存在或未启用的 rule_id；不点名时恒为空
     unknown_rule_ids: List[str] = Field(default_factory=list)
+    # file 模式的 item 级错误（文件不存在 / type_id 不一致 / 无提取结果）；正常为 None
+    error: Optional[str] = None
 
 
 class AnalysisRunResponse(BaseModel):
@@ -562,6 +574,8 @@ class AnalysisRunRequest(BaseModel):
     """独立逻辑分析请求；async 模式必须通过 callback_url 接收结果。"""
 
     mode: AnalysisRunModeEnum
+    source: AnalysisRunSourceEnum = AnalysisRunSourceEnum.values
+    persist: bool = False
     callback_url: Optional[AnyHttpUrl] = None
     items: List[AnalysisRunItem] = Field(..., min_length=1)
 
@@ -569,6 +583,24 @@ class AnalysisRunRequest(BaseModel):
     def validate_async_callback(self):
         if self.mode == AnalysisRunModeEnum.async_ and self.callback_url is None:
             raise ValueError("async 模式必须提供 callback_url")
+
+        is_file = self.source == AnalysisRunSourceEnum.file
+        if self.persist and not is_file:
+            raise ValueError("persist=true 仅在 source=file 时可用")
+
+        for item in self.items:
+            if is_file:
+                if not item.file_id:
+                    raise ValueError("source=file 时每个 item 必须提供 file_id")
+                if item.field_values:
+                    raise ValueError(
+                        "source=file 时不能传 field_values（字段值取自库内提取结果）"
+                    )
+            else:
+                if item.file_id:
+                    raise ValueError("source=values 时不能传 file_id")
+                if not item.type_id:
+                    raise ValueError("source=values 时每个 item 必须提供 type_id")
         return self
 
 
