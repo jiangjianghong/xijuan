@@ -302,6 +302,29 @@ def derive_page_range_from_model_pages(
     return start, end, capped
 
 
+def pick_model_pages(
+    pages: List[int], max_pages: Optional[int]
+) -> Tuple[List[int], bool]:
+    """由模型自报页码列表派生**离散**目标页（VL 用）。
+
+    与 derive_page_range_from_model_pages（取 [min,max] 连续区间，text 的 page
+    检索用）并列：VL 按页渲染图片，跳页零代价，取离散页可省掉中间无关页的 token。
+
+    Args:
+        pages: 模型自报页码（1-indexed，可能重复/乱序）。
+        max_pages: 页数上限；None/0/负数表示不限。
+
+    Returns:
+        (picked, capped)。pages 为空抛 ValueError。
+    """
+    if not pages:
+        raise ValueError("模型自报页码为空，无法派生 VL 目标页")
+    picked = sorted(set(pages))
+    if max_pages and max_pages > 0 and len(picked) > max_pages:
+        return picked[:max_pages], True
+    return picked, False
+
+
 def collect_depend_fields(field: Any) -> List[str]:
     """扫描字段所有可能承载 <field_result> 占位符的位置 + page_source_field，
     汇总被引用的字段 ID（按出现顺序去重）。供保存时写 depend_fields 与校验。

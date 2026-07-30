@@ -90,6 +90,49 @@ def test_derive_range_empty_raises():
         derive_page_range_from_model_pages([], 5)
 
 
+# ── VL 离散页码派生 ──────────────────────────────────────────
+
+
+def test_pick_model_pages_dedup_sort():
+    from service.extraction_service import pick_model_pages
+
+    pages, capped = pick_model_pages([9, 3, 9, 15], None)
+    assert pages == [3, 9, 15]
+    assert capped is False
+
+
+def test_pick_model_pages_cap():
+    from service.extraction_service import pick_model_pages
+
+    pages, capped = pick_model_pages([3, 9, 15, 20], 2)
+    assert pages == [3, 9]
+    assert capped is True
+
+
+def test_pick_model_pages_cap_not_needed():
+    from service.extraction_service import pick_model_pages
+
+    pages, capped = pick_model_pages([3, 9], 5)
+    assert pages == [3, 9]
+    assert capped is False
+
+
+def test_pick_model_pages_falsy_cap_means_unlimited():
+    from service.extraction_service import pick_model_pages
+
+    for mp in (None, 0, -1):
+        pages, capped = pick_model_pages([1, 2, 3], mp)
+        assert pages == [1, 2, 3], f"max_pages={mp}"
+        assert capped is False
+
+
+def test_pick_model_pages_empty_raises():
+    from service.extraction_service import pick_model_pages
+
+    with pytest.raises(ValueError):
+        pick_model_pages([], 3)
+
+
 # ── Task 5: 依赖扫描 ──────────────────────────────────────
 
 
