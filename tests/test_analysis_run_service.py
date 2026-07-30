@@ -82,6 +82,9 @@ class _Result:
     def scalars(self):
         return _Scalars(self._rows)
 
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
 
 class ReadOnlySession:
     def __init__(self, rows):
@@ -690,3 +693,97 @@ async def test_values_source_keeps_error_none_and_skips_file_queries(monkeypatch
 
     assert session.execute_count == 1  # 只查规则，不查 files/extraction
     assert data["items"][0]["error"] is None
+
+
+# ── persist 落库 ────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_persist_inserts_new_analysis_results(monkeypatch):
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        return {**_success(rule), "result": "true", "reason": "命中"}
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    session = FileModeSession(
+        rules=[_orm_rule("amount_check", ["amount"], priority=1)],
+        files=[_orm_file("f1")],
+        extractions=[_orm_extraction("f1", "amount", "120")],
+    )
+    # persist 阶段会再查一次已有结果：返回空表示需要 insert
+    session._batches.append([])
+
+    await analysis_run_service.run_analysis_batch(
+        [{"biz_id": "b0", "file_id": "f1"}],
+        session,
+        source="file",
+        persist=True,
+    )
+
+    assert len(session.added) == 1
+    row = session.added[0]
+    assert row.file_id == "f1"
+    assert row.rule_id == "amount_check"
+    assert row.result_value == "true"
+    assert session.commits >= 1
+
+
+@pytest.mark.anyio
+async def test_persist_updates_existing_analysis_result(monkeypatch):
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        return {**_success(rule), "result": "false", "reason": "新理由"}
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    existing = SimpleNamespace(
+        file_id="f1", rule_id="amount_check", result_value="true",
+        input_values={}, reason="老理由", source_refs=None,
+    )
+    session = FileModeSession(
+        rules=[_orm_rule("amount_check", ["amount"], priority=1)],
+        files=[_orm_file("f1")],
+        extractions=[_orm_extraction("f1", "amount", "120")],
+    )
+    session._batches.append([existing])
+
+    await analysis_run_service.run_analysis_batch(
+        [{"biz_id": "b0", "file_id": "f1"}],
+        session,
+        source="file",
+        persist=True,
+    )
+
+    assert session.added == []
+    assert existing.result_value == "false"
+    assert existing.reason == "新理由"
+
+
+@pytest.mark.anyio
+async def test_persist_skips_errored_items():
+    session = FileModeSession(
+        rules=[_orm_rule("amount_check", ["amount"], priority=1)],
+        files=[],
+        extractions=[],
+    )
+    await analysis_run_service.run_analysis_batch(
+        [{"biz_id": "b0", "file_id": "ghost"}],
+        session,
+        source="file",
+        persist=True,
+    )
+    assert session.added == []
+
+
+@pytest.mark.anyio
+async def test_persist_ignored_when_source_is_values(monkeypatch):
+    """values 模式没有 file_id，不可能落库；即便传了 persist 也不写。"""
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        return _success(rule)
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    session = ReadOnlySession([_orm_rule("amount_check", ["amount"], priority=1)])
+
+    # ReadOnlySession.add / commit 会 raise，故此处不抛异常即证明没写库
+    await analysis_run_service.run_analysis_batch(
+        [{"type_id": "contract", "biz_id": "b0", "field_values": {"amount": "1"}}],
+        session,
+        persist=True,
+    )

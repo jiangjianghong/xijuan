@@ -333,6 +333,46 @@ async def load_file_snapshots(
 RuleDoneHandler = Callable[[Dict[str, Any]], Awaitable[None]]
 
 
+async def persist_analysis_results(
+    items: Sequence[Mapping[str, Any]],
+    item_results: Sequence[Mapping[str, Any]],
+    session: AsyncSession,
+) -> None:
+    """把 file 模式的分析结果 upsert 进 analysis_result。
+
+    并发结束后统一执行。**不改 files.progress** —— 管线状态机只由
+    pipeline / retry 维护，此接口仅写结果行。报错的 item 整条跳过。
+    """
+
+    for item, result in zip(items, item_results):
+        if result.get("error") or not result.get("results"):
+            continue
+        file_id = str(item["file_id"])
+        for row in result["results"]:
+            existing = (await session.execute(
+                select(AnalysisResult).where(
+                    AnalysisResult.file_id == file_id,
+                    AnalysisResult.rule_id == row["rule_id"],
+                )
+            )).scalar_one_or_none()
+
+            if existing:
+                existing.result_value = row["result"]
+                existing.input_values = row["input_values"]
+                existing.reason = row["reason"]
+                existing.source_refs = row["source_refs"]
+            else:
+                session.add(AnalysisResult(
+                    file_id=file_id,
+                    rule_id=row["rule_id"],
+                    result_value=row["result"],
+                    input_values=row["input_values"],
+                    reason=row["reason"],
+                    source_refs=row["source_refs"],
+                ))
+    await session.commit()
+
+
 async def run_analysis_batch(
     items: Sequence[Mapping[str, Any]],
     session: AsyncSession,
@@ -464,7 +504,9 @@ async def run_analysis_batch(
         for index, item in enumerate(items)
     ))
 
-    # persist 分支在 Task 4 接入
+    # persist 只在 file 模式有意义（values 模式无 file_id，无法定位结果行）
+    if from_file and persist:
+        await persist_analysis_results(items, ordered_items, session)
 
     return {
         "total_items": len(items),
