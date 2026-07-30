@@ -196,6 +196,68 @@ async def test_vl_model_extract_empty_pages(monkeypatch):
     assert called is False
 
 
+async def test_vl_model_extract_caps_by_max_pages(monkeypatch):
+    """max_pages 截断候选页，refs 记录 target_pages / pages_capped。"""
+    from service.vl_service import model as vl_model_module
+
+    captured = {}
+
+    async def fake_vl_chat(messages, *, max_tokens=None, extra_body=None, max_retries=3):
+        captured["messages"] = messages
+        return {
+            "choices": [{"message": {"content": '{"value": "v", "reason": "r"}'}}],
+            "usage": {"total_tokens": 7},
+        }
+
+    monkeypatch.setattr("service.vl_service.model.vl_chat", fake_vl_chat)
+
+    pdf = _make_pdf_bytes(6)
+    _, _, refs = await vl_model_module.vl_model_extract(
+        pdf,
+        vl_extract_prompt="x",
+        vl_system_prompt=None,
+        page_range="all",
+        max_pages=2,
+        max_pixels=200_000,
+    )
+
+    assert refs["key_pages"] == [1, 2]
+    assert refs["target_pages"] == [1, 2]
+    assert refs["pages_capped"] is True
+    image_blocks = [c for c in captured["messages"][0]["content"] if c["type"] == "image_url"]
+    assert len(image_blocks) == 2
+
+
+async def test_vl_model_extract_dedups_duplicate_pages(monkeypatch):
+    """page_range 里重复的页只渲染一次。"""
+    from service.vl_service import model as vl_model_module
+
+    captured = {}
+
+    async def fake_vl_chat(messages, *, max_tokens=None, extra_body=None, max_retries=3):
+        captured["messages"] = messages
+        return {
+            "choices": [{"message": {"content": '{"value": "v", "reason": "r"}'}}],
+            "usage": {"total_tokens": 7},
+        }
+
+    monkeypatch.setattr("service.vl_service.model.vl_chat", fake_vl_chat)
+
+    pdf = _make_pdf_bytes(8)
+    _, _, refs = await vl_model_module.vl_model_extract(
+        pdf,
+        vl_extract_prompt="x",
+        vl_system_prompt=None,
+        page_range="5-7,6",
+        max_pixels=200_000,
+    )
+
+    assert refs["key_pages"] == [5, 6, 7]
+    assert refs["pages_capped"] is False
+    image_blocks = [c for c in captured["messages"][0]["content"] if c["type"] == "image_url"]
+    assert len(image_blocks) == 3
+
+
 # ── vl_progressive_extract 测试 ──────────────────────────────────
 
 

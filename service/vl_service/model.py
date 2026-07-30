@@ -7,7 +7,7 @@ from typing import Any
 import fitz
 
 from service.vl_service._common import build_image_messages, parse_vl_json_response
-from utils.vl_client import parse_page_range, render_pages_to_b64, vl_chat
+from utils.vl_client import render_pages_to_b64, resolve_target_pages, vl_chat
 
 
 async def vl_model_extract(
@@ -16,6 +16,7 @@ async def vl_model_extract(
     vl_system_prompt: str | None,
     *,
     page_range: str = "all",
+    max_pages: int | None = None,
     max_pixels: int = 4_000_000,
 ) -> tuple[str, str, dict[str, Any]]:
     """VL 全量抽取：渲染 page_range 页 → 一次调 VL → 直接产 {value, reason}。
@@ -25,21 +26,25 @@ async def vl_model_extract(
         vl_extract_prompt: 用户配置的最终提示词，必须要求 VL 输出 {value, reason}。
         vl_system_prompt: 可选系统提示。
         page_range: "all" / "1-3,5" 等。
+        max_pages: 候选页上限；None/0 表示不限。
         max_pixels: 单图像素上限。
 
     Returns:
         (value, reason, source_refs) — source_refs 是
-        {method, total_pages, key_pages, vl_total_tokens}。
+        {method, total_pages, key_pages, target_pages, pages_capped, vl_total_tokens}。
     """
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     total_pages = len(doc)
     doc.close()
 
-    pages_0idx = parse_page_range(page_range, total_pages)
+    pages_0idx, capped = resolve_target_pages(page_range, total_pages, max_pages)
+    pages_1idx = [p + 1 for p in pages_0idx]
     refs: dict[str, Any] = {
         "method": "vl_model",
         "total_pages": total_pages,
-        "key_pages": [p + 1 for p in pages_0idx],
+        "key_pages": pages_1idx,
+        "target_pages": pages_1idx,
+        "pages_capped": capped,
         "vl_total_tokens": 0,
     }
 
