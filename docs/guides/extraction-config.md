@@ -28,9 +28,9 @@ JSON 示例和排错清单为主。
 | `text` | `search_type=chunk_db` | 分块库关键词过滤 | `keywords`、`max_results` |
 | `text` | `search_type=vector_db` | 语义相似检索 | `query_text`、`top_k` |
 | `text` | `search_type=page` | 按页码整片喂 LLM | `page_range`、`max_length` |
-| `vl` | `vl_method=vl_model` | 短文档 / 相关页固定，一次视觉抽取 | `page_range` |
-| `vl` | `vl_method=vl_progressive` | 长文档、相关页分散，逐批扫描 | `field_hints`、`batch_size` |
-| `vl` | `vl_method=vl_locate` | 长文档，先定位关键页再高清抽取 | `field_hints`、`grid_pages` |
+| `vl` | `vl_method=vl_model` | 短文档 / 相关页固定，一次视觉抽取 | `page_range`、`max_pages` |
+| `vl` | `vl_method=vl_progressive` | 长文档、相关页分散，逐批扫描 | `field_hints`、`batch_size`、`page_range` |
+| `vl` | `vl_method=vl_locate` | 长文档，先定位关键页再高清抽取 | `field_hints`、`grid_pages`、`page_range` |
 
 **怎么选：**
 - 数据在**规整表格**里 → `table`。
@@ -226,9 +226,19 @@ JSON 示例和排错清单为主。
 
 **三法共通：** `vl_extract_prompt` 是最终提取 prompt，**必须含 `value` 与 `reason` 关键字**（大小写不敏感，因为要 VL 直接吐 JSON）；`vl_system_prompt` 可空。后端 `service/vl_service/_defaults.py` 与前端 UI 都预填了默认 prompt，保持默认即可跑通。全局并发上限 `vl_model.global_max_concurrency`（默认 8）。
 
+**三种方法共用的页码配置**（都写在 `vl_config` 里）：
+
+| 键 | 默认 | 含义 |
+|---|---|---|
+| `page_range` | `"all"` | 纳入视野的页，语法同 3.6（`"1-3,5"`）。重复页会自动去重，不重复渲染 |
+| `max_pages` | 不限 | 候选页上限，超出取**前 N 页** |
+| `max_pixels` | 4000000 | 单图像素上限，超出按比例缩 |
+
+`page_range` 对 `vl_progressive` 是「只在这些页里逐批扫」，对 `vl_locate` 是「只在这些页里做网格定位」。
+
 ### 4.1 vl_model（全量）
 
-`vl_config`：`page_range`（默认 `"all"`，同 3.6 语法）、`max_pixels`（默认 4000000，单图像素上限，超出按比例缩）。
+`vl_config`：无专属键，只用上面的共用页码配置。
 
 ```json
 {
@@ -243,7 +253,7 @@ JSON 示例和排错清单为主。
 
 ### 4.2 vl_progressive（逐批扫描）
 
-`vl_config`：`field_hints`（必填，人话描述要找什么，如 `"投资金额、签署日期、股东姓名"`）、`batch_size`（每批页数，默认 2）、`max_pixels`。可选 `batch_prompt_template` 覆盖批次 prompt，**自定义时必须含占位符** `{history}` `{field_hints}` `{page_label}` `{total_pages}`。
+`vl_config`：`field_hints`（必填，人话描述要找什么，如 `"投资金额、签署日期、股东姓名"`）、`batch_size`（每批页数，默认 2）、`max_pixels`。可选 `batch_prompt_template` 覆盖批次 prompt，**自定义时必须含占位符** `{history}` `{field_hints}` `{page_label}` `{total_pages}`；另可选用 `{scan_scope}`（限页时展开为扫描范围说明，全文时为空串，老模板不含它也不报错）。注意 `{total_pages}` 恒为**文档总页数**，不是本次扫描页数。
 
 ```json
 {
@@ -259,6 +269,8 @@ JSON 示例和排错清单为主。
 ### 4.3 vl_locate（缩略图定位 + 高清提取）
 
 `vl_config`：`field_hints`（必填）、`grid_pages`（每张网格图页数，默认 6）、`grid_cols`（列数，默认 3）、`max_concurrent`（第一轮并行上限，默认 20，与全局并发取小）、`key_pages_limit`（关键页上限，默认 6）、`fallback_pages`（一页未命中时回退取前 N 页，默认 3）、`max_pixels`。可选 `locate_prompt_template` 覆盖定位 prompt，**自定义时必须含占位符** `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`。
+
+> `key_pages_limit` 与共用的 `max_pages` 是**两个阶段**的约束，不要混淆：`max_pages` 管定位**之前**扫几页缩略图，`key_pages_limit` 管定位**之后**看几页高清。`fallback_pages` 取的是**候选页**的前 N 个（限了第 11-15 页就兜底看 11、12，不是文档第 1、2 页）。
 
 ```json
 {
@@ -304,6 +316,7 @@ JSON 示例和排错清单为主。
 | `table_match_keywords` | 表格匹配词 |
 | 各类提示词 | `text_extract_prompt` / `table_extract_prompt` / `*_system_prompt` / `vl_extract_prompt` |
 | `vl_config` | `field_hints` / `batch_prompt_template` / `locate_prompt_template` |
+| `vl_config.page_source_field` | 页码来源字段 ID（不是占位符，直接填 field_id） |
 
 ```json
 {
@@ -350,6 +363,26 @@ JSON 示例和排错清单为主。
 - 来源字段**没有**模型自报页码（没在 prompt 里要 `pages`，或模型没给）→ 该进阶字段**直接失败**。
   所以来源字段的 prompt 必须要求返回 `pages`。
 
+**VL 的页码联动**：`source_type=vl` 的进阶字段把 `page_source_field` 写在 `vl_config` 里（不是 `search_config`），
+三种 `vl_method` 都支持。与 text 的区别是**取离散页而非连续区间** —— 上游自报 `[3, 9, 15]` 时 VL 只渲染第 3、9、
+15 页，不看中间页（VL 按页出图，跳页零代价）。`max_pages` 同样写在 `vl_config` 里，超出时取前 N 页。联动**覆盖**
+手填的 `page_range`；来源字段没产出 `_model_pages` 时该进阶字段直接失败（与 text 一致）。
+
+```json
+{
+  "field_id": "seal_by_page",
+  "source_type": "vl",
+  "is_advanced": 1,
+  "vl_method": "vl_locate",
+  "vl_config": {
+    "page_source_field": "party_a",
+    "max_pages": 3,
+    "field_hints": "公章、骑缝章"
+  },
+  "vl_extract_prompt": "判断这几页是否盖章，输出 JSON {value, reason}"
+}
+```
+
 ### 6.3 溯源与调试
 
 进阶字段的解析过程会写进 `source_refs`（与检索 ref 同级）：
@@ -357,7 +390,7 @@ JSON 示例和排错清单为主。
 | 键 | 内容 |
 |---|---|
 | `_resolved_refs` | `{被引用 field_id: 实际填入的值}` |
-| `_page_link` | `{source_field, model_pages, derived_range: [start, end], capped}`（仅页码联动时） |
+| `_page_link` | 页码联动溯源。text `page` 检索：`{source_field, model_pages, mode:"range", derived_range: [start,end], capped}`；VL：`{source_field, model_pages, mode:"discrete", derived_pages: [...], capped}` |
 
 调试接口 `POST /extraction/test/stream` 对进阶字段会**先推一个 `resolved_refs` 事件**再进入常规流程；
 非流式 `POST /extraction/test` 则在响应里多回一个 `resolved_refs` 字段。两者读的都是该文件

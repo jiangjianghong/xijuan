@@ -876,10 +876,16 @@ _SEARCH_CONFIG_DOC = (
 
 _VL_CONFIG_DOC = (
     "VL 配置（自由 JSON，键随 `vl_method` 不同）：\n"
-    "- `vl_model`：`page_range`(默认 `\"all\"`，指定页一次性塞 VL)\n"
+    "- **三种方法共用**：`page_range`(默认 `\"all\"`，如 `\"1-3,5\"`) / `max_pages`(候选页上限，"
+    "超出取前 N 页；缺省不限) / `max_pixels`\n"
+    "- **进阶字段共用**：`page_source_field`(来源普通字段 ID，取其模型自报页码派生**离散**目标页，"
+    "覆盖手填 `page_range`；来源字段无页码则该字段失败)\n"
+    "- `vl_model`：指定页一次性塞 VL\n"
     "- `vl_progressive`：`field_hints`(\"\") / `batch_size`(2) / 可选 `batch_prompt_template`"
-    "（占位符 `{history}` `{field_hints}` `{page_label}` `{total_pages}`）\n"
+    "（占位符 `{history}` `{field_hints}` `{page_label}` `{total_pages}` `{scan_scope}`）\n"
     "- `vl_locate`：`field_hints`(\"\") / `grid_pages`(6) / `grid_cols`(3) / `max_concurrent`(20) / "
+    "`key_pages_limit`(6，定位**后**看几页高清，区别于定位**前**的 `max_pages`) / "
+    "`fallback_pages`(3，定位全空时取候选页前 N 个) / "
     "可选 `locate_prompt_template`（占位符 `{field_hints}` `{page_labels}` `{position_map}` "
     "`{grid_rows}` `{grid_cols}`）"
 )

@@ -97,9 +97,11 @@ _data 为数组，每个元素：_
 | text_extract_prompt | string | 否 | — | [text] 抽取 prompt；`source_type=text` 时须含至少一个 `<search_result>标签</search_result>`。 |
 | vl_method | VLMethodEnum | 否 | — | [vl] 方法：`vl_model` / `vl_progressive` / `vl_locate`；`source_type=vl` 时必填。 |
 | vl_config | object | 否 | — | [vl] VL 配置（自由 JSON，键随 `vl_method` 不同）：
-- `vl_model`：`page_range`(默认 `"all"`，指定页一次性塞 VL)
-- `vl_progressive`：`field_hints`("") / `batch_size`(2) / 可选 `batch_prompt_template`（占位符 `{history}` `{field_hints}` `{page_label}` `{total_pages}`）
-- `vl_locate`：`field_hints`("") / `grid_pages`(6) / `grid_cols`(3) / `max_concurrent`(20) / 可选 `locate_prompt_template`（占位符 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`）（结构详见 [vl_config](../reference/data-model.md#extraction_field)） |
+- **三种方法共用**：`page_range`(默认 `"all"`，如 `"1-3,5"`) / `max_pages`(候选页上限，超出取前 N 页；缺省不限) / `max_pixels`
+- **进阶字段共用**：`page_source_field`(来源普通字段 ID，取其模型自报页码派生**离散**目标页，覆盖手填 `page_range`；来源字段无页码则该字段失败)
+- `vl_model`：指定页一次性塞 VL
+- `vl_progressive`：`field_hints`("") / `batch_size`(2) / 可选 `batch_prompt_template`（占位符 `{history}` `{field_hints}` `{page_label}` `{total_pages}` `{scan_scope}`）
+- `vl_locate`：`field_hints`("") / `grid_pages`(6) / `grid_cols`(3) / `max_concurrent`(20) / `key_pages_limit`(6，定位**后**看几页高清，区别于定位**前**的 `max_pages`) / `fallback_pages`(3，定位全空时取候选页前 N 个) / 可选 `locate_prompt_template`（占位符 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`）（结构详见 [vl_config](../reference/data-model.md#extraction_field)） |
 | vl_system_prompt | string | 否 | — | [vl] LLM system prompt（可空）。 |
 | vl_extract_prompt | string | 否 | — | [vl] 抽取 prompt；`source_type=vl` 时必填，且须含 `value` 与 `reason` 关键字（大小写不敏感）。 |
 | is_advanced | integer | 否 | 0 | 是否进阶字段（1/0，默认 0）。置 1 时该字段在**全部普通字段抽完后**执行，配置内可用 `<field_result>字段ID</field_result>` 引用普通字段的提取值；**只能引用同类型的普通字段**，否则 400。 |
