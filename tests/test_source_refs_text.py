@@ -104,3 +104,32 @@ def test_table_refs_unnamed_table_fallback():
     assert refs["_tables"][0]["text"] == "表格名称: 表格2\n<table>C</table>"
     assert refs["_tables"][0]["page_num"] == ""
     assert texts == {"表格": "表格名称: 表格2\n<table>C</table>"}
+
+
+def test_cross_page_hit_gets_per_page_markers_and_page_nums():
+    """跨页命中：注入文本逐页标注，ref 带 page_nums；单页 ref 不带该键。"""
+    mapping = [
+        {"page_num": 1, "start_pos": 0},
+        {"page_num": 2, "start_pos": 10},
+    ]
+    search_results = [
+        {"keyword": "金额", "position": 0, "context": "AAAAAAAAAABBBBBBBBBB",
+         "start_pos": 0, "end_pos": 20},
+    ]
+    refs, texts = _build_text_source_refs("context", search_results, mapping)
+
+    assert texts == {"金额": "【第1页】\nAAAAAAAAAA\n【第2页】\nBBBBBBBBBB"}
+    assert refs["金额"][0]["page_nums"] == [1, 2]
+    # ref.text 仍是完整裸原文，page_num 仍是范围串——老消费者不受影响
+    assert refs["金额"][0]["text"] == "AAAAAAAAAABBBBBBBBBB"
+    assert refs["金额"][0]["page_num"] == "1-2"
+
+
+def test_single_page_hit_has_no_page_nums_key():
+    mapping = [{"page_num": 1, "start_pos": 0}]
+    search_results = [
+        {"keyword": "金额", "position": 0, "context": "AAAAA",
+         "start_pos": 0, "end_pos": 5},
+    ]
+    refs, _ = _build_text_source_refs("context", search_results, mapping)
+    assert "page_nums" not in refs["金额"][0]

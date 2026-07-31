@@ -1632,7 +1632,8 @@ def _build_text_source_refs(
 ) -> Tuple[Dict[str, Any], Dict[str, str]]:
     """构建带检索原文的 source_refs 与按 label 拼接的检索文本。
 
-    每条 ref 携带 text（该条命中注入 prompt 的原始片段）；
+    每条 ref 携带 text（该条命中的裸原文片段，不含页码标记）；跨页命中另带
+    page_nums（逐页页码，单页不写该键）；
     带全文坐标的 ref 另携带 bboxes（块级 PDF 框，老数据无 bbox 时不带该键）；
     source_refs["_texts"] = {label: 拼接后实际注入占位符的完整文本}。
 
@@ -1665,6 +1666,12 @@ def _build_text_source_refs(
         elif r.get("start_pos") is not None and r.get("end_pos") is not None:
             ref["page_num"] = lookup_page_num(page_mapping, r["start_pos"], r["end_pos"])
 
+        # 跨页命中额外记录逐页页码（单页不写该键，老消费者零影响）
+        if isinstance(r.get("start_pos"), int) and isinstance(r.get("end_pos"), int):
+            _segs = split_span_by_pages(page_mapping, r["start_pos"], r["end_pos"])
+            if len(_segs) > 1:
+                ref["page_nums"] = sorted({s["page_num"] for s in _segs})
+
         # 块级 bbox：所有带全文坐标的结果（含 chunk_db/vector_db）统一查 page_mapping；
         # 存量老 mapping 无 bbox 时返回空，不挂键（消费方容错）
         if r.get("start_pos") is not None and r.get("end_pos") is not None:
@@ -1686,7 +1693,13 @@ def _build_text_source_refs(
 
     results_text_by_label: Dict[str, str] = {
         kw: "\n---\n".join(
-            _page_prefix(_result_page_num(r, page_mapping)) + r.get(text_key, "")
+            _page_annotated_text(
+                r.get(text_key, ""),
+                page_mapping,
+                r.get("start_pos"),
+                r.get("end_pos"),
+                _result_page_num(r, page_mapping),
+            )
             for r in items
         )
         for kw, items in results_by_keyword.items()
