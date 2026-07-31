@@ -860,6 +860,28 @@ def containment_score(value: str, page_content: str) -> float:
     return m.size / len(v)
 
 
+def _ref_best_containment(
+    value: str, ref: Dict[str, Any], page_contents: Dict[int, str]
+) -> float:
+    """取该 ref 覆盖的各页中与抽取值包含度最高的分数。
+
+    跨页 ref 用 page_nums 逐页取分（取最高），单页 ref 用 page_num；
+    页码统一归一成 int 后查表——page_contents 的 key 来自 split_md_by_pages
+    （int），而 ref.page_num 来自 lookup_page_num（str），不归一会恒 miss。
+    """
+    pages = ref.get("page_nums")
+    if not isinstance(pages, list) or not pages:
+        single = to_int_page(ref.get("page_num"))
+        pages = [single] if single is not None else []
+    return max(
+        (
+            containment_score(value, page_contents.get(to_int_page(p), ""))
+            for p in pages
+        ),
+        default=0.0,
+    )
+
+
 def _sort_source_refs_by_page_containment(
     source_refs: Optional[Dict[str, Any]],
     extracted_value: str,
@@ -867,22 +889,25 @@ def _sort_source_refs_by_page_containment(
 ) -> None:
     """就地按包含相似度对 source_refs 各 label 分组内的 ref 排序（降序）。
 
-    每条 ref 用其 page_num 取整页内容与 extracted_value 算 containment_score，
-    分高者排前。page_num 缺失/非法（如 page 类的范围字符串）→ 该页内容取空串、
-    得分 0，稳定地沉到末尾，不影响其余 ref。稳定排序保证同分保持原相对顺序。
+    每条 ref 取其覆盖页的整页内容与 extracted_value 算 containment_score，
+    跨页 ref（带 page_nums）取各页最高分。页码解析不出 / 该页无内容 → 得分 0，
+    稳定地沉到末尾，不影响其余 ref。稳定排序保证同分保持原相对顺序。
 
     非 ref 列表键（_texts/_vl/_web_search）与非 list 值原样跳过。
     """
     if not source_refs or not extracted_value:
         return
+    # page_contents 的 key 归一成 int，兼容历史数据里的字符串页码
+    normalized: Dict[int, str] = {}
+    for k, v in page_contents.items():
+        ik = to_int_page(k)
+        if ik is not None:
+            normalized[ik] = v
     for key, refs in source_refs.items():
         if key in _NON_REF_KEYS or not isinstance(refs, list) or len(refs) < 2:
             continue
         refs.sort(
-            key=lambda ref: containment_score(
-                extracted_value,
-                page_contents.get(ref.get("page_num"), ""),
-            ),
+            key=lambda ref: _ref_best_containment(extracted_value, ref, normalized),
             reverse=True,
         )
 
