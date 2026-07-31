@@ -1006,35 +1006,63 @@ const RuleConfig = {
         return html;
     },
 
+    // 三种 VL 方法共用的页码配置块：手填范围 + 最大页数 +（进阶）页码来源字段
+    buildVLPageFields(vlConfig) {
+        const pageRange = vlConfig.page_range || 'all';
+        let pageFrom = '', pageTo = '';
+        if (pageRange !== 'all') {
+            const m = pageRange.match(/^(\d+)-(\d+)$/);
+            if (m) { pageFrom = m[1]; pageTo = m[2]; }
+            else {
+                const n = pageRange.match(/^(\d+)$/);
+                if (n) { pageFrom = n[1]; pageTo = n[1]; }
+            }
+        }
+
+        const advExtra = this.state.formIsAdvanced ? `
+            <div class="form-group">
+                <label class="form-label">页码来源字段（进阶）</label>
+                <select class="form-select" id="fm-vl-page-source">
+                    <option value="">（不联动，手填页码）</option>
+                    ${(this.state.fields || [])
+                        .filter(f => !f.is_advanced && (f.source_type === 'text' || f.source_type === 'table'))
+                        .map(f => `<option value="${Utils.escapeHtml(f.field_id)}" ${vlConfig.page_source_field === f.field_id ? 'selected' : ''}>${Utils.escapeHtml(f.field_name)} (${Utils.escapeHtml(f.field_id)})</option>`)
+                        .join('')}
+                </select>
+                <div class="form-hint">取该字段模型自报页码（_model_pages），只看这几页（离散，不含中间页）</div>
+            </div>` : '';
+
+        const disabled = this.state.formIsAdvanced && vlConfig.page_source_field ? 'disabled' : '';
+
+        return advExtra + `
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">页面范围</label>
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <span style="white-space: nowrap;">从第</span>
+                        <input class="form-input" id="fm-vl-page-from" type="number" min="1" value="${pageFrom}" placeholder="1" style="width: 90px;" ${disabled}>
+                        <span style="white-space: nowrap;">页 到第</span>
+                        <input class="form-input" id="fm-vl-page-to" type="number" min="1" value="${pageTo}" placeholder="末页" style="width: 90px;" ${disabled}>
+                        <span style="white-space: nowrap;">页</span>
+                    </div>
+                    <div class="form-hint">两个都留空 = 全部页面；只填"从"不填"到" = 从该页到末页${this.state.formIsAdvanced ? '（已选来源字段时此项被忽略）' : ''}</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">最大页数</label>
+                    <input class="form-input" id="fm-vl-max-pages" type="number" min="1" value="${vlConfig.max_pages ?? ''}" placeholder="不限">
+                    <div class="form-hint">候选页超过该值时只取前 N 页</div>
+                </div>
+            </div>
+        `;
+    },
+
     buildVLConfigFields(method, vlConfig) {
         vlConfig = vlConfig || {};
         let html = '';
 
         switch (method) {
             case 'vl_model': {
-                // 把 page_range 字符串解析回 from/to 显式数字
-                const pageRange = vlConfig.page_range || 'all';
-                let pageFrom = '', pageTo = '';
-                if (pageRange !== 'all') {
-                    const m = pageRange.match(/^(\d+)-(\d+)$/);
-                    if (m) { pageFrom = m[1]; pageTo = m[2]; }
-                    else {
-                        const n = pageRange.match(/^(\d+)$/);
-                        if (n) { pageFrom = n[1]; pageTo = n[1]; }
-                    }
-                }
-                html = `
-                    <div class="form-group">
-                        <label class="form-label">页面范围</label>
-                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                            <span style="white-space: nowrap;">从第</span>
-                            <input class="form-input" id="fm-vl-page-from" type="number" min="1" value="${pageFrom}" placeholder="1" style="width: 90px;">
-                            <span style="white-space: nowrap;">页 到第</span>
-                            <input class="form-input" id="fm-vl-page-to" type="number" min="1" value="${pageTo}" placeholder="末页" style="width: 90px;">
-                            <span style="white-space: nowrap;">页</span>
-                        </div>
-                        <div class="form-hint">两个都留空 = 全部页面；只填"从"不填"到" = 从该页到末页</div>
-                    </div>
+                html = this.buildVLPageFields(vlConfig) + `
                     <div class="form-group">
                         <label class="form-label">最大像素数</label>
                         <input class="form-input" id="fm-vl-max-pixels" type="number" value="${vlConfig.max_pixels ?? 4000000}" min="100000">
@@ -1044,7 +1072,7 @@ const RuleConfig = {
             }
 
             case 'vl_progressive':
-                html = `
+                html = this.buildVLPageFields(vlConfig) + `
                     <div class="form-group">
                         <label class="form-label">字段提示（提示要找的字段）</label>
                         <input class="form-input" id="fm-vl-field-hints" value="${Utils.escapeHtml(vlConfig.field_hints || '')}" placeholder="例：投资金额、签署日期、股东姓名">
@@ -1068,7 +1096,7 @@ const RuleConfig = {
                 break;
 
             case 'vl_locate':
-                html = `
+                html = this.buildVLPageFields(vlConfig) + `
                     <div class="form-group">
                         <label class="form-label">字段提示</label>
                         <input class="form-input" id="fm-vl-field-hints" value="${Utils.escapeHtml(vlConfig.field_hints || '')}" placeholder="例：资产总额、负债总额、净利润">
@@ -1097,6 +1125,7 @@ const RuleConfig = {
                         <div class="form-group">
                             <label class="form-label">关键页上限</label>
                             <input class="form-input" id="fm-vl-key-pages-limit" type="number" value="${vlConfig.key_pages_limit ?? 6}" min="1">
+                            <div class="form-hint">定位<b>之后</b>看几页高清；上面的「最大页数」管定位<b>之前</b>扫几页缩略图</div>
                         </div>
                         <div class="form-group">
                             <label class="form-label">兜底页数</label>
@@ -1167,24 +1196,29 @@ const RuleConfig = {
         const getInt = (id, def) => this.parseIntOrDefault(id, def);
         const getFloat = (id, def) => this.parseFloatOrDefault(id, def);
 
+        // 三种方法共用的页码配置
+        const pageSource = getVal('fm-vl-page-source');
+        if (pageSource) config.page_source_field = pageSource;
+        const fromV = getVal('fm-vl-page-from');
+        const toV = getVal('fm-vl-page-to');
+        if (!fromV && !toV) {
+            config.page_range = 'all';
+        } else {
+            const from = this._parseIntValue(fromV) ?? 1;
+            const to = toV ? (this._parseIntValue(toV) ?? from) : 9999;
+            config.page_range = `${from}-${to}`;
+        }
+        const maxPages = this._parseIntValue(getVal('fm-vl-max-pages'));
+        if (maxPages) config.max_pages = maxPages;
+
+        config.max_pixels = getInt('fm-vl-max-pixels', 4000000);
+
         switch (method) {
-            case 'vl_model': {
-                const fromV = getVal('fm-vl-page-from');
-                const toV = getVal('fm-vl-page-to');
-                if (!fromV && !toV) {
-                    config.page_range = 'all';
-                } else {
-                    const from = this._parseIntValue(fromV) ?? 1;
-                    const to = toV ? (this._parseIntValue(toV) ?? from) : 9999;
-                    config.page_range = `${from}-${to}`;
-                }
-                config.max_pixels = getInt('fm-vl-max-pixels', 4000000);
+            case 'vl_model':
                 break;
-            }
             case 'vl_progressive':
                 config.field_hints = getVal('fm-vl-field-hints');
                 config.batch_size = getInt('fm-vl-batch-size', 2);
-                config.max_pixels = getInt('fm-vl-max-pixels', 4000000);
                 {
                     const tpl = getVal('fm-vl-batch-prompt-template');
                     if (tpl && tpl !== this.VL_DEFAULTS.BATCH_PROMPT_TEMPLATE) {
@@ -1200,7 +1234,6 @@ const RuleConfig = {
                 config.thumb_scale = getFloat('fm-vl-thumb-scale', 0.75);
                 config.key_pages_limit = getInt('fm-vl-key-pages-limit', 6);
                 config.fallback_pages = getInt('fm-vl-fallback-pages', 3);
-                config.max_pixels = getInt('fm-vl-max-pixels', 4000000);
                 {
                     const tpl = getVal('fm-vl-locate-prompt-template');
                     if (tpl && tpl !== this.VL_DEFAULTS.LOCATE_PROMPT_TEMPLATE) {
@@ -2320,8 +2353,12 @@ const RuleConfig = {
 
         if (link) {
             const pages = (link.model_pages || []).join(', ');
-            const range = (link.derived_range || []).join('-');
-            rows += `<div class="debug-result-item-content" style="font-size:12px;">页码联动：${Utils.escapeHtml(link.source_field || '')} 自报 [${Utils.escapeHtml(pages)}] → 取 ${Utils.escapeHtml(range)} 页${link.capped ? '（已按最大页数收敛）' : ''}</div>`;
+            // mode: 'discrete'（VL，只看这几页）/ 'range'（text，连续区间）
+            // 老数据无 mode 键，按 range 容错
+            const taken = link.mode === 'discrete'
+                ? (link.derived_pages || []).join(', ')
+                : (link.derived_range || []).join('-');
+            rows += `<div class="debug-result-item-content" style="font-size:12px;">页码联动：${Utils.escapeHtml(link.source_field || '')} 自报 [${Utils.escapeHtml(pages)}] → 取第 ${Utils.escapeHtml(taken)} 页${link.capped ? '（已按最大页数收敛）' : ''}</div>`;
         }
         if (!rows) rows = '<div class="debug-result-item-content" style="font-size:12px;">无字段引用</div>';
 
