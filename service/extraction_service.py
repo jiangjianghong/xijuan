@@ -34,12 +34,21 @@ from utils.text_utils import normalize_cjk_quotes, salvage_value_reason
 
 # ── JSON 解析辅助 ────────────────────────────────────────────
 
+# 模型自报页码里的范围串，如 "2-4"、"第2页到第4页"、"7~9"
+_PAGE_RANGE_RE = re.compile(
+    r"^第?\s*(\d+)\s*页?\s*[-~–—至到]\s*第?\s*(\d+)\s*页?$"
+)
+# 范围展开的跨度上限，防御 "1-9999" 这类异常输入灌爆页码列表
+_MAX_PAGE_RANGE_SPAN = 50
+
+
 def _normalize_pages(raw: Any) -> List[int]:
     """把模型返回的 pages 归一化为去重升序的正整数列表。
 
     容错：接受 list（元素可为 int / 数字字符串 / "第X页" 等含数字文本）、
     单个 int、逗号分隔字符串。取出所有正整数，非法值跳过，去重后升序。
-    解析不出任何页码时返回空列表。
+    范围串（"2-4"、"第2页到第4页"）展开成逐页；跨度超 _MAX_PAGE_RANGE_SPAN
+    或首尾倒置时不展开，退回「取首个数字」。解析不出任何页码时返回空列表。
     """
     if raw is None:
         return []
@@ -58,12 +67,22 @@ def _normalize_pages(raw: Any) -> List[int]:
         if isinstance(it, bool):
             continue
         if isinstance(it, int):
-            n = it
-        else:
-            m = re.search(r"\d+", str(it))
-            if not m:
+            if it >= 1:
+                pages.append(it)
+            continue
+        s = str(it).strip()
+        # 范围串展开："2-4" -> [2,3,4]。跨度超上限或首尾倒置时不展开，
+        # 退回下面的「取首个数字」老行为。
+        rm = _PAGE_RANGE_RE.match(s)
+        if rm:
+            lo, hi = int(rm.group(1)), int(rm.group(2))
+            if 1 <= lo <= hi and hi - lo + 1 <= _MAX_PAGE_RANGE_SPAN:
+                pages.extend(range(lo, hi + 1))
                 continue
-            n = int(m.group())
+        m = re.search(r"\d+", s)
+        if not m:
+            continue
+        n = int(m.group())
         if n >= 1:
             pages.append(n)
     return sorted(set(pages))
