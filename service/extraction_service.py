@@ -23,7 +23,12 @@ from utils.config import get_config
 from utils.errors import format_exception
 from utils.llm_client import chat_completion, get_embeddings
 from utils.milvus_client import MilvusClient
-from utils.page_mapping import lookup_bboxes, lookup_page_num
+from utils.page_mapping import (
+    lookup_bboxes,
+    lookup_page_num,
+    split_span_by_pages,
+    to_int_page,
+)
 from utils.text_utils import normalize_cjk_quotes, salvage_value_reason
 
 
@@ -747,6 +752,54 @@ def _page_prefix(page_num: Any) -> str:
     """把页码格式化成注入模型的行首标记 '【第X页】\\n'；页码缺失时返回空串。"""
     s = str(page_num if page_num is not None else "").strip()
     return f"【第{s}页】\n" if s else ""
+
+
+def _page_annotated_text(
+    text: str,
+    page_mapping: List[Dict[str, Any]],
+    start_pos: Any,
+    end_pos: Any,
+    fallback_page: Any,
+) -> str:
+    """给一段检索原文加页码标记；跨页时按页边界逐段各标真实单页页码。
+
+    模型只能依据标记判断内容在哪一页，因此跨页命中必须逐页标注——单一的
+    「【第2-4页】+一大段文本」会让模型无从判断分布，自报页码只能靠猜。
+
+    三级降级，任一条件不满足都退回与单一标记完全相同的行为：
+    - page_mapping 为空 / 坐标缺失 → fallback_page 单标记
+    - 文本长度与坐标跨度不吻合（如 chunk_service 给表格 chunk 加了表名前缀，
+      此时 chunk_content != md[start:end]，按偏移切会错位）→ fallback_page 单标记
+    - 切分结果只有一段（未跨页）→ fallback_page 单标记
+
+    Args:
+        text: 该条命中注入 prompt 的原文片段。
+        page_mapping: 文件的块级页码映射。
+        start_pos: 该片段在全文中的起始坐标。
+        end_pos: 该片段在全文中的结束坐标。
+        fallback_page: 降级时使用的页码（通常是 _result_page_num 的结果）。
+
+    Returns:
+        带【第X页】标记的文本；无任何可用页码时返回原文。
+    """
+    if (
+        not page_mapping
+        or not isinstance(start_pos, int)
+        or not isinstance(end_pos, int)
+        or len(text) != end_pos - start_pos
+    ):
+        return _page_prefix(fallback_page) + text
+
+    segments = split_span_by_pages(page_mapping, start_pos, end_pos)
+    if len(segments) <= 1:
+        return _page_prefix(fallback_page) + text
+
+    # 用 "\n" 连接，保证【第X页】标记总在行首（片段自身末尾未必带换行）
+    return "\n".join(
+        _page_prefix(seg["page_num"])
+        + text[seg["start_pos"] - start_pos: seg["end_pos"] - start_pos]
+        for seg in segments
+    )
 
 
 def _result_page_num(r: Dict[str, Any], page_mapping: List[Dict[str, Any]]) -> Any:
