@@ -238,3 +238,70 @@ def lookup_bboxes(
             item["page_size"] = m["page_size"]
         results.append(item)
     return results
+
+
+def to_int_page(raw: Any) -> Optional[int]:
+    """把 page_num 归一成 int；无法解析返回 None。
+
+    生产数据是 int，历史数据与测试 fixture 可能是 str。
+    公开（无下划线前缀）命名：extraction_service 需要跨模块调用它做页码归一。
+    """
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def split_span_by_pages(
+    mapping: List[Dict[str, Any]],
+    start_pos: int,
+    end_pos: int,
+) -> List[Dict[str, Any]]:
+    """把全文坐标区间 [start_pos, end_pos) 按页边界切成逐页子段。
+
+    与 lookup_page_num 返回 "2-4" 这类范围串不同，本函数保留区间内每一页的
+    真实边界，供调用方给每段各标注单页页码（模型才能知道内容的页分布）。
+
+    Args:
+        mapping: build_page_mapping 返回的映射（按 start_pos 升序、page_num 非降）。
+        start_pos: 区间起始位置。
+        end_pos: 区间结束位置（不含）。
+
+    Returns:
+        [{"page_num": int, "start_pos": int, "end_pos": int}]，按位置升序，
+        首尾相接无缝覆盖 [start_pos, end_pos)。mapping 为空或区间为空返回 []。
+    """
+    if not mapping or end_pos <= start_pos:
+        return []
+
+    positions = [m["start_pos"] for m in mapping]
+    idx = bisect_right(positions, start_pos) - 1
+    if idx < 0:
+        idx = 0
+
+    cur_page = to_int_page(mapping[idx]["page_num"])
+    if cur_page is None:
+        return []
+
+    segments: List[Dict[str, Any]] = []
+    seg_start = start_pos
+
+    for m in mapping[idx + 1:]:
+        cut = m["start_pos"]
+        if cut >= end_pos:
+            break
+        if cut <= seg_start:
+            continue
+        page = to_int_page(m["page_num"])
+        if page is None or page == cur_page:
+            continue
+        segments.append({"page_num": cur_page, "start_pos": seg_start, "end_pos": cut})
+        seg_start = cut
+        cur_page = page
+
+    segments.append({"page_num": cur_page, "start_pos": seg_start, "end_pos": end_pos})
+    return segments
