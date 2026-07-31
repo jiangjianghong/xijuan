@@ -252,7 +252,9 @@ async def test_extract_page_field_per_page_injection(monkeypatch):
     assert injected == (
         "【第2页】\nPAGE2_BBB\n---\n【第3页】\nPAGE3_CCC\n---\n【第4页】\nPAGE4_DDD"
     )
-    assert captured["prompt"].count("【第") == 3
+    # 注入文本原样进入 prompt。不数 prompt 里的标记个数——JSON_OUTPUT_INSTRUCTION
+    # 本身也含【第X页】字面量说明，计数会被指令文案干扰。
+    assert injected in captured["prompt"]
 
 
 @pytest.mark.asyncio

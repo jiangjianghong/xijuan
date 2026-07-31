@@ -1,9 +1,55 @@
-MinerU 空结果被静默当成解析成功 — mineru_client.py:86(results 为空即 return {"md_content":"",...}) 扫描版 PDF(未开 OCR)、MinerU 200 返业务错误等,解析实际失败却被标记成功,文件一路跑到 complete,内容为空、0 表格/分块/向量、抽取全空,用户看到"处理完成"却无任何数据,也无 *_failed 可排查。→ 空内容时抛异常或置 parsing_failed。
+# ============ P0: 正确性问题 ============
 
-同步调用阻塞整个 asyncio 事件循环(两处,吞吐杀手) - Milvus 检索:search_service.py:44 在 async 协程里跑同步 gRPC,且每次请求重建连接 + load() - VL 渲染:vl_service/model.py:49、locate.py:63/147 的 fitz 光栅化 + PIL 编码(CPU 密集持 GIL)直接跑在事件循环里 单次调用期间所有并发请求(含前端高频轮询)全部冻结,global_max_concurrency=8 形同虚设。→ 用 asyncio.to_thread 把阻塞调用移出事件循环。
+# FIXME(xihong): MinerU 空结果被静默当成解析成功
+# 位置: mineru_client.py:86 — results 为空时直接 return {"md_content": "", ...}
+# 场景: 扫描版PDF(未开OCR)、MinerU返回200但业务报错等情况下,
+#       解析实际失败却被标记成功,任务一路跑到complete,
+#       内容为空、0表格/分块/向量,抽取结果全空。
+# 影响: 用户看到"处理完成"但无任何数据,且无 *_failed 记录可排查。
+# 方案: 空内容时应抛异常或显式置为 parsing_failed。
 
-优化点:前端批量上传无并发控制 + 每个文件各刷一次列表、各弹一个 Toast
+# FIXME(xihong): build_page_mapping 的 LIS 清洗不检测跳变,孤立假锚污染页码
+# 位置: utils/page_mapping.py:144-146 — _longest_nondecreasing_keep 只保证
+#       page_num 非降,孤立的大跳变假唯一锚会被保留。
+# 现象: 生产库 24 条 chunk 声称 page_num=146-437(跨292页),实际字符跨度仅 378 字。
+# 影响: 污染 chunk/表格页码、bbox 高亮、前端定位与模型自报页码(约 0.1%)。
+#       extraction 侧已在 split_span_by_pages 做局部防御(_MIN_CHARS_PER_PAGE),
+#       但根因未除,其余下游仍受影响。
+# 方案: LIS 之后增加跳变剔除;存量文件走 POST /file/{id}/recompute_page_mapping 重算。
 
-优化点:文本/表格 LLM 与 embedding 的 usage token 被丢弃 → 无成本统计(LLM 是核心成本)
 
-优化点:启动依赖自检模块 startup_check 从未被调用(死代码),文档宣称的探活表根本不打印
+# ============ P0: 吞吐问题 ============
+
+# FIXME(xihong): 同步调用阻塞整个 asyncio 事件循环(两处,吞吐杀手)
+# 位置1: search_service.py:44 — async协程里跑同步gRPC(Milvus检索),
+#        且每次请求重建连接 + load()
+# 位置2: vl_service/model.py:49, locate.py:63/147 — fitz光栅化 + PIL编码
+#        (CPU密集持GIL)直接跑在事件循环里
+# 影响: 单次调用期间所有并发请求(含前端高频轮询)全部冻结,
+#       global_max_concurrency=8 形同虚设。
+# 方案: 用 asyncio.to_thread 把阻塞调用移出事件循环;
+#       Milvus 连接应复用而非每次重建。
+
+
+# ============ P1: 成本可观测性缺失 ============
+
+# FIXME(xihong): 文本/表格 LLM 与 embedding 的 usage token 被丢弃
+# 影响: 无成本统计,而 LLM 调用是核心成本项,无法追踪/预警/分摊。
+# 方案: 在 LLM/embedding 调用返回处采集 usage,落库或至少打日志聚合。
+
+
+# ============ P2: 前端体验 ============
+
+# FIXME(xihong): 前端批量上传无并发控制 + 每文件各刷一次列表、各弹一个Toast
+# 影响: 批量上传时列表频繁重渲染、Toast刷屏,体验差,
+#       且无并发限制可能打满后端请求。
+# 方案: 上传加并发队列(如3~5并发); 批量完成后统一刷新一次列表、
+#       合并为一个汇总Toast。
+
+
+# ============ P2: 死代码 ============
+
+# FIXME(xihong): 启动依赖自检模块 startup_check 从未被调用
+# 位置: startup_check 模块
+# 影响: 文档宣称的探活表根本不打印,实际未生效,存在文档与代码脱节。
+# 方案: 要么在启动流程里接入调用,要么删除该模块并更新文档。
