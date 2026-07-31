@@ -524,6 +524,10 @@ def _remap_advanced_field_config(src_field, mapping: dict) -> Tuple[dict, List[s
         for key in ("field_hints", "batch_prompt_template", "locate_prompt_template"):
             if isinstance(vc.get(key), str):
                 vc[key] = _remap(vc[key])
+        if isinstance(vc.get("page_source_field"), str):
+            vc["page_source_field"] = mapping.get(
+                vc["page_source_field"], vc["page_source_field"]
+            )
 
     new_depend = [mapping.get(d, d) for d in (getattr(src_field, "depend_fields", None) or [])]
     return (

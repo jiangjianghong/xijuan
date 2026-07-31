@@ -355,3 +355,48 @@ async def test_assign_nonexistent_project_404(client: AsyncClient):
         assert r.status_code == 404
     finally:
         await client.delete("/doctype/pj_x?force=true")
+
+
+def test_remap_advanced_field_config_remaps_vl_page_source():
+    """复制/导入进阶 VL 字段时，vl_config.page_source_field 按新 field_id 重映射。"""
+    from types import SimpleNamespace
+
+    from blue_print.doctype_router import _remap_advanced_field_config
+
+    src = SimpleNamespace(
+        source_type="vl", search_type=None, search_config=None,
+        table_name_pattern=None, table_match_keywords=None,
+        table_extract_prompt=None, table_system_prompt=None,
+        text_extract_prompt=None, text_system_prompt=None,
+        vl_extract_prompt="提取 <field_result>a</field_result>",
+        vl_system_prompt=None,
+        vl_config={"page_source_field": "a", "field_hints": "hint <field_result>a</field_result>"},
+    )
+    attrs, missing = _remap_advanced_field_config(src, {"a": "a_0002"})
+
+    assert attrs["vl_config"]["page_source_field"] == "a_0002"
+    assert attrs["vl_config"]["field_hints"] == "hint <field_result>a_0002</field_result>"
+    assert attrs["vl_extract_prompt"] == "提取 <field_result>a_0002</field_result>"
+    assert missing == []
+    # 源对象不被污染
+    assert src.vl_config["page_source_field"] == "a"
+
+
+def test_remap_advanced_field_config_reports_missing_vl_page_source():
+    """来源字段没被一起复制 → 进 missing_dependencies，不静默留悬空引用。"""
+    from types import SimpleNamespace
+
+    from blue_print.doctype_router import _remap_advanced_field_config
+
+    src = SimpleNamespace(
+        source_type="vl", search_type=None, search_config=None,
+        table_name_pattern=None, table_match_keywords=None,
+        table_extract_prompt=None, table_system_prompt=None,
+        text_extract_prompt=None, text_system_prompt=None,
+        vl_extract_prompt="x", vl_system_prompt=None,
+        vl_config={"page_source_field": "gone"},
+    )
+    attrs, missing = _remap_advanced_field_config(src, {"other": "other_0002"})
+
+    assert missing == ["gone"]
+    assert attrs["vl_config"]["page_source_field"] == "gone"   # 原样保留待上报
