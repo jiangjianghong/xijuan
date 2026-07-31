@@ -43,3 +43,15 @@ def test_missing_coords_falls_back_to_single_marker():
 def test_no_page_info_returns_bare_text():
     """无 mapping 且无兜底页码时返回裸原文，保持现有 rule 检索行为。"""
     assert _page_annotated_text("工期为90天", [], None, None, "") == "工期为90天"
+
+
+def test_debug_stream_join_matches_official_extraction():
+    """调试流与正式抽取用同一个标注函数，产出必须逐字相同。"""
+    import inspect
+
+    from service import extraction_service
+
+    src = inspect.getsource(extraction_service.test_field_extraction_stream)
+    # 调试流不得再用裸 _page_prefix 拼接文本段，必须走 _page_annotated_text
+    assert "_page_annotated_text(" in src
+    assert "_page_prefix(_result_page_num" not in src

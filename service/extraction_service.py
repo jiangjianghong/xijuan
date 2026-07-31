@@ -2576,14 +2576,20 @@ async def test_field_extraction_stream(
                             results_by_keyword[kw] = []
                         results_by_keyword[kw].append(r)
 
-                # 每段带【第X页】标记，与实际注入 prompt 的文本一致
+                # 每段带【第X页】标记（跨页逐页标注），与实际注入 prompt 的文本一致
                 _seg_key = {"context": "context", "section": "content",
                             "rule": "extracted_text", "chunk_db": "chunk_content",
                             "vector_db": "chunk_content"}.get(search_type)
                 if _seg_key:
                     for keyword, items in results_by_keyword.items():
                         results_by_label[keyword] = "\n---\n".join(
-                            _page_prefix(_result_page_num(r, page_mapping)) + r.get(_seg_key, "")
+                            _page_annotated_text(
+                                r.get(_seg_key, ""),
+                                page_mapping,
+                                r.get("start_pos"),
+                                r.get("end_pos"),
+                                _result_page_num(r, page_mapping),
+                            )
                             for r in items
                         )
 
