@@ -67,3 +67,44 @@ def test_str_page_num_is_normalized_to_int():
     ]
     segs = split_span_by_pages(mapping, 0, 150)
     assert [s["page_num"] for s in segs] == [1, 2]
+
+
+def test_fake_anchor_with_impossible_jump_is_dropped():
+    """378 字不可能跨 291 页——该切点必为假锚，整段沿用可信页码。"""
+    mapping = [
+        {"start_pos": 0, "page_num": 146},
+        {"start_pos": 200, "page_num": 437},
+    ]
+    segs = split_span_by_pages(mapping, 0, 378)
+    assert segs == [{"page_num": 146, "start_pos": 0, "end_pos": 378}]
+
+
+def test_consecutive_page_turn_always_trusted():
+    """连续翻页（跳变 1 页）永远信任，即使该页只剩 20 字。"""
+    mapping = [
+        {"start_pos": 0, "page_num": 1},
+        {"start_pos": 20, "page_num": 2},
+    ]
+    segs = split_span_by_pages(mapping, 0, 100)
+    assert [s["page_num"] for s in segs] == [1, 2]
+
+
+def test_real_page_skip_with_enough_chars_is_trusted():
+    """跳 2 页但中间有充足字符（如整页图片）→ 采信该切点。"""
+    mapping = [
+        {"start_pos": 0, "page_num": 1},
+        {"start_pos": 300, "page_num": 3},
+    ]
+    segs = split_span_by_pages(mapping, 0, 500)
+    assert [s["page_num"] for s in segs] == [1, 3]
+
+
+def test_fake_anchor_rejection_keeps_later_anchors_consistent():
+    """假锚被拒后基准不推进，后续锚点被同一判据持续拒绝，整段页码保持一致。"""
+    mapping = [
+        {"start_pos": 0, "page_num": 146},
+        {"start_pos": 100, "page_num": 437},
+        {"start_pos": 200, "page_num": 438},
+    ]
+    segs = split_span_by_pages(mapping, 0, 378)
+    assert segs == [{"page_num": 146, "start_pos": 0, "end_pos": 378}]

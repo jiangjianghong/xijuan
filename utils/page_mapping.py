@@ -240,6 +240,11 @@ def lookup_bboxes(
     return results
 
 
+# 假锚防御：一页 markdown 至少占的字符数（保守下界，实测每页 400~500 字）。
+# 页码跳变 >= 2 页时，若被跳过的页在 md 里连这个下界都装不下，判定为假唯一锚。
+_MIN_CHARS_PER_PAGE = 100
+
+
 def to_int_page(raw: Any) -> Optional[int]:
     """把 page_num 归一成 int；无法解析返回 None。
 
@@ -274,6 +279,9 @@ def split_span_by_pages(
     Returns:
         [{"page_num": int, "start_pos": int, "end_pos": int}]，按位置升序，
         首尾相接无缝覆盖 [start_pos, end_pos)。mapping 为空或区间为空返回 []。
+
+    页码跳变 >= 2 页且字符数装不下被跳过的页时，判定为 build_page_mapping 遗留的
+    假唯一锚并丢弃该切点（详见 _MIN_CHARS_PER_PAGE）。
     """
     if not mapping or end_pos <= start_pos:
         return []
@@ -298,6 +306,13 @@ def split_span_by_pages(
             continue
         page = to_int_page(m["page_num"])
         if page is None or page == cur_page:
+            continue
+        # 假锚防御：mapping 从 cur_page 直接跳到 page，被跳过的 (jump-1) 页内容
+        # 只可能落在 [seg_start, cut) 里；装不下就说明 page 是假唯一锚。
+        # 拒绝时 seg_start / cur_page 都不推进，后续锚点会被同一判据持续拒绝，
+        # 整段因而保持一致的可信页码。
+        jump = page - cur_page
+        if jump >= 2 and (cut - seg_start) < (jump - 1) * _MIN_CHARS_PER_PAGE:
             continue
         segments.append({"page_num": cur_page, "start_pos": seg_start, "end_pos": cut})
         seg_start = cut
