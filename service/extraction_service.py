@@ -278,6 +278,118 @@ def _attach_model_pages(source_refs: Optional[Dict], pages: List[int]) -> Option
     return source_refs
 
 
+# ── 页码归一：source_pages 的计算基础 ────────────────────────
+
+# 区间串展开上限：ref.page_num 是 "1-200" 时只取前 5 页。
+# 与 _MAX_PAGE_RANGE_SPAN（模型自报页码防胡说，超限退回起始页）不是一回事：
+# 这里超限取「前 N 页」而非退回首页——page_range 是用户明确配置的，
+# 起始页之后的页确实被读了，只是不必把几百个页码全列进 source_pages。
+_MAX_SOURCE_PAGE_SPAN = 5
+
+
+def parse_page_num_str(raw: Any) -> List[int]:
+    """把 ref.page_num 归一成去重升序的 int 列表。
+
+    生产数据里 page_num 有两种类型，必须都吃：
+    - int：page 检索走 page_mapping 主路径时的逐页 ref
+    - str：lookup_page_num 反查结果（可能是 "3-5" 区间）、page_range 原串
+
+    "12" / 12 -> [12]；"12-15" -> [12,13,14,15]；"1,3,5" -> [1,3,5]；
+    "1-200" -> [1,2,3,4,5]（超 _MAX_SOURCE_PAGE_SPAN 取前 5）；
+    "" / None / "all" / 首尾倒置 -> []。
+    """
+    if raw is None or isinstance(raw, bool):
+        return []
+    if isinstance(raw, int):
+        return [raw] if raw >= 1 else []
+    if not isinstance(raw, str):
+        return []
+
+    pages: List[int] = []
+    for part in raw.replace("，", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a_raw, _, b_raw = part.partition("-")
+            a, b = to_int_page(a_raw), to_int_page(b_raw)
+            if a is None or b is None or a < 1 or b < a:
+                continue
+            pages.extend(range(a, min(b, a + _MAX_SOURCE_PAGE_SPAN - 1) + 1))
+        else:
+            n = to_int_page(part)
+            if n is not None and n >= 1:
+                pages.append(n)
+    return sorted(set(pages))
+
+
+def collect_ref_pages(source_refs: Optional[Dict]) -> List[int]:
+    """从 source_refs 算出「程序命中页」，去重升序 int 列表。
+
+    每条 ref 按精度降序取第一个可用来源（取到就不再看后面的）：
+    1. ref["bboxes"][i]["page_num"] —— 已是 int、恒单页，最精确
+    2. ref["page_nums"]             —— 跨页命中时逐页算好的 int 数组
+    3. ref["page_num"]              —— int 或 str，str 走 parse_page_num_str
+
+    vl 类另读 _vl.key_pages（已是 int 数组；vl_progressive 为 null → 无页码）。
+    元数据键（_NON_REF_KEYS）一律跳过。异常形态一律容错返回 []。
+    """
+    if not isinstance(source_refs, dict):
+        return []
+
+    pages: List[int] = []
+
+    vl = source_refs.get("_vl")
+    if isinstance(vl, dict):
+        for p in vl.get("key_pages") or []:
+            n = to_int_page(p)
+            if n is not None and n >= 1:
+                pages.append(n)
+
+    for label, refs in source_refs.items():
+        if label in _NON_REF_KEYS or not isinstance(refs, list):
+            continue
+        for ref in refs:
+            if not isinstance(ref, dict):
+                continue
+            bboxes = ref.get("bboxes")
+            if isinstance(bboxes, list) and bboxes:
+                for b in bboxes:
+                    if not isinstance(b, dict):
+                        continue
+                    n = to_int_page(b.get("page_num"))
+                    if n is not None and n >= 1:
+                        pages.append(n)
+                continue
+            page_nums = ref.get("page_nums")
+            if isinstance(page_nums, list) and page_nums:
+                for p in page_nums:
+                    n = to_int_page(p)
+                    if n is not None and n >= 1:
+                        pages.append(n)
+                continue
+            pages.extend(parse_page_num_str(ref.get("page_num")))
+
+    return sorted(set(pages))
+
+
+def derive_source_pages(
+    model_pages: Optional[List[int]], source_refs: Optional[Dict]
+) -> List[int]:
+    """算出「可用页码」：模型自报页优先，没有则回落程序命中页。
+
+    这是对外 source_pages 字段的唯一来源。恒返回 int 列表；两者皆无时为
+    空列表（键仍然存在，由调用方保证）。
+    """
+    if model_pages:
+        normalized = {
+            n for n in (to_int_page(p) for p in model_pages) if n is not None and n >= 1
+        }
+        if normalized:
+            return sorted(normalized)
+    return collect_ref_pages(source_refs)
+
+
 # ── 进阶字段：字段间引用解析（<field_result>字段ID</field_result>） ──
 
 FIELD_REF_PATTERN = re.compile(r"<field_result>(.+?)</field_result>")
