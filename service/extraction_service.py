@@ -2845,7 +2845,8 @@ async def test_field_extraction_stream(
             value = "\n---\n".join(v for v in results_by_label.values() if v)
             yield {
                 "event": "result",
-                "data": {"extracted_value": value, "reason": NO_LLM_REASON},
+                # pages 恒带上（哪怕为空），与 LLM 分支的 result 事件形态保持一致
+                "data": {"extracted_value": value, "reason": NO_LLM_REASON, "pages": []},
             }
             yield {"event": "done", "data": {}}
             return
