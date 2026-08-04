@@ -43,7 +43,13 @@ from model.tables import (
 )
 from service.file_context_service import query_file_context
 from service.pipeline_service import run_from_stage, run_from_stage_stream, run_pipeline, run_pipeline_stream
-from service.extraction_service import parse_sections, split_md_by_pages
+from service.extraction_service import (
+    derive_source_pages,
+    parse_sections,
+    read_model_pages,
+    split_md_by_pages,
+    strip_legacy_model_pages,
+)
 from utils.config import get_config
 from utils.file_utils import generate_file_id
 from utils.milvus_client import get_milvus_client
@@ -703,19 +709,22 @@ async def get_extraction_results(file_id: str, db: AsyncSession = Depends(get_db
     result = await db.execute(stmt)
     rows = result.all()
 
-    return ResponseWrapper(
-        data=[
+    items = []
+    for r, field_name in rows:
+        model_pages = read_model_pages(r)
+        items.append(
             ExtractionResultItem(
                 file_id=r.file_id,
                 field_id=r.field_id,
                 field_name=field_name,
                 extracted_value=r.extracted_value,
                 reason=r.reason,
-                source_refs=r.source_refs,
+                pages=model_pages,
+                source_pages=derive_source_pages(model_pages, r.source_refs),
+                source_refs=strip_legacy_model_pages(r.source_refs),
             ).model_dump()
-            for r, field_name in rows
-        ]
-    )
+        )
+    return ResponseWrapper(data=items)
 
 
 @router.get("/{file_id}/analysis", response_model=ResponseWrapper)
