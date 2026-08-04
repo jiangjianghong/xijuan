@@ -620,7 +620,7 @@ async def test_page_link_end_to_end(seeded_page_file, monkeypatch):
         row = await s.get(ExtractionResult, (PAGE_FILE, "pg_adv"))
         assert row is not None and row.extracted_value == "联动值"
         assert row.source_refs["_page_link"] == {
-            "source_field": "pg_basic", "model_pages": [2, 4],
+            "source_field": "pg_basic", "source_pages": [2, 4], "pages_from": "model",
             "mode": "range", "derived_range": [2, 3], "capped": True,
         }
 

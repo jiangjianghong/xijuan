@@ -565,13 +565,21 @@ def _clone_field_transient(field: "ExtractionField", **overrides: Any) -> "Extra
 def resolve_advanced_field(
     field: "ExtractionField",
     field_values: Dict[str, str],
-    field_model_pages: Dict[str, Optional[List[int]]],
+    field_source_pages: Dict[str, Optional[List[int]]],
+    pages_from: Optional[Dict[str, str]] = None,
 ) -> Tuple["ExtractionField", Dict[str, Any]]:
     """把进阶字段解析为「等价普通字段」：占位符→值、page_source_field→page_range。
 
+    Args:
+        field_values: {普通字段 field_id: 抽取值}。
+        field_source_pages: {普通字段 field_id: 可用页码}。模型自报优先、程序
+            命中页兜底，由调用方经 derive_source_pages 算好。
+        pages_from: {field_id: "model" | "refs"}，仅用于 provenance 记录页码来源，
+            不影响联动结果；不传时一律记为 "refs"。
+
     Returns:
         (resolved_field, provenance)。provenance 含 _resolved_refs（各引用实际填入值）
-        与（page 联动时）_page_link。page 来源无模型页码时抛 ValueError。
+        与（page 联动时）_page_link。来源字段无任何可用页码时抛 ValueError。
     """
     resolved_refs: Dict[str, str] = {}
     provenance: Dict[str, Any] = {}
@@ -591,16 +599,20 @@ def resolve_advanced_field(
                 sc[key] = _res(val)
             elif isinstance(val, list):
                 sc[key] = _resolve_str_list(val, _res)
-        # Feature B：page 联动
+        # Feature B：page 联动。取来源字段的**可用页码**（source_pages：模型自报
+        # 优先、程序命中页兜底），不再要求模型必须自报——模型不返回 pages 是常态，
+        # 老逻辑会让这类进阶字段永久失败。
         if field.search_type == "page" and sc.get("page_source_field"):
             src = sc["page_source_field"]
-            pages = (field_model_pages or {}).get(src) or []
+            pages = (field_source_pages or {}).get(src) or []
             if not pages:
-                raise ValueError(f"来源字段 {src} 未产出模型自报页码，无法按页码联动取文")
+                raise ValueError(f"来源字段 {src} 无可用页码，无法按页码联动取文")
             start, end, capped = derive_page_range_from_model_pages(pages, sc.get("max_pages"))
             sc["page_range"] = f"{start}-{end}"
             provenance["_page_link"] = {
-                "source_field": src, "model_pages": pages,
+                "source_field": src,
+                "source_pages": pages,
+                "pages_from": (pages_from or {}).get(src, "refs"),
                 "mode": "range",
                 "derived_range": [start, end], "capped": capped,
             }
@@ -616,19 +628,21 @@ def resolve_advanced_field(
         for key in ("field_hints", "batch_prompt_template", "locate_prompt_template"):
             if isinstance(vc.get(key), str):
                 vc[key] = _res(vc[key])
-        # VL 页码联动：取来源字段模型自报页码派生**离散**目标页，改写成
+        # VL 页码联动：取来源字段可用页码派生**离散**目标页，改写成
         # page_range 逗号串复用现有通路（vl_service 三个方法无需感知联动）
         if field.source_type == "vl" and vc.get("page_source_field"):
             src = vc["page_source_field"]
-            pages = (field_model_pages or {}).get(src) or []
+            pages = (field_source_pages or {}).get(src) or []
             if not pages:
                 raise ValueError(
-                    f"来源字段 {src} 未产出模型自报页码，无法按页码联动 VL 抽取"
+                    f"来源字段 {src} 无可用页码，无法按页码联动 VL 抽取"
                 )
             picked, capped = pick_model_pages(pages, vc.get("max_pages"))
             vc["page_range"] = ",".join(str(p) for p in picked)
             provenance["_page_link"] = {
-                "source_field": src, "model_pages": pages,
+                "source_field": src,
+                "source_pages": pages,
+                "pages_from": (pages_from or {}).get(src, "refs"),
                 "mode": "discrete", "derived_pages": picked, "capped": capped,
             }
 
@@ -664,11 +678,14 @@ def resolve_advanced_field(
 
 async def load_basic_field_results(
     file_id: str, session: AsyncSession
-) -> Tuple[Dict[str, str], Dict[str, Optional[List[int]]]]:
+) -> Tuple[Dict[str, str], Dict[str, Optional[List[int]]], Dict[str, str]]:
     """载入某文件**已落库**的普通字段提取结果，供调试接口解析进阶字段引用。
 
     Returns:
-        (field_values, field_model_pages)，键为普通字段 field_id。
+        (field_values, field_source_pages, pages_from)，键均为普通字段 field_id。
+        field_source_pages 是兜底后的可用页码（模型自报优先、程序命中页兜底）；
+        pages_from 标记该页码来自模型自报（"model"）还是程序命中（"refs"），
+        仅供 provenance 展示。
     """
     frow = (
         await session.execute(select(File).where(File.file_id == file_id))
@@ -687,13 +704,14 @@ async def load_basic_field_results(
     ).all()
 
     field_values: Dict[str, str] = {}
-    field_model_pages: Dict[str, Optional[List[int]]] = {}
+    field_source_pages: Dict[str, Optional[List[int]]] = {}
+    pages_from: Dict[str, str] = {}
     for ef, er in rows:
         field_values[ef.field_id] = er.extracted_value
-        field_model_pages[ef.field_id] = (
-            (er.source_refs or {}).get("_model_pages") if er.source_refs else None
-        )
-    return field_values, field_model_pages
+        model_pages = read_model_pages(er)
+        field_source_pages[ef.field_id] = derive_source_pages(model_pages, er.source_refs) or None
+        pages_from[ef.field_id] = "model" if model_pages else "refs"
+    return field_values, field_source_pages, pages_from
 
 
 async def resolve_advanced_field_from_db(
@@ -703,8 +721,8 @@ async def resolve_advanced_field_from_db(
 
     正式抽取走 `run_extraction` 的内存映射，不用这个（那里普通字段刚跑完，结果更新）。
     """
-    field_values, field_model_pages = await load_basic_field_results(file_id, session)
-    return resolve_advanced_field(field, field_values, field_model_pages)
+    field_values, field_source_pages, pages_from = await load_basic_field_results(file_id, session)
+    return resolve_advanced_field(field, field_values, field_source_pages, pages_from)
 
 
 # ── 页码区间解析（page 检索方式） ─────────────────────────────
@@ -2183,6 +2201,7 @@ async def _extract_field_result(
     session: AsyncSession,
     field_values: Dict[str, str],
     field_source_pages: Dict[str, Optional[List[int]]],
+    pages_from: Optional[Dict[str, str]] = None,
 ) -> Tuple[str, str, Optional[Dict], List[int]]:
     """按字段层级分派抽取。进阶字段先解析引用/页码，再走现有抽取核心。
 
@@ -2195,7 +2214,9 @@ async def _extract_field_result(
         vl 类与 use_llm=0 恒为 []。
     """
     if getattr(field, "is_advanced", 0):
-        run_field, provenance = resolve_advanced_field(field, field_values, field_source_pages)
+        run_field, provenance = resolve_advanced_field(
+            field, field_values, field_source_pages, pages_from
+        )
     else:
         run_field, provenance = field, {}
 
@@ -2274,11 +2295,12 @@ async def run_extraction(
     # 阶段间共享：普通字段的值与可用页码，供进阶字段引用解析
     field_values: Dict[str, str] = {}
     field_source_pages: Dict[str, Optional[List[int]]] = {}
+    field_pages_from: Dict[str, str] = {}
 
     for idx, field in enumerate(ordered_fields):
         try:
             extracted_value, reason, source_refs, model_pages = await _extract_field_result(
-                file_id, field, session, field_values, field_source_pages
+                file_id, field, session, field_values, field_source_pages, field_pages_from
             )
 
             _ensure_valid_extraction_result(field, extracted_value, reason, source_refs)
@@ -2321,6 +2343,7 @@ async def run_extraction(
             if not getattr(field, "is_advanced", 0):
                 field_values[field.field_id] = extracted_value
                 field_source_pages[field.field_id] = source_pages or None
+                field_pages_from[field.field_id] = "model" if model_pages else "refs"
 
             succeeded += 1
             item = {
@@ -2451,11 +2474,12 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     # 阶段间共享：普通字段的值与可用页码，供进阶字段引用解析
     field_values: Dict[str, str] = {}
     field_source_pages: Dict[str, Optional[List[int]]] = {}
+    field_pages_from: Dict[str, str] = {}
 
     for idx, field in enumerate(ordered_fields):
         try:
             extracted_value, reason, source_refs, model_pages = await _extract_field_result(
-                file_id, field, session, field_values, field_source_pages
+                file_id, field, session, field_values, field_source_pages, field_pages_from
             )
 
             _ensure_valid_extraction_result(field, extracted_value, reason, source_refs)
@@ -2497,6 +2521,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
             if not getattr(field, "is_advanced", 0):
                 field_values[field.field_id] = extracted_value
                 field_source_pages[field.field_id] = source_pages or None
+                field_pages_from[field.field_id] = "model" if model_pages else "refs"
 
             # yield 提取结果
             yield {
