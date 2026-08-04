@@ -375,6 +375,38 @@ def derive_source_pages(
     return collect_ref_pages(source_refs)
 
 
+def read_model_pages(row: "ExtractionResult") -> List[int]:
+    """从 extraction_result 行取模型自报页码，兼容存量数据。
+
+    新数据在 model_pages 列；本次改动前落库的老数据在
+    source_refs["_model_pages"] 里，列为 NULL——两处都要读，否则老文件的
+    模型页码会凭空消失。
+    """
+    if row.model_pages:
+        return [
+            n for n in (to_int_page(p) for p in row.model_pages)
+            if n is not None and n >= 1
+        ]
+    refs = row.source_refs
+    if isinstance(refs, dict):
+        return [
+            n for n in (to_int_page(p) for p in (refs.get("_model_pages") or []))
+            if n is not None and n >= 1
+        ]
+    return []
+
+
+def strip_legacy_model_pages(source_refs: Optional[Dict]) -> Optional[Dict]:
+    """对外输出前剔除存量 source_refs 里的 _model_pages。
+
+    该值已提升到顶层 pages 字段，留在 source_refs 里会让消费方看到同一份
+    数据的两个副本。新数据本就没有这个键，本函数只对老数据生效。
+    """
+    if not isinstance(source_refs, dict) or "_model_pages" not in source_refs:
+        return source_refs
+    return {k: v for k, v in source_refs.items() if k != "_model_pages"}
+
+
 # ── 进阶字段：字段间引用解析（<field_result>字段ID</field_result>） ──
 
 FIELD_REF_PATTERN = re.compile(r"<field_result>(.+?)</field_result>")
@@ -2265,6 +2297,7 @@ async def run_extraction(
                 existing.extracted_value = extracted_value
                 existing.reason = reason
                 existing.source_refs = source_refs
+                existing.model_pages = model_pages or None
             else:
                 extraction_result = ExtractionResult(
                     file_id=file_id,
@@ -2272,16 +2305,22 @@ async def run_extraction(
                     extracted_value=extracted_value,
                     reason=reason,
                     source_refs=source_refs,
+                    model_pages=model_pages or None,
                 )
                 session.add(extraction_result)
 
             await session.commit()
             logger.info("字段提取成功: field_id={}, value={}", field.field_id, extracted_value[:100] if extracted_value else "")
 
-            # 仅普通字段进入引用映射（进阶字段不可被引用）
+            # 对外页码：pages = 模型自报（可能空）；source_pages = 兜底后必定存在。
+            # 排序后再算，让 source_pages 与最终 source_refs 顺序一致。
+            source_pages = derive_source_pages(model_pages, source_refs)
+
+            # 仅普通字段进入引用映射（进阶字段不可被引用）。存 source_pages 而非
+            # 纯模型页——进阶字段联动据此兜底，不再因模型没自报页码而失败。
             if not getattr(field, "is_advanced", 0):
                 field_values[field.field_id] = extracted_value
-                field_source_pages[field.field_id] = model_pages or None
+                field_source_pages[field.field_id] = source_pages or None
 
             succeeded += 1
             item = {
@@ -2289,6 +2328,8 @@ async def run_extraction(
                 "field_name": field.field_name,
                 "value": extracted_value,
                 "reason": reason,
+                "pages": model_pages,
+                "source_pages": source_pages,
                 "source_refs": source_refs,
                 "success": True,
                 "index": idx + 1,
@@ -2315,6 +2356,7 @@ async def run_extraction(
                 existing.extracted_value = ""
                 existing.reason = failure_reason
                 existing.source_refs = None
+                existing.model_pages = None
             else:
                 extraction_result = ExtractionResult(
                     file_id=file_id,
@@ -2322,6 +2364,7 @@ async def run_extraction(
                     extracted_value="",
                     reason=failure_reason,
                     source_refs=None,
+                    model_pages=None,
                 )
                 session.add(extraction_result)
 
@@ -2333,6 +2376,8 @@ async def run_extraction(
                 "field_name": field.field_name,
                 "value": "",
                 "reason": failure_reason,
+                "pages": [],
+                "source_pages": [],
                 "source_refs": None,
                 "success": False,
                 "index": idx + 1,
@@ -2429,6 +2474,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
                 existing.extracted_value = extracted_value
                 existing.reason = reason
                 existing.source_refs = source_refs
+                existing.model_pages = model_pages or None
             else:
                 extraction_result = ExtractionResult(
                     file_id=file_id,
@@ -2436,16 +2482,21 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
                     extracted_value=extracted_value,
                     reason=reason,
                     source_refs=source_refs,
+                    model_pages=model_pages or None,
                 )
                 session.add(extraction_result)
 
             await session.commit()
             logger.info("字段提取成功: field_id={}, value={}", field.field_id, extracted_value[:100] if extracted_value else "")
 
-            # 仅普通字段进入引用映射（进阶字段不可被引用）
+            # 对外页码：pages = 模型自报（可能空）；source_pages = 兜底后必定存在
+            source_pages = derive_source_pages(model_pages, source_refs)
+
+            # 仅普通字段进入引用映射（进阶字段不可被引用）。存 source_pages 而非
+            # 纯模型页——进阶字段联动据此兜底，不再因模型没自报页码而失败。
             if not getattr(field, "is_advanced", 0):
                 field_values[field.field_id] = extracted_value
-                field_source_pages[field.field_id] = model_pages or None
+                field_source_pages[field.field_id] = source_pages or None
 
             # yield 提取结果
             yield {
@@ -2453,6 +2504,8 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
                 "field_name": field.field_name,
                 "extracted_value": extracted_value,
                 "reason": reason,
+                "pages": model_pages,
+                "source_pages": source_pages,
                 "source_refs": source_refs,
                 "success": True,
                 "current": idx + 1,
@@ -2477,6 +2530,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
                 existing.extracted_value = ""
                 existing.reason = failure_reason
                 existing.source_refs = None
+                existing.model_pages = None
             else:
                 extraction_result = ExtractionResult(
                     file_id=file_id,
@@ -2484,6 +2538,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
                     extracted_value="",
                     reason=failure_reason,
                     source_refs=None,
+                    model_pages=None,
                 )
                 session.add(extraction_result)
 
@@ -2495,6 +2550,8 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
                 "field_name": field.field_name,
                 "extracted_value": "",
                 "reason": failure_reason,
+                "pages": [],
+                "source_pages": [],
                 "source_refs": None,
                 "success": False,
                 "current": idx + 1,
