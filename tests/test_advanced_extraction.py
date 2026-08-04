@@ -201,9 +201,39 @@ def test_resolve_advanced_page_link():
     resolved, prov = resolve_advanced_field(field, {}, {"src": [3, 7]})
     assert resolved.search_config["page_range"] == "3-5"
     assert prov["_page_link"] == {
-        "source_field": "src", "model_pages": [3, 7],
+        "source_field": "src", "source_pages": [3, 7], "pages_from": "refs",
         "mode": "range", "derived_range": [3, 5], "capped": True,
     }
+
+
+def test_resolve_advanced_page_link_records_model_provenance():
+    """传入 pages_from 时如实记录页码来源，便于溯源区分模型自报与命中页兜底。"""
+    field = ExtractionField(
+        field_id="advp3", type_id="default", field_name="页联动", source_type="text",
+        is_advanced=1, search_type="page",
+        search_config={"page_source_field": "src", "max_length": 30000},
+        text_extract_prompt="<search_result>page_content</search_result>",
+    )
+    _, prov = resolve_advanced_field(field, {}, {"src": [4, 6]}, {"src": "model"})
+    assert prov["_page_link"]["pages_from"] == "model"
+    assert prov["_page_link"]["source_pages"] == [4, 6]
+
+
+def test_resolve_advanced_page_link_falls_back_to_ref_pages():
+    """来源字段没有模型自报页码、只有程序命中页时也能联动，不再抛错。
+
+    调用方（run_extraction）传进来的已经是 derive_source_pages 兜底后的结果，
+    这里验证 resolve_advanced_field 一视同仁地消费它。
+    """
+    field = ExtractionField(
+        field_id="advp4", type_id="default", field_name="页联动", source_type="text",
+        is_advanced=1, search_type="page",
+        search_config={"page_source_field": "src", "max_pages": 10, "max_length": 30000},
+        text_extract_prompt="<search_result>page_content</search_result>",
+    )
+    resolved, prov = resolve_advanced_field(field, {"src": "值"}, {"src": [4, 6]}, {"src": "refs"})
+    assert resolved.search_config["page_range"] == "4-6"
+    assert prov["_page_link"]["pages_from"] == "refs"
 
 
 def test_resolve_advanced_page_link_missing_pages_raises():
@@ -239,7 +269,7 @@ def test_resolve_advanced_vl_page_link_discrete():
 
     assert resolved.vl_config["page_range"] == "3,9,15"
     assert prov["_page_link"] == {
-        "source_field": "src", "model_pages": [9, 3, 9, 15],
+        "source_field": "src", "source_pages": [9, 3, 9, 15], "pages_from": "refs",
         "mode": "discrete", "derived_pages": [3, 9, 15], "capped": False,
     }
     # 占位符照常解析

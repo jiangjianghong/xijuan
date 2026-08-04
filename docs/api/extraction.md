@@ -235,6 +235,8 @@ curl -X POST http://localhost:5019/extraction/fields \
 | llm_output | string | 是 | LLM/VL 原始输出 |
 | extracted_value | string | 是 | 解析后的值 |
 | reason | string | 是 | 抽取理由 |
+| pages | array[integer] | 是 | 模型自报参考页（1-indexed int 数组）；VL / use_llm=0 / 模型未返回时为 [] |
+| source_pages | array[integer] | 是 | 可用页码：pages 优先、程序命中页兜底。键恒存在，无命中时为 [] |
 | resolved_refs | object | 是 |  |
 <!-- /AUTOGEN:response -->
 

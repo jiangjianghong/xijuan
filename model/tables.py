@@ -238,6 +238,10 @@ class ExtractionResult(Base):
     extracted_value: Mapped[str] = mapped_column(LONGTEXT, default="")
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_refs: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 参考块列表
+    # 模型自报的参考页码 int[]（text/table 的 LLM 输出 pages 字段）。
+    # 存量行为 NULL——老数据的值在 source_refs["_model_pages"] 里，
+    # 读取一律走 read_model_pages() 兼容，不要直读本列。
+    model_pages: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     __table_args__ = (
         Index("ix_extraction_result_file_id", "file_id"),

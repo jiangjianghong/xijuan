@@ -357,16 +357,20 @@ JSON 示例和排错清单为主。
 }
 ```
 
-- `page_source_field`：来源**普通**字段的 `field_id`。取它的 `source_refs._model_pages`（模型自报页码，
-  见 §7.3）派生区间 `[min, max]`，**覆盖**手填的 `page_range`。
-- `max_pages`：区间跨度上限，超了就从最小页起收敛（如自报 `[3, 7]` + `max_pages=3` → 取 `3-5`）。
-- 来源字段**没有**模型自报页码（没在 prompt 里要 `pages`，或模型没给）→ 该进阶字段**直接失败**。
-  所以来源字段的 prompt 必须要求返回 `pages`。
+- `page_source_field`：来源**普通**字段的 `field_id`。取它的 **`source_pages`（可用页码）** 派生区间
+  `[min, max]`，**覆盖**手填的 `page_range`。`source_pages` = 模型自报页（见 §7.3）优先，模型没自报时
+  自动回落到程序从 `source_refs` 算出的命中页。
+- `max_pages`：区间跨度上限，超了就从最小页起收敛（如来源页 `[3, 7]` + `max_pages=3` → 取 `3-5`）。
+- 来源字段**既没有模型自报页、也没有任何检索命中页**（如抽取失败）→ 该进阶字段才失败。
+  让来源字段的 prompt 要求返回 `pages` 仍是**推荐做法** —— 模型自报页通常比检索命中页更聚焦，
+  派生出的区间更窄、更准。
 
 **VL 的页码联动**：`source_type=vl` 的进阶字段把 `page_source_field` 写在 `vl_config` 里（不是 `search_config`），
-三种 `vl_method` 都支持。与 text 的区别是**取离散页而非连续区间** —— 上游自报 `[3, 9, 15]` 时 VL 只渲染第 3、9、
+三种 `vl_method` 都支持。与 text 的区别是**取离散页而非连续区间** —— 来源页为 `[3, 9, 15]` 时 VL 只渲染第 3、9、
 15 页，不看中间页（VL 按页出图，跳页零代价）。`max_pages` 同样写在 `vl_config` 里，超出时取前 N 页。联动**覆盖**
-手填的 `page_range`；来源字段没产出 `_model_pages` 时该进阶字段直接失败（与 text 一致）。
+手填的 `page_range`；来源字段无任何可用页码时该进阶字段才失败（与 text 一致）。
+
+> 溯源里的 `_page_link.pages_from` 会标明这次联动用的是模型自报页（`"model"`）还是命中页兜底（`"refs"`）。
 
 ```json
 {
@@ -445,7 +449,9 @@ JSON 示例和排错清单为主。
 
 ### 7.3 让模型自报参考页码（可选）
 
-text / table 抽取时，可在 prompt 里要求 LLM 除 `value` / `reason` 外再返回 `pages`（参考到的页码整数数组）。后端会归一化并挂到 `source_refs._model_pages`，前端 PDF 定位（📍）优先跳这些页。这是模型自报，区别于程序算的 `ref.page_num`。细节见 [source-refs](source-refs.md)。
+text / table 抽取时，可在 prompt 里要求 LLM 除 `value` / `reason` 外再返回 `pages`（参考到的页码整数数组）。后端归一化后作为**顶层 `pages` 字段**下发（不再放进 `source_refs`），并落库到 `extraction_result.model_pages` 列。
+
+即使不要求 `pages`，接口也恒有一个顶层 `source_pages` 字段 —— 模型自报页优先、程序命中页兜底，前端 PDF 定位（📍）跳的就是它。要求 `pages` 的价值在于**更聚焦**：检索常命中多页，模型自报的通常只有真正引用的那一两页，进阶字段页码联动据此派生的区间也更窄。细节见 [source-refs §7](source-refs.md#7-顶层-pages--source_pages页码不再藏在-source_refs-里)。
 
 > `<field_result>字段标识</field_result>` 是**逻辑分析**的占位符，用于 `analysis_rule.expression` 引用提取结果，不在本手册范围，见 [analysis-config](analysis-config.md)。
 

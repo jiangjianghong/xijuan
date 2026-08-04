@@ -63,16 +63,16 @@ def classify_source_refs(refs):
 | `_texts` | text / table | `{label: string}` | 各 label 实际注入占位符的完整文本 | 否 |
 | `_tables` | table | `[ref]` | 表格命中 ref 数组（key 固定，**不是**关键词） | 是（`ref.page_num`） |
 | `_vl` | vl | `{method,total_pages,key_pages,target_pages,pages_capped,...}` | VL 视觉抽取元信息；`target_pages`=本次纳入视野的页（1-indexed），`pages_capped`=是否因 `max_pages` 截断 | 是（`key_pages` / `target_pages`） |
-| `_model_pages` | text / table（可选） | `int[]` | 模型自报参考页（去重升序，见 §7） | 是（模型自报） |
+| `_model_pages` | **已废弃**（仅存量数据） | `int[]` | 模型自报参考页。已提升为顶层 `pages`（见 §7），API 输出时剔除；仅直接读库可能见到 | 是（模型自报） |
 | `_web_search` | analysis judge（可选） | `{query,results,error?}` | 联网搜索溯源（见 §8） | 否（外部网页） |
 | `_resolved_refs` | 进阶字段（`is_advanced=1`，可选） | `{field_id: string}` | 各 `<field_result>` 引用实际填入的值 | 否 |
-| `_page_link` | 进阶字段 + `page` 检索联动（可选） | `{source_field,model_pages,mode:"range",derived_range,capped}` | 由来源字段模型自报页码派生的**连续取文区间** | 是（`model_pages` / `derived_range`） |
-| `_page_link` | 进阶字段 + VL 联动（可选） | `{source_field,model_pages,mode:"discrete",derived_pages,capped}` | 由来源字段模型自报页码派生的**离散目标页**（VL 按页出图，不看中间页） | 是（`model_pages` / `derived_pages`） |
+| `_page_link` | 进阶字段 + `page` 检索联动（可选） | `{source_field,source_pages,pages_from,mode:"range",derived_range,capped}` | 由来源字段可用页码派生的**连续取文区间** | 是（`source_pages` / `derived_range`） |
+| `_page_link` | 进阶字段 + VL 联动（可选） | `{source_field,source_pages,pages_from,mode:"discrete",derived_pages,capped}` | 由来源字段可用页码派生的**离散目标页**（VL 按页出图，不看中间页） | 是（`source_pages` / `derived_pages`） |
 | `bboxes` | text / table 的**单条 ref 内**（可选，非顶层） | `[{page_num:int,bbox,page_size}]` | PDF 块级高亮框（见 §9.4） | 是（int，恒单页） |
 
-> `_resolved_refs` / `_page_link` 是**进阶字段**的解析溯源，与该字段自身的检索 ref 并存（进阶字段解析完仍走普通抽取核心，布局判定不变）。`_page_link` 的 `mode` 键区分两种形态：`"range"`（text `page` 检索，连续区间）/ `"discrete"`（VL，只看这几页）。配置方法见 [extraction-config §6](extraction-config.md#6-进阶字段字段引用--页码联动)。
+> `_resolved_refs` / `_page_link` 是**进阶字段**的解析溯源，与该字段自身的检索 ref 并存（进阶字段解析完仍走普通抽取核心，布局判定不变）。`_page_link` 的 `mode` 键区分两种形态：`"range"`（text `page` 检索，连续区间）/ `"discrete"`（VL，只看这几页）；`pages_from` 标记页码来自模型自报（`"model"`）还是程序命中页兜底（`"refs"`）。配置方法见 [extraction-config §6](extraction-config.md#6-进阶字段字段引用--页码联动)。
 
-> 存量老数据可能缺 `text` / `_texts` / `bboxes` / `_model_pages` / `_vl.target_pages` / `_vl.pages_capped` / `_page_link.mode` 等键（老 `page_mapping` 无 bbox，重新解析后才有；无 `mode` 时按 `"range"` 解读）——消费方一律用 `.get()` 容错，缺键不代表整条无效。
+> 存量老数据可能缺 `text` / `_texts` / `bboxes` / `_vl.target_pages` / `_vl.pages_capped` / `_page_link.mode` / `_page_link.pages_from` 等键（老 `page_mapping` 无 bbox，重新解析后才有；无 `mode` 时按 `"range"` 解读）——消费方一律用 `.get()` 容错，缺键不代表整条无效。反过来，存量数据还可能**多**一个 `_model_pages`（已提升为顶层 `pages`，API 输出会剔除）。
 
 ---
 
@@ -221,22 +221,43 @@ if pages is None:
 
 ---
 
-## 7. `_model_pages` 模型自报页码（与算法命中页互补）
+## 7. 顶层 `pages` / `source_pages`（页码不再藏在 source_refs 里）
 
-除「算法算出的命中页」外，**text / table 类**的 `source_refs` 顶层可能带一个 `_model_pages`——这是**模型输出 `{value, reason, pages}` 时自报的「我得出该值实际参考了哪几页」**（`parse_llm_json_response` 解析 `pages` 后由 `_attach_model_pages` 落库）：
+页码是**与 `value` / `reason` 平级的顶层字段**，不在 `source_refs` 内部：
 
 ```jsonc
 {
-  "公司名称": [ {ref}, ... ],       // 算法命中（含 page_num / bboxes）
-  "_texts": { ... },
-  "_model_pages": [1, 3]            // ★模型自报参考页（int 数组，1-indexed，去重升序）
+  "field_id": "project_name",
+  "value": "某某产业园建设项目",
+  "reason": "第3页「项目概况」段落明确写明项目全称",
+  "pages": [3],                     // ★模型自报参考页（可能为 []）
+  "source_pages": [3],              // ★可用页码（键恒存在，值可能为 []）
+  "source_refs": { ... }            // 纯溯源，不含页码汇总
 }
 ```
 
-- **类型固定为 int 数组**（1-indexed，已去重升序），**不是** string、**不会**是区间——与 `ref.page_num`（string，可区间）不同。
-- 与算法命中页**互补、可能不一致**：检索常命中多页，`_model_pages` 只列模型真正引用的页；模型未返回 / 解析失败 / 关闭 LLM（`use_llm=0`）/ VL 类时**无此键**。
-- 以 `_` 开头，§10 的取页函数会**自动跳过**它，老消费者不受影响；需要模型自报页时**单独读** `source_refs.get("_model_pages")`（或用 `model_pages_of_extraction`）。
-- 前端提取结果卡片将其单列为「模型自报页码」行，并作为 PDF 定位（📍）的**首选跳转页**，无则回退算法命中页。
+| 字段 | 含义 | 何时为空 |
+|---|---|---|
+| `pages` | **模型自报**：LLM 输出 `{value, reason, pages}` 里的 `pages`，即「我得出该值实际参考了哪几页」 | 模型未返回 / 解析失败 / `use_llm=0` / VL 类 |
+| `source_pages` | **可用页码**：`pages` 非空时等于它，否则回落到程序从 `source_refs` 算出的命中页 | 两者皆无（失败字段 / 检索无命中 / `vl_progressive`） |
+
+**关键约定：**
+
+- **两者都是已展开的 `int[]`**（1-indexed、去重升序）。**不会出现 `"12-15"` 这类区间串** —— 后端 `parse_page_num_str` 已把 `ref.page_num` 的区间展开为逐页。
+- **`source_pages` 保证「键一定存在」，不保证「非空」**。消费方可以少写遍历逻辑，但仍要判空。
+- 区间展开有上限：单个区间串最多取前 **5** 页（`_MAX_SOURCE_PAGE_SPAN`），`"1-200"` → `[1,2,3,4,5]`。`bboxes[].page_num` 与 `page_nums` 是真实逐页数据，**不受此限**。
+- 要区分「模型真的说了参考哪页」与「程序推出来的页」，读 `pages`；只想跳转 / 展示，读 `source_pages`。
+- 前端提取卡片把两者分别渲染为「模型自报页码」「实际参考页码」两行，PDF 定位（📍）直接跳 `source_pages` 首项。
+
+**`source_pages` 的计算规则**（后端 `collect_ref_pages`，每条 ref 按精度降序取第一个可用来源）：
+
+1. `ref["bboxes"][i]["page_num"]` —— 已是 int、恒单页，最精确
+2. `ref["page_nums"]` —— 跨页命中时逐页算好的 int 数组
+3. `ref["page_num"]` —— int 或 str，str 走区间展开
+
+vl 类另读 `_vl.key_pages`。`_` 前缀的元数据键一律跳过。
+
+> **存量数据**：本次改动前落库的结果，模型自报页码存在 `source_refs["_model_pages"]` 里。后端读取时会自动兼容（`read_model_pages`）并提升到顶层 `pages`，**对外输出的 `source_refs` 已剔除该键**。直接读库的消费方仍可能看到它。
 
 ---
 
@@ -273,9 +294,12 @@ if pages is None:
 |---|---|---|---|---|
 | 1 | `stage_done`(tableing) / `GET /file/{id}/tables` | `tables[i].page_num` | **string** | 表格所在页，直取 |
 | 2 | `stage_done`(chunking) / `GET /file/{id}/chunks` | `chunks[i].page_num` | **string** | 分块所在页，直取 |
-| 3 | `field_done` / extracting 结果 | `source_refs` 内（§4/§5/§6） | **string / int[]** | **核心，随布局分 3 种** |
-| 3′ | `field_done` / extracting 结果 | `source_refs._model_pages`（§7） | **int[]** | 模型自报参考页（text/table，可选） |
+| 3 | `field_done` / extracting 结果 | `source_refs` 内（§4/§5/§6） | **string / int[]** | 逐条 ref 的溯源页码，随布局分 3 种 |
+| 3′ | `field_done` / extracting 结果 | **顶层 `source_pages`**（§7） | **int[]** | ★**首选**：已归一展开的可用页码，键恒存在 |
+| 3″ | `field_done` / extracting 结果 | **顶层 `pages`**（§7） | **int[]** | 模型自报参考页（text/table，可能为 `[]`） |
 | 4 | `rule_done` / analyzing 结果 | `source_refs[field_id]` 内（§8） | 同 #3 | 嵌套依赖字段的抽取 source_refs |
+
+> **位置 3′ 是取页码的首选** —— 后端已做完区间展开、去重排序、模型页优先与命中页兜底，消费方直接读即可，不必自己遍历 `source_refs`（位置 3 只在需要逐条溯源时才用）。位置 4 的分析结果**没有**顶层页码字段，仍需按 §10 自行汇总。
 
 > `parsing` 阶段 `stage_done.data.page_mapping` 是**原始映射表**（文本位置 → 页码），不是某条数据的页码，通常无需直读；它是位置 1/3/4 反查页码的底层数据。
 
@@ -326,7 +350,9 @@ text / table 类 ref 里**有两个都叫 `page_num` 的字段，类型和用途
 
 ## 10. 参考实现（可直接抄）
 
-一套把「任意回调 / 结果 source_refs」归一成 `List[int]` 页码的函数：
+> **抽取结果（`field_done` / `GET /file/{id}/extraction`）不需要这套函数** —— 直接读顶层 `source_pages`（§7），后端已算好。下面的实现是给 **tableing / chunking 的 `page_num`** 和 **analyzing 规则的嵌套 source_refs**（位置 1/2/4）用的，它们没有顶层页码字段。
+
+一套把「任意 source_refs」归一成 `List[int]` 页码的函数：
 
 ```python
 from typing import Any, List, Optional
@@ -335,6 +361,9 @@ from typing import Any, List, Optional
 def parse_page_num_str(s: Optional[str]) -> List[int]:
     """把 string 页码归一成 int 列表。
     "12" -> [12]；"12-15" -> [12,13,14,15]；"1,3,5" -> [1,3,5]；"" / None -> []。
+
+    注：后端同名函数对单个区间串有 5 页上限（"1-200" -> [1,2,3,4,5]），
+    这里的参考实现不设上限——按你的场景自行取舍。
     """
     if not s or not isinstance(s, str):
         return []
@@ -360,9 +389,10 @@ def parse_page_num_str(s: Optional[str]) -> List[int]:
 
 
 def model_pages_of_extraction(source_refs: Any) -> List[int]:
-    """取「模型自报参考页码」（source_refs._model_pages，1-indexed，去重排序）。
-    仅 text / table 类的 LLM 抽取可能有；无此键 / 老数据 / vl 类 → []。
-    这是模型自称引用的页，与 pages_of_extraction（程序算的命中页）互补，不要混用。
+    """【已过时】取存量数据里的 source_refs._model_pages。
+
+    新数据请直接读顶层 pages 字段（§7）——API 输出的 source_refs 已剔除该键。
+    本函数只在你直接读库、面对存量 JSON 时才需要。
     """
     if not isinstance(source_refs, dict):
         return []
@@ -426,8 +456,8 @@ event = payload.get("event")
 data  = payload.get("data") or {}
 
 if event == "field_done":                       # extracting 单字段
-    pages = pages_of_extraction(data.get("source_refs"))
-    model_pages = model_pages_of_extraction(data.get("source_refs"))  # 可选：模型自报页
+    pages = data.get("source_pages") or []      # ★首选：后端已归一好
+    model_pages = data.get("pages") or []       # 可选：模型自报页
 
 elif event == "rule_done":                      # analyzing 单规则
     pages = pages_of_rule(data.get("source_refs"))
@@ -445,14 +475,16 @@ elif event == "stage_done" and payload["status"] == "chunking":
 
 ## 11. 容错清单（务必逐条落地）
 
+0. **抽取结果优先读顶层 `source_pages`**：它恒存在、是已展开的 `int[]`，下面 3~5 条的解析坑后端都替你踩过了。只有 tableing / chunking / analyzing（无顶层页码字段）才需要自己解析。
 1. **先判 `source_refs is None`**：失败字段 / 规则的 `source_refs` 是 `null`，没有任何页码。
 2. **先分流再取字段**：`_vl` 类没有 `page_num`，text/table 类没有 `key_pages`；用错字段会 KeyError。
 3. **string 页码禁止直接 `int()`**：可能是 `"3-5"` 区间或 `""` 空串，统一走 `parse_page_num_str`。
 4. **区间要展开**：`"3-5"` 代表 3、4、5 三页，不是「第 3 到 5 号」的两个数。
-5. **跳过 `_` 开头的 key**：text 类的 `_texts` / `_model_pages`、分析类的 `_web_search` 都不是命中页数据。
-6. **`bboxes` 是可选键**：存量老数据（老 `page_mapping` 无 bbox）、page 检索、vl 类都没有；`ref.get("bboxes")` 判空后再用。
-7. **vl_progressive 的 `key_pages=null`**：不是错误，是「全篇扫描无具体定位页」，按 `total_pages` 兜底或标记「全篇」。
+5. **跳过 `_` 开头的 key**：text 类的 `_texts`、进阶字段的 `_resolved_refs` / `_page_link` / `_empty_refs`、分析类的 `_web_search` 都不是命中页数据。
+6. **`bboxes` 是可选键**：存量老数据（老 `page_mapping` 无 bbox）、page 检索回退路径、vl 类都没有；`ref.get("bboxes")` 判空后再用。
+7. **vl_progressive 的 `key_pages=null`**：不是错误，是「全篇扫描无具体定位页」，此时 `source_pages` 会是 `[]`，按 `total_pages` 兜底或标记「全篇」。
 8. **页码是 1-indexed**：直接对应 PDF 第几页，无需 +1/-1。
-9. **`ref.page_num`（string）与 `bboxes[i].page_num`（int）是两个字段**：展示 / 跳页用前者，画框用后者。
-10. **老数据无 `text` / `_texts` / `bboxes` / `_model_pages`**：只有 `page_num`，页码仍可取，别因缺 `bboxes` 就当整条无效。
-11. **`_model_pages` 是模型自报页、非程序命中页**：顶层 `_` 键（`startswith("_")` 自动跳过，不污染 `pages_of_extraction`），仅 text/table 类可能有，老数据 / vl 类无；需要时另用 `model_pages_of_extraction` 单取，别和命中页混算。
+9. **`ref.page_num` 有两种类型**：`page` 检索走 `page_mapping` 主路径时是 **int**（逐页 ref），`context/section/rule` 反查时是 **string**（可能是 `"3-5"`）；`bboxes[i].page_num` 恒为 int 单页。展示 / 跳页用前者，画框用后者。
+10. **`source_pages` 键恒存在但可能为空数组**：失败字段、检索无命中、`vl_progressive` 三种情况下是 `[]`，仍要判空。
+11. **`pages`（模型自报）与 `source_pages`（可用页码）别混用**：要区分「模型真的说了参考哪页」用 `pages`；只想跳转 / 展示用 `source_pages`。`pages` 在 VL 类 / `use_llm=0` / 模型未返回时恒为 `[]`。
+12. **存量数据的 `source_refs` 可能多一个 `_model_pages`**：API 输出已剔除（值提升到顶层 `pages`），直接读库才会见到。

@@ -22,6 +22,7 @@ from model.schemas import (
 from model.tables import ExtractionField, ExtractionResult, FileContent, FileTable
 from service.extraction_service import (
     collect_depend_fields,
+    derive_source_pages,
     extract_table_field,
     extract_text_field,
     extract_vl_field,
@@ -361,13 +362,13 @@ async def test_extraction(
                 for t in tables
             ]
 
-            extracted_value, reason, _ = await extract_table_field(file_id, field, db)
+            extracted_value, reason, refs, model_pages = await extract_table_field(file_id, field, db)
             llm_input = field.table_extract_prompt or ""
             llm_output = extracted_value
 
         elif field.source_type == "vl":
             # VL 类提取：直接调用 extract_vl_field，附带元信息
-            extracted_value, reason, refs = await extract_vl_field(file_id, field, db)
+            extracted_value, reason, refs, model_pages = await extract_vl_field(file_id, field, db)
             search_results = (
                 [
                     {
@@ -410,7 +411,7 @@ async def test_extraction(
                 search_results = await search_vector_db(file_id, search_config)
 
             # 执行提取
-            extracted_value, reason, _ = await extract_text_field(file_id, field, db)
+            extracted_value, reason, refs, model_pages = await extract_text_field(file_id, field, db)
             llm_input = field.text_extract_prompt or ""
             llm_output = extracted_value
 
@@ -425,6 +426,8 @@ async def test_extraction(
             llm_output=llm_output,
             extracted_value=extracted_value,
             reason=reason,
+            pages=model_pages,
+            source_pages=derive_source_pages(model_pages, refs),
             resolved_refs=resolved_refs_info or None,
         ).model_dump()
     )

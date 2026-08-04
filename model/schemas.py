@@ -612,6 +612,11 @@ class ExtractionResultItem(BaseModel):
     field_name: Optional[str] = None
     extracted_value: str
     reason: Optional[str] = None
+    # 模型自报参考页（text/table 的 LLM 输出 pages）；VL / use_llm=0 / 模型未返回时为 []
+    pages: List[int] = Field(default_factory=list)
+    # 可用页码：pages 优先，无则由 source_refs 现算的程序命中页兜底。
+    # 键恒存在，值可能为空数组（失败字段 / 无命中 / vl_progressive）
+    source_pages: List[int] = Field(default_factory=list)
     source_refs: Optional[Dict[str, Any]] = None
 
 
@@ -640,6 +645,10 @@ class ExtractionTestResponse(BaseModel):
     llm_output: str = ""
     extracted_value: str = ""
     reason: str = ""
+    # 模型自报参考页；VL / use_llm=0 / 模型未返回时为 []
+    pages: List[int] = Field(default_factory=list)
+    # 可用页码：pages 优先，程序命中页兜底，键恒存在
+    source_pages: List[int] = Field(default_factory=list)
     # 进阶字段（is_advanced=1）专属：引用解析溯源 {_resolved_refs?, _page_link?}；普通字段为 None
     resolved_refs: Optional[Dict[str, Any]] = None
 

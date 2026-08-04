@@ -792,7 +792,7 @@ const App = {
                         data.forEach((item, idx) => {
                             const title = item.field_name || item.field_id;
                             const subtitle = item.field_name ? item.field_id : '';
-                            const hasHits = Object.keys(this.collectLocateHits(item.source_refs)).length > 0;
+                            const hasHits = Object.keys(this.collectLocateHits(item)).length > 0;
                             const locateBtn = `<button class="pdf-locate-btn" data-fidx="${idx}"${hasHits ? '' : ' disabled title="该字段无定位信息"'}>📍 定位</button>`;
                             cards += `
                                 <div class="data-card">
@@ -807,7 +807,7 @@ const App = {
                                             <span class="data-card-field-value">${this.escapeHtml(item.reason)}</span>
                                         </div>
                                     ` : ''}
-                                    ${this.renderModelPages(item.source_refs)}
+                                    ${this.renderModelPages(item)}
                                     ${this.renderSourceRefs(item.source_refs)}
                                 </div>
                             `;
@@ -892,8 +892,8 @@ const App = {
                     btn.addEventListener('click', () => {
                         const item = this._extractionData[parseInt(btn.dataset.fidx)];
                         if (!item || !panel) return;
-                        const hits = this.collectLocateHits(item.source_refs);
-                        const preferPage = this.preferredLocatePage(item.source_refs);
+                        const hits = this.collectLocateHits(item);
+                        const preferPage = this.preferredLocatePage(item);
                         PdfViewer.openAndLocate(`/file/${fileId}/pdf`, hits, preferPage);
                     });
                 });
@@ -962,31 +962,6 @@ const App = {
         });
     },
 
-    // 采集「实际参考页码」：从 source_refs 各 ref 的 page_num / bboxes / _vl.key_pages
-    // 算出的页码（程序算的、更准），去重升序。不含模型自报页（_model_pages 单独展示）。
-    actualRefPages(sourceRefs) {
-        if (!sourceRefs || typeof sourceRefs !== 'object') return [];
-        const pages = new Set();
-        for (const [label, refs] of Object.entries(sourceRefs)) {
-            if (label === '_vl') {
-                const keyPages = refs && Array.isArray(refs.key_pages) ? refs.key_pages : [];
-                keyPages.forEach(p => { const n = parseInt(p); if (n >= 1) pages.add(n); });
-                continue;
-            }
-            if (label === '_texts' || label === '_model_pages' || !Array.isArray(refs)) continue;
-            refs.forEach(ref => {
-                if (!ref) return;
-                if (Array.isArray(ref.bboxes) && ref.bboxes.length > 0) {
-                    ref.bboxes.forEach(b => { if (b && parseInt(b.page_num) >= 1) pages.add(parseInt(b.page_num)); });
-                } else if (ref.page_num) {
-                    const m = String(ref.page_num).match(/^(\d+)/);
-                    if (m) pages.add(parseInt(m[1]));
-                }
-            });
-        }
-        return [...pages].sort((a, b) => a - b);
-    },
-
     // 把页码数组渲染成一排药丸标签的一行（空数组返回空串）。chipClass 区分两类页码配色。
     _renderPageRow(label, pages, chipClass) {
         const items = (pages || [])
@@ -1003,14 +978,15 @@ const App = {
         `;
     },
 
-    // 渲染页码区块：模型自报页码（source_refs._model_pages，定位优先跳这里）+ 实际参考页码（算法算出）。
-    // 两者都无则返回空串（老数据 / 无此键容错）。
-    renderModelPages(sourceRefs) {
-        if (!sourceRefs || typeof sourceRefs !== 'object') return '';
-        const modelPages = Array.isArray(sourceRefs._model_pages) ? sourceRefs._model_pages : [];
-        const actualPages = this.actualRefPages(sourceRefs);
+    // 渲染页码区块：模型自报页码（顶层 pages）+ 实际参考页码（顶层 source_pages）。
+    // 两者都空则返回空串。source_pages 由后端 derive_source_pages 算好（模型自报
+    // 优先、程序命中页兜底、区间已展开为 int），故第二行几乎总能渲染出来。
+    renderModelPages(item) {
+        if (!item || typeof item !== 'object') return '';
+        const modelPages = Array.isArray(item.pages) ? item.pages : [];
+        const sourcePages = Array.isArray(item.source_pages) ? item.source_pages : [];
         return this._renderPageRow('模型自报页码', modelPages, 'model-page-reported')
-             + this._renderPageRow('实际参考页码', actualPages, 'model-page-actual');
+             + this._renderPageRow('实际参考页码', sourcePages, 'model-page-actual');
     },
 
     // 渲染 source_refs 的「检索原文」折叠区块（老数据无 text/_texts 时返回空串）
@@ -1045,36 +1021,31 @@ const App = {
         `;
     },
 
-    // 取「最佳定位页」：优先跳模型自报页码（_model_pages 首个），其次取首条带整数
-    // page_num 的 ref 所在页（各分组已按包含相似度降序排好；vl 的 _vl 无 page_num 跳过）。
+    // 取「最佳定位页」：直接用后端算好的 source_pages 首项——「模型自报页优先、
+    // 命中页兜底」的判断已在后端 derive_source_pages 完成，前端不再重复一套。
     // 返回 null 表示无可用页码，调用方回退到最小命中页。
-    preferredLocatePage(sourceRefs) {
-        if (!sourceRefs || typeof sourceRefs !== 'object') return null;
-        // 1. 模型自报页码优先
-        const modelPages = sourceRefs._model_pages;
-        if (Array.isArray(modelPages)) {
-            for (const p of modelPages) {
-                const n = parseInt(p);
-                if (n >= 1) return n;
-            }
-        }
-        // 2. 回退到相似度最高的命中页
-        for (const [label, refs] of Object.entries(sourceRefs)) {
-            if (label === '_texts' || label === '_vl' || label === '_model_pages' || !Array.isArray(refs)) continue;
-            for (const ref of refs) {
-                if (!ref) continue;
-                const m = String(ref.page_num || '').match(/^(\d+)/);
-                if (m) return parseInt(m[1]);
-            }
+    preferredLocatePage(item) {
+        if (!item || typeof item !== 'object') return null;
+        const pages = Array.isArray(item.source_pages) ? item.source_pages : [];
+        for (const p of pages) {
+            const n = parseInt(p);
+            if (n >= 1) return n;
         }
         return null;
     },
 
     // 从 source_refs 收集定位命中：{页码int: [{bbox, page_size}...]}
     // 有 bboxes 的 ref 进框列表；仅有 page_num 的老数据 ref 只登记页码（空数组=跳页无框）；
-    // vl 类读 _vl.key_pages 登记跳页（vl_progressive 无 key_pages 仍不可定位）
-    collectLocateHits(sourceRefs) {
+    // vl 类读 _vl.key_pages 登记跳页（vl_progressive 无 key_pages 仍不可定位）；
+    // 顶层 source_pages 也登记为「跳页但无框」，保证后端算出的页一定可跳
+    collectLocateHits(item) {
         const hits = {};
+        if (!item || typeof item !== 'object') return hits;
+        (Array.isArray(item.source_pages) ? item.source_pages : []).forEach(p => {
+            const n = parseInt(p);
+            if (n >= 1) hits[n] = hits[n] || [];
+        });
+        const sourceRefs = item.source_refs;
         if (!sourceRefs || typeof sourceRefs !== 'object') return hits;
         for (const [label, refs] of Object.entries(sourceRefs)) {
             if (label === '_vl') {
@@ -1085,15 +1056,9 @@ const App = {
                 });
                 continue;
             }
-            if (label === '_model_pages') {
-                // 模型自报页码：登记为「跳页但无框」的命中（同老数据 page_num）
-                (Array.isArray(refs) ? refs : []).forEach(p => {
-                    const n = parseInt(p);
-                    if (n >= 1) hits[n] = hits[n] || [];
-                });
-                continue;
-            }
-            if (label === '_texts' || !Array.isArray(refs)) continue;
+            // _empty_refs 是字符串数组、_resolved_refs 是对象，都不是 ref 列表
+            if (label === '_texts' || label === '_empty_refs' || label === '_resolved_refs'
+                || !Array.isArray(refs)) continue;
             refs.forEach(ref => {
                 if (!ref) return;
                 if (Array.isArray(ref.bboxes) && ref.bboxes.length > 0) {
