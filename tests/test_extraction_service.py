@@ -7,7 +7,6 @@ from service.extraction_service import _classify_heading, _PLAIN_LEVEL
 from service.extraction_service import (
     parse_llm_json_response,
     _normalize_pages,
-    _attach_model_pages,
     _sort_source_refs_by_page_containment,
 )
 
@@ -509,25 +508,6 @@ def test_normalize_pages_variants():
     assert _normalize_pages(4) == [4]
     assert _normalize_pages(["", "abc", 0, -1, True]) == []
     assert _normalize_pages(None) == []
-
-
-def test_attach_model_pages_merges_into_existing_refs():
-    refs = {"kw": [{"text": "a"}]}
-    out = _attach_model_pages(refs, [2, 1])
-    assert out is refs
-    assert out["_model_pages"] == [2, 1]
-
-
-def test_attach_model_pages_empty_pages_noop():
-    assert _attach_model_pages(None, []) is None
-    refs = {"kw": []}
-    assert _attach_model_pages(refs, []) is refs
-    assert "_model_pages" not in refs
-
-
-def test_attach_model_pages_creates_dict_when_refs_none():
-    out = _attach_model_pages(None, [7])
-    assert out == {"_model_pages": [7]}
 
 
 def test_sort_source_refs_skips_model_pages_int_list():

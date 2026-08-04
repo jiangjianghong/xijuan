@@ -207,7 +207,7 @@ async def test_extract_page_field_happy(monkeypatch):
 
     field = _make_field()
     config = {"page_range": "3", "max_length": 30000}
-    value, reason, refs = await _extract_page_field(_MD_5P, _make_mapping(), config, field)
+    value, reason, refs, _model_pages = await _extract_page_field(_MD_5P, _make_mapping(), config, field)
 
     assert value == "答案"
     assert reason == "在第3页"
@@ -244,7 +244,7 @@ async def test_extract_page_field_per_page_injection(monkeypatch):
 
     field = _make_field()
     config = {"page_range": "2-4", "max_length": 30000}
-    value, reason, refs = await _extract_page_field(_MD_5P, _make_mapping(), config, field)
+    value, reason, refs, _model_pages = await _extract_page_field(_MD_5P, _make_mapping(), config, field)
 
     assert [r["page_num"] for r in refs["page_content"]] == [2, 3, 4]
     assert [r["text"] for r in refs["page_content"]] == ["PAGE2_BBB", "PAGE3_CCC", "PAGE4_DDD"]
@@ -266,7 +266,7 @@ async def test_extract_page_field_truncated(monkeypatch):
 
     field = _make_field()
     config = {"page_range": "1-5", "max_length": 10}
-    value, reason, refs = await _extract_page_field(_MD_5P, _make_mapping(), config, field)
+    value, reason, refs, _model_pages = await _extract_page_field(_MD_5P, _make_mapping(), config, field)
 
     assert value == "v"
     # 首页 piece = "【第1页】\nPAGE1_AAA"(16 字) 超过 10 → 截断到 10 字并停止
@@ -279,7 +279,7 @@ async def test_extract_page_field_truncated(monkeypatch):
 @pytest.mark.asyncio
 async def test_extract_page_field_invalid_range():
     field = _make_field()
-    value, reason, refs = await _extract_page_field(
+    value, reason, refs, _model_pages = await _extract_page_field(
         _MD_5P, _make_mapping(), {"page_range": "5-3"}, field
     )
     assert value == ""
@@ -291,7 +291,7 @@ async def test_extract_page_field_invalid_range():
 @pytest.mark.asyncio
 async def test_extract_page_field_missing_range():
     field = _make_field()
-    value, reason, refs = await _extract_page_field(_MD_5P, _make_mapping(), {}, field)
+    value, reason, refs, _model_pages = await _extract_page_field(_MD_5P, _make_mapping(), {}, field)
     assert value == ""
     assert "page_range" in reason
     assert refs is None
@@ -300,7 +300,7 @@ async def test_extract_page_field_missing_range():
 @pytest.mark.asyncio
 async def test_extract_page_field_empty_mapping():
     field = _make_field()
-    value, reason, refs = await _extract_page_field(
+    value, reason, refs, _model_pages = await _extract_page_field(
         _MD_5P, [], {"page_range": "1-2"}, field
     )
     assert value == ""
@@ -311,7 +311,7 @@ async def test_extract_page_field_empty_mapping():
 @pytest.mark.asyncio
 async def test_extract_page_field_out_of_range():
     field = _make_field()
-    value, reason, refs = await _extract_page_field(
+    value, reason, refs, _model_pages = await _extract_page_field(
         _MD_5P, _make_mapping(), {"page_range": "100-200"}, field
     )
     assert value == ""
@@ -332,7 +332,7 @@ async def test_extract_page_field_missing_placeholder(monkeypatch):
     monkeypatch.setattr(ext_svc, "chat_completion", fake_chat)
 
     field = _make_field(prompt="提取问题（无占位符）")
-    value, reason, refs = await _extract_page_field(
+    value, reason, refs, _model_pages = await _extract_page_field(
         _MD_5P, _make_mapping(), {"page_range": "1"}, field
     )
     assert value == ""

@@ -361,13 +361,13 @@ async def test_extraction(
                 for t in tables
             ]
 
-            extracted_value, reason, _ = await extract_table_field(file_id, field, db)
+            extracted_value, reason, _, _ = await extract_table_field(file_id, field, db)
             llm_input = field.table_extract_prompt or ""
             llm_output = extracted_value
 
         elif field.source_type == "vl":
             # VL 类提取：直接调用 extract_vl_field，附带元信息
-            extracted_value, reason, refs = await extract_vl_field(file_id, field, db)
+            extracted_value, reason, refs, _ = await extract_vl_field(file_id, field, db)
             search_results = (
                 [
                     {
@@ -410,7 +410,7 @@ async def test_extraction(
                 search_results = await search_vector_db(file_id, search_config)
 
             # 执行提取
-            extracted_value, reason, _ = await extract_text_field(file_id, field, db)
+            extracted_value, reason, _, _ = await extract_text_field(file_id, field, db)
             llm_input = field.text_extract_prompt or ""
             llm_output = extracted_value
 
