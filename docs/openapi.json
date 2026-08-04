@@ -6047,6 +6047,22 @@
             "title": "Reason",
             "description": "抽取理由（可空）"
           },
+          "pages": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Pages",
+            "type": "array",
+            "description": "模型自报参考页（1-indexed int 数组）；VL / use_llm=0 / 模型未返回时为 []"
+          },
+          "source_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Source Pages",
+            "type": "array",
+            "description": "可用页码：pages 优先、程序命中页兜底。键恒存在，无命中时为 []。区间已展开，不含 \"12-15\" 形式"
+          },
           "source_refs": {
             "anyOf": [
               {
@@ -6455,6 +6471,22 @@
             "title": "Reason",
             "type": "string",
             "description": "抽取理由"
+          },
+          "pages": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Pages",
+            "type": "array",
+            "description": "模型自报参考页（1-indexed int 数组）；VL / use_llm=0 / 模型未返回时为 []"
+          },
+          "source_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Source Pages",
+            "type": "array",
+            "description": "可用页码：pages 优先、程序命中页兜底。键恒存在，无命中时为 []"
           },
           "resolved_refs": {
             "anyOf": [

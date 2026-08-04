@@ -485,9 +485,9 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 ```
 - `page_range`：`"3"` / `"3-5"`，按 page_mapping 切出对应页的 markdown
 - `max_length`：注入 prompt 的最大字符数，超出从末尾截断（默认 30000）
-- `page_source_field`（仅 `is_advanced=1`）：来源普通字段的 `field_id`。抽取时取该字段
-  `source_refs._model_pages`（模型自报页码）派生 `page_range = [min, max]`，**覆盖**手填的
-  `page_range`；来源字段无模型自报页码时该进阶字段直接失败
+- `page_source_field`（仅 `is_advanced=1`）：来源普通字段的 `field_id`。抽取时取该字段的
+  **`source_pages`（可用页码：模型自报优先、程序命中页兜底）** 派生 `page_range = [min, max]`，
+  **覆盖**手填的 `page_range`；来源字段**无任何可用页码**时该进阶字段才失败
 - `max_pages`（仅 `is_advanced=1`）：派生区间的最大跨度，超出时从最小页起收敛为该页数
 
 #### vl_config JSON 结构
@@ -745,6 +745,7 @@ custom 类规则 `is_formatted=1` 时的输出字段树（`utils/output_schema.p
 | `extracted_value` | LONGTEXT | NOT NULL | '' | 提取的值 |
 | `reason` | TEXT | NULLABLE | NULL | 提取理由/依据（LLM 返回） |
 | `source_refs` | JSON | NULLABLE | NULL | 参考块（检索来源/页码/检索原文/bboxes/VL 元数据），提取失败时为 NULL |
+| `model_pages` | JSON | NULLABLE | NULL | 模型自报参考页 `int[]`（LLM 输出的 `pages`）；VL 类 / `use_llm=0` / 模型未返回时为 NULL |
 
 #### 索引
 
@@ -756,7 +757,14 @@ custom 类规则 `is_formatted=1` 时的输出字段树（`utils/output_schema.p
 
 - 复合主键：`file_id` + `field_id`
 - 每个文件的每个字段只有一条记录
-- 提取失败时 `extracted_value` 为空字符串，`source_refs` 为 NULL
+- 提取失败时 `extracted_value` 为空字符串，`source_refs` 与 `model_pages` 均为 NULL
+- `model_pages` 是 2026-08 新增列。**存量行为 NULL**，它们的模型自报页码在
+  `source_refs["_model_pages"]` 里；读取一律走 `extraction_service.read_model_pages()`
+  兼容两处，不要直读本列。对外 API 把该值提升为顶层 `pages` 字段，并另算一个
+  `source_pages`（模型自报优先、程序命中页兜底，恒为已展开的 `int[]`）——
+  `source_pages` **不落库**，是 `model_pages` + `source_refs` 的纯派生值，
+  每次输出时由 `derive_source_pages()` 现算，避免与 `source_refs` 脱节。
+  详见 [source-refs §7](../guides/source-refs.md#7-顶层-pages--source_pages页码不再藏在-source_refs-里)。
 - `extracted_value` 用 **LONGTEXT** 而非 TEXT：TEXT 上限 65535 **字节**，utf8mb4 下中文只能存约
   21845 字；而 `search_type=page` + `use_llm=0` 会把整段原文直接当字段值落库，`max_length`
   默认 30000 **字符**（≈90000 字节）即已超 TEXT 上限。字符与字节的单位错配曾导致线上
@@ -1083,6 +1091,7 @@ CREATE TABLE IF NOT EXISTS extraction_result (
   extracted_value LONGTEXT NOT NULL,
   reason TEXT NULL,
   source_refs JSON NULL,
+  model_pages JSON NULL,
   PRIMARY KEY (file_id, field_id),
   INDEX ix_extraction_result_file_id (file_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

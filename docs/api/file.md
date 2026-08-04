@@ -592,6 +592,8 @@ _data 为数组，每个元素：_
 | field_name | string | 是 | 字段名（配置删除则 null） |
 | extracted_value | string | 否 | 抽取值 |
 | reason | string | 是 | 抽取理由（可空） |
+| pages | array[integer] | 是 | 模型自报参考页（1-indexed int 数组）；VL / use_llm=0 / 模型未返回时为 [] |
+| source_pages | array[integer] | 是 | 可用页码：pages 优先、程序命中页兜底。键恒存在，无命中时为 []。区间已展开，不含 "12-15" 形式 |
 | source_refs | object | 是 | 溯源（结构见 source-refs 指南）（结构详见 [source_refs](../guides/source-refs.md)） |
 <!-- /AUTOGEN:response -->
 

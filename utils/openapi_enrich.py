@@ -1286,7 +1286,10 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         "description": "字段提取结果行。",
         "properties": {
             "file_id": "文件唯一 ID", "field_id": "字段 ID", "field_name": "字段名（配置删除则 null）",
-            "extracted_value": "抽取值", "reason": "抽取理由（可空）", "source_refs": "溯源（结构见 source-refs 指南）",
+            "extracted_value": "抽取值", "reason": "抽取理由（可空）",
+            "pages": "模型自报参考页（1-indexed int 数组）；VL / use_llm=0 / 模型未返回时为 []",
+            "source_pages": "可用页码：pages 优先、程序命中页兜底。键恒存在，无命中时为 []。区间已展开，不含 \"12-15\" 形式",
+            "source_refs": "溯源（结构见 source-refs 指南）",
         },
     },
     "AnalysisResultItem": {
@@ -1401,6 +1404,8 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         "properties": {
             "search_results": "检索结果（形态随 source_type/search_type 不同）", "llm_input": "渲染后的 prompt",
             "llm_output": "LLM/VL 原始输出", "extracted_value": "解析后的值", "reason": "抽取理由",
+            "pages": "模型自报参考页（1-indexed int 数组）；VL / use_llm=0 / 模型未返回时为 []",
+            "source_pages": "可用页码：pages 优先、程序命中页兜底。键恒存在，无命中时为 []",
         },
     },
     "AnalysisTestResponse": {

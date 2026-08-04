@@ -38,16 +38,21 @@
 | field_name | string | 是 | 字段名（配置删除则 null） |
 | value | string | 否 | 抽取值 |
 | reason | string | 是 | 抽取理由 |
+| pages | integer[] | 否 | **模型自报参考页**（1-indexed，已展开去重升序）。VL 类 / `use_llm=0` / 模型未返回 / 字段失败时为 `[]` |
+| source_pages | integer[] | 否 | **可用页码**：`pages` 优先，无则由 `source_refs` 现算的命中页兜底。**键恒存在**，但检索无命中 / `vl_progressive` / 字段失败时为 `[]` |
 | source_refs | object | 是 | 溯源，详见 [source-refs](../guides/source-refs.md) |
 | success | boolean | 否 | 是否成功 |
 | index | integer | 否 | 序号（从 0/1 起） |
 | total | integer | 否 | 字段总数 |
 
+> `pages` / `source_pages` 都是**已展开的 int 数组**，不会出现 `"12-15"` 这类区间串。需要跳页 / 展示读 `source_pages` 即可，无需自己遍历 `source_refs` 算页码。`source_refs` 内**不再含** `_model_pages`（值已提升到顶层 `pages`）。
+
 ```jsonc
 {
   "file_id": "a1b2...", "status": "extracting", "event": "field_done",
   "data": { "field_id": "company_name", "field_name": "公司名称",
-    "value": "示例公司", "reason": "...", "source_refs": {}, "success": true, "index": 5, "total": 12 }
+    "value": "示例公司", "reason": "...", "pages": [3], "source_pages": [3],
+    "source_refs": {}, "success": true, "index": 5, "total": 12 }
 }
 ```
 
