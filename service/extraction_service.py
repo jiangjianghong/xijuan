@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from model.database import rollback_if_broken
 from model.tables import ExtractionField, ExtractionResult, File, FileChunk, FileContent, FileTable
 from service import vl_service
+from service.match_prompts import build_section_match_prompt
 from utils import vl_client
 from utils.callback import notify_callback
 from utils.config import get_config
@@ -1237,12 +1238,11 @@ async def search_section(
             f"{i + 1}. {section.number} {section.title}"
             for i, section in enumerate(sections)
         )
-        prompt = (
-            f"以下是文档中所有章节的序号和标题列表：\n\n"
-            f"{section_list}\n\n"
-            f"请找出与查询「{section_pattern}」最相关的章节，"
-            f"返回其序号（多个用逗号分隔）。\n\n"
-            f"只返回序号，不要输出其他内容。例如：2 或 1,3"
+        prompt = build_section_match_prompt(
+            section_list,
+            section_pattern,
+            max_results,
+            config.get("section_match_prompt"),
         )
         try:
             response = await chat_completion(prompt)

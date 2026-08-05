@@ -89,3 +89,62 @@ def test_section_template_supports_quantity_hint_placeholder():
         template="{section_list}\n{quantity_hint}",
     )
     assert "最多返回 2 个章节的序号，按相关性从高到低排序。" in got
+
+
+def test_search_section_uses_custom_template(monkeypatch):
+    """search_section 的 LLM 分支须使用 search_config.section_match_prompt。"""
+    import asyncio
+
+    from service import extraction_service
+
+    captured = {}
+
+    async def fake_chat(prompt, **kwargs):
+        captured["prompt"] = prompt
+        return "1"
+
+    monkeypatch.setattr(extraction_service, "chat_completion", fake_chat)
+
+    content = "# 第一章 总则\n正文甲\n\n# 第二章 评标\n正文乙\n"
+    results = asyncio.run(
+        extraction_service.search_section(
+            content,
+            {
+                "section_pattern": "评标",
+                "section_match_type": "llm",
+                "section_match_prompt": "自定义候选：{section_list}／目标：{query}",
+            },
+        )
+    )
+    assert captured["prompt"].startswith("自定义候选：")
+    assert "／目标：评标" in captured["prompt"]
+    assert captured["prompt"].endswith(MATCH_INDEX_OUTPUT_INSTRUCTION)
+    assert len(results) == 1
+
+
+def test_search_section_default_template_unchanged(monkeypatch):
+    """不配模板时 prompt 必须与改造前逐字一致。"""
+    import asyncio
+
+    from service import extraction_service
+
+    captured = {}
+
+    async def fake_chat(prompt, **kwargs):
+        captured["prompt"] = prompt
+        return ""
+
+    monkeypatch.setattr(extraction_service, "chat_completion", fake_chat)
+
+    content = "# 第一章 总则\n正文甲\n"
+    asyncio.run(
+        extraction_service.search_section(
+            content, {"section_pattern": "总则", "section_match_type": "llm"}
+        )
+    )
+    assert captured["prompt"] == (
+        "以下是文档中所有章节的序号和标题列表：\n\n"
+        "1. 第一章 总则\n\n"
+        "请找出与查询「总则」最相关的章节，返回其序号（多个用逗号分隔）。\n\n"
+        "只返回序号，不要输出其他内容。例如：2 或 1,3"
+    )
