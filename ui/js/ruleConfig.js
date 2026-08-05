@@ -34,6 +34,44 @@ const RuleConfig = {
         LOCATE_PROMPT_TEMPLATE: '这张图片是一份文档的缩略图网格（{grid_rows}行×{grid_cols}列），包含第 {page_labels} 页。\n位置对应关系：{position_map}\n\n请判断哪些页面包含以下信息：{field_hints}\n\n选择标准——选择以下类型的页面：\n1. 封面/首页（包含企业名称的标题页）\n2. 正式报表页（资产负债表、利润表、现金流量表等，以完整表格形式呈现）\n3. 协议/合同的关键条款页（金额、签署方等核心条款）\n4. 包含汇总数据的表格页（如有明显的数字表格且与所需信息直接相关）\n\n不要选择：纯文字附注段落、审计意见页、目录页、空白页。\n\n注意：只能从 [{page_labels}] 中选择，不要返回其他页码。\n请只返回JSON格式：{{"found_pages": [页码数字列表], "reason": "简要说明"}}\n如果这几页都不包含相关信息，返回：{{"found_pages": [], "reason": "无相关内容"}}',
     },
 
+    // 提示词默认模板缓存，来源为后端 GET /extraction/match-prompt-defaults。
+    // 不在前端硬编码副本：副本落后于后端时，用户一保存就会把旧模板固化进库。
+    PROMPT_DEFAULTS: null,
+
+    async loadPromptDefaults() {
+        if (this.PROMPT_DEFAULTS) return this.PROMPT_DEFAULTS;
+        try {
+            const resp = await fetch('/extraction/match-prompt-defaults');
+            const body = await resp.json();
+            this.PROMPT_DEFAULTS = body.data || {};
+        } catch (e) {
+            console.error('拉取默认提示词模板失败', e);
+            this.PROMPT_DEFAULTS = {};
+        }
+        return this.PROMPT_DEFAULTS;
+    },
+
+    // 文本框为空时填入系统默认模板供用户直接编辑；同时渲染固定输出段说明。
+    async fillMatchPromptDefaults(kind) {
+        const defaults = await this.loadPromptDefaults();
+        const ta = document.getElementById(`fm-${kind}-match-prompt`);
+        if (ta && !ta.value.trim() && defaults[kind]) ta.value = defaults[kind];
+        const suffix = document.getElementById(`fm-${kind}-match-prompt-suffix`);
+        if (suffix) suffix.textContent = (defaults.output_instruction || '').trim();
+    },
+
+    async resetMatchPrompt(elementId, kind) {
+        const defaults = await this.loadPromptDefaults();
+        const ta = document.getElementById(elementId);
+        if (ta && defaults[kind]) ta.value = defaults[kind];
+    },
+
+    onTableMatchTypeChange(value) {
+        const group = document.getElementById('fm-table-match-prompt-group');
+        if (group) group.style.display = (value === 'llm') ? '' : 'none';
+        if (value === 'llm') this.fillMatchPromptDefaults('table');
+    },
+
     init() {
         this.cacheElements();
     },
@@ -625,6 +663,10 @@ const RuleConfig = {
         const sourceType = (field && field.source_type) || 'table';
         this.onSourceTypeChange(sourceType);
 
+        if (sourceType === 'table') {
+            this.onTableMatchTypeChange((field && field.table_match_type) || 'contains');
+        }
+
         if (sourceType === 'text') {
             const searchType = (field && field.search_type) || 'context';
             this.onSearchTypeChange(searchType);
@@ -697,7 +739,7 @@ const RuleConfig = {
                     </div>
                     <div class="form-group">
                         <label class="form-label">匹配方式</label>
-                        <select class="form-select" id="fm-table-match-type">
+                        <select class="form-select" id="fm-table-match-type" onchange="RuleConfig.onTableMatchTypeChange(this.value)">
                             <option value="contains" ${(field.table_match_type || 'contains') === 'contains' ? 'selected' : ''}>包含匹配</option>
                             <option value="exact" ${field.table_match_type === 'exact' ? 'selected' : ''}>精确匹配</option>
                             <option value="fuzzy" ${field.table_match_type === 'fuzzy' ? 'selected' : ''}>模糊匹配</option>
@@ -710,6 +752,17 @@ const RuleConfig = {
                     <label class="form-label">最大返回数量</label>
                     <input class="form-input" type="number" id="fm-table-match-max-results" min="0" placeholder="0 表示不限制" value="${field.table_match_max_results ?? ''}">
                     <div class="form-hint">匹配后最多返回的表格数量，0 或空表示不限制</div>
+                </div>
+                <div class="form-group" id="fm-table-match-prompt-group" style="${(field.table_match_type === 'llm') ? '' : 'display:none'}">
+                    <div class="form-label-row">
+                        <label class="form-label">LLM 匹配提示词</label>
+                        <button type="button" class="insert-tag-btn" onclick="RuleConfig.resetMatchPrompt('fm-table-match-prompt','table')" title="恢复系统默认模板">↺</button>
+                    </div>
+                    <textarea class="form-textarea" id="fm-table-match-prompt" rows="6">${Utils.escapeHtml(field.table_match_prompt || '')}</textarea>
+                    <div class="form-hint">
+                        告诉模型<b>要找什么、怎么找</b>。可用占位符：<code>{table_list}</code>（候选表格清单，必填）、<code>{query}</code>（匹配词）、<code>{quantity_hint}</code>（按最大返回数量生成的数量约束句）。<br>
+                        <b>输出格式由系统固定追加，请勿在此改写</b> —— 系统会在模板末尾自动附上：<code id="fm-table-match-prompt-suffix"></code>
+                    </div>
                 </div>
                 <div id="fm-table-prompt-wrap">
                 <div class="form-group">
@@ -1561,6 +1614,13 @@ const RuleConfig = {
             data.table_match_max_results = this.parseIntOrNull('fm-table-match-max-results');
             data.table_system_prompt = document.getElementById('fm-table-system-prompt').value.trim() || null;
             data.table_extract_prompt = document.getElementById('fm-table-extract-prompt').value.trim() || null;
+            {
+                const tpl = document.getElementById('fm-table-match-prompt');
+                const val = tpl ? tpl.value.trim() : '';
+                const def = (this.PROMPT_DEFAULTS && this.PROMPT_DEFAULTS.table) || '';
+                // 与后端默认值逐字相同则不入库，留空表示「用系统默认」
+                data.table_match_prompt = (val && val !== def) ? val : null;
+            }
         } else if (sourceType === 'vl') {
             data.vl_method = document.getElementById('fm-vl-method').value;
             data.vl_config = this.collectVLConfig(data.vl_method);
