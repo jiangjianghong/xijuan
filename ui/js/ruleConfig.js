@@ -27,11 +27,8 @@ const RuleConfig = {
     },
 
     // VL 默认提示词（与后端 service/vl_service/_defaults.py 严格保持一致）。
-    // 注：locate 模板里字面 { } 必须写成 {{ }}，因为后端会 .format() 这个模板。
     VL_DEFAULTS: {
         EXTRACT_PROMPT: '请基于以上图片提取相关信息。\n请只返回 JSON 格式：{"value": "提取到的内容（多个用逗号分隔）", "reason": "简要说明依据，例如在哪一页或哪个位置看到"}\n如果未找到，返回：{"value": "", "reason": "未找到"}',
-        BATCH_PROMPT_TEMPLATE: '{history}你正在逐页阅读一份文档，需要关注以下信息：{field_hints}\n\n当前是{page_label}（共{total_pages}页）。\n如果当前页包含上述相关信息，请输出精简摘要（保留关键数字、名称、金额等）。\n如果当前页无相关信息（如封面、目录、说明性文字），请仅输出"无相关信息"。',
-        LOCATE_PROMPT_TEMPLATE: '这张图片是一份文档的缩略图网格（{grid_rows}行×{grid_cols}列），包含第 {page_labels} 页。\n位置对应关系：{position_map}\n\n请判断哪些页面包含以下信息：{field_hints}\n\n选择标准——选择以下类型的页面：\n1. 封面/首页（包含企业名称的标题页）\n2. 正式报表页（资产负债表、利润表、现金流量表等，以完整表格形式呈现）\n3. 协议/合同的关键条款页（金额、签署方等核心条款）\n4. 包含汇总数据的表格页（如有明显的数字表格且与所需信息直接相关）\n\n不要选择：纯文字附注段落、审计意见页、目录页、空白页。\n\n注意：只能从 [{page_labels}] 中选择，不要返回其他页码。\n请只返回JSON格式：{{"found_pages": [页码数字列表], "reason": "简要说明"}}\n如果这几页都不包含相关信息，返回：{{"found_pages": [], "reason": "无相关内容"}}',
     },
 
     // 提示词默认模板缓存，来源为后端 GET /extraction/match-prompt-defaults。
@@ -1153,7 +1150,7 @@ const RuleConfig = {
                     </div>
                     <div class="form-group">
                         <label class="form-label">批量 prompt 模板</label>
-                        <textarea class="form-textarea" id="fm-vl-batch-prompt-template" rows="8" placeholder="必须含占位符 {field_hints} {page_label} {total_pages} {history}">${Utils.escapeHtml(vlConfig.batch_prompt_template || this.VL_DEFAULTS.BATCH_PROMPT_TEMPLATE)}</textarea>
+                        <textarea class="form-textarea" id="fm-vl-batch-prompt-template" rows="8" placeholder="必须含占位符 {field_hints} {page_label} {total_pages} {history}">${Utils.escapeHtml(vlConfig.batch_prompt_template || '')}</textarea>
                         <div class="form-hint">已填默认模板，如需调整请直接编辑；与默认完全一致则不会落库。</div>
                     </div>
                 `;
@@ -1202,7 +1199,7 @@ const RuleConfig = {
                     </div>
                     <div class="form-group">
                         <label class="form-label">定位 prompt 模板</label>
-                        <textarea class="form-textarea" id="fm-vl-locate-prompt-template" rows="10" placeholder="必须含占位符 {field_hints} {page_labels} {position_map} {grid_rows} {grid_cols}">${Utils.escapeHtml(vlConfig.locate_prompt_template || this.VL_DEFAULTS.LOCATE_PROMPT_TEMPLATE)}</textarea>
+                        <textarea class="form-textarea" id="fm-vl-locate-prompt-template" rows="10" placeholder="必须含占位符 {field_hints} {page_labels} {position_map} {grid_rows} {grid_cols}">${Utils.escapeHtml(vlConfig.locate_prompt_template || '')}</textarea>
                         <div class="form-hint">已填默认模板，如需调整请直接编辑；与默认完全一致则不会落库。</div>
                     </div>
                 `;
@@ -1218,6 +1215,16 @@ const RuleConfig = {
             ? (this.state.editingField.vl_config || {})
             : {};
         area.innerHTML = this.buildVLConfigFields(method, config);
+        this.fillVLPromptDefaults();
+    },
+
+    // VL 模板文本框为空时填入后端默认值（模板不在前端存副本，见 loadPromptDefaults）
+    async fillVLPromptDefaults() {
+        const defaults = await this.loadPromptDefaults();
+        const batch = document.getElementById('fm-vl-batch-prompt-template');
+        if (batch && !batch.value.trim() && defaults.vl_batch) batch.value = defaults.vl_batch;
+        const locate = document.getElementById('fm-vl-locate-prompt-template');
+        if (locate && !locate.value.trim() && defaults.vl_locate) locate.value = defaults.vl_locate;
     },
 
     _parseIntValue(value) {
@@ -1285,7 +1292,8 @@ const RuleConfig = {
                 config.batch_size = getInt('fm-vl-batch-size', 2);
                 {
                     const tpl = getVal('fm-vl-batch-prompt-template');
-                    if (tpl && tpl !== this.VL_DEFAULTS.BATCH_PROMPT_TEMPLATE) {
+                    const def = (this.PROMPT_DEFAULTS && this.PROMPT_DEFAULTS.vl_batch) || '';
+                    if (tpl && tpl !== def) {
                         config.batch_prompt_template = tpl;
                     }
                 }
@@ -1300,7 +1308,8 @@ const RuleConfig = {
                 config.fallback_pages = getInt('fm-vl-fallback-pages', 3);
                 {
                     const tpl = getVal('fm-vl-locate-prompt-template');
-                    if (tpl && tpl !== this.VL_DEFAULTS.LOCATE_PROMPT_TEMPLATE) {
+                    const def = (this.PROMPT_DEFAULTS && this.PROMPT_DEFAULTS.vl_locate) || '';
+                    if (tpl && tpl !== def) {
                         config.locate_prompt_template = tpl;
                     }
                 }
@@ -1320,6 +1329,7 @@ const RuleConfig = {
         if (vlSection) {
             vlSection.style.display = type === 'vl' ? 'block' : 'none';
         }
+        if (type === 'vl') this.fillVLPromptDefaults();
         // LLM 开关仅对表格 / 文本类有意义，VL 恒需模型
         const useLlmGroup = document.getElementById('fm-use-llm-group');
         if (useLlmGroup) {
