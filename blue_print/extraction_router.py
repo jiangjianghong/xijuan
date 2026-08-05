@@ -62,6 +62,7 @@ async def list_fields(type_id: str = "", db: AsyncSession = Depends(get_db)):
                 table_match_keywords=f.table_match_keywords,
                 table_match_max_results=f.table_match_max_results,
                 table_system_prompt=f.table_system_prompt,
+                table_match_prompt=f.table_match_prompt,
                 table_extract_prompt=f.table_extract_prompt,
                 search_type=f.search_type,
                 search_config=f.search_config,
@@ -189,6 +190,7 @@ async def upsert_field(
         existing.table_match_keywords = field.table_match_keywords
         existing.table_match_max_results = field.table_match_max_results
         existing.table_system_prompt = field.table_system_prompt
+        existing.table_match_prompt = field.table_match_prompt
         existing.table_extract_prompt = field.table_extract_prompt
         existing.search_type = field.search_type
         existing.search_config = field.search_config
@@ -217,6 +219,7 @@ async def upsert_field(
             table_match_keywords=field.table_match_keywords,
             table_match_max_results=field.table_match_max_results,
             table_system_prompt=field.table_system_prompt,
+            table_match_prompt=field.table_match_prompt,
             table_extract_prompt=field.table_extract_prompt,
             search_type=field.search_type,
             search_config=field.search_config,
@@ -298,6 +301,7 @@ def _build_temp_field(config: Dict[str, Any]) -> ExtractionField:
         table_match_keywords=config.get("table_match_keywords"),
         table_match_max_results=config.get("table_match_max_results"),
         table_system_prompt=config.get("table_system_prompt"),
+        table_match_prompt=config.get("table_match_prompt"),
         table_extract_prompt=config.get("table_extract_prompt"),
         search_type=config.get("search_type"),
         search_config=config.get("search_config"),
