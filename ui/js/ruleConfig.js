@@ -920,6 +920,17 @@ const RuleConfig = {
                         <input class="form-input" id="fm-sc-section-threshold" type="number" step="0.01" value="${config.threshold ?? 0.8}" min="0" max="1">
                         <div class="form-hint">章节标题与"章节模式"的相似度 ≥ 该值才命中（0-1）</div>
                     </div>
+                    <div class="form-group" id="fm-section-match-prompt-group" style="${sectionMatchType === 'llm' ? '' : 'display:none'}">
+                        <div class="form-label-row">
+                            <label class="form-label">LLM 匹配提示词</label>
+                            <button type="button" class="insert-tag-btn" onclick="RuleConfig.resetMatchPrompt('fm-section-match-prompt','section')" title="恢复系统默认模板">↺</button>
+                        </div>
+                        <textarea class="form-textarea" id="fm-section-match-prompt" rows="6">${Utils.escapeHtml(config.section_match_prompt || '')}</textarea>
+                        <div class="form-hint">
+                            告诉模型<b>要找什么、怎么找</b>。可用占位符：<code>{section_list}</code>（候选章节清单，必填）、<code>{query}</code>（章节模式）、<code>{quantity_hint}</code>（按最大结果数生成的数量约束句，默认模板未使用）。<br>
+                            <b>输出格式由系统固定追加，请勿在此改写</b> —— 系统会在模板末尾自动附上：<code id="fm-section-match-prompt-suffix"></code>
+                        </div>
+                    </div>
                     <div class="form-group">
                         <label class="form-label">排序方式</label>
                         <select class="form-select" id="fm-sc-sort-order">
@@ -1338,6 +1349,11 @@ const RuleConfig = {
             : {};
 
         area.innerHTML = this.buildSearchConfigFields(type, config);
+
+        if (type === 'section') {
+            const mt = config.section_match_type || config.match_type || 'contains';
+            if (mt === 'llm') this.fillMatchPromptDefaults('section');
+        }
     },
 
     onSectionMatchTypeChange(matchType) {
@@ -1345,6 +1361,11 @@ const RuleConfig = {
         if (group) {
             group.style.display = matchType === 'fuzzy' ? '' : 'none';
         }
+        const promptGroup = document.getElementById('fm-section-match-prompt-group');
+        if (promptGroup) {
+            promptGroup.style.display = matchType === 'llm' ? '' : 'none';
+        }
+        if (matchType === 'llm') this.fillMatchPromptDefaults('section');
     },
 
     // ─────────────────────────────────────────────────────────
@@ -1662,6 +1683,12 @@ const RuleConfig = {
             case 'section':
                 config.section_pattern = getVal('fm-sc-section-pattern');
                 config.section_match_type = getVal('fm-sc-section-match-type') || 'contains';
+                {
+                    const tpl = document.getElementById('fm-section-match-prompt');
+                    const val = tpl ? tpl.value.trim() : '';
+                    const def = (this.PROMPT_DEFAULTS && this.PROMPT_DEFAULTS.section) || '';
+                    if (val && val !== def) config.section_match_prompt = val;
+                }
                 config.max_results = getInt('fm-sc-max-results', 5);
                 config.sort_order = getVal('fm-sc-sort-order') || 'asc';
                 if (config.section_match_type === 'fuzzy') {
