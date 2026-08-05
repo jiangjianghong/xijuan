@@ -191,3 +191,74 @@ def test_extraction_field_has_table_match_prompt_column():
     from model.tables import ExtractionField
 
     assert "table_match_prompt" in set(ExtractionField.__table__.columns.keys())
+
+
+def test_field_create_accepts_table_match_prompt():
+    from model.schemas import ExtractionFieldCreate
+
+    m = ExtractionFieldCreate(
+        field_id="t1", field_name="表字段", source_type="table",
+        table_match_type="llm", table_match_keywords=["报价"],
+        table_match_prompt="清单：{table_list}",
+        table_extract_prompt="从 <search_result>报价</search_result> 提取",
+    )
+    assert m.table_match_prompt == "清单：{table_list}"
+
+
+def test_field_create_rejects_table_prompt_without_list_placeholder():
+    import pytest as _pytest
+    from model.schemas import ExtractionFieldCreate
+
+    with _pytest.raises(ValueError, match="table_list"):
+        ExtractionFieldCreate(
+            field_id="t2", field_name="表字段", source_type="table",
+            table_match_type="llm", table_match_keywords=["报价"],
+            table_match_prompt="没有候选列表占位符",
+            table_extract_prompt="从 <search_result>报价</search_result> 提取",
+        )
+
+
+def test_field_create_ignores_table_prompt_when_match_type_not_llm():
+    """非 LLM 匹配时该模板不生效，不做占位符强校验。"""
+    from model.schemas import ExtractionFieldCreate
+
+    m = ExtractionFieldCreate(
+        field_id="t3", field_name="表字段", source_type="table",
+        table_match_type="contains", table_match_keywords=["报价"],
+        table_match_prompt="残留的旧模板",
+        table_extract_prompt="从 <search_result>报价</search_result> 提取",
+    )
+    assert m.table_match_prompt == "残留的旧模板"
+
+
+def test_field_create_rejects_section_prompt_without_list_placeholder():
+    import pytest as _pytest
+    from model.schemas import ExtractionFieldCreate
+
+    with _pytest.raises(ValueError, match="section_list"):
+        ExtractionFieldCreate(
+            field_id="s1", field_name="章节字段", source_type="text",
+            search_type="section",
+            search_config={
+                "section_pattern": "评标",
+                "section_match_type": "llm",
+                "section_match_prompt": "没有候选列表占位符",
+            },
+            text_extract_prompt="从 <search_result>评标</search_result> 提取",
+        )
+
+
+def test_field_create_accepts_valid_section_prompt():
+    from model.schemas import ExtractionFieldCreate
+
+    m = ExtractionFieldCreate(
+        field_id="s2", field_name="章节字段", source_type="text",
+        search_type="section",
+        search_config={
+            "section_pattern": "评标",
+            "section_match_type": "llm",
+            "section_match_prompt": "候选：{section_list}",
+        },
+        text_extract_prompt="从 <search_result>评标</search_result> 提取",
+    )
+    assert m.search_config["section_match_prompt"] == "候选：{section_list}"

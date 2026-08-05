@@ -82,6 +82,7 @@ class ExportFieldItem(BaseModel):
     table_match_keywords: Optional[List[str]] = None
     table_match_max_results: Optional[int] = None
     table_system_prompt: Optional[str] = None
+    table_match_prompt: Optional[str] = None
     table_extract_prompt: Optional[str] = None
     search_type: Optional[str] = None
     search_config: Optional[Dict[str, Any]] = None
@@ -303,6 +304,8 @@ class ExtractionFieldCreate(BaseModel):
     table_match_keywords: Optional[List[str]] = None
     table_match_max_results: Optional[int] = None
     table_system_prompt: Optional[str] = None
+    # LLM 匹配方式下的自定义匹配提示词；须晚于 table_match_type 声明，供其校验器读取
+    table_match_prompt: Optional[str] = None
     table_extract_prompt: Optional[str] = None
     # 文本类
     search_type: Optional[SearchTypeEnum] = None
@@ -340,6 +343,38 @@ class ExtractionFieldCreate(BaseModel):
         if info.data.get("source_type") == SourceTypeEnum.table and v:
             if not re.search(r"<search_result>.+?</search_result>", v):
                 raise ValueError("table_extract_prompt 必须包含至少一个 <search_result>标签</search_result> 占位符")
+        return v
+
+    @field_validator("table_match_prompt")
+    @classmethod
+    def validate_table_match_prompt(cls, v, info):
+        """LLM 匹配的自定义模板必须含 {table_list}，否则模型看不到候选表格。"""
+        if cls.__name__ != "ExtractionFieldCreate":
+            return v
+        if not v or not v.strip():
+            return v
+        if info.data.get("table_match_type") != TableMatchTypeEnum.llm:
+            return v
+        if "{table_list}" not in v:
+            raise ValueError("table_match_prompt 必须包含 {table_list} 占位符")
+        return v
+
+    @field_validator("search_config")
+    @classmethod
+    def validate_section_match_prompt(cls, v, info):
+        """章节 LLM 匹配的自定义模板必须含 {section_list}。"""
+        if cls.__name__ != "ExtractionFieldCreate":
+            return v
+        if not isinstance(v, dict):
+            return v
+        tpl = v.get("section_match_prompt")
+        if not isinstance(tpl, str) or not tpl.strip():
+            return v
+        match_type = v.get("section_match_type") or v.get("match_type")
+        if match_type != "llm":
+            return v
+        if "{section_list}" not in tpl:
+            raise ValueError("section_match_prompt 必须包含 {section_list} 占位符")
         return v
 
     @field_validator("vl_method")
