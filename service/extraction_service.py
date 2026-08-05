@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from model.database import rollback_if_broken
 from model.tables import ExtractionField, ExtractionResult, File, FileChunk, FileContent, FileTable
 from service import vl_service
-from service.match_prompts import build_section_match_prompt
+from service.match_prompts import build_section_match_prompt, build_table_match_prompt
 from utils import vl_client
 from utils.callback import notify_callback
 from utils.config import get_config
@@ -1718,16 +1718,11 @@ async def extract_table_field(
             f"{i + 1}. {table.table_name or f'表格{table.table_index}'}"
             for i, table in enumerate(tables)
         )
-        max_results = field.table_match_max_results or 0
-        if max_results > 0:
-            quantity_hint = f"最多返回 {max_results} 个表格的序号，按相关性从高到低排序。"
-        else:
-            quantity_hint = "返回所有匹配表格的序号。"
-        prompt = (
-            f"以下是文档中所有表格的名称和序号列表：\n\n"
-            f"{table_list}\n\n"
-            f"请找出与查询「{query_desc}」最相关的表格，{quantity_hint}\n\n"
-            f"只返回序号，不要输出其他内容。例如：2 或 1,3"
+        prompt = build_table_match_prompt(
+            table_list,
+            query_desc,
+            field.table_match_max_results,
+            getattr(field, "table_match_prompt", None),
         )
         try:
             response = await chat_completion(prompt)
@@ -2641,16 +2636,11 @@ async def test_field_extraction_stream(
                         f"{i + 1}. {table.table_name or f'表格{table.table_index}'}"
                         for i, table in enumerate(tables)
                     )
-                    max_results = field.table_match_max_results or 0
-                    if max_results > 0:
-                        quantity_hint = f"最多返回 {max_results} 个表格的序号，按相关性从高到低排序。"
-                    else:
-                        quantity_hint = "返回所有匹配表格的序号。"
-                    llm_match_prompt = (
-                        f"以下是文档中所有表格的名称和序号列表：\n\n"
-                        f"{table_list}\n\n"
-                        f"请找出与查询「{query_desc}」最相关的表格，{quantity_hint}\n\n"
-                        f"只返回序号，不要输出其他内容。例如：2 或 1,3"
+                    llm_match_prompt = build_table_match_prompt(
+                        table_list,
+                        query_desc,
+                        field.table_match_max_results,
+                        getattr(field, "table_match_prompt", None),
                     )
                     yield {
                         "event": "match_llm",

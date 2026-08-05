@@ -148,3 +148,27 @@ def test_search_section_default_template_unchanged(monkeypatch):
         "请找出与查询「总则」最相关的章节，返回其序号（多个用逗号分隔）。\n\n"
         "只返回序号，不要输出其他内容。例如：2 或 1,3"
     )
+
+
+def test_table_match_prompt_reads_field_column():
+    """表格匹配模板取自 field.table_match_prompt，正式路径与调试流须一致。"""
+    from types import SimpleNamespace
+
+    field = SimpleNamespace(
+        table_match_type="llm",
+        table_match_keywords=["报价"],
+        table_match_max_results=2,
+        table_match_prompt="表清单：{table_list}／要找：{query}／{quantity_hint}",
+        table_name_pattern=None,
+    )
+    got = build_table_match_prompt(
+        "1. 投标报价表",
+        "、".join(field.table_match_keywords),
+        field.table_match_max_results,
+        field.table_match_prompt,
+    )
+    assert got == (
+        "表清单：1. 投标报价表／要找：报价／"
+        "最多返回 2 个表格的序号，按相关性从高到低排序。"
+        "\n\n只返回序号，不要输出其他内容。例如：2 或 1,3"
+    )
