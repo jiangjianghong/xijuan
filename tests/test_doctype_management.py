@@ -366,7 +366,7 @@ def test_remap_advanced_field_config_remaps_vl_page_source():
     src = SimpleNamespace(
         source_type="vl", search_type=None, search_config=None,
         table_name_pattern=None, table_match_keywords=None,
-        table_extract_prompt=None, table_system_prompt=None,
+        table_extract_prompt=None, table_system_prompt=None, table_match_prompt=None,
         text_extract_prompt=None, text_system_prompt=None,
         vl_extract_prompt="提取 <field_result>a</field_result>",
         vl_system_prompt=None,
@@ -391,7 +391,7 @@ def test_remap_advanced_field_config_reports_missing_vl_page_source():
     src = SimpleNamespace(
         source_type="vl", search_type=None, search_config=None,
         table_name_pattern=None, table_match_keywords=None,
-        table_extract_prompt=None, table_system_prompt=None,
+        table_extract_prompt=None, table_system_prompt=None, table_match_prompt=None,
         text_extract_prompt=None, text_system_prompt=None,
         vl_extract_prompt="x", vl_system_prompt=None,
         vl_config={"page_source_field": "gone"},
