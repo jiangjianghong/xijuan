@@ -262,3 +262,55 @@ def test_field_create_accepts_valid_section_prompt():
         text_extract_prompt="从 <search_result>评标</search_result> 提取",
     )
     assert m.search_config["section_match_prompt"] == "候选：{section_list}"
+
+
+def test_table_match_prompt_counts_as_dependency():
+    """匹配提示词里的 <field_result> 必须被记为依赖，否则进阶字段依赖漏登记。"""
+    from types import SimpleNamespace
+
+    from service.extraction_service import collect_depend_fields
+
+    field = SimpleNamespace(
+        table_name_pattern=None, table_extract_prompt=None, table_system_prompt=None,
+        text_extract_prompt=None, text_system_prompt=None,
+        vl_extract_prompt=None, vl_system_prompt=None,
+        table_match_prompt="找与 <field_result>up1</field_result> 有关的表：{table_list}",
+        table_match_keywords=None, search_config=None, vl_config=None,
+        search_type=None, source_type="table",
+    )
+    assert collect_depend_fields(field) == ["up1"]
+
+
+def test_section_match_prompt_counts_as_dependency():
+    """search_config 里的模板由既有遍历自动覆盖，此处固化该保证。"""
+    from types import SimpleNamespace
+
+    from service.extraction_service import collect_depend_fields
+
+    field = SimpleNamespace(
+        table_name_pattern=None, table_extract_prompt=None, table_system_prompt=None,
+        text_extract_prompt=None, text_system_prompt=None,
+        vl_extract_prompt=None, vl_system_prompt=None, table_match_prompt=None,
+        table_match_keywords=None, vl_config=None,
+        search_config={
+            "section_match_prompt": "找 <field_result>up2</field_result>：{section_list}"
+        },
+        search_type="section", source_type="text",
+    )
+    assert collect_depend_fields(field) == ["up2"]
+
+
+def test_resolve_advanced_field_resolves_table_match_prompt():
+    from model.tables import ExtractionField
+    from service.extraction_service import resolve_advanced_field
+
+    field = ExtractionField(
+        field_id="adv", type_id="default", field_name="进阶表字段",
+        source_type="table", is_advanced=1,
+        table_match_type="llm", table_match_keywords=["报价"],
+        table_match_prompt="找与 <field_result>up1</field_result> 有关：{table_list}",
+        table_extract_prompt="从 <search_result>报价</search_result> 提取",
+    )
+    resolved, prov = resolve_advanced_field(field, {"up1": "甲公司"}, {})
+    assert resolved.table_match_prompt == "找与 甲公司 有关：{table_list}"
+    assert prov["_resolved_refs"]["up1"] == "甲公司"

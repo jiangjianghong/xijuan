@@ -492,7 +492,7 @@ def collect_depend_fields(field: Any) -> List[str]:
     # 提示词 + table_name_pattern（后者同时充当表格抽取的占位符 label）
     for attr in (
         "table_name_pattern",
-        "table_extract_prompt", "table_system_prompt",
+        "table_extract_prompt", "table_system_prompt", "table_match_prompt",
         "text_extract_prompt", "text_system_prompt",
         "vl_extract_prompt", "vl_system_prompt",
     ):
@@ -657,6 +657,7 @@ def resolve_advanced_field(
         table_name_pattern=_res(field.table_name_pattern),
         table_extract_prompt=_res(field.table_extract_prompt),
         table_system_prompt=_res(field.table_system_prompt),
+        table_match_prompt=_res(field.table_match_prompt),
         text_extract_prompt=_res(field.text_extract_prompt),
         text_system_prompt=_res(field.text_system_prompt),
         vl_extract_prompt=_res(field.vl_extract_prompt),
