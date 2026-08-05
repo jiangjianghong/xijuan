@@ -172,3 +172,16 @@ def test_table_match_prompt_reads_field_column():
         "最多返回 2 个表格的序号，按相关性从高到低排序。"
         "\n\n只返回序号，不要输出其他内容。例如：2 或 1,3"
     )
+
+
+def test_no_hardcoded_output_instruction_left_in_service():
+    """输出格式段只允许存在于 match_prompts.py。
+
+    改造前 extraction_service.py 里有三份各自拼装的匹配 prompt（章节、表格正式
+    路径、表格调试流），末句输出格式指令重复三遍且已各自漂移过。这条测试防止
+    今后有人再就地写死一份 —— 那样 match_prompts 的模板就管不到它了。
+    """
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parent.parent / "service" / "extraction_service.py"
+    assert "只返回序号" not in src.read_text(encoding="utf-8")
