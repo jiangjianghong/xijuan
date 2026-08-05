@@ -185,3 +185,9 @@ def test_no_hardcoded_output_instruction_left_in_service():
 
     src = Path(__file__).resolve().parent.parent / "service" / "extraction_service.py"
     assert "只返回序号" not in src.read_text(encoding="utf-8")
+
+
+def test_extraction_field_has_table_match_prompt_column():
+    from model.tables import ExtractionField
+
+    assert "table_match_prompt" in set(ExtractionField.__table__.columns.keys())

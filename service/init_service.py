@@ -78,6 +78,7 @@ async def init_database() -> None:
             ("extraction_field", "is_advanced", "TINYINT NOT NULL DEFAULT 0"),
             ("extraction_field", "depend_fields", "JSON NULL"),
             ("extraction_result", "model_pages", "JSON NULL"),
+            ("extraction_field", "table_match_prompt", "TEXT NULL"),
         ]
         for table_name, column_name, column_type in migrations:
             result = await conn.execute(

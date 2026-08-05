@@ -172,6 +172,8 @@ class ExtractionField(Base):
     table_match_keywords: Mapped[list | None] = mapped_column(JSON, nullable=True)
     table_match_max_results: Mapped[int | None] = mapped_column(Integer, nullable=True)
     table_system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # LLM 匹配方式下的自定义匹配提示词（空=用 service/match_prompts.py 的默认模板）
+    table_match_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     table_extract_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 文本类专用
     search_type: Mapped[str | None] = mapped_column(
