@@ -34,8 +34,32 @@ from service.extraction_service import (
     search_vector_db,
     test_field_extraction_stream,
 )
+from service.match_prompts import (
+    DEFAULT_SECTION_MATCH_PROMPT,
+    DEFAULT_TABLE_MATCH_PROMPT,
+    MATCH_INDEX_OUTPUT_INSTRUCTION,
+)
+from service.vl_service._defaults import DEFAULT_BATCH_PROMPT, DEFAULT_LOCATE_PROMPT
 
 router = APIRouter(prefix="/extraction", tags=["extraction"])
+
+
+@router.get("/match-prompt-defaults", response_model=ResponseWrapper)
+async def get_match_prompt_defaults():
+    """下发各类提示词模板的系统默认值。
+
+    前端据此渲染「高级配置」文本框并做「是否改过」比对，从而不必在
+    ui/js 里保存副本 —— 副本一旦落后于后端，用户保存时会把旧模板固化进库。
+    """
+    return ResponseWrapper(
+        data={
+            "section": DEFAULT_SECTION_MATCH_PROMPT,
+            "table": DEFAULT_TABLE_MATCH_PROMPT,
+            "output_instruction": MATCH_INDEX_OUTPUT_INSTRUCTION,
+            "vl_batch": DEFAULT_BATCH_PROMPT,
+            "vl_locate": DEFAULT_LOCATE_PROMPT,
+        }
+    )
 
 
 @router.get("/fields", response_model=ResponseWrapper)

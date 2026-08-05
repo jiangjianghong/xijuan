@@ -314,3 +314,17 @@ def test_resolve_advanced_field_resolves_table_match_prompt():
     resolved, prov = resolve_advanced_field(field, {"up1": "甲公司"}, {})
     assert resolved.table_match_prompt == "找与 甲公司 有关：{table_list}"
     assert prov["_resolved_refs"]["up1"] == "甲公司"
+
+
+async def test_match_prompt_defaults_endpoint(client):
+    """前端靠该接口取默认模板，故后端是唯一真相来源。"""
+    resp = await client.get("/extraction/match-prompt-defaults")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["section"] == DEFAULT_SECTION_MATCH_PROMPT
+    assert data["table"] == DEFAULT_TABLE_MATCH_PROMPT
+    assert data["output_instruction"] == MATCH_INDEX_OUTPUT_INSTRUCTION
+    # VL 两个模板一并下发，前端据此删除本地副本
+    assert "{field_hints}" in data["vl_batch"]
+    assert "{scan_scope}" in data["vl_batch"]
+    assert "{page_labels}" in data["vl_locate"]
