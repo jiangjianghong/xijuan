@@ -502,6 +502,36 @@ def test_parse_llm_json_response_plain_text_fallback_no_pages():
     assert pages == []
 
 
+def test_parse_llm_json_response_invalid_backslash_escape_keeps_pages():
+    """MinerU 把百分号解析成 LaTeX `$5\\%$`，模型照抄进 value 导致非法 JSON 转义。
+    清洗非法反斜杠后应正常解析，pages 不丢。"""
+    resp = (
+        '{"value": "出资占股 $5\\%$ 实行同股同权。",'
+        ' "reason": "标题完全匹配，提取正文。", "pages": [289, 290]}'
+    )
+    value, reason, pages = parse_llm_json_response(resp)
+    assert value == "出资占股 $5\\%$ 实行同股同权。"
+    assert reason == "标题完全匹配，提取正文。"
+    assert pages == [289, 290]
+
+
+def test_parse_llm_json_response_valid_escapes_preserved():
+    """合法转义 \\n \\t \\\" 以及成对反斜杠 \\\\ 不能被清洗破坏。"""
+    resp = '{"value": "第一行\\n第二行\\t制表\\\\反斜杠", "reason": "r", "pages": [1]}'
+    value, reason, pages = parse_llm_json_response(resp)
+    assert value == "第一行\n第二行\t制表\\反斜杠"
+    assert pages == [1]
+
+
+def test_parse_llm_json_response_backslash_before_valid_char_literal():
+    """`\\%` 是非法转义（补成 \\\\%），但 `\\\\%`（转义反斜杠+%）必须原样保留，
+    不能把合法的 \\\\ 拆成 \\\\\\%。"""
+    resp = '{"value": "a\\\\%b", "reason": "r", "pages": [2]}'
+    value, reason, pages = parse_llm_json_response(resp)
+    assert value == "a\\%b"
+    assert pages == [2]
+
+
 def test_normalize_pages_variants():
     assert _normalize_pages([2, 1, "第3页", "5"]) == [1, 2, 3, 5]
     assert _normalize_pages("3, 1、2") == [1, 2, 3]

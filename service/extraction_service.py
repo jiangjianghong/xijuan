@@ -105,6 +105,23 @@ def _extract_value_reason_pages(data: Dict[str, Any]) -> Tuple[str, str, List[in
     return value, reason, pages
 
 
+def _sanitize_json_escapes(s: str) -> str:
+    """清洗 JSON 字符串中的非法反斜杠转义。
+
+    模型在 value 里照抄原文时，MinerU 解析的 LaTeX（如 $5\\%$）会产生非法
+    JSON 转义（\\% 不在合法集合里），导致 json.loads 失败。本函数把非法转义
+    的反斜杠补成 \\\\，让 JSON 合法，同时保留 \\n \\t \\" \\\\ 等合法转义。
+
+    合法 JSON 转义：\" \\\\ \\/ \\b \\f \\n \\r \\t \\uXXXX。
+    """
+    # 正则同时消费「合法转义对」与「落单反斜杠+任意字符」。
+    # group(1) 匹配到 -> 合法转义，原样保留；group(2) 匹配到 -> 非法字符，补 \\\\。
+    _INVALID_ESCAPE = re.compile(r'\\(?:(["\\/bfnrt]|u[0-9a-fA-F]{4})|(.))', re.DOTALL)
+    return _INVALID_ESCAPE.sub(
+        lambda m: m.group(0) if m.group(1) else '\\\\' + m.group(2), s
+    )
+
+
 def parse_llm_json_response(response: str) -> Tuple[str, str, List[int]]:
     """解析 LLM 返回的 JSON 响应，提取 value、reason 和 pages。
 
@@ -121,6 +138,9 @@ def parse_llm_json_response(response: str) -> Tuple[str, str, List[int]]:
     json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response, re.DOTALL)
     if json_match:
         response = json_match.group(1)
+
+    # 清洗非法反斜杠转义（\\% -> \\\\%），保留合法转义（\\n \\t \\\\ 等）
+    response = _sanitize_json_escapes(response)
 
     # 尝试解析 JSON
     try:
@@ -1518,6 +1538,7 @@ JSON_OUTPUT_INSTRUCTION = """
 注意：value 本身的格式请严格遵循 system_prompt 中的要求（如有），可以是字符串、JSON数组或JSON对象——但最外层始终是上面那**一个**对象。
 pages 为你得出该值时实际参考的页码列表（整数数组）。检索文本中每处【第X页】标记表示其后内容所在的页码，同一段落跨页时会出现多个标记；请以你引用内容之前**最近**的那个标记为准，不要跨标记推断。若无法确定则返回空数组 []。
 重点关注：只要输出json结果不要带有```等标识,value和reason的值中不得含有英文标点符号。
+**JSON 转义规范**：value 和 reason 中的特殊字符必须正确转义。反斜杠必须写成 \\\\（两个反斜杠），百分号等特殊字符前的反斜杠同样需要转义（如 \\% 应写成 \\\\%）。换行符、制表符等标准转义（\\n \\t \\" 等）保持不变。
 """
 
 
