@@ -63,10 +63,39 @@ const RuleConfig = {
         if (ta && defaults[kind]) ta.value = defaults[kind];
     },
 
+    // 「LLM 匹配高级设置」折叠面板。默认收起——绝大多数字段用系统默认模板即可，
+    // 展开后才拉取默认模板（收起状态无需发这个请求）。
+    async toggleMatchPromptPanel(kind) {
+        const body = document.getElementById(`fm-${kind}-match-prompt-body`);
+        if (!body) return;
+        const opening = body.style.display === 'none';
+        body.style.display = opening ? '' : 'none';
+        this.setMatchPromptToggleLabel(kind, opening);
+        if (opening) await this.fillMatchPromptDefaults(kind);
+    },
+
+    setMatchPromptToggleLabel(kind, expanded) {
+        const btn = document.getElementById(`fm-${kind}-match-prompt-toggle`);
+        if (btn) btn.textContent = expanded ? '▾ LLM 匹配高级设置' : '▸ LLM 匹配高级设置';
+    },
+
+    collapseMatchPromptPanel(kind) {
+        const body = document.getElementById(`fm-${kind}-match-prompt-body`);
+        if (body) body.style.display = 'none';
+        this.setMatchPromptToggleLabel(kind, false);
+    },
+
     onTableMatchTypeChange(value) {
         const group = document.getElementById('fm-table-match-prompt-group');
         if (group) group.style.display = (value === 'llm') ? '' : 'none';
-        if (value === 'llm') this.fillMatchPromptDefaults('table');
+        if (value !== 'llm') {
+            // 切走 LLM 时收回面板，避免下次切回来仍是展开态
+            this.collapseMatchPromptPanel('table');
+            return;
+        }
+        // 已配置过模板的字段初始即展开，此时需补渲染固定输出段说明
+        const body = document.getElementById('fm-table-match-prompt-body');
+        if (body && body.style.display !== 'none') this.fillMatchPromptDefaults('table');
     },
 
     init() {
@@ -751,14 +780,17 @@ const RuleConfig = {
                     <div class="form-hint">匹配后最多返回的表格数量，0 或空表示不限制</div>
                 </div>
                 <div class="form-group" id="fm-table-match-prompt-group" style="${(field.table_match_type === 'llm') ? '' : 'display:none'}">
-                    <div class="form-label-row">
-                        <label class="form-label">LLM 匹配提示词</label>
-                        <button type="button" class="insert-tag-btn" onclick="RuleConfig.resetMatchPrompt('fm-table-match-prompt','table')" title="恢复系统默认模板">↺</button>
-                    </div>
-                    <textarea class="form-textarea" id="fm-table-match-prompt" rows="6">${Utils.escapeHtml(field.table_match_prompt || '')}</textarea>
-                    <div class="form-hint">
-                        告诉模型<b>要找什么、怎么找</b>。可用占位符：<code>{table_list}</code>（候选表格清单，必填）、<code>{query}</code>（匹配词）、<code>{quantity_hint}</code>（按最大返回数量生成的数量约束句）。<br>
-                        <b>输出格式由系统固定追加，请勿在此改写</b> —— 系统会在模板末尾自动附上：<code id="fm-table-match-prompt-suffix"></code>
+                    <button type="button" class="insert-tag-btn" id="fm-table-match-prompt-toggle" onclick="RuleConfig.toggleMatchPromptPanel('table')" style="width:100%;text-align:left;">${field.table_match_prompt ? '▾' : '▸'} LLM 匹配高级设置</button>
+                    <div id="fm-table-match-prompt-body" style="${field.table_match_prompt ? '' : 'display:none'}">
+                        <div class="form-label-row" style="margin-top:8px;">
+                            <label class="form-label">LLM 匹配提示词</label>
+                            <button type="button" class="insert-tag-btn" onclick="RuleConfig.resetMatchPrompt('fm-table-match-prompt','table')" title="恢复系统默认模板">↺</button>
+                        </div>
+                        <textarea class="form-textarea" id="fm-table-match-prompt" rows="6">${Utils.escapeHtml(field.table_match_prompt || '')}</textarea>
+                        <div class="form-hint">
+                            告诉模型<b>要找什么、怎么找</b>。可用占位符：<code>{table_list}</code>（候选表格清单，必填）、<code>{query}</code>（匹配词）、<code>{quantity_hint}</code>（按最大返回数量生成的数量约束句）。<br>
+                            <b>输出格式由系统固定追加，请勿在此改写</b> —— 系统会在模板末尾自动附上：<code id="fm-table-match-prompt-suffix"></code>
+                        </div>
                     </div>
                 </div>
                 <div id="fm-table-prompt-wrap">
@@ -918,14 +950,17 @@ const RuleConfig = {
                         <div class="form-hint">章节标题与"章节模式"的相似度 ≥ 该值才命中（0-1）</div>
                     </div>
                     <div class="form-group" id="fm-section-match-prompt-group" style="${sectionMatchType === 'llm' ? '' : 'display:none'}">
-                        <div class="form-label-row">
-                            <label class="form-label">LLM 匹配提示词</label>
-                            <button type="button" class="insert-tag-btn" onclick="RuleConfig.resetMatchPrompt('fm-section-match-prompt','section')" title="恢复系统默认模板">↺</button>
-                        </div>
-                        <textarea class="form-textarea" id="fm-section-match-prompt" rows="6">${Utils.escapeHtml(config.section_match_prompt || '')}</textarea>
-                        <div class="form-hint">
-                            告诉模型<b>要找什么、怎么找</b>。可用占位符：<code>{section_list}</code>（候选章节清单，必填）、<code>{query}</code>（章节模式）、<code>{quantity_hint}</code>（按最大结果数生成的数量约束句，默认模板未使用）。<br>
-                            <b>输出格式由系统固定追加，请勿在此改写</b> —— 系统会在模板末尾自动附上：<code id="fm-section-match-prompt-suffix"></code>
+                        <button type="button" class="insert-tag-btn" id="fm-section-match-prompt-toggle" onclick="RuleConfig.toggleMatchPromptPanel('section')" style="width:100%;text-align:left;">${config.section_match_prompt ? '▾' : '▸'} LLM 匹配高级设置</button>
+                        <div id="fm-section-match-prompt-body" style="${config.section_match_prompt ? '' : 'display:none'}">
+                            <div class="form-label-row" style="margin-top:8px;">
+                                <label class="form-label">LLM 匹配提示词</label>
+                                <button type="button" class="insert-tag-btn" onclick="RuleConfig.resetMatchPrompt('fm-section-match-prompt','section')" title="恢复系统默认模板">↺</button>
+                            </div>
+                            <textarea class="form-textarea" id="fm-section-match-prompt" rows="6">${Utils.escapeHtml(config.section_match_prompt || '')}</textarea>
+                            <div class="form-hint">
+                                告诉模型<b>要找什么、怎么找</b>。可用占位符：<code>{section_list}</code>（候选章节清单，必填）、<code>{query}</code>（章节模式）、<code>{quantity_hint}</code>（按最大结果数生成的数量约束句，默认模板未使用）。<br>
+                                <b>输出格式由系统固定追加，请勿在此改写</b> —— 系统会在模板末尾自动附上：<code id="fm-section-match-prompt-suffix"></code>
+                            </div>
                         </div>
                     </div>
                     <div class="form-group">
@@ -1362,7 +1397,11 @@ const RuleConfig = {
 
         if (type === 'section') {
             const mt = config.section_match_type || config.match_type || 'contains';
-            if (mt === 'llm') this.fillMatchPromptDefaults('section');
+            // 只在面板初始即展开（已存过模板）时补渲染，收起态不必发请求
+            const body = document.getElementById('fm-section-match-prompt-body');
+            if (mt === 'llm' && body && body.style.display !== 'none') {
+                this.fillMatchPromptDefaults('section');
+            }
         }
     },
 
@@ -1375,7 +1414,12 @@ const RuleConfig = {
         if (promptGroup) {
             promptGroup.style.display = matchType === 'llm' ? '' : 'none';
         }
-        if (matchType === 'llm') this.fillMatchPromptDefaults('section');
+        if (matchType !== 'llm') {
+            this.collapseMatchPromptPanel('section');
+            return;
+        }
+        const body = document.getElementById('fm-section-match-prompt-body');
+        if (body && body.style.display !== 'none') this.fillMatchPromptDefaults('section');
     },
 
     // ─────────────────────────────────────────────────────────
