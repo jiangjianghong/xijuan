@@ -68,6 +68,7 @@
 | POST | `/extraction/fields` | 字段提取 | 新增/更新字段配置（upsert） | [api/extraction.md](api/extraction.md) |
 | DELETE | `/extraction/fields/{field_id}` | 字段提取 | 删除字段配置 | [api/extraction.md](api/extraction.md) |
 | GET | `/extraction/fields/{field_id}/check` | 字段提取 | 检查字段 ID 是否存在 | [api/extraction.md](api/extraction.md) |
+| GET | `/extraction/match-prompt-defaults` | 字段提取 | 获取提示词模板默认值 | [api/extraction.md](api/extraction.md) |
 | POST | `/extraction/test` | 字段提取 | 字段提取调试（同步） | [api/extraction.md](api/extraction.md) |
 | POST | `/extraction/test/stream` | 字段提取 | 字段提取流式调试（SSE） | [api/extraction.md](api/extraction.md) |
 | DELETE | `/file/batch` | 文件处理 | 批量删除文件 | [api/file.md](api/file.md) |

@@ -38,6 +38,7 @@ _data 为数组，每个元素：_
 | table_match_keywords | array[string] | 是 |  |
 | table_match_max_results | integer | 是 |  |
 | table_system_prompt | string | 是 |  |
+| table_match_prompt | string | 是 |  |
 | table_extract_prompt | string | 是 |  |
 | search_type | SearchTypeEnum | 是 |  |
 | search_config | object | 是 | 结构详见 [search_config](../reference/data-model.md#extraction_field) |
@@ -84,11 +85,12 @@ _data 为数组，每个元素：_
 | table_match_keywords | array[string] | 否 | — | [table] 匹配关键词列表。 |
 | table_match_max_results | integer | 否 | — | [table] 最多命中表数。 |
 | table_system_prompt | string | 否 | — | [table] LLM system prompt（可空）。 |
+| table_match_prompt | string | 否 | — | [table] table_match_type=llm 时的自定义匹配提示词；空=用系统默认。须含 {table_list} 占位符，输出格式段由系统固定追加。 |
 | table_extract_prompt | string | 否 | — | [table] 抽取 prompt；`source_type=table` 时须含至少一个 `<search_result>标签</search_result>`。 |
 | search_type | SearchTypeEnum | 否 | — | [text] 检索方式：`context` / `section` / `rule` / `chunk_db` / `vector_db` / `page`。 |
 | search_config | object | 否 | — | [text] 检索配置（自由 JSON，键随 `search_type` 不同）：
 - `context`：`keywords`[必] / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)
-- `section`：`section_pattern` / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)
+- `section`：`section_pattern` / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)；`section_match_type=llm` 时另可配 `section_match_prompt`（自定义匹配提示词，空=用系统默认，须含 `{section_list}`）
 - `rule`：`keywords`[必] / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)
 - `chunk_db`：`keywords`[必] / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)
 - `vector_db`：`query_text` / `top_k`(5) / `score_threshold`
@@ -202,6 +204,33 @@ curl -X POST http://localhost:5019/extraction/fields \
 | 状态码 | 触发条件 | 响应体 |
 |---|---|---|
 | 200 | 无论是否存在 | ResponseWrapper（`data.exists`） |
+
+## 获取提示词模板默认值
+
+下发各类提示词模板的**系统默认值**，无参数、只读常量，不查库。供前端渲染「LLM 匹配高级设置」、提供「恢复默认」、做「是否改过」比对，避免前端硬编码模板副本落后于后端。
+
+- 方法路径：`GET /extraction/match-prompt-defaults`
+- 认证：无（内网部署）
+
+**响应体**
+
+<!-- AUTOGEN:response GET /extraction/match-prompt-defaults status=200 -->
+| 字段 | 类型 | 可空 | 说明 |
+|---|---|:--:|---|
+| section | string | 是 | 章节 LLM 匹配默认模板 |
+| table | string | 是 | 表格 LLM 匹配默认模板 |
+| output_instruction | string | 是 | 系统固定追加的输出格式段（只读） |
+| vl_batch | string | 是 | vl_progressive 批次提示词默认模板 |
+| vl_locate | string | 是 | vl_locate 定位提示词默认模板 |
+<!-- /AUTOGEN:response -->
+
+匹配模板（`section` / `table`）留空时即为字段实际使用的内容；`output_instruction` 是系统**恒定追加**到匹配模板末尾的输出格式段，用户不可编辑，仅供只读展示。详见 [extraction-config 指南 · LLM 匹配提示词](../guides/extraction-config.md#74-llm-匹配提示词可配置)。
+
+**状态码 / 错误**
+
+| 状态码 | 触发条件 | 响应体 |
+|---|---|---|
+| 200 | 成功 | ResponseWrapper |
 
 ## 字段提取调试（同步）
 

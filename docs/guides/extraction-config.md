@@ -55,7 +55,7 @@ JSON 示例和排错清单为主。
 | `contains` | 表名包含指定文字即命中 | `"利润"` 命中所有名字含「利润」的表 |
 | `llm` | 由 LLM 语义判断是否相关 | `"收入相关"` 可命中 `"营业收入明细表"` |
 
-从严到宽：`exact` < `fuzzy` < `contains` < `llm`。捞不到就往宽调，捞太多杂表就往严调，或改用 `table_match_keywords` / `table_match_max_results` 收敛命中集（见 [data-model#extraction_field](../reference/data-model.md#extraction_field)）。
+从严到宽：`exact` < `fuzzy` < `contains` < `llm`。捞不到就往宽调，捞太多杂表就往严调，或改用 `table_match_keywords` / `table_match_max_results` 收敛命中集（见 [data-model#extraction_field](../reference/data-model.md#extraction_field)）。选 `llm` 时匹配提示词可按字段自定义（`table_match_prompt`，留空用系统默认），见 [§7.4](#74-llm-匹配提示词可配置)。
 
 ### 配方
 
@@ -128,7 +128,7 @@ JSON 示例和排错清单为主。
 
 ### 3.2 章节检索 `section`
 
-匹配 Markdown 标题（如 `# 1.1 经营范围`）并取整段。`section_match_type`（`exact`/`fuzzy`/`contains`/`llm`，默认 `contains`）、`threshold`（fuzzy 阈值 0.8）、`max_results`（默认 3）。**占位符标签用 `section_pattern` 的值。**
+匹配 Markdown 标题（如 `# 1.1 经营范围`）并取整段。`section_match_type`（`exact`/`fuzzy`/`contains`/`llm`，默认 `contains`）、`threshold`（fuzzy 阈值 0.8）、`max_results`（默认 3）。选 `llm` 时匹配提示词可按字段自定义（`search_config.section_match_prompt`，留空用系统默认），见 [§7.4](#74-llm-匹配提示词可配置)。**占位符标签用 `section_pattern` 的值。**
 
 ```json
 {
@@ -446,6 +446,8 @@ JSON 示例和排错清单为主。
 | `vl_method` | `source_type=vl` 时必填 |
 | `batch_prompt_template`（vl_progressive 自定义时） | 含 `{history}` `{field_hints}` `{page_label}` `{total_pages}` |
 | `locate_prompt_template`（vl_locate 自定义时） | 含 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}` |
+| `table_match_prompt`（`table_match_type=llm` 且非空时） | 含 `{table_list}` |
+| `search_config.section_match_prompt`（`section_match_type=llm` 且非空时） | 含 `{section_list}` |
 
 ### 7.3 让模型自报参考页码（可选）
 
@@ -453,7 +455,55 @@ text / table 抽取时，可在 prompt 里要求 LLM 除 `value` / `reason` 外�
 
 即使不要求 `pages`，接口也恒有一个顶层 `source_pages` 字段 —— 模型自报页优先、程序命中页兜底，前端 PDF 定位（📍）跳的就是它。要求 `pages` 的价值在于**更聚焦**：检索常命中多页，模型自报的通常只有真正引用的那一两页，进阶字段页码联动据此派生的区间也更窄。细节见 [source-refs §7](source-refs.md#7-顶层-pages--source_pages页码不再藏在-source_refs-里)。
 
-> `<field_result>字段标识</field_result>` 是**逻辑分析**的占位符，用于 `analysis_rule.expression` 引用提取结果，不在本手册范围，见 [analysis-config](analysis-config.md)。
+### 7.4 LLM 匹配提示词（可配置）
+
+表格匹配（`table_match_type=llm`）与章节匹配（`section_match_type=llm`）的提示词可按字段自定义。**留空即用系统默认模板**，不配也能跑。
+
+**提示词分两段**
+
+| 段 | 内容 | 谁来写 |
+|---|---|---|
+| 用户可编辑段 | 说明「要找什么、怎么找」，即下面配置的模板 | 用户（可留空用默认） |
+| 系统固定段 | 输出格式指令：`只返回序号，不要输出其他内容。例如：2 或 1,3` | 系统恒定追加到模板末尾，**用户改不到** |
+
+输出格式段之所以不开放：匹配结果靠正则抓响应里的整数序号解析，模板若被改成「返回 JSON」，解析器会把 JSON 里的其它数字一并当成序号，命中集直接错乱。同理，模板里也不要要求模型解释理由或输出表名。
+
+**存储位置（两者不对称）**
+
+| 匹配类型 | 存哪 | 空值含义 |
+|---|---|---|
+| 表格 | `extraction_field.table_match_prompt`（独立列） | 用系统默认模板 |
+| 章节 | `search_config.section_match_prompt`（JSON 内的键） | 用系统默认模板 |
+
+**可用占位符**
+
+| 占位符 | 表格匹配 | 章节匹配 |
+|---|---|---|
+| `{table_list}` / `{section_list}` | **必填**，候选表格清单（`序号. 表名`） | **必填**，候选章节清单（`序号. 章节号 标题`） |
+| `{query}` | `table_match_keywords` 用顿号连接（无关键词时回退 `table_name_pattern`） | `section_pattern` 的值 |
+| `{quantity_hint}` | 按 `table_match_max_results` 生成的数量约束句 | 按 `search_config.max_results`（默认 3）生成 |
+
+候选列表占位符缺失即 **422**（模型看不到候选清单，匹配无从谈起）；`{query}` / `{quantity_hint}` 可选，**章节默认模板未使用 `{quantity_hint}`**，需要约束数量自己加进模板即可。渲染用字符串替换而非 `str.format()`，故模板里的字面 `{` `}` **无需转义**、未知占位符原样保留（这点与 VL 的 `batch_prompt_template` / `locate_prompt_template` 不同）。
+
+```json
+{
+  "field_id": "total_revenue",
+  "field_name": "营业总收入",
+  "source_type": "table",
+  "table_match_type": "llm",
+  "table_match_keywords": ["利润表", "收入"],
+  "table_match_max_results": 2,
+  "table_match_prompt": "以下是文档中所有表格的名称和序号列表：\n\n{table_list}\n\n请找出与「{query}」最相关的**合并口径**报表，母公司报表一律排除。{quantity_hint}"
+}
+```
+
+进阶字段的匹配模板里同样可以写 `<field_result>字段ID</field_result>` 引用普通字段的提取值（见 [§6](#6-进阶字段字段引用--页码联动)），复制 / 导出 / 导入时占位符会随新字段 ID 重映射。
+
+**默认模板从哪拿**：`GET /extraction/match-prompt-defaults` 下发 `section` / `table` / `output_instruction` / `vl_batch` / `vl_locate` 五个默认值（见 [接口参考](../api/extraction.md#获取提示词模板默认值)）。前端据此渲染而不硬编码副本，避免副本落后于后端、被用户一保存就固化进库。
+
+**前端在哪配**：字段表单的匹配方式选到「LLM 匹配」后出现 `▸ LLM 匹配高级设置` 折叠按钮，**默认收起**；展开后是提示词文本框 + 「↺ 恢复默认」+ 占位符说明 + 只读展示的系统固定输出段。已存过自定义模板的字段初始即展开。
+
+
 
 ---
 

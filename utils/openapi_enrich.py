@@ -519,6 +519,23 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
     },
 
     # ─── extraction ────────────────────────────────────────
+    "/extraction/match-prompt-defaults": {
+        "get": {
+            "summary": "获取提示词模板默认值",
+            "description": (
+                "下发各类提示词模板的**系统默认值**，无参数、只读常量，不查库。\n\n"
+                "返回 `data={section, table, output_instruction, vl_batch, vl_locate}`：\n"
+                "- `section` / `table`：章节 / 表格 LLM 匹配的默认模板（对应 `search_config.section_match_prompt` "
+                "与 `table_match_prompt` 留空时实际使用的内容）\n"
+                "- `output_instruction`：匹配模板末尾由系统**恒定追加**的输出格式段，用户不可编辑，"
+                "仅供前端只读展示\n"
+                "- `vl_batch` / `vl_locate`：`vl_progressive` 的 `batch_prompt_template` 与 "
+                "`vl_locate` 的 `locate_prompt_template` 默认值\n\n"
+                "**用途**：前端据此渲染「LLM 匹配高级设置」文本框、提供「恢复默认」、并做「是否改过」比对，"
+                "从而不必在前端硬编码模板副本——副本一旦落后于后端，用户保存时会把旧模板固化进库。"
+            ),
+        }
+    },
     "/extraction/fields": {
         "get": {
             "summary": "列出字段配置",
@@ -541,6 +558,9 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "`{field_hints}` `{page_label}` `{total_pages}` `{history}`\n"
                 "- `vl_locate` 的自定义 `locate_prompt_template` 必含 "
                 "`{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`\n"
+                "- `table_match_type=llm` 时非空的 `table_match_prompt` 必含 `{table_list}`；"
+                "`section_match_type=llm` 时非空的 `search_config.section_match_prompt` 必含 `{section_list}`"
+                "（缺了模型看不到候选列表）\n"
                 "- 模板里的字面 `{` `}` 需写成 `{{` `}}` 转义（`str.format()` 渲染）\n\n"
                 "返回 `data={field_id}`，`message` 区分「已创建 / 已更新」。"
             ),
@@ -865,7 +885,8 @@ PARAM_OVERRIDES: Dict[tuple, Dict[str, Any]] = {
 _SEARCH_CONFIG_DOC = (
     "检索配置（自由 JSON，键随 `search_type` 不同）：\n"
     "- `context`：`keywords`[必] / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)\n"
-    "- `section`：`section_pattern` / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)\n"
+    "- `section`：`section_pattern` / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)"
+    "；`section_match_type=llm` 时另可配 `section_match_prompt`（自定义匹配提示词，空=用系统默认，须含 `{section_list}`）\n"
     "- `rule`：`keywords`[必] / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)\n"
     "- `chunk_db`：`keywords`[必] / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)\n"
     "- `vector_db`：`query_text` / `top_k`(5) / `score_threshold`\n"
@@ -976,6 +997,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "table_match_keywords": "[table] 匹配关键词列表。",
             "table_match_max_results": "[table] 最多命中表数。",
             "table_system_prompt": "[table] LLM system prompt。",
+            "table_match_prompt": "[table] LLM 匹配自定义提示词（可空）。",
             "table_extract_prompt": "[table] 抽取 prompt，须含 `<search_result>标签</search_result>` 占位符。",
             "search_type": "[text] 检索方式：`context` / `section` / `rule` / `chunk_db` / `vector_db` / `page`。",
             "search_config": _SEARCH_CONFIG_DOC,
@@ -1057,6 +1079,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "table_match_keywords": "[table] 匹配关键词列表。",
             "table_match_max_results": "[table] 最多命中表数。",
             "table_system_prompt": "[table] LLM system prompt（可空）。",
+            "table_match_prompt": "[table] table_match_type=llm 时的自定义匹配提示词；空=用系统默认。须含 {table_list} 占位符，输出格式段由系统固定追加。",
             "table_extract_prompt": "[table] 抽取 prompt；`source_type=table` 时须含至少一个 `<search_result>标签</search_result>`。",
             "search_type": "[text] 检索方式：`context` / `section` / `rule` / `chunk_db` / `vector_db` / `page`。",
             "search_config": "[text] " + _SEARCH_CONFIG_DOC,
@@ -1473,6 +1496,11 @@ RESPONSE_DATA: Dict[tuple, Any] = {
     ("/file/{file_id}/extraction", "get"): ["ExtractionResultItem"],
     ("/file/{file_id}/analysis", "get"): ["AnalysisResultItem"],
     # extraction
+    ("/extraction/match-prompt-defaults", "get"): {
+        "section": "string — 章节 LLM 匹配默认模板", "table": "string — 表格 LLM 匹配默认模板",
+        "output_instruction": "string — 系统固定追加的输出格式段（只读）",
+        "vl_batch": "string — vl_progressive 批次提示词默认模板",
+        "vl_locate": "string — vl_locate 定位提示词默认模板"},
     ("/extraction/fields", "get"): ["ExtractionFieldResponse"],
     ("/extraction/fields", "post"): {"field_id": "string — 字段 ID"},
     ("/extraction/fields/{field_id}/check", "get"): {"exists": "boolean — 是否已存在"},
