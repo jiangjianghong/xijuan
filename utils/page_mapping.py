@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 from bisect import bisect_right
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 def _parse_middle_json(middle_json_raw: Union[str, dict]) -> dict:
@@ -68,6 +69,79 @@ def _unique_find(md_content: str, probe: str):
     return -1, 0
 
 
+# 与 table_service 的表格枚举口径保持一致——两处必须数出同样多、同样顺序的表格，
+# 否则「第 i 个表格组 ↔ md 中第 i 张表」的配对会错位。
+_TABLE_RE = re.compile(r"<table>.*?</table>", re.DOTALL | re.IGNORECASE)
+
+
+def _is_continuation_table_block(block: dict) -> bool:
+    """判定 table 块是否为 MinerU 跨页表格的「后续页空壳」。
+
+    MinerU 把跨页表格合并成一个 <table> 写进 md，middle_json 里只有首页块携带
+    完整 html，后续页退化成 {"lines": [], "lines_deleted": true} 的 table_body
+    空壳——提不出任何探针文本，因而产不出锚点。
+
+    要求「有 table_body 子块」而不仅是「提不出文本」：扫描件里未转成 HTML 的表格
+    块只有 type/bbox、连 blocks 都没有，那种块与跨页无关，误并入表格组会凭空撑大
+    末页页码。
+    """
+    if block.get("type") != "table":
+        return False
+    if _block_probe_and_bbox(block)[0].strip():
+        return False
+    return any(
+        isinstance(b, dict) and b.get("type") == "table_body"
+        for b in block.get("blocks", [])
+    )
+
+
+def _collect_table_groups(pdf_info: List[dict]) -> List[Dict[str, int]]:
+    """按 middle_json 顺序收集表格组，返回 [{"first_page", "last_page"}, ...]。
+
+    一个组 = 一个携带 html 的首页块 + 其后紧邻页的连续空壳块。空壳块只在页码恰好
+    衔接（`last_page + 1`）时并入，避免相隔数页的异常空壳块把末页拨过头；出现在
+    任何有内容块之前的空壳块无组可归，直接忽略。
+    """
+    groups: List[Dict[str, int]] = []
+    for page in pdf_info:
+        page_num = page.get("page_idx", 0) + 1
+        for block in page.get("para_blocks", []):
+            if block.get("type") != "table":
+                continue
+            if _is_continuation_table_block(block):
+                if groups and page_num == groups[-1]["last_page"] + 1:
+                    groups[-1]["last_page"] = page_num
+                continue
+            groups.append({"first_page": page_num, "last_page": page_num})
+    return groups
+
+
+def _cross_page_table_anchors(
+    md_content: str,
+    pdf_info: List[dict],
+) -> List[Tuple[int, int, int, None, None]]:
+    """为跨页表格在 </table> 之后补一个「末页」锚点。
+
+    跨页表格覆盖的第 2..N 页在 middle_json 里全是空壳块、产不出锚点，而
+    lookup_page_num 的语义是「取 start_pos 之前最近的锚点页码」——于是表格之后、
+    下一个真实锚点之前的正文会继承表格**之前**的页码（实测 22-23 页的表，其后第
+    23 页正文被标成第 21 页）。这里按「第 i 个表格组 ↔ md 中第 i 张表」配对，给
+    跨页组补一个零宽锚点把页码拨到末页。
+
+    锚点不带 bbox/page_size：它落在表格之外，只作页码分界，挂整表框会让前端在正文
+    位置画出表格高亮。组数与 md 中表格数对不上时整体放弃——宁可不补，也不错位污染。
+    """
+    groups = _collect_table_groups(pdf_info)
+    spans = [m.end() for m in _TABLE_RE.finditer(md_content)]
+    if not groups or len(groups) != len(spans):
+        return []
+    return [
+        (end, 0, g["last_page"], None, None)
+        for end, g in zip(spans, groups)
+        if g["last_page"] > g["first_page"]
+    ]
+
+
 def _longest_nondecreasing_keep(pages: List[int]) -> List[int]:
     """返回要保留的下标(page_num 的最长非降子序列),剔除破坏单调的假唯一锚。"""
     if not pages:
@@ -102,8 +176,9 @@ def build_page_mapping(
     """构建 markdown 文本位置 → 页码的映射表(全局唯一锚 + LIS 单调清洗)。
 
     算法：遍历 middle_json 每页每块，取足够长前缀在整篇 md 做全局唯一匹配
-    (count==1)得到可信锚 (pos, page_num, bbox, page_size)；锚点按 pos 排序后
-    用 LIS 保留 page_num 非降的最长子序列，剔除极少数破坏单调的假唯一匹配。
+    (count==1)得到可信锚 (pos, page_num, bbox, page_size)；跨页表格额外补一个
+    末页锚(见 _cross_page_table_anchors)；锚点按 pos 排序后用 LIS 保留 page_num
+    非降的最长子序列，剔除极少数破坏单调的假唯一匹配。
     产出 schema 与历史版本一致，lookup_page_num/lookup_bboxes 无需改动。
 
     Args:
@@ -137,6 +212,9 @@ def build_page_mapping(
 
     if not candidates:
         return []
+
+    # 1.5) 跨页表格补末页锚（空壳块产不出锚，表格后的正文否则会继承表格之前的页码）
+    candidates.extend(_cross_page_table_anchors(md_content, pdf_info))
 
     # 2) 按位置排序
     candidates.sort(key=lambda c: c[0])

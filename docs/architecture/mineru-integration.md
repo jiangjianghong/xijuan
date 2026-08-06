@@ -111,12 +111,13 @@ files = {"files": (file_name, file_content, "application/pdf")}
 
 ## 6. middle_json 后处理：page_mapping（`utils/page_mapping.py`）
 
-页码映射走 `build_page_mapping`（**全局唯一锚 + LIS 单调清洗**，数据源仅
+页码映射走 `build_page_mapping`（**全局唯一锚 + 跨页表格补锚 + LIS 单调清洗**，数据源仅
 middle_json）。对每个 para_block 取足够长前缀（文本块取 span content，表格块取
 table_body span 的 html），在**整篇 md 做全局唯一匹配**（`count==1` 才认，避免歧义），
-得到可信锚 `(pos, page_num, bbox, page_size)`；锚点按位置排序后用 LIS 保留 page_num
-非降的最长子序列，剔除极少数破坏单调的假唯一匹配。bbox 直接取 middle_json 的原生页
-坐标，无需反归一化。
+得到可信锚 `(pos, page_num, bbox, page_size)`；跨页表格的后续页在 middle_json 里是提不出
+探针的空壳块，额外按表格组补一个末页锚（详见下方构建算法第 3 步）；锚点按位置排序后用 LIS
+保留 page_num 非降的最长子序列，剔除极少数破坏单调的假唯一匹配。bbox 直接取 middle_json
+的原生页坐标，无需反归一化。
 
 解析完成后，管线层（`pipeline_service.py`）调用：
 
@@ -138,8 +139,17 @@ page_mapping = build_page_mapping(content, middle_json_str)
           "lines": [{"spans": [{"content": "文本片段"}]}]
         },
         {
-          "type": "table",            // 表格块：无 lines/spans 文本
-          "bbox": [x0, y0, x1, y1]    // 整表框
+          "type": "table",            // 表格块（跨页表的首页）：html 是合并后的整表
+          "bbox": [x0, y0, x1, y1],   // 整表框
+          "blocks": [
+            {"type": "table_caption", "lines": [{"spans": [{"content": "表3 xxx"}]}]},
+            {"type": "table_body", "lines": [{"spans": [{"type": "table", "html": "<table>...</table>"}]}]}
+          ]
+        },
+        {
+          "type": "table",            // 跨页表的后续页：空壳，提不出任何文本
+          "bbox": [x0, y0, x1, y1],
+          "blocks": [{"type": "table_body", "lines": [], "lines_deleted": true}]
         }
       ]
     }
@@ -147,14 +157,17 @@ page_mapping = build_page_mapping(content, middle_json_str)
 }
 ```
 
-**构建算法**（前向扫描锚定，两种锚点）：
+> 跨页表格在 md 中只有**一个** `<table>`（MinerU 已合并），但在 middle_json 里占 N 个块：首块带完整 html，其余 N−1 块是上面那种 `lines_deleted` 空壳。生产抽样中 78% 的带表格文件存在跨页表，累计 328 个页面属于这种空壳块。
 
-1. 逐页遍历 `para_blocks`，维护单调前进的游标 `cursor`。
-2. **表格块**（`type == "table"`，无 lines/spans 文本，提不出前缀）：在 `md_content` 中从 `cursor` 处前向 `find("<table")` 字面量定位，命中则记录锚点并挂**整表 bbox**；找不到 `<table` 字面量或块无 bbox 时不产锚点（容错跳过）。
-3. **文本块**：提取纯文本（所有 span 的 `content` 用空格拼接），少于 3 个字符的块跳过；依次用块文本的前 50 / 30 / 20 字符前缀从 `cursor` 处 `find` 定位，都失败再试前 10 字符。
-4. 命中则记录一条映射并把游标推进到 `pos + 1`（保证单调前进，避免回头错配）。
-5. 每个命中锚点产出一条映射项（位置区间 + 页码 + bbox/page_size）——**完整字段结构见 [reference/data-model.md#file_content](../reference/data-model.md#file_content)（`page_mapping` 子结构，schema 唯一权威），此处不复述**。语义要点：`page_num` 为 1-indexed；`bbox`/`page_size` 在 middle_json 缺失时不带（存量老数据全部不带）；文本块 bbox 为该段落块的框，表格块为整表框；坐标系为左上原点、与 `page_size` 同一单位，前端按 `canvas尺寸 / page_size` 线性缩放画框。
-6. 最终按 `start_pos` 排序返回。
+**构建算法**（全局唯一锚 + 跨页表格补锚 + LIS 单调清洗）：
+
+1. 逐页遍历 `para_blocks`，对每块递归收集探针文本（文本块取 span `content`，表格块取 `table_body` span 的 `html`，用空格拼接）；探针不足 8 字符的块跳过。
+2. 依次用探针的前 40 / 25 字符在**整篇 md 做全局唯一匹配**（`md.count(prefix) == 1` 才认），命中则产出锚点 `(pos, used_len, page_num, bbox, page_size)`。不唯一或找不到都不产锚——宁可缺锚，也不用歧义位置毒化映射。
+3. **跨页表格补末页锚**（`_cross_page_table_anchors`）：MinerU 把跨页表格合并成一个 `<table>` 写进 md，middle_json 里只有**首页**块携带完整 html，后续页退化成 `{"lines": [], "lines_deleted": true}` 的 `table_body` 空壳、提不出探针——表格覆盖的第 2..N 页因而一个锚点都没有。按「第 i 个表格组 ↔ md 中第 i 张 `<table>`」配对（表格枚举正则与 `table_service` 一致），给跨页组在 `</table>` 之后补一个零宽锚点（`page_num` = 组末页，**不带 bbox/page_size**——它落在表格之外，只作页码分界，挂整表框会让前端在正文位置画出表格高亮）。表格组数与 md 中表格数对不上时整体放弃补锚，避免错位污染。
+4. 锚点按 `pos` 排序，再用 LIS 保留 `page_num` 非降的最长子序列，剔除极少数破坏单调的假唯一匹配。
+5. 每个保留的锚点产出一条映射项（位置区间 + 页码 + bbox/page_size）——**完整字段结构见 [reference/data-model.md#file_content](../reference/data-model.md#file_content)（`page_mapping` 子结构，schema 唯一权威），此处不复述**。语义要点：`page_num` 为 1-indexed；`bbox`/`page_size` 在 middle_json 缺失时不带（存量老数据全部不带）；文本块 bbox 为该段落块的框，表格块为整表框；坐标系为左上原点、与 `page_size` 同一单位，前端按 `canvas尺寸 / page_size` 线性缩放画框。
+
+> **为什么必须补末页锚**：`lookup_page_num` 的语义是「取 `start_pos` 之前最近的锚点页码」，锚点之间的空白一律继承前一个锚。跨页表格制造的锚点空洞可横跨数十页、长达数万字符，表格结束后的正文会因此继承表格**之前**的页码。实测：一份 40 页文档里 22–23 页的表，其后第 23 页正文被标成第 21 页；一份 90 页文档里 49–64 页的表，其后正文被标成第 45 页。补锚只新增锚点、不改动已有锚点（已在生产数据上验证「丢失原有锚点 = 0」且单调性保持）。表格**内部**的页码仍为首页——空壳块只有 bbox、没有行级信息，无从得知第 k 行落在哪一页，故不做估算。
 
 **配套查询函数**（供下游 tableing/chunking/extraction 用）：
 
