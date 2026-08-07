@@ -37,9 +37,11 @@ class AnalysisRuleSnapshot:
     priority: int
     is_formatted: int = 0
     output_schema: Optional[list] = None
+    enabled: int = 1
 
     @classmethod
     def from_orm(cls, rule: AnalysisRule) -> "AnalysisRuleSnapshot":
+        enabled_raw = getattr(rule, "enabled", 1)
         return cls(
             rule_id=rule.rule_id,
             type_id=rule.type_id or "default",
@@ -52,6 +54,7 @@ class AnalysisRuleSnapshot:
             priority=int(rule.priority or 0),
             is_formatted=int(getattr(rule, "is_formatted", 0) or 0),
             output_schema=getattr(rule, "output_schema", None),
+            enabled=1 if enabled_raw is None else int(enabled_raw),
         )
 
 
@@ -85,15 +88,17 @@ def plan_rules(
 ) -> RulePlan:
     """规划一个 item 实际要执行的规则。
 
-    `rule_ids` 为 None（不传）时沿用隐式筛选：只跑依赖字段被输入覆盖的规则，
-    其余静默跳过。显式点名（含空数组）时只跑点名的规则，且**不做**覆盖过滤 ——
-    缺依赖字段交由 `execute_rule` 产出失败结果，避免规则从 results 里凭空消失。
-    点名了但该类型下不存在或未启用的 rule_id 收进 `unknown_rule_ids` 回传，不报错。
+    `rule_ids` 为 None（不传）时沿用隐式筛选：只跑**启用**（enabled=1）且依赖字段被
+    输入覆盖的规则，其余静默跳过。显式点名（含空数组）时只跑点名的规则，**无视 enabled
+    开关**，且**不做**覆盖过滤 —— 缺依赖字段交由 `execute_rule` 产出失败结果，避免规则
+    从 results 里凭空消失。独立分析的显式执行不应依赖开关状态。
+    点名了但该类型下不存在的 rule_id 收进 `unknown_rule_ids` 回传，不报错。
     """
 
     if rule_ids is None:
+        enabled_rules = [rule for rule in rules if rule.enabled]
         return RulePlan(
-            rules=select_covered_rules(rules, field_values),
+            rules=select_covered_rules(enabled_rules, field_values),
             unknown_rule_ids=[],
             require_coverage=False,
         )
@@ -256,12 +261,15 @@ async def _load_rules_by_type(
     type_ids: set[str],
     session: AsyncSession,
 ) -> dict[str, list[AnalysisRuleSnapshot]]:
-    """一次查询全部类型规则，并在启动并发前转换为快照。"""
+    """一次查询全部类型规则，并在启动并发前转换为快照。
+
+    **不**按 enabled 过滤：显式点名的规则应无视开关执行；enabled 过滤仅在
+    `plan_rules` 的隐式路径（不传 rule_ids）里对「跑全部启用规则」生效。
+    """
 
     statement = (
         select(AnalysisRule)
         .where(
-            AnalysisRule.enabled == 1,
             AnalysisRule.type_id.in_(sorted(type_ids)),
         )
         .order_by(

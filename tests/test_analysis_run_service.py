@@ -21,6 +21,7 @@ def _rule(
     *,
     rule_type: str = "judge",
     expression: str = "<field_result>amount</field_result>",
+    enabled: int = 1,
 ) -> AnalysisRuleSnapshot:
     return AnalysisRuleSnapshot(
         rule_id=rule_id,
@@ -32,6 +33,7 @@ def _rule(
         depend_fields=depend_fields,
         web_search=None,
         priority=priority,
+        enabled=enabled,
     )
 
 
@@ -40,6 +42,7 @@ def _orm_rule(
     depend_fields: list[str],
     *,
     priority: int,
+    enabled: int = 1,
 ):
     return SimpleNamespace(
         rule_id=rule_id,
@@ -51,6 +54,7 @@ def _orm_rule(
         depend_fields=depend_fields,
         web_search=None,
         priority=priority,
+        enabled=enabled,
     )
 
 
@@ -342,6 +346,27 @@ def test_plan_rules_keeps_named_rule_whose_depend_fields_are_missing():
     assert [rule.rule_id for rule in plan.rules] == ["amount_and_tax"]
 
 
+def test_plan_rules_named_disabled_rule_ignores_switch():
+    """显式点名 enabled=0 的规则也照常执行 —— 独立分析不依赖开关状态。"""
+    plan = plan_rules(
+        [_rule("disabled_rule", ["amount"], 1, enabled=0)],
+        {"amount": "1200000"},
+        ["disabled_rule"],
+    )
+    assert [rule.rule_id for rule in plan.rules] == ["disabled_rule"]
+    assert plan.unknown_rule_ids == []
+
+
+def test_plan_rules_implicit_path_skips_disabled_rules():
+    """不传 rule_ids（跑全部）时仍尊重开关：enabled=0 的规则静默跳过。"""
+    rules = [
+        _rule("on", ["amount"], 1, enabled=1),
+        _rule("off", ["amount"], 2, enabled=0),
+    ]
+    plan = plan_rules(rules, {"amount": "1"}, None)
+    assert [rule.rule_id for rule in plan.rules] == ["on"]
+
+
 @pytest.mark.anyio
 async def test_execute_rule_reports_missing_depend_fields_when_coverage_required():
     result = await analysis_run_service.execute_rule(
@@ -412,6 +437,57 @@ async def test_run_analysis_batch_returns_unknown_rule_ids():
     assert item["total"] == 0
     assert item["results"] == []
     assert item["unknown_rule_ids"] == ["ghost"]
+
+
+@pytest.mark.anyio
+async def test_run_analysis_batch_named_disabled_rule_executes(monkeypatch):
+    """点名 enabled=0 的规则应实际执行，而不是被当成 unknown 丢弃。"""
+    called = []
+
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        called.append(rule.rule_id)
+        return _success(rule)
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    data = await analysis_run_service.run_analysis_batch(
+        [{
+            "type_id": "contract",
+            "biz_id": "b0",
+            "field_values": {"amount": "120"},
+            "rule_ids": ["disabled_rule"],
+        }],
+        ReadOnlySession([
+            _orm_rule("disabled_rule", ["amount"], priority=1, enabled=0),
+        ]),
+    )
+
+    item = data["items"][0]
+    assert called == ["disabled_rule"]
+    assert item["total"] == 1
+    assert item["succeeded"] == 1
+    assert item["unknown_rule_ids"] == []
+
+
+@pytest.mark.anyio
+async def test_run_analysis_batch_implicit_run_skips_disabled(monkeypatch):
+    """不传 rule_ids 跑全部时，enabled=0 的规则不执行。"""
+    called = []
+
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        called.append(rule.rule_id)
+        return _success(rule)
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    data = await analysis_run_service.run_analysis_batch(
+        [{"type_id": "contract", "biz_id": "b0", "field_values": {"amount": "1"}}],
+        ReadOnlySession([
+            _orm_rule("on", ["amount"], priority=1, enabled=1),
+            _orm_rule("off", ["amount"], priority=2, enabled=0),
+        ]),
+    )
+
+    assert called == ["on"]
+    assert data["items"][0]["total"] == 1
 
 
 @pytest.mark.anyio
