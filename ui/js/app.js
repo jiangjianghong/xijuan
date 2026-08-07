@@ -1144,6 +1144,10 @@ const App = {
                 LogViewer.deactivate();
             }
         }
+
+        if (page === 'api-docs' && typeof ApiDocs !== 'undefined') {
+            ApiDocs.activate();
+        }
     },
 
     updateNavIndicator(btn) {

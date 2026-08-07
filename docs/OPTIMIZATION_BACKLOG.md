@@ -27,7 +27,7 @@
 ## 🔴 第一优先级：安全 + 静默正确性
 
 - [ ] **R1 · 全站零鉴权 + CORS 通配** — 影响：高 / 工作量：中
-  - 证据：`app.py:59`（`allow_origins=["*"]`）、全 router 仅 `Depends(get_db)`、`docs/API_DOCUMENTATION.md:36`（"认证方式：无"）
+  - 证据：`app.py:59`（`allow_origins=["*"]`）、全 router 仅 `Depends(get_db)`、`docs/API_FULL_REFERENCE.md:215`（当前源码未实现应用层鉴权）
   - 问题：任何能访问到服务的人可无条件 `DELETE /file`、`DELETE /doctype?force=true`（级联删文件+Milvus+PDF+配置）、读全部抽取结果与原始 PDF、`GET /log/stream` 实时拉取含 LLM 提示词与文档明文的日志；无租户隔离。
   - 建议：FastAPI `APIKeyHeader`/`HTTPBearer` 全局依赖；写/删/日志接口分级；CORS 收敛为前端域名白名单。
 
@@ -170,3 +170,4 @@
 - 全部 66 条均经"独立审查员回读源码"确认；其中 6 条"头条"（R2/R5/R3/R1/R9/R4）由本次审查者**再次亲自回读源码复核**，结论属实。
 - 影响力/工作量为审查校准值；部分原评"高"经复核下修为"中"（如 H1 上传并发、H2 retry 竞态——真实但严重性有条件）。
 - 少数验证 agent 运行期安全分类器不可用，其**结论正确性**不受影响（分类器只审查 agent 行为安全性，非内容对错）；涉及的头条项已人工复核。
+

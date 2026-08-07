@@ -3342,6 +3342,299 @@ h1, h2, h3, h4, h5, h6,
     color: #ff9b86;
 }
 
+/* ── API Docs Page ── */
+.api-docs-content {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.api-docs-toolbar {
+    padding: 16px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.api-docs-title {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.api-docs-title .panel-title {
+    margin: 0;
+}
+
+.api-docs-meta {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.api-docs-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 1 520px;
+}
+
+.api-docs-search {
+    height: 38px;
+    flex: 1;
+    min-width: 240px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--text-secondary);
+}
+
+.api-docs-search input {
+    width: 100%;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.api-docs-shell {
+    display: grid;
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.api-docs-toc {
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 132px);
+    padding: 14px;
+    overflow: auto;
+}
+
+.api-docs-toc-head {
+    margin-bottom: 10px;
+    color: var(--bio-dark);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.api-docs-toc-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.api-docs-toc-item {
+    display: block;
+    padding: 6px 8px;
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.35;
+    text-decoration: none;
+}
+
+.api-docs-toc-item:hover {
+    background: var(--bio-pale);
+    color: var(--bio-dark);
+}
+
+.api-docs-toc-item.level-1 {
+    font-weight: 700;
+    color: var(--bio-dark);
+}
+
+.api-docs-toc-item.level-2 {
+    padding-left: 16px;
+}
+
+.api-docs-toc-item.level-3 {
+    padding-left: 28px;
+    font-size: 12px;
+}
+
+.api-docs-toc-item.level-4,
+.api-docs-toc-item.level-5,
+.api-docs-toc-item.level-6 {
+    padding-left: 40px;
+    font-size: 12px;
+}
+
+.api-docs-toc-item.is-hidden {
+    display: none;
+}
+
+.api-docs-body {
+    min-width: 0;
+    padding: 28px 32px;
+    color: #26382f;
+    font-size: 14px;
+    line-height: 1.72;
+}
+
+.api-docs-body h1,
+.api-docs-body h2,
+.api-docs-body h3,
+.api-docs-body h4,
+.api-docs-body h5,
+.api-docs-body h6 {
+    margin: 24px 0 10px;
+    color: var(--bio-dark);
+    line-height: 1.35;
+    scroll-margin-top: 20px;
+}
+
+.api-docs-body h1 {
+    margin-top: 0;
+    font-size: 26px;
+    font-family: 'Lora', 'Georgia', serif;
+}
+
+.api-docs-body h2 {
+    padding-top: 12px;
+    border-top: 1px solid rgba(79, 119, 93, 0.16);
+    font-size: 20px;
+}
+
+.api-docs-body h3 {
+    font-size: 17px;
+}
+
+.api-docs-body p,
+.api-docs-body ul,
+.api-docs-body blockquote,
+.api-docs-body .api-table-wrap,
+.api-docs-body .api-code {
+    margin: 10px 0 14px;
+}
+
+.api-docs-body ul {
+    padding-left: 22px;
+}
+
+.api-docs-body li {
+    margin: 4px 0;
+}
+
+.api-docs-body blockquote {
+    padding: 10px 14px;
+    border-left: 3px solid var(--bio-light);
+    border-radius: 0 6px 6px 0;
+    background: rgba(232, 239, 230, 0.58);
+    color: var(--text-secondary);
+}
+
+.api-docs-body hr {
+    margin: 24px 0;
+    border: none;
+    border-top: 1px solid rgba(79, 119, 93, 0.16);
+}
+
+.api-docs-body a {
+    color: #1d6f93;
+    text-decoration: none;
+}
+
+.api-docs-body a:hover {
+    text-decoration: underline;
+}
+
+.api-docs-body code {
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: rgba(44, 76, 59, 0.08);
+    color: #1f4d3a;
+    font-size: 12px;
+    word-break: break-word;
+}
+
+.api-code {
+    position: relative;
+    max-width: 100%;
+    overflow: auto;
+    padding: 14px 16px;
+    border-radius: 8px;
+    background: #1f2f28;
+    color: #edf7f0;
+    line-height: 1.55;
+}
+
+.api-code code {
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 12px;
+    white-space: pre;
+}
+
+.api-table-wrap {
+    max-width: 100%;
+    overflow: auto;
+    border: 1px solid rgba(79, 119, 93, 0.18);
+    border-radius: 8px;
+}
+
+.api-table {
+    width: 100%;
+    min-width: 560px;
+    border-collapse: collapse;
+    background: rgba(255, 255, 255, 0.62);
+}
+
+.api-table th,
+.api-table td {
+    padding: 9px 11px;
+    border-bottom: 1px solid rgba(79, 119, 93, 0.14);
+    border-right: 1px solid rgba(79, 119, 93, 0.12);
+    vertical-align: top;
+    text-align: left;
+}
+
+.api-table th:last-child,
+.api-table td:last-child {
+    border-right: none;
+}
+
+.api-table th {
+    position: sticky;
+    top: 0;
+    background: #eef5ef;
+    color: var(--bio-dark);
+    font-weight: 700;
+}
+
+.api-table tbody tr:hover td {
+    background: rgba(232, 239, 230, 0.45);
+}
+
+.api-docs-loading,
+.api-docs-empty,
+.api-docs-error,
+.api-docs-no-results {
+    padding: 18px;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.api-docs-error {
+    color: #b91c1c;
+}
+
+.api-search-hidden {
+    display: none !important;
+}
+
 /* ── Pipeline Enhancements: Duration, Preview, Expandable ── */
 
 /* Duration badge */
@@ -3599,6 +3892,24 @@ input[type="checkbox"] {
         grid-column: 1 / -1;
         justify-content: flex-start;
     }
+
+    .api-docs-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .api-docs-actions {
+        flex: none;
+    }
+
+    .api-docs-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .api-docs-toc {
+        position: static;
+        max-height: 220px;
+    }
 }
 
 /* ── Responsive ── */
@@ -3644,6 +3955,25 @@ input[type="checkbox"] {
 
     .header-nav {
         margin-left: 16px;
+        overflow-x: auto;
+        max-width: 100%;
+    }
+
+    .api-docs-content {
+        padding: 16px;
+    }
+
+    .api-docs-body {
+        padding: 20px 16px;
+    }
+
+    .api-docs-actions {
+        flex-wrap: wrap;
+    }
+
+    .api-docs-search {
+        flex-basis: 100%;
+        min-width: 0;
     }
 
     .rule-modal {

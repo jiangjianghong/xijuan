@@ -12,6 +12,9 @@
 
 ## 文档地图
 
+### 单文件总手册
+- [API_FULL_REFERENCE](API_FULL_REFERENCE.md) — 当前项目全部 51 个接口与现有文档细节的单文件详尽手册，包含公共约定、参数表、请求示例、响应示例、错误条件、回调与 SSE 契约，并在文末完整汇编 `api/`、`guides/`、`reference/`、`architecture/` 与 backlog 文档。适合外部集成方或需要一次性通读项目文档全貌时使用。
+
 ### 参考层 · 接口参考（`api/`）
 - [overview](api/overview.md) — 基础信息 · 通用响应信封 · 认证 · 分页约定 · 错误码总表 · 版本
 - [doctype](api/doctype.md) — `/doctype` 文档类型 / 项目 / 血缘 / 模板
@@ -38,7 +41,7 @@
 
 ## 接口总览
 
-共 50 个接口。下表由 `scripts/gen_doc_tables.py` 从 `docs/openapi.json` 生成，请勿手改。
+共 51 个接口。下表由 `scripts/gen_doc_tables.py` 从 `docs/openapi.json` 生成，请勿手改。
 
 <!-- AUTOGEN:endpoint-index -->
 | 方法 | 路径 | 分组 | 摘要 | 文档 |
