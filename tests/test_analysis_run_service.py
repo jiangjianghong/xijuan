@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -954,3 +955,69 @@ async def test_persist_ignored_when_source_is_values(monkeypatch):
         session,
         persist=True,
     )
+
+
+# ── item 级并发上限 ─────────────────────────────────────────
+
+
+def _patch_max_concurrency(monkeypatch, value: int):
+    """把 get_config().analysis.max_concurrency 覆盖成给定值。"""
+    fake_cfg = SimpleNamespace(
+        analysis=SimpleNamespace(max_concurrency=value, calc_precision=2)
+    )
+    monkeypatch.setattr(analysis_run_service, "get_config", lambda: fake_cfg)
+
+
+@pytest.mark.anyio
+async def test_run_analysis_batch_caps_item_concurrency(monkeypatch):
+    """同时执行的 item 数不超过 analysis.max_concurrency。"""
+    _patch_max_concurrency(monkeypatch, 2)
+
+    state = {"active": 0, "peak": 0}
+
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        state["active"] += 1
+        state["peak"] = max(state["peak"], state["active"])
+        await asyncio.sleep(0.01)
+        state["active"] -= 1
+        return _success(rule)
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    items = [
+        {"type_id": "contract", "biz_id": f"b{i}", "field_values": {"amount": "1"}}
+        for i in range(8)
+    ]
+    data = await analysis_run_service.run_analysis_batch(
+        items,
+        ReadOnlySession([_orm_rule("amount_check", ["amount"], priority=1)]),
+    )
+
+    assert state["peak"] <= 2
+    assert [item["biz_id"] for item in data["items"]] == [f"b{i}" for i in range(8)]
+
+
+@pytest.mark.anyio
+async def test_run_analysis_batch_concurrency_one_is_serial(monkeypatch):
+    """max_concurrency=1 时退化为串行，峰值并发恒为 1。"""
+    _patch_max_concurrency(monkeypatch, 1)
+
+    state = {"active": 0, "peak": 0}
+
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        state["active"] += 1
+        state["peak"] = max(state["peak"], state["active"])
+        await asyncio.sleep(0.01)
+        state["active"] -= 1
+        return _success(rule)
+
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+    items = [
+        {"type_id": "contract", "biz_id": f"b{i}", "field_values": {"amount": "1"}}
+        for i in range(4)
+    ]
+    await analysis_run_service.run_analysis_batch(
+        items,
+        ReadOnlySession([_orm_rule("amount_check", ["amount"], priority=1)]),
+    )
+
+    assert state["peak"] == 1

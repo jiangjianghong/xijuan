@@ -36,9 +36,11 @@ uploads/
 # Claude
 .claude/
 
-# Documentation
-docs/
+# Documentation（排除文档目录，但保留运行时 /api-reference 接口读取的手册）
+docs/*
 *.md
+# 否定规则须放在最后：dockerignore 最后匹配的规则生效，避免被上面的 *.md 覆盖
+!docs/API_FULL_REFERENCE.md
 
 # Build artifacts
 dist/

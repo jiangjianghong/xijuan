@@ -95,6 +95,7 @@ class TableNameValidationConfig(BaseModel):
 class AnalysisConfig(BaseModel):
     calc_precision: int = 2
     judge_timeout: int = 30
+    max_concurrency: int = 10  # 独立分析接口 item 级最大并发数
 
 
 class VLModelConfig(BaseModel):

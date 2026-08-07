@@ -507,8 +507,21 @@ async def run_analysis_batch(
             "error": None,
         }
 
+    # item 级并发闸门：限制同时执行的 item 数，避免大批量请求瞬间打爆 LLM。
+    # gather 仍按传入顺序返回，Semaphore 只约束并发度不影响结果次序。
+    semaphore = asyncio.Semaphore(
+        max(1, get_config().analysis.max_concurrency or 1)
+    )
+
+    async def run_item_guarded(
+        item_index: int,
+        item: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        async with semaphore:
+            return await run_item(item_index, item)
+
     ordered_items = await asyncio.gather(*(
-        run_item(index, item)
+        run_item_guarded(index, item)
         for index, item in enumerate(items)
     ))
 
