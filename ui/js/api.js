@@ -318,6 +318,15 @@ const API = {
     },
 
     /**
+     * 配置版本探针：只回 count + MAX(updated_at)，供配置页轮询判断他人是否改过配置
+     */
+    async getConfigVersion(typeId) {
+        const tid = typeId !== undefined ? typeId : this.getCurrentTypeId();
+        const result = await this.request(`/doctype/${encodeURIComponent(tid)}/config_version`);
+        return result.data;
+    },
+
+    /**
      * 新增/更新字段提取配置（自动注入当前 type_id）
      */
     async saveExtractionField(data) {
