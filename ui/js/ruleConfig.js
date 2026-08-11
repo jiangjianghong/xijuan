@@ -150,6 +150,9 @@ const RuleConfig = {
             this.state.fields = await API.getExtractionFields();
             this.state.loaded.fields = true;
             this.renderFieldList();
+            // 自己触发的加载一并对齐基线，避免把自己的保存误报成「他人更新」。
+            // 故意不 await：列表该立刻渲染，基线晚一个 RTT 无影响。
+            if (this.watch.active) this.syncBaseline();
         } catch (error) {
             Toast.error('加载字段配置失败: ' + error.message);
         }
@@ -160,6 +163,7 @@ const RuleConfig = {
             this.state.rules = await API.getAnalysisRules();
             this.state.loaded.rules = true;
             this.renderRuleList();
+            if (this.watch.active) this.syncBaseline();
         } catch (error) {
             Toast.error('加载规则配置失败: ' + error.message);
         }
@@ -275,6 +279,132 @@ const RuleConfig = {
     },
 
     // ─────────────────────────────────────────────────────────
+    // 配置变更探测（多人协作：他人改了配置，本页自动感知）
+    //
+    // 只在配置页可见时轮询探针接口 GET /doctype/{type_id}/config_version，
+    // 版本快照变了才拉全量。表单开着时绝不自动重载——那会吞掉用户填了半天的
+    // 内容，比看到旧数据糟得多，只挂一条横幅让用户自己决定。
+    // ─────────────────────────────────────────────────────────
+
+    POLL_INTERVAL_MS: 8000,
+
+    watch: {
+        active: false,       // 是否停在配置页
+        timer: null,
+        baseline: null,      // 上次确认过的版本快照（JSON 字符串）；null=尚未对齐
+        pendingStale: false, // 表单开着期间探到的变更，关表单后补刷
+    },
+
+    activate() {
+        this.watch.active = true;
+        // 进页面先对齐基线再开轮询，否则首次探测必然「发现变化」而误报
+        this.syncBaseline();
+        this.startPolling();
+    },
+
+    deactivate() {
+        this.watch.active = false;
+        this.stopPolling();
+    },
+
+    startPolling() {
+        this.stopPolling();
+        this.watch.timer = setInterval(() => this.checkConfigVersion(), this.POLL_INTERVAL_MS);
+    },
+
+    stopPolling() {
+        if (this.watch.timer) {
+            clearInterval(this.watch.timer);
+            this.watch.timer = null;
+        }
+    },
+
+    // 把当前版本记为基线但不触发任何刷新。
+    // 用于：进入配置页、切换文档类型、以及自己保存之后
+    // （自己的保存也会推高 updated_at，不对齐就会把自己的改动误报成「他人更新」）
+    async syncBaseline() {
+        try {
+            this.watch.baseline = JSON.stringify(await API.getConfigVersion());
+        } catch (e) {
+            // 探针失败就放弃本次对齐，下一轮再来；不弹提示以免网络抖动时反复打扰
+            this.watch.baseline = null;
+        }
+    },
+
+    async checkConfigVersion() {
+        if (!this.watch.active) return;
+        if (document.hidden) return;   // 浏览器 tab 不可见时不打扰后端
+
+        let snapshot;
+        try {
+            snapshot = JSON.stringify(await API.getConfigVersion());
+        } catch (e) {
+            return;   // 网络抖动静默跳过，等下一轮
+        }
+
+        if (this.watch.baseline === null) {
+            this.watch.baseline = snapshot;   // 之前没对齐上，这次补齐，不当作变更
+            return;
+        }
+        if (snapshot === this.watch.baseline) return;
+
+        this.watch.baseline = snapshot;
+        this.onConfigChanged();
+    },
+
+    onConfigChanged() {
+        if (this.state.modalType) {
+            // 表单开着：一个字都不动，只挂横幅
+            this.watch.pendingStale = true;
+            this.showStaleBanner();
+            return;
+        }
+        this.reloadCurrentTab().then(() => {
+            Toast.info('配置已由他人更新，列表已刷新');
+        });
+    },
+
+    // 重载当前可见标签页；另一个标签标记为未加载，等切过去时走既有懒加载
+    async reloadCurrentTab() {
+        if (this.state.currentTab === 'rules') {
+            this.state.loaded.fields = false;
+            await this.loadRules();
+        } else {
+            this.state.loaded.rules = false;
+            await this.loadFields();
+        }
+    },
+
+    showStaleBanner() {
+        if (document.getElementById('config-stale-banner')) return;
+        const header = this.els.modalOverlay.querySelector('.rule-modal-header');
+        if (!header) return;
+        const banner = document.createElement('div');
+        banner.id = 'config-stale-banner';
+        banner.className = 'config-stale-banner';
+        banner.innerHTML = '<span>⚠️ 他人刚修改了本类型的配置，你保存后会覆盖对方的改动。</span>'
+            + '<button class="btn btn-ghost" onclick="RuleConfig.discardAndReload()">放弃我的修改并加载最新</button>';
+        header.insertAdjacentElement('afterend', banner);
+    },
+
+    hideStaleBanner() {
+        const el = document.getElementById('config-stale-banner');
+        if (el) el.remove();
+    },
+
+    async discardAndReload() {
+        this.closeModal();   // closeModal 内部会清 editing* / modalType 并摘掉横幅
+        await this.reloadCurrentTab();
+        Toast.info('已加载最新配置');
+    },
+
+    async manualRefresh() {
+        await this.reloadCurrentTab();
+        await this.syncBaseline();
+        Toast.success('已刷新');
+    },
+
+    // ─────────────────────────────────────────────────────────
     // 弹窗管理
     // ─────────────────────────────────────────────────────────
 
@@ -292,6 +422,12 @@ const RuleConfig = {
         this.state.editingField = null;
         this.state.editingRule = null;
         this.state.modalType = null;
+        this.hideStaleBanner();
+        // 表单开着期间探到的他人改动，关表单后补做刷新
+        if (this.watch.pendingStale) {
+            this.watch.pendingStale = false;
+            this.reloadCurrentTab();
+        }
     },
 
     // ─────────────────────────────────────────────────────────

@@ -4609,3 +4609,24 @@ input[type="checkbox"] {
         height: 260px;
     }
 }
+
+
+/* 配置被他人改动时，编辑弹窗顶部的提示横幅 */
+.config-stale-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 20px 12px;
+    padding: 10px 14px;
+    border: 1px solid rgba(245, 158, 11, 0.45);
+    border-radius: 8px;
+    background: rgba(245, 158, 11, 0.12);
+    color: #b45309;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.config-stale-banner button {
+    flex-shrink: 0;
+}
