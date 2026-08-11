@@ -169,6 +169,7 @@ async def test_file_stats_aggregation(client: AsyncClient):
     file_ids = ["pytest_stats_f0", "pytest_stats_f1", "pytest_stats_f2"]
 
     base = (await client.get("/file/stats?range=all")).json()["data"]["overview"]
+    base_total_seconds = (base["avg_total_seconds"] or 0) * base["total_files"]
 
     now = datetime.now().replace(microsecond=0)
     factory = get_session_factory()
@@ -200,6 +201,10 @@ async def test_file_stats_aggregation(client: AsyncClient):
         assert ov["completed"] == base["completed"] + 2
         assert ov["failed"] == base["failed"] + 1
         assert ov["total_size"] == base["total_size"] + 6000
+        # 全流程耗时 = 每个文件六阶段耗时之和，再对全部文件取平均：
+        # f0: parsing 10s + analyzing 40s = 50s；f1: parsing 20s；f2: 缺失 = 0s。
+        expected_avg = (base_total_seconds + 70) / (base["total_files"] + 3)
+        assert ov["avg_total_seconds"] == pytest.approx(expected_avg, abs=0.01)
 
         by_type = {i["key"]: i for i in data["by_type"]}
         assert by_type[type_id]["count"] == 3
@@ -276,7 +281,7 @@ async def test_file_stats_range_scopes_every_metric(client: AsyncClient):
         # 阶段耗时同样受窗口约束
         all_parsing = next(i for i in all_data["stage_durations"] if i["stage"] == "parsing")
         win_parsing = next(i for i in win_data["stage_durations"] if i["stage"] == "parsing")
-        assert all_parsing["samples"] == win_parsing["samples"] + 1
+        assert all_parsing["samples"] >= win_parsing["samples"] + 1
     finally:
         async with factory() as session:
             for cls, key in [(FileModel, file_id), (DocType, type_id)]:

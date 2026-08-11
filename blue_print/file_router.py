@@ -370,9 +370,11 @@ async def file_stats(
             func.max(d).label(f"{stage}_max"),
             func.coalesce(func.sum(d), 0).label(f"{stage}_sum"),
         ]
-    total_dur = func.timestampdiff(
-        text("SECOND"), FileModel.start_parsing_time, FileModel.end_analyzing_time
-    )
+    # 文件全流程耗时按六阶段实际执行时间求和；缺少任一端的阶段按 0 秒处理。
+    # 表达式因此对每一行都非 NULL，AVG 会把窗口内所有文件纳入分母。
+    total_dur = func.coalesce(_duration(PIPELINE_STAGES[0]), 0)
+    for stage in PIPELINE_STAGES[1:]:
+        total_dur = total_dur + func.coalesce(_duration(stage), 0)
     stage_cols.append(func.avg(total_dur).label("total_avg"))
 
     srow = (await db.execute(scoped(select(*stage_cols).select_from(FileModel)))).one()

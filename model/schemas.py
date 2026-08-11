@@ -811,7 +811,7 @@ class StatsOverview(BaseModel):
     processing: int = 0
     total_size: int = 0
     success_rate: float = 0.0
-    # 全流程平均耗时（秒）：start_parsing_time → end_analyzing_time 双端非空的文件才计入
+    # 全流程平均耗时（秒）：每个文件六阶段 end-start 之和；缺失阶段按 0，全部文件计入
     avg_total_seconds: Optional[float] = None
     type_count: int = 0
     project_count: int = 0

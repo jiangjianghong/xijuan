@@ -200,7 +200,7 @@ const Statistics = {
             { label: '已处理文件总体积', value: Utils.formatFileSize(ov.total_size || 0), icon: 'hard-drive', tone: 'earth',
               sub: '全部状态，PDF 原始大小' },
             { label: '平均全流程耗时', value: this.fmtDuration(ov.avg_total_seconds), icon: 'timer', tone: 'primary',
-              sub: '解析开始 → 分析结束（含排队）' },
+              sub: '六阶段实际耗时合计' },
         ];
         el.innerHTML = cards.map(c => `
             <div class="stats-kpi-card glass-card tone-${c.tone}">
