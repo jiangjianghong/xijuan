@@ -120,6 +120,10 @@ const DocTypeManager = {
             try { App.restoreProcessingQueue(); } catch (e) { console.warn(e); }
         }
         if (typeof RuleConfig !== 'undefined') {
+            // 先同步作废基线：切类型后探针查的是新 type_id，快照必然与旧基线不同。
+            // 置 null 让下一次探测走「补齐基线」分支，避免误报一次「他人更新」。
+            // （不调 syncBaseline：它是异步的，写入前的那个 RTT 仍会误报）
+            try { RuleConfig.watch.baseline = null; } catch (e) { console.warn(e); }
             try { RuleConfig.loadFields && RuleConfig.loadFields(); } catch (e) { console.warn(e); }
             try { RuleConfig.loadRules && RuleConfig.loadRules(); } catch (e) { console.warn(e); }
         }
@@ -537,6 +541,8 @@ const DocTypeManager = {
             this.closeCopyDialog();
             await this.refresh();
             if (typeof RuleConfig !== 'undefined') {
+                // 同上：切类型先作废基线，避免下一次探测把「换了类型」误报成「他人更新」
+                try { RuleConfig.watch.baseline = null; } catch (e) {}
                 try { RuleConfig.loadFields && RuleConfig.loadFields(); } catch (e) {}
                 try { RuleConfig.loadRules && RuleConfig.loadRules(); } catch (e) {}
             }

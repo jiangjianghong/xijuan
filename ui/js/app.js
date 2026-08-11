@@ -1144,6 +1144,15 @@ const App = {
             RuleConfig.loadFields();
         }
 
+        // 配置变更探测只在配置页可见时轮询，切走即停
+        if (typeof RuleConfig !== 'undefined') {
+            if (page === 'rule-config') {
+                RuleConfig.activate();
+            } else {
+                RuleConfig.deactivate();
+            }
+        }
+
         if (typeof LogViewer !== 'undefined') {
             if (page === 'runtime-logs') {
                 LogViewer.activate();
