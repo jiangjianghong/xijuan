@@ -828,6 +828,46 @@ async def export_configs(type_id: str, db: AsyncSession = Depends(get_db)):
     return ResponseWrapper(data=payload.model_dump())
 
 
+@router.get("/{type_id}/config_version", response_model=ResponseWrapper)
+async def get_config_version(type_id: str, db: AsyncSession = Depends(get_db)):
+    """配置版本探针：供前端轮询判断本类型的提取字段 / 分析规则是否被他人改动。
+
+    只查 COUNT + MAX(updated_at) 两个聚合值，比拉全量配置轻两个数量级，适合被轮询。
+
+    count 与 latest 缺一不可：
+    - 只看 latest 探测不到删除——删掉最新那条，MAX 反而变小或不变
+    - 只看 count 探测不到原地修改
+    两者组合覆盖增 / 删 / 改，连「同时删一条加一条」（count 不变但 latest 变）也能抓到。
+    """
+    field_row = (
+        await db.execute(
+            select(
+                func.count(ExtractionField.field_id),
+                func.max(ExtractionField.updated_at),
+            ).where(ExtractionField.type_id == type_id)
+        )
+    ).one()
+    rule_row = (
+        await db.execute(
+            select(
+                func.count(AnalysisRule.rule_id),
+                func.max(AnalysisRule.updated_at),
+            ).where(AnalysisRule.type_id == type_id)
+        )
+    ).one()
+
+    def _pack(count, latest) -> dict:
+        return {"count": count or 0, "latest": latest.isoformat() if latest else None}
+
+    return ResponseWrapper(
+        data={
+            "type_id": type_id,
+            "fields": _pack(field_row[0], field_row[1]),
+            "rules": _pack(rule_row[0], rule_row[1]),
+        }
+    )
+
+
 @router.post("/import", response_model=ResponseWrapper)
 async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(get_db)):
     """从 JSON 载荷导入字段+规则到目标类型。
