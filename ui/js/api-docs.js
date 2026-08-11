@@ -7,6 +7,7 @@ const ApiDocs = {
         loading: false,
         raw: '',
         sections: [],
+        tocSections: [],
     },
 
     els: {},
@@ -34,13 +35,32 @@ const ApiDocs = {
         if (this._bound) return;
         this._bound = true;
 
-        this.els.search?.addEventListener('input', () => this.applySearch());
+        // 防抖：避免每敲一个字符就重跑一遍全量匹配。
+        this.els.search?.addEventListener('input', () => {
+            clearTimeout(this._searchTimer);
+            this._searchTimer = setTimeout(() => this.applySearch(), 150);
+        });
         this.els.clear?.addEventListener('click', () => {
             this.els.search.value = '';
+            clearTimeout(this._searchTimer);
             this.applySearch();
             this.els.search.focus();
         });
         this.els.refresh?.addEventListener('click', () => this.load(true));
+
+        // 目录跳转：目标段可能还没渲染，先补渲染再滚过去，否则跳到空占位上。
+        this.els.toc?.addEventListener('click', (event) => {
+            const link = event.target.closest('.api-docs-toc-item');
+            if (!link) return;
+            const href = link.getAttribute('href') || '';
+            if (!href.startsWith('#')) return;
+            const id = decodeURIComponent(href.slice(1));
+            const index = this.state.sections.findIndex((section) => section.id === id);
+            if (index < 0) return;
+            event.preventDefault();
+            this.renderSection(index);
+            this.state.sections[index].el?.scrollIntoView({ block: 'start' });
+        });
     },
 
     async load(force = false) {
@@ -59,10 +79,13 @@ const ApiDocs = {
 
             const data = payload.data || {};
             this.state.raw = String(data.content || '');
-            this.state.sections = this.buildSections(this.state.raw);
+            this.state.sections = this.splitSections(this.state.raw);
+            this.state.tocSections = this.state.sections.filter((section) => section.level > 0);
             this.state.loaded = true;
             this.render(data);
-            this.applySearch();
+            // 骨架天然全部可见，空搜索无需再过滤一遍；
+            // 但重新加载（refresh）时搜索框可能仍有内容，这时要把过滤恢复回去。
+            if (this.els.search?.value.trim()) this.applySearch();
         } catch (error) {
             this.setError(error.message || 'API 手册加载失败');
         } finally {
@@ -90,37 +113,104 @@ const ApiDocs = {
         if (this.els.meta) {
             this.els.meta.textContent = `${endpointCount} 个接口 · ${Utils.formatFileSize(data.size || 0)} · 更新 ${updatedAt}`;
         }
-        this.renderToc(this.state.sections);
-        this.renderBody(this.state.raw);
-        if (typeof lucide !== 'undefined') lucide.createIcons();
+        this.renderToc(this.state.tocSections);
+        this.renderBody(this.state.sections);
+        // 手册正文是 markdown 转换产物，不含 data-lucide 图标；
+        // 限定 root 后这次扫描只覆盖空容器，避免在万级节点的 document 上全量 querySelectorAll。
+        if (typeof lucide !== 'undefined' && this.els.body) {
+            lucide.createIcons({ root: this.els.body });
+        }
     },
 
-    buildSections(markdown) {
-        const seen = new Map();
+    /**
+     * 按标题把手册切成段：每段 = 一个标题行 + 到下一个标题之前的全部行。
+     * 段是懒渲染与搜索的最小单位，id 与 TOC 锚点在此单点生成，避免两处各算一份而漂移。
+     */
+    splitSections(markdown) {
         const sections = [];
+        const seen = new Map();
+        let current = null;
         let inFence = false;
+
+        const ensure = () => {
+            if (!current) {
+                current = {
+                    level: 0, rawTitle: '', title: '',
+                    id: 'api-docs-preamble', haystack: '', lines: [],
+                };
+            }
+            return current;
+        };
+
         markdown.split(/\r?\n/).forEach((line) => {
             const trimmed = line.trim();
+
             if (/^```/.test(trimmed)) {
                 inFence = !inFence;
+                ensure().lines.push(line);
                 return;
             }
-            if (inFence) return;
+            if (inFence) {
+                ensure().lines.push(line);
+                return;
+            }
+
             const match = /^(#{1,6})\s+(.+)$/.exec(trimmed);
-            if (!match) return;
-            const level = match[1].length;
-            const title = match[2].replace(/`/g, '').trim();
+            if (!match) {
+                ensure().lines.push(line);
+                return;
+            }
+
+            if (current) sections.push(current);
+            const rawTitle = match[2].trim();
+            const title = rawTitle.replace(/`/g, '').trim();
             const baseId = this.slugify(title) || `section-${seen.size + 1}`;
             const count = seen.get(baseId) || 0;
             seen.set(baseId, count + 1);
-                sections.push({
-                    level,
-                    title,
-                    id: count ? `${baseId}-${count + 1}` : baseId,
-                    haystack: title.toLowerCase(),
-                });
+            current = {
+                level: match[1].length,
+                rawTitle,
+                title,
+                id: count ? `${baseId}-${count + 1}` : baseId,
+                haystack: title.toLowerCase(),
+                lines: [line],
+            };
+        });
+
+        if (current) sections.push(current);
+
+        return sections
+            .filter((section) => section.level > 0 || section.lines.some((line) => line.trim()))
+            .map((section) => {
+                section.text = section.lines.join('\n').toLowerCase();
+                section.estHeight = this.estimateHeight(section);
+                section.rendered = false;
+                section.el = null;
+                return section;
             });
-        return sections;
+    },
+
+    /**
+     * 估算段渲染后的高度，作为占位 min-height，避免懒渲染时滚动条长度剧烈跳变。
+     * 只求量级正确：表格行比正文行高，代码围栏本身不占高度。
+     */
+    estimateHeight(section) {
+        let px = 0;
+        section.lines.forEach((line) => {
+            const trimmed = line.trim();
+            if (!trimmed) return;
+            if (trimmed.startsWith('```')) px += 12;
+            else if (trimmed.startsWith('|')) px += 34;
+            else px += 26;
+        });
+        return Math.min(4000, Math.max(80, px));
+    },
+
+    /** TOC 数据 = 分段结果里有标题的那些段，保证目录锚点与正文段 id 同源。 */
+    buildSections(markdown) {
+        return this.splitSections(markdown)
+            .filter((section) => section.level > 0)
+            .map(({ level, title, id, haystack }) => ({ level, title, id, haystack }));
     },
 
     slugify(text) {
@@ -145,10 +235,68 @@ const ApiDocs = {
         `).join('');
     },
 
-    renderBody(markdown) {
+    renderBody(sections) {
         if (!this.els.body) return;
-        const html = this.markdownToHtml(markdown);
-        this.els.body.innerHTML = html || '<div class="api-docs-empty">API 手册为空</div>';
+        if (!sections.length) {
+            this.els.body.innerHTML = '<div class="api-docs-empty">API 手册为空</div>';
+            return;
+        }
+
+        // 只注入骨架：标题立刻可见（TOC 锚点可用），正文等滚入视口再生成。
+        this.els.body.innerHTML = sections.map((section, index) => {
+            const head = section.level
+                ? `<h${section.level} id="${Utils.escapeHtml(section.id)}" data-search-title="${Utils.escapeHtml(section.haystack)}">${this.renderInline(section.rawTitle)}</h${section.level}>`
+                : '';
+            return `<section class="api-doc-section" data-index="${index}" style="min-height:${section.estHeight}px">`
+                + head
+                + '<div class="api-doc-section-body"></div>'
+                + '</section>';
+        }).join('');
+
+        // 缓存宿主元素，后续搜索/跳转不必反复 querySelector。
+        this.els.body.querySelectorAll('.api-doc-section').forEach((el) => {
+            const index = Number(el.dataset.index);
+            if (sections[index]) sections[index].el = el;
+        });
+
+        this.observeSections();
+    },
+
+    /** 渲染单段正文。标题已在骨架里，这里只补标题之后的内容。 */
+    renderSection(index) {
+        const section = this.state.sections[index];
+        if (!section || section.rendered) return;
+        const host = section.el;
+        if (!host) return;
+        const holder = host.querySelector('.api-doc-section-body');
+        if (!holder) return;
+
+        const bodyLines = section.level ? section.lines.slice(1) : section.lines;
+        holder.innerHTML = this.markdownToHtml(bodyLines.join('\n'));
+        section.rendered = true;
+        host.style.minHeight = '';
+    },
+
+    /** 滚入视口前 600px 就开始渲染，滚动时基本感知不到空白。 */
+    observeSections() {
+        if (this._observer) this._observer.disconnect();
+
+        if (typeof IntersectionObserver === 'undefined') {
+            this.state.sections.forEach((_, index) => this.renderSection(index));
+            return;
+        }
+
+        this._observer = new IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+                if (!entry.isIntersecting) return;
+                this.renderSection(Number(entry.target.dataset.index));
+                this._observer.unobserve(entry.target);
+            });
+        }, { rootMargin: '600px 0px' });
+
+        this.state.sections.forEach((section) => {
+            if (section.el) this._observer.observe(section.el);
+        });
     },
 
     markdownToHtml(markdown) {
@@ -274,31 +422,32 @@ const ApiDocs = {
         return html;
     },
 
+    /** 纯函数：返回每段是否命中。空查询全命中，不做任何逐段匹配。 */
+    matchSections(sections, query) {
+        const needle = String(query == null ? '' : query).trim().toLowerCase();
+        if (!needle) return sections.map(() => true);
+        return sections.map((section) => section.text.includes(needle));
+    },
+
     applySearch() {
         const query = (this.els.search?.value || '').trim().toLowerCase();
-        this.filterToc(query);
-        this.filterBody(query);
+        const matched = this.matchSections(this.state.sections, query);
+        this.filterBody(query, matched);
+        this.filterToc(query, matched);
     },
 
-    filterToc(query) {
-        if (!this.els.toc) return;
-        const items = this.els.toc.querySelectorAll('.api-docs-toc-item');
-        items.forEach((item) => {
-            const text = item.dataset.title || item.textContent.toLowerCase();
-            item.classList.toggle('is-hidden', Boolean(query) && !text.includes(query));
-        });
-    },
-
-    filterBody(query) {
+    filterBody(query, matched) {
         if (!this.els.body) return;
         this.els.body.classList.toggle('is-searching', Boolean(query));
-        const blocks = this.els.body.querySelectorAll('h1,h2,h3,h4,h5,h6,p,blockquote,li,tr,pre');
+
         let visibleCount = 0;
-        blocks.forEach((block) => {
-            const text = block.textContent.toLowerCase();
-            const matched = !query || text.includes(query);
-            block.classList.toggle('api-search-hidden', !matched);
-            if (matched) visibleCount += 1;
+        this.state.sections.forEach((section, index) => {
+            const hit = matched[index];
+            if (hit) visibleCount += 1;
+            if (!section.el) return;
+            section.el.classList.toggle('api-search-hidden', !hit);
+            // 命中的段必须立刻渲染：它可能还没滚进过视口。
+            if (hit && query) this.renderSection(index);
         });
 
         let empty = this.els.body.querySelector('.api-docs-no-results');
@@ -312,6 +461,19 @@ const ApiDocs = {
         } else if (empty) {
             empty.remove();
         }
+    },
+
+    filterToc(query, matched) {
+        if (!this.els.toc) return;
+        // 目录与正文用同一份命中结果，口径一致。
+        const hitIds = new Set();
+        this.state.sections.forEach((section, index) => {
+            if (matched[index]) hitIds.add(section.id);
+        });
+        this.els.toc.querySelectorAll('.api-docs-toc-item').forEach((item) => {
+            const id = decodeURIComponent((item.getAttribute('href') || '').slice(1));
+            item.classList.toggle('is-hidden', Boolean(query) && !hitIds.has(id));
+        });
     },
 };
 

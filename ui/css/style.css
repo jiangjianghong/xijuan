@@ -3483,6 +3483,16 @@ h1, h2, h3, h4, h5, h6,
     line-height: 1.72;
 }
 
+.api-doc-section {
+    /* scrollIntoView 目标：留出与标题一致的顶部余量 */
+    scroll-margin-top: 20px;
+}
+
+.api-doc-section-body:empty {
+    /* 未渲染的段不留额外间距，占位高度已由内联 min-height 承担 */
+    display: none;
+}
+
 .api-docs-body h1,
 .api-docs-body h2,
 .api-docs-body h3,
