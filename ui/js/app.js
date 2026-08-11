@@ -1122,8 +1122,15 @@ const App = {
             if (match) targetBtn = btn;
         });
 
-        // 滑动指示器
-        if (targetBtn) this.updateNavIndicator(targetBtn);
+        // 滑动指示器：统计页没有对应导航按钮，此时把指示器收起，
+        // 否则它会停在上一个按钮下方，显得某个导航项仍处于选中态。
+        const indicator = document.querySelector('.nav-indicator');
+        if (targetBtn) {
+            if (indicator) indicator.style.opacity = '';
+            this.updateNavIndicator(targetBtn);
+        } else if (indicator) {
+            indicator.style.opacity = '0';
+        }
 
         // 切换页面容器
         document.querySelectorAll('.page-container').forEach(el => {
@@ -1147,6 +1154,16 @@ const App = {
 
         if (page === 'api-docs' && typeof ApiDocs !== 'undefined') {
             ApiDocs.activate();
+        }
+
+        // 统计页的图表必须在容器可见（尺寸非 0）后才能初始化，
+        // 因此 activate 放在 page-container 加上 active 之后。
+        if (typeof Statistics !== 'undefined') {
+            if (page === 'statistics') {
+                Statistics.activate();
+            } else {
+                Statistics.deactivate();
+            }
         }
     },
 

@@ -4381,3 +4381,221 @@ input[type="checkbox"] {
     padding: 10px 12px;
     margin-bottom: 16px;
 }
+
+
+/* ══════════════════════════════════════════════════════════
+   数据统计页（入口：点击左上角「析卷 AI」标题）
+   ══════════════════════════════════════════════════════════ */
+
+/* 标题作为统计页入口：可点，hover 时轻微提亮并浮起。
+   字号/字重/颜色沿用上方 .header h1，此处只加交互态。 */
+.app-title {
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    padding: 2px 8px;
+    margin: -2px -8px;
+    transition: background var(--transition), color var(--transition), transform var(--transition);
+}
+
+.app-title:hover {
+    background: var(--bio-pale);
+    color: var(--bio-med);
+    transform: translateY(-1px);
+}
+
+.app-title:focus-visible {
+    outline: 2px solid var(--bio-med);
+    outline-offset: 2px;
+}
+
+.stats-content {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* ── 工具条 ── */
+.stats-toolbar {
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.stats-toolbar-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+.stats-toolbar-title .panel-title {
+    margin-bottom: 0;
+}
+
+.stats-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* 工具条右侧：下拉与刷新按钮同一行居中，等高 36px */
+.stats-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.stats-toolbar-actions select {
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.75);
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 0 12px;
+    outline: none;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.stats-toolbar-actions select:hover {
+    border-color: var(--bio-light);
+}
+
+.stats-toolbar-actions select:focus {
+    border-color: var(--bio-med);
+    box-shadow: 0 0 0 3px rgba(79, 119, 93, 0.13);
+}
+
+/* ── KPI 卡片 ── */
+.stats-kpi-grid {
+    display: grid;
+    /* 180px 下限保证 6 张卡在 1280px 容器内排成整齐一行，不留孤儿行 */
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+}
+
+.stats-kpi-card {
+    padding: 16px 18px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    border-radius: var(--radius-sm);
+    /* 左侧色条由 tone-* 覆盖，用于区分 KPI 语义 */
+    border-left: 3px solid var(--bio-light);
+}
+
+.stats-kpi-icon {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    background: var(--bio-pale);
+    color: var(--bio-med);
+}
+
+.stats-kpi-body {
+    min-width: 0;
+}
+
+.stats-kpi-value {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--bio-dark);
+    word-break: break-all;
+}
+
+.stats-kpi-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.stats-kpi-sub {
+    font-size: 11px;
+    color: var(--bio-light);
+    margin-top: 4px;
+}
+
+.stats-kpi-card.tone-success { border-left-color: var(--success); }
+.stats-kpi-card.tone-success .stats-kpi-icon { color: var(--success); }
+
+.stats-kpi-card.tone-earth { border-left-color: var(--earth); }
+.stats-kpi-card.tone-earth .stats-kpi-icon {
+    color: var(--earth);
+    background: rgba(139, 115, 91, 0.10);
+}
+
+.stats-kpi-card.tone-primary { border-left-color: var(--bio-med); }
+
+/* ── 图表网格 ── */
+.stats-chart-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.stats-chart-card {
+    padding: 18px 20px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+
+/* 趋势图信息密度高，横跨整行 */
+.stats-chart-wide {
+    grid-column: 1 / -1;
+}
+
+.stats-chart-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--bio-dark);
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.stats-chart-hint {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-secondary);
+}
+
+.stats-chart {
+    width: 100%;
+    height: 300px;
+}
+
+.stats-chart-wide .stats-chart {
+    height: 320px;
+}
+
+@media (max-width: 900px) {
+    .stats-chart-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .stats-content {
+        padding: 16px;
+    }
+
+    .stats-chart,
+    .stats-chart-wide .stats-chart {
+        height: 260px;
+    }
+}

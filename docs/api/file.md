@@ -118,6 +118,50 @@ _data 为数组，每个元素：_
 |---|---|---|
 | 200 | 成功 | ResponseWrapper |
 
+## 全局处理统计
+
+统计页（前端点击左上角「析卷 AI」标题进入）的唯一数据源，一次返回 6 组聚合结果。
+
+**口径为全局**：不接受 `type_id` / `project_id` 过滤，统计库中全部文件，与顶部项目 / 文档类型选择器无关。固定 4 条聚合查询（状态分布、类型×项目、按天趋势、阶段耗时），无 N+1。
+
+两个易误读的口径：
+
+1. `overview.avg_total_seconds` 是 `start_parsing_time` → `end_analyzing_time` 的墙钟时长，**包含阶段之间的排队等待**，因此通常远大于 `stage_durations` 各阶段均值之和。
+2. `stage_durations[].samples` 只计该阶段起止时间**双端非空**的文件。重试会把目标阶段及下游时间戳重置为 NULL，这些文件在重跑完成前不计入；只有 end 没有 start 的历史遗留行同样不计入。
+
+`trend` 只返回**有数据的日期**，空白日期需消费方自行补零（前端 `Statistics.fillTrend` 即做此事）。
+
+- 方法路径：`GET /file/stats`
+- 认证：无（内网部署）
+
+**查询参数**
+
+<!-- AUTOGEN:query-params GET /file/stats -->
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| days | integer | 否 | 30 | 「历史处理趋势」的天数窗口（默认 30）。**只影响 trend**，概览 / 状态分布 / 项目占比 / 类型排行 / 阶段耗时恒为全量口径。越界值被夹到 `[1, 365]`，实际生效值在响应的 `trend_days` 里回传。 |
+<!-- /AUTOGEN:query-params -->
+
+**响应体**
+
+<!-- AUTOGEN:response GET /file/stats status=200 -->
+| 字段 | 类型 | 可空 | 说明 |
+|---|---|:--:|---|
+| overview | StatsOverview | 否 | 概览 KPI |
+| status_distribution | array[StatsCountItem] | 是 | 按 progress 的分布（按数量降序） |
+| by_project | array[StatsCountItem] | 是 | 按项目的分布（按数量降序，未分组归入 `__ungrouped__`） |
+| by_type | array[StatsCountItem] | 是 | 按文档类型的分布（按数量降序） |
+| trend | array[StatsTrendItem] | 是 | 近 `trend_days` 天的按天趋势（升序，仅含有数据的日期） |
+| stage_durations | array[StatsStageItem] | 是 | 六阶段耗时，按管线执行顺序固定返回 6 项 |
+| trend_days | integer | 是 | 实际生效的趋势天数（入参 `days` 夹到 [1,365] 后的值） |
+<!-- /AUTOGEN:response -->
+
+**状态码 / 错误**
+
+| 状态码 | 触发条件 | 响应体 |
+|---|---|---|
+| 200 | 成功（无数据时各数组为空、`overview` 全 0） | ResponseWrapper |
+
 ## 文件片段上下文查询
 
 按请求体 `file_id` + `query`（关键词或 Markdown 文本片段）在整篇 Markdown 精确查找，返回命中上下文窗口、页码，并可选返回全部分块。**`file_id` 在请求体，不在 URL。**

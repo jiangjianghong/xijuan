@@ -769,6 +769,30 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             ),
         }
     },
+    "/file/stats": {
+        "get": {
+            "summary": "全局处理统计",
+            "description": (
+                "统计页（前端点击左上角标题进入）的唯一数据源，一次返回 6 组聚合结果。\n\n"
+                "**口径：全局**——不接受 `type_id` / `project_id` 过滤，统计库中全部文件；"
+                "与顶部项目 / 文档类型选择器无关。\n\n"
+                "**返回结构**\n"
+                "- `overview`：总数 / 已完成 / 失败 / 处理中 / 总体积 / 成功率 / 平均全流程耗时\n"
+                "- `status_distribution`：按 `progress` 分组（数量降序）\n"
+                "- `by_project`：按项目分组（数量降序），未归类的类型合并到 `__ungrouped__`\n"
+                "- `by_type`：按文档类型分组（数量降序）\n"
+                "- `trend`：近 `days` 天按 `create_time` 落日的每日上传 / 完成 / 失败数，"
+                "**只含有数据的日期**（消费方需自行补零）\n"
+                "- `stage_durations`：六阶段耗时，恒按管线顺序返回 6 项\n\n"
+                "**两个易误读的口径**\n"
+                "1. `overview.avg_total_seconds` 是 `start_parsing_time → end_analyzing_time` 的墙钟时长，"
+                "**包含阶段之间的排队等待**，因此通常远大于 `stage_durations` 各阶段均值之和。\n"
+                "2. `stage_durations[].samples` 只计该阶段起止时间**双端非空**的文件；"
+                "重试会把目标阶段及下游时间戳重置为 NULL，这些文件在重跑完成前不计入。\n\n"
+                "**性能**：固定 4 条聚合查询（状态分布、类型×项目、按天趋势、阶段耗时），无 N+1。"
+            ),
+        }
+    },
     "/file/{file_id}/recompute_page_mapping": {
         "post": {
             "summary": "重算页码映射",
@@ -841,6 +865,11 @@ PARAM_OVERRIDES: Dict[tuple, Dict[str, Any]] = {
         "type_id": "按文档类型精确过滤；空串返回全部类型。",
         "page": "页码，从 1 开始（默认 1）。",
         "page_size": "每页条数（默认 20）。",
+    },
+    ("/file/stats", "get"): {
+        "days": "「历史处理趋势」的天数窗口（默认 30）。**只影响 trend**，概览 / 状态分布 / "
+                "项目占比 / 类型排行 / 阶段耗时恒为全量口径。越界值被夹到 `[1, 365]`，"
+                "实际生效值在响应的 `trend_days` 里回传。",
     },
     ("/extraction/fields", "get"): {
         "type_id": "按文档类型精确过滤字段配置；空串返回全部。",
@@ -1265,6 +1294,54 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "project_id": "所属项目 ID（可空）", "create_time": "创建时间",
         },
     },
+    "StatsOverview": {
+        "description": "统计概览 KPI（全局口径）。",
+        "properties": {
+            "total_files": "文件总数", "completed": "已完成数（progress=complete）",
+            "failed": "失败数（progress 为任一 `*_failed`）", "processing": "处理中数",
+            "total_size": "所有文件字节数之和", "success_rate": "成功率百分比（completed/total×100，保留 2 位）",
+            "avg_total_seconds": "平均全流程耗时（秒）：`start_parsing_time` → `end_analyzing_time`，"
+                                 "**含阶段间排队等待**，故通常大于各阶段耗时之和；无样本时为 null",
+            "type_count": "出现在统计里的文档类型数", "project_count": "出现在统计里的项目数（含「未分组」）",
+        },
+    },
+    "StatsCountItem": {
+        "description": "分组计数项（状态分布 / 项目占比 / 类型排行共用）。",
+        "properties": {
+            "key": "分组键：状态分布为 `progress`，项目为 `project_id`（未分组为 `__ungrouped__`），类型为 `type_id`",
+            "label": "可读名：项目/类型取库中名称；状态分布无可读名，回落为 `key` 原值（中文由前端映射）",
+            "count": "该组文件数", "size": "该组文件字节数之和",
+        },
+    },
+    "StatsTrendItem": {
+        "description": "按天聚合的处理趋势（按 `files.create_time` 落日）。仅返回有数据的日期，空白日期需消费方自行补零。",
+        "properties": {
+            "date": "日期，`YYYY-MM-DD`", "count": "当日上传文件数",
+            "completed": "当日上传中已完成数", "failed": "当日上传中失败数",
+        },
+    },
+    "StatsStageItem": {
+        "description": "单阶段耗时统计（秒）。仅统计该阶段 `start_*_time` / `end_*_time` **双端非空**的文件，"
+                       "因此 `samples` 通常小于文件总数（未跑到该阶段、重试后被重置为 NULL、"
+                       "或只有 end 没有 start 的历史遗留行都不计入）。",
+        "properties": {
+            "stage": "阶段名：`parsing`/`tableing`/`chunking`/`embedding`/`extracting`/`analyzing`",
+            "samples": "参与统计的文件数", "avg_seconds": "平均耗时（秒）",
+            "min_seconds": "最短耗时（秒）", "max_seconds": "最长耗时（秒）",
+            "total_seconds": "累计耗时（秒）",
+        },
+    },
+    "FileStatsResponse": {
+        "description": "全局处理统计聚合结果。",
+        "properties": {
+            "overview": "概览 KPI", "status_distribution": "按 progress 的分布（按数量降序）",
+            "by_project": "按项目的分布（按数量降序，未分组归入 `__ungrouped__`）",
+            "by_type": "按文档类型的分布（按数量降序）",
+            "trend": "近 `trend_days` 天的按天趋势（升序，仅含有数据的日期）",
+            "stage_durations": "六阶段耗时，按管线执行顺序固定返回 6 项",
+            "trend_days": "实际生效的趋势天数（入参 `days` 夹到 [1,365] 后的值）",
+        },
+    },
     "FileTableItem": {
         "description": "文件表格项。",
         "properties": {
@@ -1483,6 +1560,7 @@ RESPONSE_DATA: Dict[tuple, Any] = {
     ("/file/parse", "post"): {"file_id": "string — 新建文件 ID"},
     ("/file/list", "get"): "FileListResponse",
     ("/file/processing", "get"): ["ProcessingItem"],
+    ("/file/stats", "get"): "FileStatsResponse",
     ("/file/context_query", "post"): "FileContextQueryResponse",
     ("/file/batch", "delete"): "BatchDeleteResponse",
     ("/file/{file_id}/status", "get"): "FileStatusResponse",

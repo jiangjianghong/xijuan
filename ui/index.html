@@ -65,7 +65,8 @@
     <!-- Header -->
     <header class="header glass-card relative z-10">
         <i data-lucide="leaf" class="w-6 h-6 text-bio-med mr-2 flex-shrink-0"></i>
-        <h1 class="font-serif text-bio-dark">析卷 AI</h1>
+        <h1 id="app-title" class="app-title font-serif text-bio-dark" role="button" tabindex="0"
+            title="查看数据统计" onclick="App.switchPage('statistics')">析卷 AI</h1>
         <nav class="header-nav">
             <span class="nav-indicator"></span>
             <button class="nav-btn active rounded-full" data-page="file-processing" onclick="App.switchPage('file-processing')">
@@ -604,6 +605,73 @@
         </main>
     </div><!-- /page-api-docs -->
 
+    <!-- Page: Statistics（入口 = 点击左上角「析卷 AI」标题） -->
+    <div id="page-statistics" class="page-container relative z-10">
+        <main class="stats-content">
+            <section class="stats-toolbar glass-card">
+                <div class="stats-toolbar-title">
+                    <h2 class="panel-title">
+                        <i data-lucide="chart-column" class="w-5 h-5"></i>
+                        数据统计
+                    </h2>
+                    <span id="stats-meta" class="stats-meta">未加载</span>
+                </div>
+                <div class="stats-toolbar-actions">
+                    <!-- 无独立标签：选项文案已自解释，加标签只会把工具条撑成两行。
+                         该窗口作用于整页全部指标（KPI + 所有图表），不只是趋势图。 -->
+                    <select id="stats-range" title="统计时间范围（作用于整页）">
+                        <option value="all">所有时间</option>
+                        <option value="1h">近 1 小时</option>
+                        <option value="24h">近 24 小时</option>
+                        <option value="today">今天</option>
+                        <option value="yesterday">昨天</option>
+                        <option value="3d">近 3 天</option>
+                        <option value="7d">近 7 天</option>
+                        <option value="30d" selected>近 30 天</option>
+                        <option value="90d">近 90 天</option>
+                        <option value="365d">近 1 年</option>
+                    </select>
+                    <button id="stats-refresh" class="runtime-log-btn icon-only" type="button" title="刷新统计">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </section>
+
+            <!-- KPI 概览 -->
+            <section id="stats-kpi" class="stats-kpi-grid"></section>
+
+            <!-- 图表网格 -->
+            <section class="stats-chart-grid">
+                <div class="stats-chart-card glass-card">
+                    <h3 class="stats-chart-title">处理状态分布</h3>
+                    <div id="chart-status" class="stats-chart"></div>
+                </div>
+                <div class="stats-chart-card glass-card">
+                    <h3 class="stats-chart-title">项目文件占比</h3>
+                    <div id="chart-project" class="stats-chart"></div>
+                </div>
+                <div class="stats-chart-card glass-card stats-chart-wide">
+                    <h3 class="stats-chart-title">
+                        历史处理趋势
+                        <span id="stats-trend-hint" class="stats-chart-hint">按上传日期</span>
+                    </h3>
+                    <div id="chart-trend" class="stats-chart"></div>
+                </div>
+                <div class="stats-chart-card glass-card">
+                    <h3 class="stats-chart-title">文档类型排行（前 10）</h3>
+                    <div id="chart-type" class="stats-chart"></div>
+                </div>
+                <div class="stats-chart-card glass-card">
+                    <h3 class="stats-chart-title">
+                        各阶段耗时分析
+                        <span class="stats-chart-hint">仅统计起止时间齐全的文件</span>
+                    </h3>
+                    <div id="chart-stage" class="stats-chart"></div>
+                </div>
+            </section>
+        </main>
+    </div><!-- /page-statistics -->
+
     <!-- Rule Modal -->
     <div id="rule-modal-overlay" class="rule-modal-overlay">
         <div class="rule-modal">
@@ -942,6 +1010,7 @@
             pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdfjs/pdf.worker.min.js';
         }
     </script>
+    <script src="vendor/echarts/echarts.min.js"></script>
     <script src="js/utils.js"></script>
     <script src="js/customSelect.js"></script>
     <script src="js/api.js"></script>
@@ -953,11 +1022,13 @@
     <script src="js/stream-demo.js"></script>
     <script src="js/log-viewer.js"></script>
     <script src="js/api-docs.js"></script>
+    <script src="js/statistics.js"></script>
     <!-- Initialize Lucide icons -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             lucide.createIcons();
             DocTypeManager.init();
+            Statistics.init();
         });
     </script>
 </body>

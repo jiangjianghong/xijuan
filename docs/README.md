@@ -79,6 +79,7 @@
 | GET | `/file/list` | 文件处理 | 分页查询文件列表 | [api/file.md](api/file.md) |
 | POST | `/file/parse` | 文件处理 | 提交文件解析 | [api/file.md](api/file.md) |
 | GET | `/file/processing` | 文件处理 | 处理中文件队列 | [api/file.md](api/file.md) |
+| GET | `/file/stats` | 文件处理 | 全局处理统计 | [api/file.md](api/file.md) |
 | DELETE | `/file/{file_id}` | 文件处理 | 删除文件 | [api/file.md](api/file.md) |
 | GET | `/file/{file_id}/analysis` | 文件处理 | 逻辑分析结果 | [api/file.md](api/file.md) |
 | GET | `/file/{file_id}/chunks` | 文件处理 | 文件分块列表 | [api/file.md](api/file.md) |

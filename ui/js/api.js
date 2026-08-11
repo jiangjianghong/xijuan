@@ -179,6 +179,16 @@ const API = {
     },
 
     /**
+     * 获取处理统计（不受当前项目/文档类型选择影响）。
+     * range 为时间窗口枚举（all / 1h / 24h / today / yesterday / 3d / 7d / 30d / 90d / 365d），
+     * **作用于整页全部指标**，不只是趋势图。
+     */
+    async getFileStats(range = '30d') {
+        const result = await this.request(`/file/stats?range=${encodeURIComponent(range)}`);
+        return result.data;
+    },
+
+    /**
      * 获取文件详情
      */
     async getFileDetail(fileId) {

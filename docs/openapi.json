@@ -156,6 +156,63 @@
         }
       }
     },
+    "/file/stats": {
+      "get": {
+        "tags": [
+          "file"
+        ],
+        "summary": "全局处理统计",
+        "description": "统计页（前端点击左上角标题进入）的唯一数据源，一次返回 6 组聚合结果。\n\n**口径：全局**——不接受 `type_id` / `project_id` 过滤，统计库中全部文件；与顶部项目 / 文档类型选择器无关。\n\n**返回结构**\n- `overview`：总数 / 已完成 / 失败 / 处理中 / 总体积 / 成功率 / 平均全流程耗时\n- `status_distribution`：按 `progress` 分组（数量降序）\n- `by_project`：按项目分组（数量降序），未归类的类型合并到 `__ungrouped__`\n- `by_type`：按文档类型分组（数量降序）\n- `trend`：近 `days` 天按 `create_time` 落日的每日上传 / 完成 / 失败数，**只含有数据的日期**（消费方需自行补零）\n- `stage_durations`：六阶段耗时，恒按管线顺序返回 6 项\n\n**两个易误读的口径**\n1. `overview.avg_total_seconds` 是 `start_parsing_time → end_analyzing_time` 的墙钟时长，**包含阶段之间的排队等待**，因此通常远大于 `stage_durations` 各阶段均值之和。\n2. `stage_durations[].samples` 只计该阶段起止时间**双端非空**的文件；重试会把目标阶段及下游时间戳重置为 NULL，这些文件在重跑完成前不计入。\n\n**性能**：固定 4 条聚合查询（状态分布、类型×项目、按天趋势、阶段耗时），无 N+1。",
+        "operationId": "file_stats_file_stats_get",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "title": "Days"
+            },
+            "description": "「历史处理趋势」的天数窗口（默认 30）。**只影响 trend**，概览 / 状态分布 / 项目占比 / 类型排行 / 阶段耗时恒为全量口径。越界值被夹到 `[1, 365]`，实际生效值在响应的 `trend_days` 里回传。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/FileStatsResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/file/context_query": {
       "post": {
         "tags": [
@@ -5431,6 +5488,250 @@
         ],
         "title": "ProcessingItem",
         "type": "object"
+      },
+      "StatsCountItem": {
+        "description": "分组计数项（状态分布 / 项目占比 / 类型排行共用）。",
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string",
+            "description": "分组键：状态分布为 `progress`，项目为 `project_id`（未分组为 `__ungrouped__`），类型为 `type_id`"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string",
+            "description": "可读名：项目/类型取库中名称；状态分布无可读名，回落为 `key` 原值（中文由前端映射）"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer",
+            "description": "该组文件数"
+          },
+          "size": {
+            "default": 0,
+            "title": "Size",
+            "type": "integer",
+            "description": "该组文件字节数之和"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ],
+        "title": "StatsCountItem",
+        "type": "object"
+      },
+      "StatsOverview": {
+        "description": "统计概览 KPI（全局口径）。",
+        "properties": {
+          "total_files": {
+            "default": 0,
+            "title": "Total Files",
+            "type": "integer",
+            "description": "文件总数"
+          },
+          "completed": {
+            "default": 0,
+            "title": "Completed",
+            "type": "integer",
+            "description": "已完成数（progress=complete）"
+          },
+          "failed": {
+            "default": 0,
+            "title": "Failed",
+            "type": "integer",
+            "description": "失败数（progress 为任一 `*_failed`）"
+          },
+          "processing": {
+            "default": 0,
+            "title": "Processing",
+            "type": "integer",
+            "description": "处理中数"
+          },
+          "total_size": {
+            "default": 0,
+            "title": "Total Size",
+            "type": "integer",
+            "description": "所有文件字节数之和"
+          },
+          "success_rate": {
+            "default": 0.0,
+            "title": "Success Rate",
+            "type": "number",
+            "description": "成功率百分比（completed/total×100，保留 2 位）"
+          },
+          "avg_total_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Avg Total Seconds",
+            "description": "平均全流程耗时（秒）：`start_parsing_time` → `end_analyzing_time`，**含阶段间排队等待**，故通常大于各阶段耗时之和；无样本时为 null"
+          },
+          "type_count": {
+            "default": 0,
+            "title": "Type Count",
+            "type": "integer",
+            "description": "出现在统计里的文档类型数"
+          },
+          "project_count": {
+            "default": 0,
+            "title": "Project Count",
+            "type": "integer",
+            "description": "出现在统计里的项目数（含「未分组」）"
+          }
+        },
+        "title": "StatsOverview",
+        "type": "object"
+      },
+      "StatsStageItem": {
+        "description": "单阶段耗时统计（秒）。仅统计该阶段 `start_*_time` / `end_*_time` **双端非空**的文件，因此 `samples` 通常小于文件总数（未跑到该阶段、重试后被重置为 NULL、或只有 end 没有 start 的历史遗留行都不计入）。",
+        "properties": {
+          "stage": {
+            "title": "Stage",
+            "type": "string",
+            "description": "阶段名：`parsing`/`tableing`/`chunking`/`embedding`/`extracting`/`analyzing`"
+          },
+          "samples": {
+            "default": 0,
+            "title": "Samples",
+            "type": "integer",
+            "description": "参与统计的文件数"
+          },
+          "avg_seconds": {
+            "default": 0.0,
+            "title": "Avg Seconds",
+            "type": "number",
+            "description": "平均耗时（秒）"
+          },
+          "min_seconds": {
+            "default": 0.0,
+            "title": "Min Seconds",
+            "type": "number",
+            "description": "最短耗时（秒）"
+          },
+          "max_seconds": {
+            "default": 0.0,
+            "title": "Max Seconds",
+            "type": "number",
+            "description": "最长耗时（秒）"
+          },
+          "total_seconds": {
+            "default": 0.0,
+            "title": "Total Seconds",
+            "type": "number",
+            "description": "累计耗时（秒）"
+          }
+        },
+        "required": [
+          "stage"
+        ],
+        "title": "StatsStageItem",
+        "type": "object"
+      },
+      "StatsTrendItem": {
+        "description": "按天聚合的处理趋势（按 `files.create_time` 落日）。仅返回有数据的日期，空白日期需消费方自行补零。",
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string",
+            "description": "日期，`YYYY-MM-DD`"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer",
+            "description": "当日上传文件数"
+          },
+          "completed": {
+            "default": 0,
+            "title": "Completed",
+            "type": "integer",
+            "description": "当日上传中已完成数"
+          },
+          "failed": {
+            "default": 0,
+            "title": "Failed",
+            "type": "integer",
+            "description": "当日上传中失败数"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "title": "StatsTrendItem",
+        "type": "object"
+      },
+      "FileStatsResponse": {
+        "properties": {
+          "overview": {
+            "$ref": "#/components/schemas/StatsOverview",
+            "description": "概览 KPI"
+          },
+          "status_distribution": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StatsCountItem"
+            },
+            "title": "Status Distribution",
+            "type": "array",
+            "description": "按 progress 的分布（按数量降序）"
+          },
+          "by_project": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StatsCountItem"
+            },
+            "title": "By Project",
+            "type": "array",
+            "description": "按项目的分布（按数量降序，未分组归入 `__ungrouped__`）"
+          },
+          "by_type": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StatsCountItem"
+            },
+            "title": "By Type",
+            "type": "array",
+            "description": "按文档类型的分布（按数量降序）"
+          },
+          "trend": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StatsTrendItem"
+            },
+            "title": "Trend",
+            "type": "array",
+            "description": "近 `trend_days` 天的按天趋势（升序，仅含有数据的日期）"
+          },
+          "stage_durations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StatsStageItem"
+            },
+            "title": "Stage Durations",
+            "type": "array",
+            "description": "六阶段耗时，按管线执行顺序固定返回 6 项"
+          },
+          "trend_days": {
+            "default": 30,
+            "title": "Trend Days",
+            "type": "integer",
+            "description": "实际生效的趋势天数（入参 `days` 夹到 [1,365] 后的值）"
+          }
+        },
+        "required": [
+          "overview"
+        ],
+        "title": "FileStatsResponse",
+        "type": "object",
+        "description": "全局处理统计聚合结果。"
       },
       "FileContextChunkItem": {
         "properties": {

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
 from loguru import logger
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from logs import log_context
@@ -25,10 +26,16 @@ from model.schemas import (
     FileDetailResponse,
     FileListItem,
     FileListResponse,
+    FileStatsResponse,
     FileStatusResponse,
     FileTableItem,
     ProcessingItem,
     ResponseWrapper,
+    StatsCountItem,
+    StatsOverview,
+    StatsRangeEnum,
+    StatsStageItem,
+    StatsTrendItem,
 )
 from model.tables import (
     AnalysisResult,
@@ -40,6 +47,7 @@ from model.tables import (
     FileChunk,
     FileContent,
     FileTable,
+    Project,
 )
 from service.file_context_service import query_file_context
 from service.pipeline_service import run_from_stage, run_from_stage_stream, run_pipeline, run_pipeline_stream
@@ -125,6 +133,12 @@ PROCESSING_STATES = (
     "chunking", "embedding", "extracting", "analyzing",
 )
 
+# 管线六阶段（顺序即执行顺序），用于统计接口按阶段展开耗时列
+PIPELINE_STAGES = ("parsing", "tableing", "chunking", "embedding", "extracting", "analyzing")
+
+# 未分组项目的占位 key：与 /doctype/list 的 project_id 过滤值、前端默认项目保持一致
+UNGROUPED_KEY = "__ungrouped__"
+
 
 @router.get("/processing", response_model=ResponseWrapper)
 async def list_processing(
@@ -169,6 +183,241 @@ async def list_processing(
         for r in rows
     ]
     return ResponseWrapper(data=items)
+
+
+# 失败状态集合：与 progress 状态机一一对应（每个阶段各有一个 *_failed）
+FAILED_STATES = tuple(f"{s}_failed" for s in PIPELINE_STAGES)
+
+# 自然日窗口的天数（含当天）。1h/24h 走滚动时钟，不在此表
+_RANGE_DAYS = {"3d": 3, "7d": 7, "30d": 30, "90d": 90, "365d": 365}
+
+# 趋势按小时分桶的窗口上限：超过 3 天用小时桶会过密（>72 点）且没有信息增量
+_HOUR_BUCKET_MAX_DAYS = 3
+
+
+def resolve_stats_range(
+    range_key: str, now: datetime
+) -> tuple[Optional[datetime], Optional[datetime], str]:
+    """把时间窗口枚举解析成 `[start, end)` 与趋势分桶粒度。
+
+    返回 `(start, end, granularity)`：
+    - `start=None` 表示不设下界（`all`，统计全部历史）
+    - `end=None` 表示不设上界（一直到此刻）。只有 `yesterday` 这种闭区间才给 end ——
+      给开区间加 `create_time < now` 会在应用时钟略慢于 DB 时钟时漏掉刚落库的行。
+    - `granularity` 为 `hour` 或 `day`，决定趋势的分桶格式
+    """
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if range_key == "all":
+        return None, None, "day"
+    if range_key == "1h":
+        return now - timedelta(hours=1), None, "hour"
+    if range_key == "24h":
+        return now - timedelta(hours=24), None, "hour"
+    if range_key == "today":
+        return midnight, None, "hour"
+    if range_key == "yesterday":
+        return midnight - timedelta(days=1), midnight, "hour"
+    days = _RANGE_DAYS[range_key]
+    granularity = "hour" if days <= _HOUR_BUCKET_MAX_DAYS else "day"
+    return midnight - timedelta(days=days - 1), None, granularity
+
+
+@router.get("/stats", response_model=ResponseWrapper)
+async def file_stats(
+    range: StatsRangeEnum = StatsRangeEnum.D30,
+    db: AsyncSession = Depends(get_db),
+):
+    """处理统计（概览 KPI / 状态分布 / 项目占比 / 类型排行 / 处理趋势 / 阶段耗时）。
+
+    不受顶部项目、文档类型选择器影响（统计全部类型），但**受 `range` 时间窗口约束**：
+    窗口按 `files.create_time` 过滤，且**统一作用于全部 6 组指标**，不只是趋势图。
+    共 4 条聚合查询（状态分布、类型×项目、趋势、阶段耗时），无 N+1。
+    """
+    now = datetime.now()
+    start, end, granularity = resolve_stats_range(range.value, now)
+
+    def scoped(stmt):
+        """给聚合查询套上时间窗口。所有指标共用，保证一页数据口径一致。"""
+        if start is not None:
+            stmt = stmt.where(FileModel.create_time >= start)
+        if end is not None:
+            stmt = stmt.where(FileModel.create_time < end)
+        return stmt
+
+    # ── 1. 状态分布（顺带算出概览的完成/失败/处理中/总量/总大小）──
+    status_rows = (
+        await db.execute(
+            scoped(
+                select(
+                    FileModel.progress,
+                    func.count(FileModel.file_id).label("cnt"),
+                    func.coalesce(func.sum(FileModel.file_size), 0).label("size"),
+                )
+            ).group_by(FileModel.progress)
+        )
+    ).all()
+
+    status_distribution = [
+        StatsCountItem(
+            key=r.progress or "unknown",
+            label=r.progress or "unknown",  # 中文文案由前端 Utils.getStatusText 映射
+            count=int(r.cnt or 0),
+            size=int(r.size or 0),
+        )
+        for r in status_rows
+    ]
+    status_distribution.sort(key=lambda x: x.count, reverse=True)
+
+    total_files = sum(i.count for i in status_distribution)
+    total_size = sum(i.size for i in status_distribution)
+    completed = sum(i.count for i in status_distribution if i.key == "complete")
+    failed = sum(i.count for i in status_distribution if i.key in FAILED_STATES)
+    processing = sum(i.count for i in status_distribution if i.key in PROCESSING_STATES)
+
+    # ── 2. 类型 × 项目（一条查询同时喂 by_type 与 by_project）──
+    group_rows = (
+        await db.execute(
+            scoped(
+                select(
+                    FileModel.type_id,
+                    DocType.type_name,
+                    DocType.project_id,
+                    Project.project_name,
+                    func.count(FileModel.file_id).label("cnt"),
+                    func.coalesce(func.sum(FileModel.file_size), 0).label("size"),
+                )
+                .select_from(FileModel)
+                .join(DocType, FileModel.type_id == DocType.type_id, isouter=True)
+                .join(Project, DocType.project_id == Project.project_id, isouter=True)
+            ).group_by(
+                FileModel.type_id, DocType.type_name, DocType.project_id, Project.project_name
+            )
+        )
+    ).all()
+
+    by_type: list[StatsCountItem] = []
+    project_acc: dict[str, StatsCountItem] = {}
+    for r in group_rows:
+        type_id = r.type_id or "default"
+        cnt, size = int(r.cnt or 0), int(r.size or 0)
+        by_type.append(
+            StatsCountItem(key=type_id, label=r.type_name or type_id, count=cnt, size=size)
+        )
+        # doc_type 已删但文件还在时 project_id 为 NULL，与「未分组」合并计入
+        pid = r.project_id or UNGROUPED_KEY
+        item = project_acc.get(pid)
+        if item is None:
+            item = StatsCountItem(
+                key=pid,
+                label=r.project_name or ("未分组" if pid == UNGROUPED_KEY else pid),
+                count=0,
+                size=0,
+            )
+            project_acc[pid] = item
+        item.count += cnt
+        item.size += size
+
+    by_type.sort(key=lambda x: x.count, reverse=True)
+    by_project = sorted(project_acc.values(), key=lambda x: x.count, reverse=True)
+
+    # ── 3. 处理趋势（按窗口长短选择 小时 / 天 分桶）──
+    # 格式串作为 bind param 传入，避免 % 与 DBAPI paramstyle 打架
+    bucket_fmt = "%Y-%m-%d %H:00" if granularity == "hour" else "%Y-%m-%d"
+    bucket = func.date_format(FileModel.create_time, bucket_fmt)
+    trend_rows = (
+        await db.execute(
+            scoped(
+                select(
+                    bucket.label("bucket"),
+                    func.count(FileModel.file_id).label("cnt"),
+                    func.sum(case((FileModel.progress == "complete", 1), else_=0)).label("done"),
+                    func.sum(case((FileModel.progress.in_(FAILED_STATES), 1), else_=0)).label("bad"),
+                )
+            )
+            .group_by(bucket)
+            .order_by(bucket)
+        )
+    ).all()
+
+    trend = [
+        StatsTrendItem(
+            date=str(r.bucket),
+            count=int(r.cnt or 0),
+            completed=int(r.done or 0),
+            failed=int(r.bad or 0),
+        )
+        for r in trend_rows
+        if r.bucket is not None
+    ]
+
+    # ── 4. 阶段耗时（一条查询取 6 阶段的 样本数/均值/极值/总和）──
+    def _duration(stage: str):
+        """TIMESTAMPDIFF(SECOND, start, end)：任一端为 NULL 时结果为 NULL，
+        因而 count/avg 会自动跳过没跑到该阶段（或重试后被重置）的行。"""
+        return func.timestampdiff(
+            text("SECOND"),
+            getattr(FileModel, f"start_{stage}_time"),
+            getattr(FileModel, f"end_{stage}_time"),
+        )
+
+    stage_cols = []
+    for stage in PIPELINE_STAGES:
+        d = _duration(stage)
+        stage_cols += [
+            func.count(d).label(f"{stage}_n"),
+            func.avg(d).label(f"{stage}_avg"),
+            func.min(d).label(f"{stage}_min"),
+            func.max(d).label(f"{stage}_max"),
+            func.coalesce(func.sum(d), 0).label(f"{stage}_sum"),
+        ]
+    total_dur = func.timestampdiff(
+        text("SECOND"), FileModel.start_parsing_time, FileModel.end_analyzing_time
+    )
+    stage_cols.append(func.avg(total_dur).label("total_avg"))
+
+    srow = (await db.execute(scoped(select(*stage_cols).select_from(FileModel)))).one()
+
+    def _f(v) -> float:
+        return round(float(v), 2) if v is not None else 0.0
+
+    stage_durations = [
+        StatsStageItem(
+            stage=stage,
+            samples=int(getattr(srow, f"{stage}_n") or 0),
+            avg_seconds=_f(getattr(srow, f"{stage}_avg")),
+            min_seconds=_f(getattr(srow, f"{stage}_min")),
+            max_seconds=_f(getattr(srow, f"{stage}_max")),
+            total_seconds=_f(getattr(srow, f"{stage}_sum")),
+        )
+        for stage in PIPELINE_STAGES
+    ]
+
+    overview = StatsOverview(
+        total_files=total_files,
+        completed=completed,
+        failed=failed,
+        processing=processing,
+        total_size=total_size,
+        success_rate=round(completed / total_files * 100, 2) if total_files else 0.0,
+        avg_total_seconds=_f(srow.total_avg) if srow.total_avg is not None else None,
+        type_count=len(by_type),
+        project_count=len(by_project),
+    )
+
+    return ResponseWrapper(
+        data=FileStatsResponse(
+            overview=overview,
+            status_distribution=status_distribution,
+            by_project=by_project,
+            by_type=by_type,
+            trend=trend,
+            stage_durations=stage_durations,
+            range=range,
+            granularity=granularity,
+            start_time=start,
+            end_time=end or now,
+        ).model_dump()
+    )
 
 
 @router.post("/context_query", response_model=ResponseWrapper)

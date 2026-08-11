@@ -781,3 +781,91 @@ class BatchDeleteRequest(BaseModel):
 class BatchDeleteResponse(BaseModel):
     deleted_count: int
     failed_ids: List[str] = []
+
+
+# ── 文件统计 ────────────────────────────────────────────────
+
+class StatsRangeEnum(str, Enum):
+    """统计时间窗口。窗口对 `files.create_time` 生效，**统一作用于整页所有指标**。
+
+    `1h` / `24h` 是滚动时钟窗口（从此刻往前推）；`today` / `yesterday` / `Nd`
+    是自然日窗口（从某天 00:00 起算），因为按天分桶的图表用自然日更符合直觉。
+    """
+    ALL = "all"
+    H1 = "1h"
+    H24 = "24h"
+    TODAY = "today"
+    YESTERDAY = "yesterday"
+    D3 = "3d"
+    D7 = "7d"
+    D30 = "30d"
+    D90 = "90d"
+    D365 = "365d"
+
+
+class StatsOverview(BaseModel):
+    """统计概览 KPI（全部文档类型 / 项目，但受时间窗口约束）。"""
+    total_files: int = 0
+    completed: int = 0
+    failed: int = 0
+    processing: int = 0
+    total_size: int = 0
+    success_rate: float = 0.0
+    # 全流程平均耗时（秒）：start_parsing_time → end_analyzing_time 双端非空的文件才计入
+    avg_total_seconds: Optional[float] = None
+    type_count: int = 0
+    project_count: int = 0
+
+
+class StatsCountItem(BaseModel):
+    """分组计数项：状态分布 / 项目占比 / 类型排行共用。
+
+    `label` 取数据库里的可读名（type_name / project_name）；状态分布没有可读名，
+    此处回落为 `key` 原值，中文文案由前端 `Utils.getStatusText` 统一映射，
+    避免后端再维护一份会漂移的状态中文表。
+    """
+    key: str
+    label: str
+    count: int = 0
+    size: int = 0
+
+
+class StatsTrendItem(BaseModel):
+    """按桶聚合的处理趋势（按 files.create_time 落桶）。
+
+    `date` 的格式随 `granularity` 变化：`day` 为 `YYYY-MM-DD`，`hour` 为 `YYYY-MM-DD HH:00`。
+    只返回**有数据的桶**，空桶需消费方自行补零。
+    """
+    date: str
+    count: int = 0
+    completed: int = 0
+    failed: int = 0
+
+
+class StatsStageItem(BaseModel):
+    """单阶段耗时统计（秒）。
+
+    仅统计 `start_*_time` / `end_*_time` 双端非空的文件，因此 `samples` 通常小于
+    文件总数（未跑到该阶段、或只有 end 没有 start 的历史遗留行都不计入）。
+    阶段中文名由前端 `Utils.getStageText` 映射。
+    """
+    stage: str
+    samples: int = 0
+    avg_seconds: float = 0.0
+    min_seconds: float = 0.0
+    max_seconds: float = 0.0
+    total_seconds: float = 0.0
+
+
+class FileStatsResponse(BaseModel):
+    overview: StatsOverview
+    status_distribution: List[StatsCountItem] = []
+    by_project: List[StatsCountItem] = []
+    by_type: List[StatsCountItem] = []
+    trend: List[StatsTrendItem] = []
+    stage_durations: List[StatsStageItem] = []
+    # 生效的时间窗口：range 为入参回显，start/end 为解析后的实际边界
+    range: StatsRangeEnum = StatsRangeEnum.D30
+    granularity: str = "day"
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
