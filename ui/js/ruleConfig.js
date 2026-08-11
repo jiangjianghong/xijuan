@@ -100,6 +100,17 @@ const RuleConfig = {
 
     init() {
         this.cacheElements();
+        this.bindPassiveRefresh();
+    },
+
+    // 被动探测：切回浏览器 tab / 窗口重新获得焦点时立刻探一次，
+    // 不必干等下一个轮询周期。checkConfigVersion 内部有 watch.active 守卫，
+    // 因此不在配置页时这两个监听不会产生任何请求。
+    bindPassiveRefresh() {
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) this.checkConfigVersion();
+        });
+        window.addEventListener('focus', () => this.checkConfigVersion());
     },
 
     cacheElements() {
