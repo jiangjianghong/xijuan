@@ -223,6 +223,21 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             ),
         }
     },
+    "/doctype/{type_id}/config_version": {
+        "get": {
+            "summary": "配置版本探针",
+            "description": (
+                "返回该类型下提取字段与分析规则的 `count` + `MAX(updated_at)`，"
+                "供前端轮询判断配置是否被他人改动（多人协作时免手动刷新）。\n\n"
+                "只查两个聚合值，比拉全量配置轻两个数量级，适合被高频轮询。\n\n"
+                "`count` 与 `latest` 需**一起**比对：只看 `latest` 探测不到删除"
+                "（删掉最新那条 `MAX` 反而变小或不变），只看 `count` 探测不到原地修改。"
+                "两者组合可覆盖增/删/改，连「同时删一条加一条」也能抓到。\n\n"
+                "`latest` 为秒级精度（源列是 `datetime`），同一秒内的多次修改只体现为一个值。\n\n"
+                "类型不存在或该类型下无任何配置时返回 `count=0` / `latest=null`，不报 404。"
+            ),
+        }
+    },
     "/doctype/import": {
         "post": {
             "summary": "从 JSON 载荷导入配置",
@@ -1547,6 +1562,10 @@ RESPONSE_DATA: Dict[tuple, Any] = {
     ("/doctype/batch_delete", "post"): {"results": "array — 逐条删除结果", "deleted": "integer — 成功删除条数"},
     ("/doctype/{type_id}/copy_from", "post"): "CopyConfigsResponse",
     ("/doctype/{type_id}/export", "get"): "ExportPayload",
+    ("/doctype/{type_id}/config_version", "get"): {
+        "type_id": "string — 查询的文档类型 ID",
+        "fields": "object — 提取字段版本 `{count, latest}`，latest 为 ISO 时间串或 null",
+        "rules": "object — 分析规则版本 `{count, latest}`，latest 为 ISO 时间串或 null"},
     ("/doctype/import", "post"): "ImportConfigsResponse",
     ("/doctype/{type_id}/promote", "post"): {"type_id": "string — 类型 ID"},
     ("/doctype/{type_id}/demote", "post"): {"type_id": "string — 类型 ID"},

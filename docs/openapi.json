@@ -166,15 +166,13 @@
         "operationId": "file_stats_file_stats_get",
         "parameters": [
           {
-            "name": "days",
+            "name": "range",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer",
-              "default": 30,
-              "title": "Days"
-            },
-            "description": "「历史处理趋势」的天数窗口（默认 30）。**只影响 trend**，概览 / 状态分布 / 项目占比 / 类型排行 / 阶段耗时恒为全量口径。越界值被夹到 `[1, 365]`，实际生效值在响应的 `trend_days` 里回传。"
+              "$ref": "#/components/schemas/StatsRangeEnum",
+              "default": "30d"
+            }
           }
         ],
         "responses": {
@@ -2695,6 +2693,76 @@
         }
       }
     },
+    "/doctype/{type_id}/config_version": {
+      "get": {
+        "tags": [
+          "doctype"
+        ],
+        "summary": "配置版本探针",
+        "description": "返回该类型下提取字段与分析规则的 `count` + `MAX(updated_at)`，供前端轮询判断配置是否被他人改动（多人协作时免手动刷新）。\n\n只查两个聚合值，比拉全量配置轻两个数量级，适合被高频轮询。\n\n`count` 与 `latest` 需**一起**比对：只看 `latest` 探测不到删除（删掉最新那条 `MAX` 反而变小或不变），只看 `count` 探测不到原地修改。两者组合可覆盖增/删/改，连「同时删一条加一条」也能抓到。\n\n`latest` 为秒级精度（源列是 `datetime`），同一秒内的多次修改只体现为一个值。\n\n类型不存在或该类型下无任何配置时返回 `count=0` / `latest=null`，不报 404。",
+        "operationId": "get_config_version_doctype__type_id__config_version_get",
+        "parameters": [
+          {
+            "name": "type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Type Id"
+            },
+            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "type_id": {
+                          "type": "string",
+                          "description": "查询的文档类型 ID"
+                        },
+                        "fields": {
+                          "type": "object",
+                          "description": "提取字段版本 `{count, latest}`，latest 为 ISO 时间串或 null"
+                        },
+                        "rules": {
+                          "type": "object",
+                          "description": "分析规则版本 `{count, latest}`，latest 为 ISO 时间串或 null"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/doctype/import": {
       "post": {
         "tags": [
@@ -4954,6 +5022,23 @@
         "title": "SourceTypeEnum",
         "description": "字段提取来源：`table`（按表名匹配后 LLM 抽取）/ `text`（文本检索后 LLM 抽取）/ `vl`（视觉模型端到端抽取，绕过 Markdown）。"
       },
+      "StatsRangeEnum": {
+        "type": "string",
+        "enum": [
+          "all",
+          "1h",
+          "24h",
+          "today",
+          "yesterday",
+          "3d",
+          "7d",
+          "30d",
+          "90d",
+          "365d"
+        ],
+        "title": "StatsRangeEnum",
+        "description": "统计时间窗口。窗口对 `files.create_time` 生效，**统一作用于整页所有指标**。\n\n`1h` / `24h` 是滚动时钟窗口（从此刻往前推）；`today` / `yesterday` / `Nd`\n是自然日窗口（从某天 00:00 起算），因为按天分桶的图表用自然日更符合直觉。"
+      },
       "TableMatchTypeEnum": {
         "type": "string",
         "enum": [
@@ -5719,11 +5804,40 @@
             "type": "array",
             "description": "六阶段耗时，按管线执行顺序固定返回 6 项"
           },
-          "trend_days": {
-            "default": 30,
-            "title": "Trend Days",
-            "type": "integer",
-            "description": "实际生效的趋势天数（入参 `days` 夹到 [1,365] 后的值）"
+          "range": {
+            "$ref": "#/components/schemas/StatsRangeEnum",
+            "default": "30d"
+          },
+          "granularity": {
+            "default": "day",
+            "title": "Granularity",
+            "type": "string"
+          },
+          "start_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start Time"
+          },
+          "end_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Time"
           }
         },
         "required": [

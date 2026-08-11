@@ -314,6 +314,54 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 | 200 | 成功 | ResponseWrapper |
 | 404 | 类型不存在 | ResponseWrapper |
 
+## 配置版本探针
+
+返回该类型下提取字段与分析规则的条数与最近更新时间，供前端轮询判断配置是否被他人改动——多人协作时无需手动刷新页面。只查两个聚合值，比拉全量配置轻两个数量级，适合被高频轮询（前端默认 8 秒一次）。
+
+- 方法路径：`GET /doctype/{type_id}/config_version`
+- 认证：无（内网部署）
+
+**路径参数**
+
+<!-- AUTOGEN:path-params GET /doctype/{type_id}/config_version -->
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| type_id | string | 是 | 文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。 |
+<!-- /AUTOGEN:path-params -->
+
+**响应体**
+
+<!-- AUTOGEN:response GET /doctype/{type_id}/config_version status=200 -->
+| 字段 | 类型 | 可空 | 说明 |
+|---|---|:--:|---|
+| type_id | string | 是 | 查询的文档类型 ID |
+| fields | object | 是 | 提取字段版本 `{count, latest}`，latest 为 ISO 时间串或 null |
+| rules | object | 是 | 分析规则版本 `{count, latest}`，latest 为 ISO 时间串或 null |
+<!-- /AUTOGEN:response -->
+
+`fields` / `rules` 的结构均为 `{"count": 整数, "latest": ISO 时间串 | null}`：
+
+```json
+{
+  "type_id": "default",
+  "fields": {"count": 12, "latest": "2026-08-11T10:03:22"},
+  "rules":  {"count": 8,  "latest": "2026-08-11T09:41:07"}
+}
+```
+
+**使用说明**
+
+- **`count` 与 `latest` 必须一起比对**：只看 `latest` 探测不到删除（删掉最新那条，`MAX(updated_at)` 反而变小或不变）；只看 `count` 探测不到原地修改。两者组合覆盖增 / 删 / 改，连「同时删一条加一条」（`count` 不变但 `latest` 变）也能抓到。推荐做法是把整个响应对象序列化后与上一次的快照做字符串比较。
+- `latest` 为**秒级**精度（源列 `extraction_field.updated_at` / `analysis_rule.updated_at` 为 `datetime`），同一秒内的多次修改只体现为一个值。
+- 版本按 `type_id` 隔离，其他类型的改动不会影响本类型的返回值。
+- 类型不存在或该类型下无任何配置时返回 `count=0` / `latest=null`，不报 404。
+
+**状态码 / 错误**
+
+| 状态码 | 触发条件 | 响应体 |
+|---|---|---|
+| 200 | 成功（含类型不存在，返回全零版本） | ResponseWrapper |
+
 ## 从 JSON 载荷导入配置
 
 把 export 载荷导入目标类型。字段始终生成**新 `field_id`**；规则按 `depend_field_names` 在目标类型按字段名重映射。

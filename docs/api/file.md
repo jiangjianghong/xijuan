@@ -139,7 +139,7 @@ _data 为数组，每个元素：_
 <!-- AUTOGEN:query-params GET /file/stats -->
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
-| days | integer | 否 | 30 | 「历史处理趋势」的天数窗口（默认 30）。**只影响 trend**，概览 / 状态分布 / 项目占比 / 类型排行 / 阶段耗时恒为全量口径。越界值被夹到 `[1, 365]`，实际生效值在响应的 `trend_days` 里回传。 |
+| range | StatsRangeEnum | 否 | 30d |  |
 <!-- /AUTOGEN:query-params -->
 
 **响应体**
@@ -153,7 +153,10 @@ _data 为数组，每个元素：_
 | by_type | array[StatsCountItem] | 是 | 按文档类型的分布（按数量降序） |
 | trend | array[StatsTrendItem] | 是 | 近 `trend_days` 天的按天趋势（升序，仅含有数据的日期） |
 | stage_durations | array[StatsStageItem] | 是 | 六阶段耗时，按管线执行顺序固定返回 6 项 |
-| trend_days | integer | 是 | 实际生效的趋势天数（入参 `days` 夹到 [1,365] 后的值） |
+| range | StatsRangeEnum | 是 |  |
+| granularity | string | 是 |  |
+| start_time | string | 是 |  |
+| end_time | string | 是 |  |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**

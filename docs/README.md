@@ -63,6 +63,7 @@
 | DELETE | `/doctype/projects/{project_id}` | 文档类型 | 删除项目 | [api/doctype.md](api/doctype.md) |
 | DELETE | `/doctype/{type_id}` | 文档类型 | 删除文档类型（单个） | [api/doctype.md](api/doctype.md) |
 | PUT | `/doctype/{type_id}` | 文档类型 | 更新文档类型（可改 type_id） | [api/doctype.md](api/doctype.md) |
+| GET | `/doctype/{type_id}/config_version` | 文档类型 | 配置版本探针 | [api/doctype.md](api/doctype.md) |
 | POST | `/doctype/{type_id}/copy_from` | 文档类型 | 同实例跨类型复制配置 | [api/doctype.md](api/doctype.md) |
 | POST | `/doctype/{type_id}/demote` | 文档类型 | 取消模板标记 | [api/doctype.md](api/doctype.md) |
 | GET | `/doctype/{type_id}/export` | 文档类型 | 导出配置为 JSON 载荷 | [api/doctype.md](api/doctype.md) |
