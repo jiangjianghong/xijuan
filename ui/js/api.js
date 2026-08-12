@@ -128,22 +128,43 @@ const API = {
     /**
      * 上传文件 (异步)
      */
-    async uploadFileAsync(file, typeId) {
-        const formData = new FormData();
-        formData.append('file', file);
+    uploadFileAsync(file, typeId, onProgress) {
+        return new Promise((resolve, reject) => {
+            const formData = new FormData();
+            formData.append('file', file);
 
-        const tid = encodeURIComponent(typeId || this.getCurrentTypeId());
-        const response = await fetch(`${this.baseUrl}/file/parse?mode=async&type_id=${tid}`, {
-            method: 'POST',
-            body: formData,
+            const tid = encodeURIComponent(typeId || this.getCurrentTypeId());
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${this.baseUrl}/file/parse?mode=async&type_id=${tid}`);
+
+            xhr.upload.onprogress = event => {
+                if (typeof onProgress !== 'function') return;
+                onProgress(event.lengthComputable && event.total > 0
+                    ? event.loaded / event.total * 100
+                    : null);
+            };
+
+            xhr.onload = () => {
+                let payload = {};
+                try {
+                    payload = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+                } catch (error) {
+                    reject(new Error('上传响应格式错误'));
+                    return;
+                }
+
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    if (typeof onProgress === 'function') onProgress(100);
+                    resolve(payload);
+                    return;
+                }
+
+                reject(new Error(this._formatError(payload.detail) || `上传失败: ${xhr.status}`));
+            };
+            xhr.onerror = () => reject(new Error('上传失败: 网络连接异常'));
+            xhr.onabort = () => reject(new Error('上传已取消'));
+            xhr.send(formData);
         });
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.detail || `上传失败: ${response.status}`);
-        }
-
-        return response.json();
     },
 
     /**

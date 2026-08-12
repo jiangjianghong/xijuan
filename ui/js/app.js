@@ -10,7 +10,7 @@ const App = {
         pageSize: 20,
         statusFilter: '',
         selectedIds: new Set(),
-        queue: new Map(), // fileId -> { fileName, stage, progress }
+        queue: new Map(), // id -> { fileName, stage, progress, file?, uploadProgress?, error? }
         pollingInterval: null,
         allQueuePolling: null, // 「全部队列」弹窗打开时的独立轮询句柄
         currentFileId: null,
@@ -44,15 +44,16 @@ const App = {
     async restoreProcessingQueue() {
         try {
             const items = await API.getProcessing(API.getCurrentTypeId());
-            // 清掉旧的非 uploading 项，保留上传中的临时卡片
+            // 清掉旧的非上传项，保留本地上传中/上传失败卡片
             for (const [id, it] of Array.from(this.state.queue.entries())) {
-                if (it.stage !== 'uploading') this.state.queue.delete(id);
+                if (!it.stage.startsWith('upload')) this.state.queue.delete(id);
             }
             items.forEach(item => {
                 this.state.queue.set(item.file_id, {
                     fileName: item.file_name,
                     stage: item.progress,
                     progress: Utils.getStageProgress(item.progress),
+                    typeId: API.getCurrentTypeId(),
                 });
             });
             this.renderQueue();
@@ -139,6 +140,16 @@ const App = {
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', (e) => this.switchTab(e.target.dataset.tab));
         });
+
+        // 上传失败卡片操作
+        this.els.queueContainer.addEventListener('click', (e) => {
+            const button = e.target.closest('[data-queue-action]');
+            if (!button) return;
+            const card = button.closest('[data-id]');
+            if (!card) return;
+            if (button.dataset.queueAction === 'retry-upload') this.retryUpload(card.dataset.id);
+            if (button.dataset.queueAction === 'remove-upload') this.removeFromQueue(card.dataset.id);
+        });
     },
 
     // ─────────────────────────────────────────────────────────
@@ -154,29 +165,45 @@ const App = {
         pdfFiles.forEach(file => this.uploadFile(file));
     },
 
-    async uploadFile(file) {
-        const tempId = Utils.generateId();
-        this.addToQueue(tempId, file.name, 'uploading', 5);
+    async uploadFile(file, retryId = null, uploadTypeId = null) {
+        const tempId = retryId || Utils.generateId();
+        const typeId = uploadTypeId || API.getCurrentTypeId();
+        this.addToQueue(tempId, file.name, 'uploading', 0, {
+            file,
+            typeId,
+            uploadProgress: 0,
+            error: null,
+        });
 
         try {
-            const result = await API.uploadFileAsync(file);
+            const result = await API.uploadFileAsync(file, typeId, percent => {
+                this.updateUploadProgress(tempId, percent);
+            });
             const fileId = result.data && result.data.file_id;
 
-            // 移除临时上传项
-            this.removeFromQueue(tempId);
-
             if (fileId) {
-                // 添加到队列，由轮询驱动后续进度
-                this.addToQueue(fileId, file.name, 'parsing', Utils.getStageProgress('parsing'));
+                // 原位切换为真实文件 ID，后续由轮询驱动管线进度
+                this.replaceQueueId(tempId, fileId, {
+                    fileName: file.name,
+                    stage: 'parsing',
+                    progress: Utils.getStageProgress('parsing'),
+                    typeId,
+                });
                 Toast.info(`${file.name} 已提交处理`);
             } else {
-                // 可能是已完成的文件
+                this.removeFromQueue(tempId);
                 Toast.info(result.message || `${file.name} 已提交`);
             }
 
             this.loadFileList();
         } catch (error) {
-            this.removeFromQueue(tempId);
+            const item = this.state.queue.get(tempId);
+            if (item) {
+                item.stage = 'upload_failed';
+                item.error = error.message;
+                item.progress = 0;
+                this.renderQueue();
+            }
             Toast.error(`上传失败: ${error.message}`);
         }
 
@@ -187,9 +214,36 @@ const App = {
     // 队列管理
     // ─────────────────────────────────────────────────────────
 
-    addToQueue(id, fileName, stage, progress) {
-        this.state.queue.set(id, { fileName, stage, progress });
+    addToQueue(id, fileName, stage, progress, extra = {}) {
+        const current = this.state.queue.get(id) || {};
+        this.state.queue.set(id, { ...current, ...extra, fileName, stage, progress });
         this.renderQueue();
+    },
+
+    replaceQueueId(oldId, newId, nextItem) {
+        const nextQueue = new Map();
+        for (const [id, item] of this.state.queue.entries()) {
+            nextQueue.set(id === oldId ? newId : id, id === oldId ? nextItem : item);
+        }
+        this.state.queue = nextQueue;
+        this.renderQueue();
+    },
+
+    updateUploadProgress(id, percent) {
+        const item = this.state.queue.get(id);
+        if (!item) return;
+        item.uploadProgress = percent;
+        const safeId = typeof CSS !== 'undefined' && CSS.escape
+            ? CSS.escape(id)
+            : String(id).replace(/(["\\])/g, '\\$1');
+        const card = this.els.queueContainer.querySelector(`[data-id="${safeId}"]`);
+        if (card && typeof QueueProgress !== 'undefined') QueueProgress.updateCard(card, percent);
+    },
+
+    async retryUpload(id) {
+        const item = this.state.queue.get(id);
+        if (!item || !item.file || item.stage !== 'upload_failed') return;
+        await this.uploadFile(item.file, id, item.typeId);
     },
 
     updateQueueItem(id, stage, progress) {
@@ -214,10 +268,37 @@ const App = {
 
         let html = '';
         this.state.queue.forEach((item, id) => {
-            const stageText = item.stage === 'uploading' ? '上传中' : Utils.getStatusText(item.stage);
+            const escapeAttr = value => Utils.escapeHtml(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            const safeId = escapeAttr(id);
+            const safeName = Utils.escapeHtml(item.fileName);
+            const safeNameAttr = escapeAttr(item.fileName);
+            if (item.stage === 'uploading' || item.stage === 'upload_failed') {
+                const failed = item.stage === 'upload_failed';
+                const stageText = failed ? '上传失败' : '上传中';
+                const error = failed && item.error ? `<div class="queue-upload-error" title="${escapeAttr(item.error)}">${Utils.escapeHtml(item.error)}</div>` : '';
+                html += `
+                    <div class="queue-upload-card${failed ? ' is-upload-failed' : ''}" data-id="${safeId}">
+                        <svg class="queue-upload-outline" viewBox="0 0 266 108" aria-hidden="true">
+                            <path data-upload-progress-guide d="M133 2 H246 A18 18 0 0 1 264 20 V88 A18 18 0 0 1 246 106 H20 A18 18 0 0 1 2 88 V20 A18 18 0 0 1 20 2 H133" fill="none" stroke="none"></path>
+                            <path data-upload-progress-path d="" fill="none"></path>
+                        </svg>
+                        <div class="queue-upload-main">
+                            <div class="queue-upload-icon"><i data-lucide="upload-cloud"></i></div>
+                            <div class="queue-upload-copy">
+                                <div class="queue-card-name" title="${safeNameAttr}">${safeName}</div>
+                                <div class="queue-card-stage">${stageText}</div>
+                                ${error}
+                            </div>
+                        </div>
+                        ${failed ? `<div class="queue-upload-actions"><button type="button" class="queue-upload-action" data-queue-action="retry-upload" title="重试上传"><i data-lucide="rotate-ccw"></i><span>重试</span></button><button type="button" class="queue-upload-action" data-queue-action="remove-upload" title="移除"><i data-lucide="x"></i><span>移除</span></button></div>` : '<span class="queue-upload-percent" data-upload-percent>上传中</span>'}
+                    </div>
+                `;
+                return;
+            }
+            const stageText = Utils.getStatusText(item.stage);
             html += `
-                <div class="queue-card" data-id="${id}">
-                    <div class="queue-card-name" title="${item.fileName}">${item.fileName}</div>
+                <div class="queue-card" data-id="${safeId}">
+                    <div class="queue-card-name" title="${safeNameAttr}">${safeName}</div>
                     <div class="queue-progress">
                         <div class="queue-progress-bar" style="width: ${item.progress}%"></div>
                     </div>
@@ -226,6 +307,15 @@ const App = {
             `;
         });
         this.els.queueContainer.innerHTML = html;
+        this.state.queue.forEach((item, id) => {
+            if (item.stage !== 'uploading' && item.stage !== 'upload_failed') return;
+            const safeId = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : String(id).replace(/(["\\])/g, '\\$1');
+            const card = this.els.queueContainer.querySelector(`[data-id="${safeId}"]`);
+            if (card && typeof QueueProgress !== 'undefined') {
+                QueueProgress.updateCard(card, item.stage === 'upload_failed' ? 100 : item.uploadProgress);
+            }
+        });
+        if (typeof lucide !== 'undefined') lucide.createIcons();
     },
 
     // ─────────────────────────────────────────────────────────
@@ -1198,43 +1288,52 @@ const App = {
     async pollQueueStatus() {
         // 跟踪队列里的真实文件（跳过上传中的临时项）
         const tracked = Array.from(this.state.queue.entries()).filter(
-            ([id, item]) => item.stage !== 'uploading'
+            ([id, item]) => !item.stage.startsWith('upload')
         );
         if (tracked.length === 0) return;
 
-        let processing;
-        try {
-            processing = await API.getProcessing(API.getCurrentTypeId());
-        } catch (e) {
-            return; // 本轮失败，下轮再试
-        }
-        const stillIds = new Set(processing.map(p => p.file_id));
-
-        // 1) 仍在处理中的：更新阶段/进度
-        processing.forEach(p => {
-            if (this.state.queue.has(p.file_id)) {
-                this.updateQueueItem(p.file_id, p.progress, Utils.getStageProgress(p.progress));
-            }
+        const groups = new Map();
+        tracked.forEach(entry => {
+            const typeId = entry[1].typeId || API.getCurrentTypeId();
+            if (!groups.has(typeId)) groups.set(typeId, []);
+            groups.get(typeId).push(entry);
         });
 
-        // 2) 已从处理中消失的：查最终态，弹完成/失败提示并移除
         let dequeued = false;
-        for (const [fileId, item] of tracked) {
-            if (stillIds.has(fileId)) continue;
-            this.removeFromQueue(fileId);
-            dequeued = true;
+        for (const [typeId, group] of groups.entries()) {
+            let processing;
             try {
-                const status = await API.getFileStatus(fileId);
-                if (status.progress === 'complete') {
-                    Toast.success(`${item.fileName} 处理完成`);
-                } else if (Utils.isFailed(status.progress)) {
-                    Toast.error(`${item.fileName} 处理失败`);
+                processing = await API.getProcessing(typeId);
+            } catch (e) {
+                continue; // 本类型本轮失败，下轮再试
+            }
+            const stillIds = new Set(processing.map(p => p.file_id));
+
+            // 1) 仍在处理中的：更新阶段/进度
+            processing.forEach(p => {
+                if (this.state.queue.has(p.file_id)) {
+                    this.updateQueueItem(p.file_id, p.progress, Utils.getStageProgress(p.progress));
                 }
-                if (this.state.currentFileId === fileId) {
-                    this.loadDrawerContent(fileId);
+            });
+
+            // 2) 已从处理中消失的：查最终态，弹完成/失败提示并移除
+            for (const [fileId, item] of group) {
+                if (stillIds.has(fileId)) continue;
+                this.removeFromQueue(fileId);
+                dequeued = true;
+                try {
+                    const status = await API.getFileStatus(fileId);
+                    if (status.progress === 'complete') {
+                        Toast.success(`${item.fileName} 处理完成`);
+                    } else if (Utils.isFailed(status.progress)) {
+                        Toast.error(`${item.fileName} 处理失败`);
+                    }
+                    if (this.state.currentFileId === fileId) {
+                        this.loadDrawerContent(fileId);
+                    }
+                } catch (error) {
+                    // 文件可能已被删除，静默
                 }
-            } catch (error) {
-                // 文件可能已被删除，静默
             }
         }
         if (dequeued) this.loadFileList();
