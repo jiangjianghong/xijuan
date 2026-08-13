@@ -12,6 +12,10 @@ const App = {
         selectedIds: new Set(),
         queue: new Map(), // id -> { fileName, stage, progress, file?, uploadProgress?, error? }
         pollingInterval: null,
+        pollingInFlight: false,
+        pollingRequested: false,
+        pollingEventsBound: false,
+        queueRequestGeneration: 0,
         allQueuePolling: null, // 「全部队列」弹窗打开时的独立轮询句柄
         currentFileId: null,
     },
@@ -42,18 +46,24 @@ const App = {
      * 重建时保留正在「上传中」的临时项（尚无真实 file_id）。
      */
     async restoreProcessingQueue() {
+        const typeId = API.getCurrentTypeId();
+        const generation = ++this.state.queueRequestGeneration;
         try {
-            const items = await API.getProcessing(API.getCurrentTypeId());
-            // 清掉旧的非上传项，保留本地上传中/上传失败卡片
+            const items = await API.getProcessing(typeId);
+            if (generation !== this.state.queueRequestGeneration || API.getCurrentTypeId() !== typeId) return;
+            const processingIds = new Set(items.map(item => item.file_id));
+            // 只重建当前类型；保留本页正在上传及切换类型前已跟踪的管线任务。
             for (const [id, it] of Array.from(this.state.queue.entries())) {
-                if (!it.stage.startsWith('upload')) this.state.queue.delete(id);
+                if (!it.stage.startsWith('upload') && it.typeId === typeId && !processingIds.has(id)) {
+                    this.state.queue.delete(id);
+                }
             }
             items.forEach(item => {
                 this.state.queue.set(item.file_id, {
                     fileName: item.file_name,
                     stage: item.progress,
                     progress: Utils.getStageProgress(item.progress),
-                    typeId: API.getCurrentTypeId(),
+                    typeId,
                 });
             });
             this.renderQueue();
@@ -226,6 +236,7 @@ const App = {
             nextQueue.set(id === oldId ? newId : id, id === oldId ? nextItem : item);
         }
         this.state.queue = nextQueue;
+        this.state.queueRequestGeneration += 1;
         this.renderQueue();
     },
 
@@ -1282,17 +1293,68 @@ const App = {
     // ─────────────────────────────────────────────────────────
 
     startPolling() {
-        this.state.pollingInterval = setInterval(() => this.pollQueueStatus(), 3000);
+        if (!this.state.pollingEventsBound) {
+            window.addEventListener('focus', () => {
+                if (this.state.pollingInterval) {
+                    clearTimeout(this.state.pollingInterval);
+                    this.state.pollingInterval = null;
+                }
+                if (this.state.pollingInFlight) {
+                    this.state.pollingRequested = true;
+                    return;
+                }
+                this.runQueuePoll();
+            });
+            window.addEventListener('blur', () => {
+                if (!this.state.pollingInFlight) this.scheduleQueuePoll();
+            });
+            this.state.pollingEventsBound = true;
+        }
+        this.scheduleQueuePoll();
+    },
+
+    getQueuePollingDelay() {
+        return typeof document.hasFocus === 'function' && document.hasFocus() ? 2000 : 5000;
+    },
+
+    scheduleQueuePoll(delay = this.getQueuePollingDelay()) {
+        if (this.state.pollingInterval) clearTimeout(this.state.pollingInterval);
+        this.state.pollingInterval = setTimeout(() => {
+            this.state.pollingInterval = null;
+            this.runQueuePoll();
+        }, delay);
+    },
+
+    async runQueuePoll() {
+        if (this.state.pollingInFlight) return;
+        if (this.state.pollingInterval) {
+            clearTimeout(this.state.pollingInterval);
+            this.state.pollingInterval = null;
+        }
+        this.state.pollingInFlight = true;
+        try {
+            await this.pollQueueStatus();
+        } finally {
+            this.state.pollingInFlight = false;
+            if (this.state.pollingRequested) {
+                this.state.pollingRequested = false;
+                await this.runQueuePoll();
+            } else {
+                this.scheduleQueuePoll();
+            }
+        }
     },
 
     async pollQueueStatus() {
+        const currentTypeId = API.getCurrentTypeId();
+        const generation = ++this.state.queueRequestGeneration;
         // 跟踪队列里的真实文件（跳过上传中的临时项）
         const tracked = Array.from(this.state.queue.entries()).filter(
             ([id, item]) => !item.stage.startsWith('upload')
         );
-        if (tracked.length === 0) return;
 
-        const groups = new Map();
+        // 当前类型始终参与对账，用来发现其他浏览器新建的任务。
+        const groups = new Map([[currentTypeId, []]]);
         tracked.forEach(entry => {
             const typeId = entry[1].typeId || API.getCurrentTypeId();
             if (!groups.has(typeId)) groups.set(typeId, []);
@@ -1307,18 +1369,30 @@ const App = {
             } catch (e) {
                 continue; // 本类型本轮失败，下轮再试
             }
+            if (generation !== this.state.queueRequestGeneration) return;
             const stillIds = new Set(processing.map(p => p.file_id));
+            const canDiscover = typeId === currentTypeId && API.getCurrentTypeId() === currentTypeId;
 
-            // 1) 仍在处理中的：更新阶段/进度
+            // 1) 当前类型可发现新任务；其他类型仅更新本页已跟踪的任务。
             processing.forEach(p => {
                 if (this.state.queue.has(p.file_id)) {
                     this.updateQueueItem(p.file_id, p.progress, Utils.getStageProgress(p.progress));
+                } else if (canDiscover) {
+                    this.state.queue.set(p.file_id, {
+                        fileName: p.file_name,
+                        stage: p.progress,
+                        progress: Utils.getStageProgress(p.progress),
+                        typeId: p.type_id || typeId,
+                    });
+                    this.renderQueue();
                 }
             });
 
             // 2) 已从处理中消失的：查最终态，弹完成/失败提示并移除
             for (const [fileId, item] of group) {
                 if (stillIds.has(fileId)) continue;
+                const liveItem = this.state.queue.get(fileId);
+                if (!liveItem || liveItem.stage.startsWith('upload')) continue;
                 this.removeFromQueue(fileId);
                 dequeued = true;
                 try {
