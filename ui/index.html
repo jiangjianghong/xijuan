@@ -97,6 +97,9 @@
             <label style="font-size:13px; color:#4F775D;">文档类型</label>
             <select id="doctype-selector" class="status-filter" data-hover="1" style="min-width:140px;"></select>
             <button class="btn btn-secondary" style="padding:4px 10px; font-size:12px;" onclick="DocTypeManager.openManageDialog()">管理</button>
+            <button class="btn btn-secondary settings-entry-btn" type="button" onclick="SettingsManager.open()" title="系统设置">
+                <i data-lucide="settings" class="w-4 h-4"></i><span>设置</span>
+            </button>
         </div>
     </header>
 
@@ -1006,6 +1009,60 @@
         </div>
     </div>
 
+    <!-- Settings Login Modal -->
+    <div id="settings-login-overlay" class="rule-modal-overlay settings-login-overlay" role="dialog" aria-modal="true" aria-labelledby="settings-login-title">
+        <div class="rule-modal settings-login-modal">
+            <div class="rule-modal-header">
+                <div>
+                    <h3 id="settings-login-title">系统设置验证</h3>
+                    <p>请输入管理员密码</p>
+                </div>
+                <button class="rule-modal-close" type="button" onclick="SettingsManager.closeLogin()" aria-label="关闭">&times;</button>
+            </div>
+            <form id="settings-login-form" class="settings-login-form" onsubmit="SettingsManager.login(event)">
+                <label for="settings-password">管理员密码</label>
+                <div class="settings-password-row">
+                    <input id="settings-password" class="form-input" type="password" autocomplete="current-password" required>
+                    <button class="btn btn-primary" type="submit" id="settings-login-submit">验证</button>
+                </div>
+                <p id="settings-login-error" class="settings-inline-error" role="alert"></p>
+            </form>
+        </div>
+    </div>
+
+    <!-- Runtime Settings Modal -->
+    <div id="settings-modal-overlay" class="rule-modal-overlay settings-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+        <div class="rule-modal settings-modal">
+            <div class="rule-modal-header settings-modal-header">
+                <div>
+                    <h3 id="settings-modal-title">系统设置</h3>
+                    <p>保存后对新请求和新任务即时生效</p>
+                </div>
+                <button class="rule-modal-close" type="button" onclick="SettingsManager.close()" aria-label="关闭">&times;</button>
+            </div>
+            <div class="settings-workspace">
+                <nav id="settings-group-nav" class="settings-group-nav" aria-label="设置分组"></nav>
+                <form id="settings-form" class="settings-form" onsubmit="SettingsManager.save(event)">
+                    <div id="settings-form-body" class="settings-form-body"></div>
+                </form>
+            </div>
+            <div class="settings-savebar">
+                <div class="settings-save-status">
+                    <span id="settings-dirty-dot" class="settings-dirty-dot"></span>
+                    <span id="settings-save-status">没有未保存的修改</span>
+                </div>
+                <div class="settings-save-actions">
+                    <button class="btn btn-secondary" type="button" onclick="SettingsManager.logout()">
+                        <i data-lucide="log-out" class="w-4 h-4"></i><span>退出设置</span>
+                    </button>
+                    <button class="btn btn-primary" type="submit" form="settings-form" id="settings-save-btn" disabled>
+                        <i data-lucide="save" class="w-4 h-4"></i><span>保存修改</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="vendor/pdfjs/pdf.min.js"></script>
     <script>
         if (window.pdfjsLib) {
@@ -1017,6 +1074,7 @@
     <script src="js/queueProgress.js"></script>
     <script src="js/customSelect.js"></script>
     <script src="js/api.js"></script>
+    <script src="js/settings.js"></script>
     <script src="js/doctype.js"></script>
     <script src="js/schemaBuilder.js"></script>
     <script src="js/ruleConfig.js"></script>

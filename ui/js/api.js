@@ -42,10 +42,46 @@ const API = {
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({}));
-            throw new Error(this._formatError(error.detail) || `请求失败: ${response.status}`);
+            const requestError = new Error(this._formatError(error.detail) || `请求失败: ${response.status}`);
+            requestError.status = response.status;
+            requestError.detail = error.detail;
+            throw requestError;
         }
 
         return response.json();
+    },
+
+    // ─── 系统运行时设置 ───
+
+    async settingsLogin(password) {
+        const result = await this.request('/settings/login', {
+            method: 'POST',
+            body: JSON.stringify({ password }),
+        });
+        return result.data;
+    },
+
+    async getSettingsSession() {
+        const result = await this.request('/settings/session');
+        return result.data;
+    },
+
+    async getRuntimeSettings() {
+        const result = await this.request('/settings/config');
+        return result.data;
+    },
+
+    async updateRuntimeSettings(payload) {
+        const result = await this.request('/settings/config', {
+            method: 'PATCH',
+            body: JSON.stringify(payload),
+        });
+        return result.data;
+    },
+
+    async settingsLogout() {
+        const result = await this.request('/settings/logout', { method: 'POST' });
+        return result.data;
     },
 
     /**
