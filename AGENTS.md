@@ -41,7 +41,7 @@ uv sync
 - Logging configured in `logs/__init__.py` using loguru. Filters out polling endpoints from uvicorn access log.
 
 ### Layer Structure
-- **`blue_print/`** - FastAPI routers (registered in `__init__.py:register_routers`). Prefix: `/file`, `/extraction`, `/analysis`, `/search`, `/doctype`.
+- **`blue_print/`** - FastAPI routers (registered in `__init__.py:register_routers`). Prefix: `/file`, `/extraction`, `/analysis`, `/search`, `/doctype`, `/settings`.
 - **`service/`** - Business logic. Each service module corresponds to a pipeline stage.
 - **`model/`** - SQLAlchemy async ORM (`tables.py`), Pydantic response schemas (`schemas.py`), database session management (`database.py`).
 - **`utils/`** - Shared clients: `llm_client.py` (OpenAI-compatible chat/embeddings), `milvus_client.py` (Milvus vector DB), `config.py`, `file_utils.py`, `callback.py`, `page_mapping.py`.
@@ -164,4 +164,10 @@ Two rule types:
 
 ## Configuration
 
-Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`, `storage`. Each maps to a Pydantic model in `utils/config.py`. `storage`（`max_total_bytes` / `max_retention_minutes` / `cleanup_interval_minutes`，默认 `0/0/10`，0=关闭）治理 `uploads` 下 PDF：启动时 + 每 `cleanup_interval_minutes` 分钟 + 每次上传后触发 `service/retention_service.py:enforce_pdf_retention`，只删物理 PDF（按 `create_time` 最旧优先淘汰 / 超时删除），不动数据库；被清文件的 PDF 预览与 VL 抽取返回 404。
+Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`, `storage`, `settings`. Each maps to a Pydantic model in `utils/config.py`. `storage`（`max_total_bytes` / `max_retention_minutes` / `cleanup_interval_minutes`，默认 `0/0/10`，0=关闭）治理 `uploads` 下 PDF：启动时 + 每 `cleanup_interval_minutes` 分钟 + 每次上传后触发 `service/retention_service.py:enforce_pdf_retention`，只删物理 PDF（按 `create_time` 最旧优先淘汰 / 超时删除），不动数据库；被清文件的 PDF 预览与 VL 抽取返回 404。
+
+### Runtime Settings (`blue_print/settings_router.py`)
+- Header button “设置” sits immediately right of “管理”; a password gate protects the modal. The plaintext password is only configured in `settings.password`; empty disables login. Sessions default to 30 minutes, use an HttpOnly SameSite=Strict cookie, and live in single-process memory.
+- The UI/API allowlists `mineru`, `chunking`, `embedding`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`, and `storage`. `embedding` only permits `base_url`, `api_key`, and `model_name`; MySQL, Milvus, server, settings, unknown and read-only fields are rejected.
+- Secrets are write-only: reads return only `{configured: bool}` and updates use explicit keep/replace/clear operations. `service/settings_service.py` validates the complete Pydantic config, preserves YAML comments/order with ruamel.yaml, atomically replaces the single config file, then swaps the in-memory config snapshot and VL semaphore. New calls see the new config; in-flight work is not forced to switch.
+- Runtime sessions/config swaps assume the current single-worker deployment. Manual YAML edits are loaded on restart, not watched automatically.

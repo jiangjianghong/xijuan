@@ -122,3 +122,9 @@ storage:
   max_total_bytes: 0            # PDF 总大小上限(字节)，0=不限。超限时按 create_time 最旧优先淘汰。例:10737418240=10GB
   max_retention_minutes: 0      # PDF 最久保存时间(分钟)，0=不限。超过则删除物理 PDF。例:4320=3天
   cleanup_interval_minutes: 10  # 后台清理扫描周期(分钟)
+
+# 系统设置页面安全配置（只允许直接编辑本文件，不通过设置 API 返回或修改）
+settings:
+  password: ""          # 管理员明文密码；留空时禁止登录系统设置
+  session_minutes: 30   # 登录会话有效期（分钟）
+  secure_cookie: false  # HTTPS 部署时改为 true

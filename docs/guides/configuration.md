@@ -160,3 +160,19 @@
 | `max_total_bytes` | 整数 | `0` | PDF 总大小上限（字节），`0` = 不限；超限按最旧 `create_time` 优先淘汰。示例: `10737418240`（10GB） |
 | `max_retention_minutes` | 整数 | `0` | PDF 最长保留时长（分钟），`0` = 不限；超时即删除。示例: `4320`（3 天） |
 | `cleanup_interval_minutes` | 整数 | `10` | 后台清理扫描周期（分钟） |
+
+## settings — 系统设置页面安全配置
+
+页面头部“管理”右侧的“设置”按钮提供运行时配置管理。管理员密码以明文保存在唯一的 `configs/config.yaml` 中；该分组永远不会通过设置 API 返回，也不能在页面中修改。
+
+| 配置项 | 类型 | 默认值 | 含义 |
+|---|---|---|---|
+| `password` | 字符串 | `""` | 设置管理员密码；留空时禁止登录设置页 |
+| `session_minutes` | 整数 | `30` | 登录会话有效期（分钟） |
+| `secure_cookie` | 布尔 | `false` | HTTPS 部署时设为 `true`，为会话 Cookie 增加 `Secure` |
+
+设置页开放 `mineru`、`chunking`、`embedding`、`extraction`、`table_name_validation`、`analysis`、`vl_model`、`web_search` 和 `storage`。其中向量化只允许修改 `base_url`、`api_key`、`model_name`，其他参数只读；`server`、`mysql`、`milvus` 完全不返回且不能修改。
+
+API Key 只显示“已配置/未配置”，旧值不会返回浏览器。管理员可以明确选择保留、覆盖或清除密钥。保存使用同目录临时文件和原子替换，保留 YAML 注释、顺序和未开放配置；写盘成功后，新请求和新任务立即使用新配置，已运行任务不强制切换。
+
+当前会话和热配置引用均为单进程内存状态，因此运行服务必须保持单 worker。进程重启后设置会话失效；直接手工修改 YAML 仍需重启服务才能加载。
