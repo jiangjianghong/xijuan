@@ -823,6 +823,11 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "description": (
                 "按 `type_id` 加载启用规则批量执行逻辑判断 / 计算。支持 `sync` / `async` / `stream`，"
                 "可批量 `items`。\n\n"
+                "**先理解两层数组：** 请求 `items[]` 是待分析的业务对象列表；响应 `data.items[]` "
+                "与请求逐项对应，表示每个业务对象的执行汇总；每个响应 item 内的 `results[]` 才是该"
+                "业务对象逐条执行规则的结果。即 `请求 items[0] -> 响应 data.items[0] -> "
+                "data.items[0].results[]`。即使只提交 1 个业务对象或只执行 1 条规则，对应字段仍保持"
+                "数组；没有规则实际执行时 `results` 为 `[]`。\n\n"
                 "- 取值来源由请求级 `source` 决定：`values`（默认）用请求里的 `field_values`"
                 "（不读文件提取结果、不写 `analysis_result`）；`file` 改读各 item `file_id` 已落库的 "
                 "`extraction_result`，此时 `field_values` 不得传（422）、`type_id` 可省"
@@ -834,11 +839,14 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "`field_values` 覆盖了 `depend_fields` 的那些（其余静默跳过）；`[]` = 不执行任何规则；"
                 "显式点名 = 只跑指定规则，**不做**覆盖过滤，缺依赖字段的规则产出 `success=false` "
                 "结果（`reason` 列出缺失字段）并计入 `total` / `failed`，不会从 `results` 里消失\n"
-                "- 点名了该类型下不存在或未启用的 rule_id 不报错，收进 `AnalysisRunItemResult.unknown_rule_ids` 回传\n"
+                "- 显式点名时无视 `enabled` 开关；该 `type_id` 下不存在的 rule_id 不报错，收进 "
+                "`AnalysisRunItemResult.unknown_rule_ids` 回传\n"
                 "- items 间并发，单 item 内按 `priority, rule_id` 顺序执行；`source=file` 的读库集中在并发前、"
                 "`persist` 写库在并发后（`AsyncSession` 非并发安全）\n"
-                "- `async` 模式用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`\n\n"
-                "返回 `data=AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`（sync）。"
+                "- `sync` 的最终结果在 HTTP 响应 `data`；`async` 的最终结果在 `task_done.data`；"
+                "`stream` 的最终结果在 SSE `task_done` 事件的 `data`。三者最终结果均为"
+                " `AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`\n"
+                "- `async` 模式用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`"
             ),
         }
     },
@@ -1459,15 +1467,28 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         },
     },
     "AnalysisRunRuleResult": {
-        "description": "独立分析单规则结果。",
+        "description": (
+            "某一个业务输入 item 执行某一条分析规则所得的结果。它是 "
+            "`AnalysisRunItemResult.results[]` 的元素，不代表一个新的业务输入。"
+        ),
         "properties": {
-            "rule_id": "规则 ID", "rule_name": "规则名", "rule_type": "judge/calc/custom", "result": "结果",
-            "reason": "理由", "input_values": "依赖字段取值", "source_refs": "溯源（可空）",
-            "success": "是否成功", "index": "序号", "total": "规则总数",
+            "rule_id": "本条结果对应的规则 ID。",
+            "rule_name": "本条结果对应的规则名称。",
+            "rule_type": "规则类型：`judge` / `calc` / `custom`。",
+            "result": "规则执行结果；失败时通常为空字符串，结合 `success` 和 `reason` 判断。",
+            "reason": "规则给出的理由，或执行失败原因。",
+            "input_values": "本条规则实际使用的依赖字段值，形如 `{field_id: value}`。",
+            "source_refs": "依赖字段溯源；`source=values` 通常为 null，`source=file` 可包含提取溯源。",
+            "success": "本条规则是否执行成功；不是规则业务结论本身。",
+            "index": "本条规则在当前 item 的执行序号，从 1 开始。",
+            "total": "当前 item 实际执行的规则总数，与外层 item 的 `total` 相同。",
         },
     },
     "AnalysisRunRequest": {
-        "description": "独立逻辑分析请求。",
+        "description": (
+            "独立逻辑分析请求。`items[]` 是批量业务输入：一个元素代表一组需要独立分析的字段值"
+            "或一个文件，不代表规则。响应会为每个请求 item 返回一个同位置的 item 结果。"
+        ),
         "properties": {
             "mode": "执行模式：`sync` 同步返回 / `async` 后台跑并回调 / `stream` SSE 流式",
             "source": (
@@ -1479,11 +1500,35 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
                 "**不改 `files.progress`**"
             ),
             "callback_url": "`async` 模式必填，用于推送 `rule_done` / `task_done` / `task_failed`",
-            "items": "待分析的输入组，item 间并发",
+            "items": (
+                "待分析的业务输入列表，至少 1 项。一个 item 代表一个业务对象；item 间并发执行，"
+                "响应 `data.items[]` 按请求顺序逐项对应。即使只分析一个对象也必须传数组。"
+            ),
         },
+        "examples": [{
+            "mode": "sync",
+            "source": "values",
+            "items": [
+                {
+                    "type_id": "financial_report",
+                    "biz_id": "doc-001",
+                    "field_values": {"net_profit": "5000000", "revenue": "150000000"},
+                    "rule_ids": ["profit_positive", "profit_margin"],
+                },
+                {
+                    "type_id": "financial_report",
+                    "biz_id": "doc-002",
+                    "field_values": {"net_profit": "-100000", "revenue": "8000000"},
+                    "rule_ids": ["profit_positive", "profit_margin"],
+                },
+            ],
+        }],
     },
     "AnalysisRunItem": {
-        "description": "独立分析的单组输入（字段值来自请求或该文件已落库的提取结果）。",
+        "description": (
+            "独立分析的一组业务输入。一个 item 通常代表一份合同、一张订单、一份报表或一个文件；"
+            "服务会在该 item 上执行零到多条规则，并把规则结果放进对应响应 item 的 `results[]`。"
+        ),
         "properties": {
             "type_id": "文档类型 ID；`source=file` 时可省，取 `files.type_id`",
             "biz_id": "调用方业务 ID（原样回传）",
@@ -1500,19 +1545,117 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         },
     },
     "AnalysisRunItemResult": {
-        "description": "独立分析单 item 结果。",
+        "description": (
+            "一个请求 item 的执行汇总。响应 `items[i]` 对应请求 `items[i]`；其中 `results[]` 是"
+            "这个业务对象实际执行的逐规则结果。即使只有一条规则也仍是数组，没有规则执行时为 `[]`。"
+        ),
         "properties": {
-            "item_index": "item 序号", "biz_id": "业务 ID", "type_id": "文档类型", "total": "规则数",
-            "succeeded": "成功数", "failed": "失败数", "results": "逐规则结果",
-            "unknown_rule_ids": "请求点名了但该类型下不存在或未启用的 rule_id；不点名时恒为空",
+            "item_index": "对应请求 `items[]` 的零基下标；响应顺序与请求保持一致。",
+            "biz_id": "对应请求 item 的业务 ID，原样回传，方便调用方关联结果。",
+            "type_id": "该业务输入实际使用的文档类型 ID。",
+            "total": "当前业务输入实际执行的规则总数，等于 `results` 数组长度。",
+            "succeeded": "当前 `results[]` 中 `success=true` 的数量。",
+            "failed": "当前 `results[]` 中 `success=false` 的数量；正常满足 `succeeded + failed = total`。",
+            "results": (
+                "当前业务输入的逐规则结果列表，每个元素对应一条实际执行的规则。"
+                "它不是另一批 item；一条规则也仍用单元素数组表示。"
+            ),
+            "unknown_rule_ids": "请求点名了但该类型下不存在的 rule_id；不点名时恒为空。显式点名的禁用规则仍会执行，不属于 unknown。",
             "error": (
                 "file 模式的 item 级错误（文件不存在 / type_id 不一致 / 无提取结果）；正常为 null"
             ),
         },
     },
     "AnalysisRunResponse": {
-        "description": "独立逻辑分析结果（sync）。",
-        "properties": {"total_items": "item 总数", "items": "逐 item 结果"},
+        "description": (
+            "独立逻辑分析的批量最终结果。`items[]` 按顺序对应请求 `items[]`；每个 item 内的"
+            " `results[]` 再列出该业务输入执行的规则结果。sync 直接返回此结构，async/stream 在"
+            " `task_done.data` 中返回此结构。"
+        ),
+        "properties": {
+            "total_items": "本批业务输入总数，等于请求 `items` 长度，也等于响应 `items` 长度。",
+            "items": (
+                "逐业务输入的执行汇总列表。响应 `items[i]` 对应请求 `items[i]`，"
+                "不是逐规则列表；逐规则列表位于各元素的 `results[]`。"
+            ),
+        },
+        "examples": [{
+            "total_items": 2,
+            "items": [
+                {
+                    "item_index": 0,
+                    "biz_id": "doc-001",
+                    "type_id": "financial_report",
+                    "total": 2,
+                    "succeeded": 2,
+                    "failed": 0,
+                    "results": [
+                        {
+                            "rule_id": "profit_positive",
+                            "rule_name": "是否盈利",
+                            "rule_type": "judge",
+                            "result": "true",
+                            "reason": "净利润大于 0。",
+                            "input_values": {"net_profit": "5000000"},
+                            "source_refs": None,
+                            "success": True,
+                            "index": 1,
+                            "total": 2,
+                        },
+                        {
+                            "rule_id": "profit_margin",
+                            "rule_name": "净利率",
+                            "rule_type": "calc",
+                            "result": "0.0333333333",
+                            "reason": "计算成功",
+                            "input_values": {"net_profit": "5000000", "revenue": "150000000"},
+                            "source_refs": None,
+                            "success": True,
+                            "index": 2,
+                            "total": 2,
+                        },
+                    ],
+                    "unknown_rule_ids": [],
+                    "error": None,
+                },
+                {
+                    "item_index": 1,
+                    "biz_id": "doc-002",
+                    "type_id": "financial_report",
+                    "total": 2,
+                    "succeeded": 2,
+                    "failed": 0,
+                    "results": [
+                        {
+                            "rule_id": "profit_positive",
+                            "rule_name": "是否盈利",
+                            "rule_type": "judge",
+                            "result": "false",
+                            "reason": "净利润小于 0。",
+                            "input_values": {"net_profit": "-100000"},
+                            "source_refs": None,
+                            "success": True,
+                            "index": 1,
+                            "total": 2,
+                        },
+                        {
+                            "rule_id": "profit_margin",
+                            "rule_name": "净利率",
+                            "rule_type": "calc",
+                            "result": "-0.0125",
+                            "reason": "计算成功",
+                            "input_values": {"net_profit": "-100000", "revenue": "8000000"},
+                            "source_refs": None,
+                            "success": True,
+                            "index": 2,
+                            "total": 2,
+                        },
+                    ],
+                    "unknown_rule_ids": [],
+                    "error": None,
+                },
+            ],
+        }],
     },
     "ExtractionTestResponse": {
         "description": "字段提取调试结果。",

@@ -249,6 +249,32 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 
 按 `type_id` 加载启用规则批量执行逻辑判断 / 计算。字段值可由调用方直接传入（`source=values`，默认），也可取自某个文件已落库的提取结果（`source=file`）。支持 `sync` / `async` / `stream`，可批量 `items`。
 
+### 先理解 `items` 和 `results`
+
+该接口同时支持“批量业务输入”和“每个业务输入执行多条规则”，因此使用两层数组：
+
+| 层级 | 代表什么 | 与哪一层对应 |
+|---|---|---|
+| 请求 `items[]` | 待分析的业务对象列表；每个元素是一组字段值或一个文件 | 一个 item 可以是一份合同、一张订单、一份报表等 |
+| 响应 `data.items[]` | 每个业务对象的执行汇总 | 响应 `data.items[i]` 对应请求 `items[i]` |
+| 响应 `data.items[i].results[]` | 第 `i` 个业务对象实际执行的逐规则结果 | 每个元素对应一条规则，不是另一个业务对象 |
+
+映射关系：
+
+```text
+请求 items[0]（业务对象 doc-001）
+  -> 响应 data.items[0]（doc-001 的执行汇总）
+       -> results[0]（doc-001 的第 1 条规则结果）
+       -> results[1]（doc-001 的第 2 条规则结果）
+
+请求 items[1]（业务对象 doc-002）
+  -> 响应 data.items[1]（doc-002 的执行汇总）
+       -> results[0]（doc-002 的第 1 条规则结果）
+       -> results[1]（doc-002 的第 2 条规则结果）
+```
+
+即使只提交一个业务对象，请求仍写成 `items: [{...}]`；即使某个对象只执行一条规则，其结果仍写成 `results: [{...}]`。没有规则实际执行时，`results` 为 `[]`。
+
 - 方法路径：`POST /analysis/run`
 - 认证：无（内网部署）
 - Content-Type：`application/json`
@@ -262,7 +288,7 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 | source | AnalysisRunSourceEnum | 否 | values | 字段值来源：`values`（默认）用请求里的 `field_values`；`file` 读各 item `file_id` 已落库的 `extraction_result` |
 | persist | boolean | 否 | False | 是否把结果 upsert 进 `analysis_result`；仅 `source=file` 可用，**不改 `files.progress`** |
 | callback_url | string | 否 | — | `async` 模式必填，用于推送 `rule_done` / `task_done` / `task_failed` |
-| items | array[AnalysisRunItem] | 是 | — | 待分析的输入组，item 间并发 |
+| items | array[AnalysisRunItem] | 是 | — | 待分析的业务输入列表，至少 1 项。一个 item 代表一个业务对象；item 间并发执行，响应 `data.items[]` 按请求顺序逐项对应。即使只分析一个对象也必须传数组。 |
 <!-- /AUTOGEN:request-body -->
 
 `items[]`（`AnalysisRunItem`）：
@@ -327,21 +353,131 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 <!-- AUTOGEN:response POST /analysis/run status=200 -->
 | 字段 | 类型 | 可空 | 说明 |
 |---|---|:--:|---|
-| total_items | integer | 否 | item 总数 |
-| items | array[AnalysisRunItemResult] | 是 | 逐 item 结果 |
+| total_items | integer | 否 | 本批业务输入总数，等于请求 `items` 长度，也等于响应 `items` 长度。 |
+| items | array[AnalysisRunItemResult] | 是 | 逐业务输入的执行汇总列表。响应 `items[i]` 对应请求 `items[i]`，不是逐规则列表；逐规则列表位于各元素的 `results[]`。 |
 <!-- /AUTOGEN:response -->
 
 `items[]`（`AnalysisRunItemResult`）：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| item_index | integer | 与请求 `items` 下标一致（并发执行但顺序保持） |
-| biz_id | string | 原样回传 |
+| item_index | integer | 与请求 `items` 的零基下标一致（并发执行但响应顺序保持） |
+| biz_id | string | 请求中的业务 ID 原样回传，用于关联输入和结果 |
 | type_id | string | 文档类型 |
-| total / succeeded / failed | integer | 实际执行的规则数与成败计数 |
-| results | array | 逐规则结果（`AnalysisRunRuleResult`） |
-| unknown_rule_ids | array[string] | 点名了但该类型下不存在或未启用的 rule_id；不点名时恒为空 |
+| total | integer | 当前业务对象实际执行的规则数，等于 `results` 长度 |
+| succeeded | integer | `results[]` 中 `success=true` 的数量 |
+| failed | integer | `results[]` 中 `success=false` 的数量；`succeeded + failed = total` |
+| results | array[AnalysisRunRuleResult] | 当前业务对象的逐规则结果；一条规则也仍是数组，无规则执行时为 `[]` |
+| unknown_rule_ids | array[string] | 点名了但该类型下不存在的 rule_id；不点名时恒为空。显式点名的禁用规则仍会执行 |
 | error | string \| null | `source=file` 的 item 级错误（文件不存在 / `type_id` 与文件不一致 / 该文件无提取结果）；正常为 `null`。此时 `total` 为 0、`results` 为空，同批其它 item 不受影响 |
+
+`results[]`（`AnalysisRunRuleResult`）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| rule_id / rule_name | string | 本条结果对应的规则 ID / 名称 |
+| rule_type | string | `judge` / `calc` / `custom` |
+| result | string | 规则结果；执行失败时通常为空字符串 |
+| reason | string | 规则理由或执行失败原因 |
+| input_values | object | 本条规则实际使用的依赖字段值 `{field_id: value}` |
+| source_refs | object \| null | 依赖字段溯源；`source=values` 通常为 `null`，`source=file` 可带提取溯源 |
+| success | boolean | 本条规则是否执行成功，不等同于 judge 规则的 true/false 业务结论 |
+| index | integer | 本条规则在当前业务对象中的执行序号，从 1 开始 |
+| total | integer | 当前业务对象实际执行的规则总数，与外层 item 的 `total` 相同 |
+
+**两条业务输入、每条执行两条规则的同步响应示例**
+
+```json
+{
+  "code": 200,
+  "message": "逻辑分析完成",
+  "data": {
+    "total_items": 2,
+    "items": [
+      {
+        "item_index": 0,
+        "biz_id": "doc-001",
+        "type_id": "financial_report",
+        "total": 2,
+        "succeeded": 2,
+        "failed": 0,
+        "results": [
+          {
+            "rule_id": "profit_positive",
+            "rule_name": "是否盈利",
+            "rule_type": "judge",
+            "result": "true",
+            "reason": "净利润大于 0。",
+            "input_values": {"net_profit": "5000000"},
+            "source_refs": null,
+            "success": true,
+            "index": 1,
+            "total": 2
+          },
+          {
+            "rule_id": "profit_margin",
+            "rule_name": "净利率",
+            "rule_type": "calc",
+            "result": "0.0333333333",
+            "reason": "计算成功",
+            "input_values": {"net_profit": "5000000", "revenue": "150000000"},
+            "source_refs": null,
+            "success": true,
+            "index": 2,
+            "total": 2
+          }
+        ],
+        "unknown_rule_ids": [],
+        "error": null
+      },
+      {
+        "item_index": 1,
+        "biz_id": "doc-002",
+        "type_id": "financial_report",
+        "total": 2,
+        "succeeded": 2,
+        "failed": 0,
+        "results": [
+          {
+            "rule_id": "profit_positive",
+            "rule_name": "是否盈利",
+            "rule_type": "judge",
+            "result": "false",
+            "reason": "净利润小于 0。",
+            "input_values": {"net_profit": "-100000"},
+            "source_refs": null,
+            "success": true,
+            "index": 1,
+            "total": 2
+          },
+          {
+            "rule_id": "profit_margin",
+            "rule_name": "净利率",
+            "rule_type": "calc",
+            "result": "-0.0125",
+            "reason": "计算成功",
+            "input_values": {"net_profit": "-100000", "revenue": "8000000"},
+            "source_refs": null,
+            "success": true,
+            "index": 2,
+            "total": 2
+          }
+        ],
+        "unknown_rule_ids": [],
+        "error": null
+      }
+    ]
+  }
+}
+```
+
+三种模式取得最终结果的位置不同，但最终数据结构相同：
+
+| mode | 最终结果位置 |
+|---|---|
+| `sync` | HTTP 响应的 `data` |
+| `async` | 回调 `event=task_done` 的 `data` |
+| `stream` | SSE `task_done` 事件负载的 `data` |
 
 **状态码 / 错误**
 
@@ -353,4 +489,4 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 
 > 校验分层：能从请求体判断的问题返回 **422**；需查库才知道的问题（文件不存在 / `type_id` 不一致 / 无提取结果）记在 item 级 `error` 字段并返回 **200**，不让一个坏 item 拖垮整批。
 
-> 点名了不存在或未启用的 rule_id **不报错**，收进 `unknown_rule_ids` 回传，需调用方自行检查。items 间并发，单 item 内按 `priority, rule_id` 顺序执行。`async` 用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`（见 [callbacks.md](callbacks.md)），`stream` 走 SSE（见 [sse.md](sse.md)）。
+> 显式点名时无视 `enabled` 开关；点名了该类型下不存在的 rule_id **不报错**，收进 `unknown_rule_ids` 回传，需调用方自行检查。items 间并发，单 item 内按 `priority, rule_id` 顺序执行。`async` 用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`（见 [callbacks.md](callbacks.md)），`stream` 走 SSE（见 [sse.md](sse.md)）。

@@ -1940,6 +1940,30 @@ curl -X POST http://localhost:5019/analysis/test \
 
 不依赖文件处理管线，直接对外部传入字段值或某文件已落库提取结果执行启用规则。支持批量 `items`、`sync` / `async` / `stream` 三种模式。
 
+#### `items` 与 `results` 为什么都是列表
+
+该接口同时支持“批量提交多个业务对象”和“每个业务对象执行多条规则”，所以返回结构分两层：
+
+| 层级 | 含义 | 对应关系 |
+|---|---|---|
+| 请求 `items[]` | 待分析的业务对象列表；每个元素是一组字段值或一个文件 | 一个 item 可代表一份合同、一张订单、一份报表等 |
+| 响应 `data.items[]` | 每个业务对象的执行汇总 | `data.items[i]` 对应请求 `items[i]`，顺序不因并发而改变 |
+| 响应 `data.items[i].results[]` | 第 `i` 个业务对象实际执行的逐规则结果 | 每个元素对应一条规则，不是另一个业务对象 |
+
+```text
+请求 items[0]（业务对象 doc-001）
+  -> 响应 data.items[0]（doc-001 的执行汇总）
+       -> results[0]（doc-001 的第 1 条规则结果）
+       -> results[1]（doc-001 的第 2 条规则结果）
+
+请求 items[1]（业务对象 doc-002）
+  -> 响应 data.items[1]（doc-002 的执行汇总）
+       -> results[0]（doc-002 的第 1 条规则结果）
+       -> results[1]（doc-002 的第 2 条规则结果）
+```
+
+即使只提交一个业务对象，请求也必须写成 `items: [{...}]`；即使某个对象只执行一条规则，结果也仍是 `results: [{...}]`。没有规则实际执行时，`results` 为 `[]`。
+
 | 项 | 说明 |
 |---|---|
 | 方法 | `POST` |
@@ -1956,7 +1980,7 @@ curl -X POST http://localhost:5019/analysis/test \
 | `source` | string | 否 | `values` | `values` 使用请求字段值；`file` 从文件 `extraction_result` 读取 |
 | `persist` | boolean | 否 | `false` | 是否写入 `analysis_result`；仅 `source=file` 可用 |
 | `callback_url` | string | 条件 | `null` | `async` 模式必填 |
-| `items` | object[] | 是 | 无 | 待分析输入组，至少 1 个 |
+| `items` | object[] | 是 | 无 | 待分析的业务对象列表，至少 1 个；一个元素代表一个业务对象，响应按请求顺序逐项对应 |
 
 `items[]` 参数：
 
@@ -1974,9 +1998,9 @@ curl -X POST http://localhost:5019/analysis/test \
 |---|---|---|
 | 不传 / `null` | 该类型全部启用规则 | 静默跳过依赖不满足的规则 |
 | `[]` | 不执行任何规则 | 返回空 `results` |
-| `['a','b']` | 只跑指定且启用的规则 | 缺依赖会产出 `success=false` 结果；不存在/未启用进入 `unknown_rule_ids` |
+| `['a','b']` | 只跑指定规则，无视 `enabled` 开关 | 缺依赖会产出 `success=false` 结果；该类型下不存在的 ID 进入 `unknown_rule_ids` |
 
-`source=values` 同步请求示例：
+`source=values` 同步批量请求示例（2 个业务对象，每个对象点名 2 条规则）：
 
 ```json
 {
@@ -1987,6 +2011,12 @@ curl -X POST http://localhost:5019/analysis/test \
       "type_id": "financial_report",
       "biz_id": "doc-001",
       "field_values": {"net_profit": "5000000", "revenue": "150000000"},
+      "rule_ids": ["profit_positive", "profit_margin"]
+    },
+    {
+      "type_id": "financial_report",
+      "biz_id": "doc-002",
+      "field_values": {"net_profit": "-100000", "revenue": "8000000"},
       "rule_ids": ["profit_positive", "profit_margin"]
     }
   ]
@@ -2006,14 +2036,49 @@ curl -X POST http://localhost:5019/analysis/test \
 }
 ```
 
-同步响应示例：
+同步响应的外层字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `total_items` | integer | 本批业务对象总数，等于请求 `items` 长度和响应 `items` 长度 |
+| `items` | object[] | 逐业务对象执行汇总；响应 `items[i]` 对应请求 `items[i]` |
+
+响应 `items[]`（单个业务对象汇总）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `item_index` | integer | 对应请求 `items[]` 的零基下标 |
+| `biz_id` | string | 请求中的业务 ID 原样回传，用于关联输入和结果 |
+| `type_id` | string | 实际使用的文档类型 ID |
+| `total` | integer | 当前对象实际执行的规则数，等于 `results` 长度 |
+| `succeeded` | integer | `results[]` 中 `success=true` 的数量 |
+| `failed` | integer | `results[]` 中 `success=false` 的数量；`succeeded + failed = total` |
+| `results` | object[] | 当前对象的逐规则结果；一条规则也仍是数组，无规则执行时为 `[]` |
+| `unknown_rule_ids` | string[] | 点名但在该类型下不存在的规则 ID；不点名时为 `[]`。显式点名的禁用规则仍会执行 |
+| `error` | string/null | item 级错误；正常为 `null`，出错时同批其它 item 仍继续 |
+
+响应 `items[].results[]`（单条规则结果）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `rule_id` / `rule_name` | string | 本条结果对应的规则 ID / 名称 |
+| `rule_type` | string | `judge` / `calc` / `custom` |
+| `result` | string | 规则执行结果；执行失败时通常为空字符串 |
+| `reason` | string | 规则理由或执行失败原因 |
+| `input_values` | object | 本条规则实际使用的依赖字段值 `{field_id: value}` |
+| `source_refs` | object/null | 依赖字段溯源；`source=values` 通常为 `null`，`source=file` 可包含提取溯源 |
+| `success` | boolean | 本条规则是否执行成功，不等同于 judge 规则的 true/false 业务结论 |
+| `index` | integer | 本条规则在当前对象中的执行序号，从 1 开始 |
+| `total` | integer | 当前对象实际执行的规则总数，与外层 item 的 `total` 相同 |
+
+同步批量响应示例：
 
 ```json
 {
   "code": 200,
   "message": "逻辑分析完成",
   "data": {
-    "total_items": 1,
+    "total_items": 2,
     "items": [
       {
         "item_index": 0,
@@ -2034,6 +2099,54 @@ curl -X POST http://localhost:5019/analysis/test \
             "success": true,
             "index": 1,
             "total": 2
+          },
+          {
+            "rule_id": "profit_margin",
+            "rule_name": "净利率",
+            "rule_type": "calc",
+            "result": "0.0333333333",
+            "reason": "计算成功",
+            "input_values": {"net_profit": "5000000", "revenue": "150000000"},
+            "source_refs": null,
+            "success": true,
+            "index": 2,
+            "total": 2
+          }
+        ],
+        "unknown_rule_ids": [],
+        "error": null
+      },
+      {
+        "item_index": 1,
+        "biz_id": "doc-002",
+        "type_id": "financial_report",
+        "total": 2,
+        "succeeded": 2,
+        "failed": 0,
+        "results": [
+          {
+            "rule_id": "profit_positive",
+            "rule_name": "是否盈利",
+            "rule_type": "judge",
+            "result": "false",
+            "reason": "净利润小于 0。",
+            "input_values": {"net_profit": "-100000"},
+            "source_refs": null,
+            "success": true,
+            "index": 1,
+            "total": 2
+          },
+          {
+            "rule_id": "profit_margin",
+            "rule_name": "净利率",
+            "rule_type": "calc",
+            "result": "-0.0125",
+            "reason": "计算成功",
+            "input_values": {"net_profit": "-100000", "revenue": "8000000"},
+            "source_refs": null,
+            "success": true,
+            "index": 2,
+            "total": 2
           }
         ],
         "unknown_rule_ids": [],
@@ -2043,6 +2156,14 @@ curl -X POST http://localhost:5019/analysis/test \
   }
 }
 ```
+
+三种执行模式取得最终结果的位置不同，但最终结构都是上面的 `AnalysisRunResponse{total_items, items[]}`：
+
+| `mode` | 最终结果位置 |
+|---|---|
+| `sync` | HTTP 响应 `data` |
+| `async` | 回调 `event=task_done` 的 `data` |
+| `stream` | SSE `task_done` 事件负载的 `data` |
 
 异步请求示例：
 
@@ -3593,7 +3714,7 @@ judge / custom 规则可在执行前先联网检索（博查 Bocha AI），把�
   | `["a","b"]` | 只跑点名的 | 产出 `success=false` 结果（`reason` 列出缺失字段），计入 `total` / `failed` |
 
 - **覆盖门控（不点名时最易踩坑）**：不传 `rule_ids` 时，某条规则只有当它的 `depend_fields` **每个键**都出现在该 item 的 `field_values` 里才会被执行，否则静默跳过。门控只看**键是否存在**，值可以为空（空值会在后续依赖校验里被判无效）。**显式点名的规则不受此门控**——缺键会得到一条失败结果而不是消失，便于调用方发现自己漏传了字段。
-- **点名了不存在 / 未启用 / 不属于该 `type_id` 的规则不报错**，这些 ID 收进该 item 结果的 `unknown_rule_ids` 数组回传，需调用方自行检查（配错 ID 不会让请求失败）。
+- **点名了不存在 / 不属于该 `type_id` 的规则不报错**，这些 ID 收进该 item 结果的 `unknown_rule_ids` 数组回传，需调用方自行检查（配错 ID 不会让请求失败）。显式点名时无视 `enabled` 开关，禁用规则也会执行。
 - `items` 之间**并发**，单个 item 内按 `priority, rule_id` 顺序执行。
 - judge / custom 的 `web_search` 在这里**同样生效**。
 - `async` 模式必须带 `callback_url`，用 `task_id` 推送 `rule_done` / `task_done` / `task_failed`；`stream` 走 SSE。字段签名与状态码见第 5 节。
@@ -3703,7 +3824,7 @@ calc 更短：`input_values → resolved_expression → result → done`。事�
 | judge 结果不稳定/不准 | 表达式描述不清、缺少判据 | 把已知条件和判断标准写明确；用 `system_prompt` 固化口径；必要时补 `web_search` |
 | web_search 无结果或走了失败提示 | `api_key`/网络问题、`query` 拼接后为空、`freshness` 过窄 | 看调试流 `web_search` 事件的 `query`/`error`；核对全局 `web_search` 配置 |
 | 独立分析 `/analysis/run` 某规则「没跑」 | 未点名 `rule_ids` 时，该规则 `depend_fields` 的键未被 item 的 `field_values` **完整覆盖**，被静默跳过 | 在 `field_values` 里补齐该规则依赖的全部键；或用 `rule_ids` 点名该规则，缺键会变成带 `reason` 的失败结果而非消失（参见本文内 [7.2](#72-独立分析analysisrun)） |
-| 独立分析点名的规则没出现在结果里 | 该 `rule_id` 在该 `type_id` 下不存在 / `enabled=0` | 查该 item 结果的 `unknown_rule_ids`，核对 `rule_id` 拼写与所属 `type_id` |
+| 独立分析点名的规则没出现在结果里 | 该 `rule_id` 在该 `type_id` 下不存在 | 查该 item 结果的 `unknown_rule_ids`，核对 `rule_id` 拼写与所属 `type_id`；显式点名不受 `enabled` 影响 |
 | 独立分析 file 模式返回 `error: 该文件无提取结果` | 该文件还没跑完 `extracting`（或提取结果已被清理） | 先查 `GET /file/{id}` 的 `progress` 是否已过 `extracting`；必要时 `POST /file/{id}/retry/extracting` |
 | 独立分析 file 模式返回 `error: type_id 与文件不一致` | 请求里显式传的 `type_id` 与 `files.type_id` 不同 | 省略 `type_id` 让服务端取库里的值，或改成与文件一致 |
 | 规则改了不生效 | `enabled=0`，或规则 `type_id` 与文件类型不一致 | 确认 `enabled=1` 且 `type_id` 与目标文件一致 |

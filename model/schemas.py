@@ -594,7 +594,7 @@ class AnalysisRunItemResult(BaseModel):
     succeeded: int
     failed: int
     results: List[AnalysisRunRuleResult] = Field(default_factory=list)
-    # 请求点名了但该类型下不存在或未启用的 rule_id；不点名时恒为空
+    # 请求点名了但该类型下不存在的 rule_id；显式点名的禁用规则仍会执行
     unknown_rule_ids: List[str] = Field(default_factory=list)
     # file 模式的 item 级错误（文件不存在 / type_id 不一致 / 无提取结果）；正常为 None
     error: Optional[str] = None
