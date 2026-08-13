@@ -172,3 +172,21 @@ async def test_logout_revokes_session_and_clears_cookie(settings_client: AsyncCl
     assert logout.status_code == 200
     assert "settings_session=" in logout.headers["set-cookie"].lower()
     assert config.status_code == 401
+
+
+async def test_invalid_config_response_does_not_echo_bad_input(
+    settings_client: AsyncClient, router_dependencies
+):
+    marker = "private-invalid-input"
+    path = router_dependencies[0].config_path
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("queue_width: 1", f"queue_width: {marker}"),
+        encoding="utf-8",
+    )
+    await login(settings_client)
+
+    response = await settings_client.get("/settings/config")
+
+    assert response.status_code == 500
+    assert marker not in response.text
+    assert "mineru.queue_width" in response.text

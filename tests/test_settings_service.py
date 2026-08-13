@@ -235,6 +235,87 @@ def test_update_rejects_stale_version_without_writing(config_path: Path):
     assert config_path.read_text(encoding="utf-8") == before
 
 
+def test_update_can_create_an_open_group_missing_from_legacy_yaml(config_path: Path):
+    text = config_path.read_text(encoding="utf-8")
+    start = text.index("storage:\n")
+    end = text.index("settings:\n")
+    config_path.write_text(text[:start] + text[end:], encoding="utf-8")
+    service = SettingsService(config_path)
+
+    result = service.update_config(
+        base_version=service.read_public_config()["version"],
+        changes={"storage": {"max_total_bytes": 1024}},
+        secrets={},
+    )
+
+    assert result["config"]["storage"]["max_total_bytes"] == 1024
+    assert "storage:" in config_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"mineru": {"queue_width": 0}},
+        {"chunking": {"chunk_size": -1}},
+        {"chunking": {"chunk_size": 100, "chunk_overlap": 100}},
+        {"chunking": {"chunk_size": 2049, "max_chunk_size": 2048}},
+        {"vl_model": {"global_max_concurrency": 0}},
+        {"storage": {"cleanup_interval_minutes": 0}},
+    ],
+)
+def test_update_rejects_invalid_ranges_and_cross_field_values(
+    config_path: Path, changes: dict
+):
+    service = SettingsService(config_path)
+    before = config_path.read_text(encoding="utf-8")
+
+    with pytest.raises(ConfigFieldError):
+        service.update_config(
+            base_version=service.read_public_config()["version"],
+            changes=changes,
+            secrets={},
+        )
+
+    assert config_path.read_text(encoding="utf-8") == before
+
+
+def test_unknown_top_level_nodes_are_preserved_and_never_exposed(config_path: Path):
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + "\ncustom_plugin:\n  api_key: plugin-top-secret\n  enabled: true\n",
+        encoding="utf-8",
+    )
+    service = SettingsService(config_path)
+
+    public = service.read_public_config()
+    assert "custom_plugin" not in public["config"]
+    assert "plugin-top-secret" not in repr(public)
+    updated = service.update_config(
+        base_version=public["version"],
+        changes={"mineru": {"queue_width": 3}},
+        secrets={},
+    )
+
+    assert "plugin-top-secret" not in repr(updated)
+    written = config_path.read_text(encoding="utf-8")
+    assert "custom_plugin:" in written
+    assert "plugin-top-secret" in written
+
+
+def test_invalid_existing_config_error_does_not_echo_input_value(config_path: Path):
+    marker = "sensitive-invalid-value"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace("queue_width: 1", f"queue_width: {marker}"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigFieldError) as exc_info:
+        SettingsService(config_path).read_public_config()
+
+    assert "mineru.queue_width" in str(exc_info.value)
+    assert marker not in str(exc_info.value)
+
+
 @pytest.mark.parametrize(
     "secret_path,operation",
     [

@@ -96,8 +96,8 @@ async def retention_loop() -> None:
     启动时 run_init 已清理过一次,故循环先 sleep 再执行。整体 try/except
     包裹,单轮失败只记日志不杀循环;收到取消向上抛出以便优雅退出。
     """
-    interval = max(1, get_config().storage.cleanup_interval_minutes) * 60
     while True:
+        interval = max(1, get_config().storage.cleanup_interval_minutes) * 60
         await asyncio.sleep(interval)
         try:
             session_factory = get_session_factory()

@@ -147,12 +147,13 @@ const SettingsManager = {
         this.original = structuredClone(data.config);
         this.secretState = {};
         this.render();
-        if (oldDraft && oldDraft.version === data.version) this.restoreDraft(oldDraft);
+        const restoredDraft = Boolean(oldDraft && oldDraft.version === data.version);
+        if (restoredDraft) this.restoreDraft(oldDraft);
         else if (oldDraft) Toast.info('配置已变化，请重新应用之前的修改');
         this.draftBeforeAuth = null;
         this.pendingOpen = false;
         document.getElementById('settings-modal-overlay').classList.add('active');
-        this.setDirty(false);
+        this.setDirty(restoredDraft);
         lucide.createIcons();
     },
 
@@ -357,13 +358,34 @@ const SettingsManager = {
                 this.pendingOpen = true;
                 this.openLogin();
             } else if (error.status === 409) {
-                Toast.error('配置已被其他管理员修改，请关闭后重新打开设置');
+                this.conflictDraft = draft;
+                Toast.error('配置已被其他管理员修改，正在加载最新配置并只重新应用本次修改');
+                await this.reloadConflictDraft();
             } else {
                 Toast.error('保存失败: ' + error.message);
             }
         } finally {
             button.disabled = !this.dirty;
         }
+    },
+
+    async reloadConflictDraft() {
+        const draft = this.conflictDraft;
+        if (!draft) return;
+        const changes = this.buildChanges(draft.values);
+        const latest = await API.getRuntimeSettings();
+        this.payload = latest;
+        this.original = structuredClone(latest.config);
+        this.secretState = {};
+        this.render();
+        const rebasedValues = structuredClone(latest.config);
+        Object.entries(changes).forEach(([group, fields]) => {
+            Object.assign(rebasedValues[group], fields);
+        });
+        this.restoreDraft({ version: latest.version, values: rebasedValues, secrets: draft.secrets });
+        this.conflictDraft = null;
+        this.setDirty(true);
+        lucide.createIcons();
     },
 
     restoreDraft(draft) {

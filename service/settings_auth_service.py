@@ -24,6 +24,7 @@ class LoginRateLimitedError(AuthenticationError):
 class _FailureState:
     attempts: int = 0
     locked_until: float = 0.0
+    last_failed_at: float = 0.0
 
 
 class SettingsAuthService:
@@ -62,6 +63,8 @@ class SettingsAuthService:
         if state.locked_until and state.locked_until <= now:
             state.attempts = 0
             state.locked_until = 0.0
+        elif state.attempts and now - state.last_failed_at >= self.LOCK_SECONDS:
+            state.attempts = 0
         return state
 
     def is_rate_limited(self, client_ip: str) -> bool:
@@ -78,9 +81,12 @@ class SettingsAuthService:
 
             expected = self._password_provider()
             supplied = password if isinstance(password, str) else ""
-            valid = bool(expected) and secrets.compare_digest(supplied, expected)
+            valid = bool(expected) and secrets.compare_digest(
+                supplied.encode("utf-8"), expected.encode("utf-8")
+            )
             if not valid:
                 state.attempts += 1
+                state.last_failed_at = now
                 if state.attempts >= self.MAX_FAILURES:
                     state.locked_until = now + self.LOCK_SECONDS
                     raise LoginRateLimitedError("登录尝试过多，请稍后重试")

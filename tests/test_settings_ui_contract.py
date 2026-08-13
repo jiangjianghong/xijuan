@@ -54,3 +54,11 @@ def test_api_client_exposes_settings_methods_and_error_status():
     ):
         assert method in script
     assert "requestError.status = response.status" in script
+
+
+def test_relogin_and_conflict_paths_preserve_dirty_draft():
+    script = (ROOT / "ui/js/settings.js").read_text(encoding="utf-8")
+
+    assert "this.setDirty(restoredDraft)" in script
+    assert "reloadConflictDraft" in script
+    assert "只重新应用本次修改" in script

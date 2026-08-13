@@ -96,6 +96,20 @@ def test_successful_login_clears_previous_failures():
     assert service.validate(token) is True
 
 
+def test_old_failures_do_not_count_as_consecutive_attempts():
+    clock = FakeClock()
+    service = make_service(clock)
+
+    for _ in range(4):
+        with pytest.raises(AuthenticationError):
+            service.authenticate("wrong", "10.0.0.3")
+    clock.advance(5 * 60)
+
+    with pytest.raises(AuthenticationError):
+        service.authenticate("wrong", "10.0.0.3")
+    assert service.is_rate_limited("10.0.0.3") is False
+
+
 def test_empty_configured_password_never_authenticates():
     service = SettingsAuthService(
         password_provider=lambda: "",
@@ -105,3 +119,20 @@ def test_empty_configured_password_never_authenticates():
 
     with pytest.raises(AuthenticationError):
         service.authenticate("", "127.0.0.1")
+
+
+def test_unicode_password_authenticates_and_unicode_failures_are_counted():
+    clock = FakeClock()
+    service = SettingsAuthService(
+        password_provider=lambda: "管理员密码",
+        session_minutes_provider=lambda: 30,
+        clock=clock,
+    )
+
+    token = service.authenticate("管理员密码", "10.0.0.4")
+    assert service.validate(token) is True
+    for _ in range(4):
+        with pytest.raises(AuthenticationError):
+            service.authenticate("错误密码", "10.0.0.5")
+    with pytest.raises(LoginRateLimitedError):
+        service.authenticate("错误密码", "10.0.0.5")

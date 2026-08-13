@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import os
+import secrets
 import tempfile
 from pathlib import Path
 from threading import RLock
@@ -40,6 +42,8 @@ SECRET_PATHS = {
     "web_search.api_key",
 }
 
+_VERSION_KEY = secrets.token_bytes(32)
+
 
 class SettingsError(RuntimeError):
     """设置服务基础异常。"""
@@ -69,11 +73,35 @@ def _version(data: Mapping[str, Any]) -> str:
     payload = json.dumps(
         _to_plain(data), ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+    return hmac.new(_VERSION_KEY, payload, hashlib.sha256).hexdigest()
 
 
 def _secret_configured(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def _known_config(document: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: _to_plain(value)
+        for key, value in document.items()
+        if key in AppConfig.model_fields
+    }
+
+
+def _format_validation_error(exc: ValidationError) -> str:
+    messages = []
+    for error in exc.errors(include_url=False, include_context=False, include_input=False):
+        path = ".".join(str(part) for part in error.get("loc", ()))
+        message = error.get("msg", "配置值无效")
+        messages.append(f"{path}: {message}" if path else message)
+    return "; ".join(messages) or "配置值无效"
+
+
+def _validate_document(document: Mapping[str, Any]) -> AppConfig:
+    try:
+        return AppConfig(**_known_config(document))
+    except ValidationError as exc:
+        raise ConfigFieldError(_format_validation_error(exc)) from exc
 
 
 class SettingsService:
@@ -97,7 +125,7 @@ class SettingsService:
         return document
 
     def _public_payload(self, document: Mapping[str, Any]) -> dict[str, Any]:
-        validated = AppConfig(**_to_plain(document))
+        validated = _validate_document(document)
         public: dict[str, Any] = {}
         for group in OPEN_GROUPS:
             public[group] = getattr(validated, group).model_dump(mode="python")
@@ -135,8 +163,12 @@ class SettingsService:
                     raise ConfigFieldError(f"不允许修改配置字段: {path}")
                 if path in SECRET_PATHS:
                     raise ConfigFieldError(f"密钥必须通过 secrets 操作修改: {path}")
-                if group not in document:
-                    raise ConfigFieldError(f"配置文件缺少分组: {group}")
+
+    @staticmethod
+    def _ensure_open_group(document: Mapping[str, Any], group: str) -> None:
+        if group not in document or not isinstance(document[group], Mapping):
+            default = AppConfig.model_fields[group].default
+            document[group] = default.model_dump(mode="python")
 
     def _apply_secret_operations(
         self, document: Mapping[str, Any], secrets: Mapping[str, Any]
@@ -150,6 +182,7 @@ class SettingsService:
             group, field = path.split(".", 1)
             if action == "keep":
                 continue
+            self._ensure_open_group(document, group)
             if action == "clear":
                 document[group][field] = None if group == "table_name_validation" else ""
                 continue
@@ -198,13 +231,11 @@ class SettingsService:
                 raise ConfigConflictError("配置已被其他管理员修改，请重新加载")
             self._validate_changes(document, changes)
             for group, fields in changes.items():
+                self._ensure_open_group(document, group)
                 for field, value in fields.items():
                     document[group][field] = value
             self._apply_secret_operations(document, secrets)
-            try:
-                validated = AppConfig(**_to_plain(document))
-            except ValidationError as exc:
-                raise ConfigFieldError(str(exc)) from exc
+            validated = _validate_document(document)
 
             # 新信号量在落盘前构造；后续仅做不会失败的引用切换。
             new_vl_semaphore = asyncio.Semaphore(
