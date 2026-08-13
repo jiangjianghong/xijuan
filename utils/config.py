@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
-from functools import lru_cache
 from pathlib import Path
+from threading import RLock
 from typing import Any, Dict, List
 
 import yaml
@@ -128,6 +128,12 @@ class StorageConfig(BaseModel):
     cleanup_interval_minutes: int = 10  # 后台清理扫描周期(分钟)
 
 
+class SettingsSecurityConfig(BaseModel):
+    password: str = ""
+    session_minutes: int = 30
+    secure_cookie: bool = False
+
+
 # ── 顶层配置 ────────────────────────────────────────────────
 
 class AppConfig(BaseSettings):
@@ -145,6 +151,7 @@ class AppConfig(BaseSettings):
     vl_model: VLModelConfig = VLModelConfig()
     web_search: WebSearchConfig = WebSearchConfig()
     storage: StorageConfig = StorageConfig()
+    settings: SettingsSecurityConfig = SettingsSecurityConfig()
 
 
 def _load_yaml(path: Path) -> dict:
@@ -152,11 +159,42 @@ def _load_yaml(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
-@lru_cache
-def get_config() -> AppConfig:
-    """获取全局配置单例。"""
-    config_path = Path(os.getenv("APP_CONFIG_PATH", str(_DEFAULT_CONFIG_PATH)))
+def get_config_path() -> Path:
+    """返回当前配置文件路径。"""
+    return Path(os.getenv("APP_CONFIG_PATH", str(_DEFAULT_CONFIG_PATH)))
+
+
+def load_config(path: Path | None = None) -> AppConfig:
+    """从磁盘加载并校验完整配置。"""
+    config_path = path or get_config_path()
     if config_path.exists():
         data = _load_yaml(config_path)
         return AppConfig(**data)
     return AppConfig()
+
+
+_config_lock = RLock()
+_current_config: AppConfig | None = None
+
+
+def get_config() -> AppConfig:
+    """获取当前进程的不可变配置快照。"""
+    global _current_config
+    with _config_lock:
+        if _current_config is None:
+            _current_config = load_config()
+        return _current_config
+
+
+def replace_config(config: AppConfig) -> None:
+    """原子替换进程内配置；调用方必须先完成完整校验。"""
+    global _current_config
+    with _config_lock:
+        _current_config = config
+
+
+def reset_config() -> None:
+    """清空进程内配置，下次读取时重新从磁盘加载。"""
+    global _current_config
+    with _config_lock:
+        _current_config = None
