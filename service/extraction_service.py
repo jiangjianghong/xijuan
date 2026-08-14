@@ -249,6 +249,17 @@ def _is_extraction_success(value: Any, source_refs: Optional[Dict]) -> bool:
     return _has_real_source_refs(source_refs) or bool(str(value or "").strip())
 
 
+class NoExtractionResultError(ValueError):
+    """检索或模型未返回有效字段结果，属于可预期的业务无结果。"""
+
+
+def _log_field_extraction_failure(field_id: str, error: Exception) -> None:
+    if isinstance(error, NoExtractionResultError):
+        logger.warning("字段提取无结果: field_id={}, reason={}", field_id, error)
+        return
+    logger.error("字段提取失败: field_id={}, error={}", field_id, error)
+
+
 def _ensure_valid_extraction_result(
     field: ExtractionField,
     extracted_value: Any,
@@ -257,7 +268,9 @@ def _ensure_valid_extraction_result(
 ) -> None:
     if _is_extraction_success(extracted_value, source_refs):
         return
-    raise ValueError(reason or f"字段 {field.field_name} 未提取到有效结果或来源引用")
+    raise NoExtractionResultError(
+        reason or f"字段 {field.field_name} 未提取到有效结果或来源引用"
+    )
 
 
 # ── LLM 开关（use_llm=0 直接返回检索原文，不走二次抽取） ──────────
@@ -2389,7 +2402,7 @@ async def run_extraction(
             await notify_callback(callback_url, file_id, "extracting", event="field_done", data=item)
 
         except Exception as e:
-            logger.error("字段提取失败: field_id={}, error={}", field.field_id, e)
+            _log_field_extraction_failure(field.field_id, e)
             failure_reason = format_exception(e)
             # 落库失败会把会话打成 DEACTIVE，不修复则下面的 execute 必抛
             # PendingRollbackError，把单字段失败放大成整个文件卡死（2026-07-28 线上事故）。
@@ -2573,7 +2586,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
             }
 
         except Exception as e:
-            logger.error("字段提取失败: field_id={}, error={}", field.field_id, e)
+            _log_field_extraction_failure(field.field_id, e)
             failure_reason = format_exception(e)
             # 落库失败会把会话打成 DEACTIVE，不修复则下面的 execute 必抛
             # PendingRollbackError，把单字段失败放大成整个文件卡死（2026-07-28 线上事故）。

@@ -181,7 +181,12 @@ def test_slice_by_page_range_empty_md():
 from unittest.mock import MagicMock
 
 import service.extraction_service as ext_svc
-from service.extraction_service import _ensure_valid_extraction_result, _extract_page_field
+from service.extraction_service import (
+    NoExtractionResultError,
+    _ensure_valid_extraction_result,
+    _extract_page_field,
+    _log_field_extraction_failure,
+)
 
 
 def _make_field(prompt='提取问题: <search_result>page_content</search_result>', system=None):
@@ -342,9 +347,33 @@ async def test_extract_page_field_missing_placeholder(monkeypatch):
 def test_empty_extraction_without_source_refs_is_failure():
     field = _make_field()
 
-    with pytest.raises(ValueError, match="未提取到有效结果"):
+    with pytest.raises(NoExtractionResultError, match="未提取到有效结果"):
         _ensure_valid_extraction_result(field, "", "", None)
 
     _ensure_valid_extraction_result(field, "", "未找到明确值", {"page_content": [{"text": "原文"}]})
+
+
+def test_expected_no_result_is_logged_as_warning(monkeypatch):
+    warning = MagicMock()
+    error = MagicMock()
+    monkeypatch.setattr(ext_svc.logger, "warning", warning)
+    monkeypatch.setattr(ext_svc.logger, "error", error)
+
+    _log_field_extraction_failure("field-1", NoExtractionResultError("未检索到内容"))
+
+    warning.assert_called_once()
+    error.assert_not_called()
+
+
+def test_unexpected_extraction_error_is_logged_as_error(monkeypatch):
+    warning = MagicMock()
+    error = MagicMock()
+    monkeypatch.setattr(ext_svc.logger, "warning", warning)
+    monkeypatch.setattr(ext_svc.logger, "error", error)
+
+    _log_field_extraction_failure("field-1", RuntimeError("LLM unavailable"))
+
+    error.assert_called_once()
+    warning.assert_not_called()
 
 
