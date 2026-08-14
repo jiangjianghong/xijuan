@@ -8,6 +8,7 @@ const SettingsManager = {
     dirty: false,
     pendingOpen: false,
     secretState: {},
+    scrollSpyHandler: null,
 
     GROUPS: [
         { id: 'mineru', label: 'MinerU', icon: 'file-scan', description: 'PDF 解析服务与上传限制' },
@@ -176,6 +177,7 @@ const SettingsManager = {
             el.addEventListener('input', () => this.setDirty(true));
             el.addEventListener('change', () => this.setDirty(true));
         });
+        this.bindScrollSpy();
     },
 
     renderGroup(group) {
@@ -271,7 +273,38 @@ const SettingsManager = {
 
     scrollToGroup(group) {
         document.getElementById(`settings-group-${group}`).scrollIntoView({ behavior: 'smooth', block: 'start' });
-        document.querySelectorAll('.settings-nav-item').forEach(item => item.classList.toggle('active', item.dataset.settingsNav === group));
+        this.setActiveGroup(group);
+    },
+
+    bindScrollSpy() {
+        const body = document.getElementById('settings-form-body');
+        if (this.scrollSpyHandler) body.removeEventListener('scroll', this.scrollSpyHandler);
+        this.scrollSpyHandler = () => this.syncActiveGroupToScroll();
+        body.addEventListener('scroll', this.scrollSpyHandler, { passive: true });
+    },
+
+    syncActiveGroupToScroll() {
+        const body = document.getElementById('settings-form-body');
+        const sections = [...body.querySelectorAll('[data-settings-group]')];
+        if (!sections.length) return;
+
+        let activeSection = sections[0];
+        const activationLine = body.getBoundingClientRect().top + 24;
+        for (const section of sections) {
+            if (section.getBoundingClientRect().top > activationLine) break;
+            activeSection = section;
+        }
+        if (body.scrollTop + body.clientHeight >= body.scrollHeight - 2) {
+            activeSection = sections[sections.length - 1];
+        }
+        this.setActiveGroup(activeSection.dataset.settingsGroup);
+    },
+
+    setActiveGroup(group) {
+        const items = [...document.querySelectorAll('.settings-nav-item')];
+        items.forEach(item => item.classList.toggle('active', item.dataset.settingsNav === group));
+        const activeItem = items.find(item => item.dataset.settingsNav === group);
+        activeItem?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     },
 
     parseControl(control) {

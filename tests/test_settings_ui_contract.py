@@ -62,3 +62,12 @@ def test_relogin_and_conflict_paths_preserve_dirty_draft():
     assert "this.setDirty(restoredDraft)" in script
     assert "reloadConflictDraft" in script
     assert "只重新应用本次修改" in script
+
+
+def test_settings_scroll_updates_active_navigation():
+    script = (ROOT / "ui/js/settings.js").read_text(encoding="utf-8")
+
+    assert "this.bindScrollSpy()" in script
+    assert "addEventListener('scroll'" in script
+    assert "syncActiveGroupToScroll" in script
+    assert "setActiveGroup" in script
