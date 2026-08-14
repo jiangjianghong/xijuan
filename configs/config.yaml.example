@@ -6,125 +6,133 @@
 
 # 服务器配置
 server:
-  host: "0.0.0.0"
-  port: 5019
+  host: "0.0.0.0"              # HTTP 监听地址；容器部署通常使用 0.0.0.0
+  port: 5019                   # HTTP 监听端口
 
 # MinerU PDF 解析服务配置
 mineru:
-  base_url: "http://your-mineru-server:7078"
-  backend: "vllm-async-engine"
-  queue_width: 1
-  parse_timeout: 1200        # 解析超时（秒）
-  max_file_size: 104857600   # 最大文件大小（字节），默认 100MB
+  base_url: "http://your-mineru-server:7078"  # MinerU 服务地址
+  backend: "vllm-async-engine"                # MinerU 使用的解析后端
+  queue_width: 1                               # MinerU 服务端并行队列宽度
+  parse_timeout: 1200                           # 单文件解析超时（秒）
+  max_file_size: 104857600                      # 单文件大小上限（字节），默认 100MB
 
 # 文本分块配置
 chunking:
-  chunk_size: 512            # 目标块大小（字符数）
-  chunk_overlap: 50          # 块间重叠字符数
-  max_chunk_size: 2048       # 最大块大小
-  separators: ["\n\n", "\n", "。", " "]  # 分割符优先级
+  chunk_size: 512                               # 目标文本块大小（字符）
+  chunk_overlap: 50                             # 相邻文本块重叠大小（字符）
+  max_chunk_size: 2048                          # 文本块最大大小（字符）
+  separators: ["\n\n", "\n", "。", " "]      # 分块分隔符，按顺序尝试
 
 # 向量化（Embedding）配置
 embedding:
-  base_url: "http://your-embedding-server:8119/v1"
-  model_name: "your-embedding-model"
-  api_key: "your-api-key"
-  embedding_dim: 4096        # 向量维度
-  batch_size: 10             # 批量请求数
-  timeout: 60                # 请求超时（秒）
-  retry_count: 3             # 重试次数
+  base_url: "http://your-embedding-server:8119/v1"  # Embedding API 地址
+  model: "your-embedding-model"                      # Embedding 模型名称
+  api_key: "your-api-key"                            # Embedding API 密钥
+  embedding_dim: 4096                                 # 向量维度，必须与 Milvus collection 一致
+  batch_size: 10                                      # 单次请求包含的文本条数，不是并发数
+  timeout: 60                                         # 单次 HTTP 请求超时（秒）
+  retry_count: 3                                      # 单次请求失败后的最大尝试次数
 
 # Milvus 向量数据库配置
 milvus:
-  host: "your-milvus-host"
-  port: 19530
-  user: ""
-  password: ""
-  collection_name: "your_collection_name"
-  index_type: "IVF_FLAT"
-  metric_type: "L2"
-  nlist: 4096
-  search_topk: 10
+  host: "your-milvus-host"                           # Milvus 服务主机名或 IP
+  port: 19530                                         # Milvus 服务端口
+  user: ""                                           # Milvus 用户名；无需认证时留空
+  password: ""                                       # Milvus 密码；无需认证时留空
+  collection_name: "your_collection_name"            # 向量集合名称
+  index_type: "IVF_FLAT"                             # 向量索引类型
+  metric_type: "L2"                                  # 向量距离度量类型，如 L2/COSINE
+  nlist: 4096                                         # IVF 索引聚类数
+  search_topk: 10                                     # 向量检索默认返回条数
 
 # MySQL 数据库配置
 mysql:
-  host: "127.0.0.1"
-  port: 3306
-  database: "your_database"
-  username: "your_username"
-  password: "your_password"
-  pool_size: 50          # 常驻连接数(每个进程一份)
-  max_overflow: 10       # 突发可临时额外创建的连接数,峰值 = pool_size + max_overflow
-  pool_timeout: 10       # 连接池满时等待连接的秒数,超时抛 TimeoutError
+  host: "127.0.0.1"                                   # MySQL 服务主机名或 IP
+  port: 3306                                           # MySQL 服务端口
+  database: "your_database"                           # 数据库名称
+  username: "your_username"                           # 数据库用户名
+  password: "your_password"                           # 数据库密码
+  pool_size: 50                                        # 每个进程的常驻连接数
+  max_overflow: 10                                     # 连接池满后的临时连接数；峰值 = pool_size + max_overflow
+  pool_timeout: 10                                     # 等待连接池可用连接的最长时间（秒）
 
-# 字段提取配置（LLM 相关）
+# 字段提取配置（普通文本/表格字段使用的 LLM）
 extraction:
-  llm_base_url: "http://your-llm-server:8119/v1"
-  llm_model: "your-llm-model"
-  llm_api_key: "your-api-key"
-  llm_timeout: 60            # LLM 请求超时（秒）
-  llm_retry_count: 3         # LLM 重试次数
-  max_context_length: 4096   # 最大上下文长度
-  # LLM 额外请求参数，直接写入请求体的 extra_body 字段
+  base_url: "http://your-llm-server:8119/v1"          # 文本 LLM API 地址
+  model: "your-llm-model"                             # 文本 LLM 模型名称
+  api_key: "your-api-key"                             # 文本 LLM API 密钥
+  timeout: 60                                          # 单次 LLM 请求超时（秒）
+  retry_count: 3                                       # 单次请求失败后的最大尝试次数
+  max_context_length: 4096                             # 检索文本注入 prompt 的最大字符数
+  # 额外请求参数会原样写入 OpenAI 兼容请求的 extra_body 字段
   # 自部署模型（vLLM / Ollama 等）关闭思考链示例：
-  #   llm_extra_body: {chat_template_kwargs: {enable_thinking: false}}
+  # extra_body: {chat_template_kwargs: {enable_thinking: false}}
   # 阿里 DashScope 等托管模型关闭思考链示例：
-  #   llm_extra_body: {enable_thinking: false}
-  # 不需要额外参数时留空：
-  llm_extra_body: {}
+  # extra_body: {enable_thinking: false}
+  extra_body: {}                                       # 默认不附加额外请求参数
 
-# 表格名校验配置（独立于 extraction，字段含义相同）
-# 未配置的字段会回退到 extraction 的对应值
+# 表格名校验配置（为空的连接字段会回退到 extraction 对应字段）
 table_name_validation:
-  llm_base_url: null
-  llm_model: null
-  llm_api_key: null
-  llm_timeout: null
-  llm_retry_count: null
-  max_context_length: null
-  max_context_lines: 3       # 表格名提取时参考的最大行数
-  max_concurrency: 20        # 并发 LLM 请求数
-  llm_extra_body: null
+  base_url: null                                        # 独立表格校验 LLM 地址；为空回退 extraction.base_url
+  model: null                                           # 独立表格校验模型；为空回退 extraction.model
+  api_key: null                                         # 独立表格校验密钥；为空回退 extraction.api_key
+  timeout: null                                         # 独立请求超时（秒）；为空回退 extraction.timeout
+  retry_count: null                                     # 独立重试次数；为空回退 extraction.retry_count
+  max_context_length: null                              # 上文字符上限；为空回退 extraction.max_context_length
+  max_context_lines: 3                                  # 表格名提取时参考的最大上文行数
+  extra_body: null                                      # 额外请求参数；为空回退 extraction.extra_body
 
 # 逻辑分析配置
 analysis:
-  calc_precision: 2          # 计算结果小数精度
-  judge_timeout: 30          # 判定超时（秒）
+  calc_precision: 2                                     # calc 规则结果保留的小数位数
+  judge_timeout: 30                                     # judge 规则判定超时（秒）
 
 # VL（视觉模型）抽取配置
 vl_model:
-  base_url: "http://your-vl-server:8119/v1"
-  api_key: "your-api-key"
-  model: "your-vl-model"
-  temperature: 0.1
-  max_tokens: 4096
-  timeout: 180               # VL 请求超时（秒）
-  extra_body: {}
-  global_max_concurrency: 8  # 全局最大并发数
-  default_max_pixels: 4000000 # 默认最大像素数（4MP）
-  pdf_storage_dir: "uploads" # PDF 文件存储目录
+  base_url: "http://your-vl-server:8119/v1"            # VL 模型 API 地址
+  api_key: "your-api-key"                              # VL 模型 API 密钥
+  model: "your-vl-model"                               # VL 模型名称
+  temperature: 0.1                                      # VL 生成温度
+  max_tokens: 4096                                      # 单次 VL 请求最大输出 token 数
+  timeout: 180                                           # 单次 VL 请求超时（秒）
+  extra_body: {}                                         # 透传给 OpenAI 兼容接口的额外参数
+  default_max_pixels: 4000000                            # PDF 页面默认最大像素数（4MP）
+  pdf_storage_dir: "uploads"                            # 原始 PDF 文件存储目录
+
+# 模型通道、业务阶段与单任务并发限制（当前进程内生效）
+concurrency:
+  global_llm: 16                                        # 全项目普通文本 LLM HTTP 请求并发上限
+  global_embedding: 4                                   # 全项目 Embedding HTTP 请求并发上限
+  global_vl: 8                                          # 全项目 VL HTTP 请求并发上限
+  global_table_validation: 10                           # 所有文件表格名校验任务的并发上限
+  global_extraction: 8                                  # 所有文件字段抽取任务的并发上限
+  global_analysis: 8                                    # 所有文件/请求逻辑分析任务的并发上限
+  task_table_validation: 4                              # 单文件表格名校验任务的并发上限
+  task_extraction: 4                                    # 单文件字段抽取任务的并发上限
+  task_analysis: 4                                      # 单次分析请求内部的并发上限
+  global_pipeline: 4                                    # 文件管线全局并发预留值；当前不改变入口调度
 
 # 网络搜索配置（博查 Bocha AI，逻辑分析 judge 规则使用）
 web_search:
-  base_url: "https://api.bochaai.com/v1/web-search"
-  api_key: "your-api-key"
-  count: 5              # 默认返回条数
-  summary: true         # 返回长摘要
-  freshness: "noLimit"  # 默认时间范围 noLimit/oneDay/oneWeek/oneMonth/oneYear
-  timeout: 10
-  retry_count: 2
-  max_result_length: 4000  # 注入 prompt 的搜索文本最大字符数（末尾截断）
+  base_url: "https://api.bochaai.com/v1/web-search"    # 网络搜索 API 地址
+  api_key: "your-api-key"                              # 网络搜索 API 密钥
+  count: 5                                              # 默认返回结果条数
+  summary: true                                         # 是否请求长摘要
+  freshness: "noLimit"                                 # 默认时间范围：noLimit/oneDay/oneWeek/oneMonth/oneYear
+  timeout: 10                                           # 单次搜索请求超时（秒）
+  retry_count: 2                                        # 搜索失败后的最大尝试次数
+  max_result_length: 4000                               # 注入分析 prompt 的搜索文本最大字符数
 
 # PDF 存储治理配置
-# uploads 下原始 PDF 的清理策略；只删物理 PDF 文件，不动数据库
-# 被清文件的解析/抽取结果仍可查，仅 PDF 预览（GET /file/{id}/pdf）与 VL 抽取会 404
+# 只删除 uploads 下的物理 PDF，不删除数据库中的解析和抽取结果
 storage:
-  max_total_bytes: 0            # PDF 总大小上限(字节)，0=不限。超限时按 create_time 最旧优先淘汰。例:10737418240=10GB
-  max_retention_minutes: 0      # PDF 最久保存时间(分钟)，0=不限。超过则删除物理 PDF。例:4320=3天
-  cleanup_interval_minutes: 10  # 后台清理扫描周期(分钟)
+  max_total_bytes: 0                                    # PDF 总容量上限（字节）；0=不限，超限按最旧文件淘汰
+  max_retention_minutes: 0                              # PDF 最长保存时间（分钟）；0=不限，超时删除物理文件
+  cleanup_interval_minutes: 10                          # 后台清理扫描周期（分钟）
 
-# 系统设置页面安全配置（只允许直接编辑本文件，不通过设置 API 返回或修改）
+# 系统设置页面安全配置（不通过设置 API 返回或修改）
 settings:
-  password: ""          # 管理员明文密码；留空时禁止登录系统设置
-  session_minutes: 30   # 登录会话有效期（分钟）
-  secure_cookie: false  # HTTPS 部署时改为 true
+  password: ""                                         # 管理员明文密码；留空时关闭设置页密码登录
+  session_minutes: 30                                   # 登录会话有效期（分钟）
+  secure_cookie: false                                  # HTTPS 部署时设为 true，启用 Secure Cookie

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import json
@@ -17,6 +16,7 @@ from pydantic import ValidationError
 from ruamel.yaml import YAML
 
 from utils.config import AppConfig, get_config_path, replace_config
+from utils.concurrency import replace_limiters
 
 
 OPEN_GROUPS = (
@@ -29,17 +29,39 @@ OPEN_GROUPS = (
     "vl_model",
     "web_search",
     "storage",
+    "concurrency",
 )
 
-EMBEDDING_EDITABLE = {"base_url", "api_key", "model_name"}
+EMBEDDING_EDITABLE = {"base_url", "api_key", "model", "model_name"}
 EMBEDDING_READONLY = ["embedding_dim", "batch_size", "timeout", "retry_count"]
 
 SECRET_PATHS = {
     "embedding.api_key",
-    "extraction.llm_api_key",
-    "table_name_validation.llm_api_key",
+    "extraction.api_key",
+    "table_name_validation.api_key",
     "vl_model.api_key",
     "web_search.api_key",
+}
+
+SECRET_PATH_ALIASES = {
+    "extraction.llm_api_key": "extraction.api_key",
+    "table_name_validation.llm_api_key": "table_name_validation.api_key",
+}
+
+FIELD_ALIASES = {
+    "embedding.model_name": "embedding.model",
+    "extraction.llm_base_url": "extraction.base_url",
+    "extraction.llm_model": "extraction.model",
+    "extraction.llm_api_key": "extraction.api_key",
+    "extraction.llm_timeout": "extraction.timeout",
+    "extraction.llm_retry_count": "extraction.retry_count",
+    "extraction.llm_extra_body": "extraction.extra_body",
+    "table_name_validation.llm_base_url": "table_name_validation.base_url",
+    "table_name_validation.llm_model": "table_name_validation.model",
+    "table_name_validation.llm_api_key": "table_name_validation.api_key",
+    "table_name_validation.llm_timeout": "table_name_validation.timeout",
+    "table_name_validation.llm_retry_count": "table_name_validation.retry_count",
+    "table_name_validation.llm_extra_body": "table_name_validation.extra_body",
 }
 
 _VERSION_KEY = secrets.token_bytes(32)
@@ -78,6 +100,20 @@ def _version(data: Mapping[str, Any]) -> str:
 
 def _secret_configured(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def _canonical_path(path: str) -> str:
+    return SECRET_PATH_ALIASES.get(path, FIELD_ALIASES.get(path, path))
+
+
+def _remove_legacy_keys(document: Mapping[str, Any], canonical_path: str) -> None:
+    group, field = canonical_path.split(".", 1)
+    for alias, canonical in FIELD_ALIASES.items():
+        if canonical != canonical_path:
+            continue
+        alias_group, alias_field = alias.split(".", 1)
+        if alias_group == group and alias_field != field:
+            document[group].pop(alias_field, None)
 
 
 def _known_config(document: Mapping[str, Any]) -> dict[str, Any]:
@@ -129,12 +165,30 @@ class SettingsService:
         public: dict[str, Any] = {}
         for group in OPEN_GROUPS:
             public[group] = getattr(validated, group).model_dump(mode="python")
+        # 旧并发字段只用于输入迁移，不再出现在新设置响应中。
+        public.get("table_name_validation", {}).pop("max_concurrency", None)
+        public.get("analysis", {}).pop("max_concurrency", None)
+        public.get("vl_model", {}).pop("global_max_concurrency", None)
         for path in SECRET_PATHS:
             group, field = path.split(".", 1)
             raw_group = document.get(group) or {}
+            raw_value = raw_group.get(field)
+            if raw_value is None:
+                for alias, canonical in FIELD_ALIASES.items():
+                    alias_group, alias_field = alias.split(".", 1)
+                    if alias_group == group and canonical == path:
+                        raw_value = raw_group.get(alias_field)
+                        if raw_value is not None:
+                            break
             public[group][field] = {
-                "configured": _secret_configured(raw_group.get(field))
+                "configured": _secret_configured(raw_value)
             }
+        # 旧设置页面/客户端仍可读取别名，但值来自规范字段，不暴露明文。
+        for alias, canonical in FIELD_ALIASES.items():
+            alias_group, alias_field = alias.split(".", 1)
+            canonical_group, canonical_field = canonical.split(".", 1)
+            if alias_group == canonical_group and canonical_group in public:
+                public[alias_group][alias_field] = public[canonical_group][canonical_field]
         return {
             "version": _version(document),
             "config": public,
@@ -158,9 +212,10 @@ class SettingsService:
             if group == "embedding":
                 allowed = EMBEDDING_EDITABLE
             for field in fields:
-                path = f"{group}.{field}"
+                path = _canonical_path(f"{group}.{field}")
                 if field not in allowed:
-                    raise ConfigFieldError(f"不允许修改配置字段: {path}")
+                    if path.split(".", 1)[1] not in allowed:
+                        raise ConfigFieldError(f"不允许修改配置字段: {path}")
                 if path in SECRET_PATHS:
                     raise ConfigFieldError(f"密钥必须通过 secrets 操作修改: {path}")
 
@@ -174,6 +229,7 @@ class SettingsService:
         self, document: Mapping[str, Any], secrets: Mapping[str, Any]
     ) -> None:
         for path, operation in secrets.items():
+            path = _canonical_path(path)
             if path not in SECRET_PATHS:
                 raise ConfigFieldError(f"不允许修改密钥: {path}")
             if not isinstance(operation, Mapping):
@@ -185,12 +241,14 @@ class SettingsService:
             self._ensure_open_group(document, group)
             if action == "clear":
                 document[group][field] = None if group == "table_name_validation" else ""
+                _remove_legacy_keys(document, path)
                 continue
             if action == "replace":
                 value = operation.get("value")
                 if not isinstance(value, str) or not value.strip():
                     raise ConfigFieldError(f"新密钥不能为空: {path}")
                 document[group][field] = value
+                _remove_legacy_keys(document, path)
                 continue
             raise ConfigFieldError(f"未知密钥操作: {path}")
 
@@ -233,18 +291,15 @@ class SettingsService:
             for group, fields in changes.items():
                 self._ensure_open_group(document, group)
                 for field, value in fields.items():
-                    document[group][field] = value
+                    canonical = _canonical_path(f"{group}.{field}").split(".", 1)[1]
+                    document[group][canonical] = value
+                    _remove_legacy_keys(document, f"{group}.{canonical}")
             self._apply_secret_operations(document, secrets)
             validated = _validate_document(document)
 
             # 新信号量在落盘前构造；后续仅做不会失败的引用切换。
-            new_vl_semaphore = asyncio.Semaphore(
-                max(1, validated.vl_model.global_max_concurrency)
-            )
+            limits = validated.concurrency.model_dump(mode="python")
+            replace_limiters(limits)
             self._write_atomic(document)
             replace_config(validated)
-
-            from utils import vl_client
-
-            vl_client._global_sem = new_vl_semaphore
             return self._public_payload(document)

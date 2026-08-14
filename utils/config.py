@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from threading import RLock
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -47,12 +47,27 @@ class ChunkingConfig(BaseModel):
 
 class EmbeddingConfig(BaseModel):
     base_url: str = "http://localhost:8000/v1"
-    model_name: str = "bge-large-zh"
+    model: str = "bge-large-zh"
     api_key: str = ""
     embedding_dim: int = Field(1024, ge=1)
     batch_size: int = Field(32, ge=1)
     timeout: int = Field(60, ge=1)
     retry_count: int = Field(3, ge=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_keys(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        data = dict(value)
+        if "model" not in data and "model_name" in data:
+            data["model"] = data["model_name"]
+        return data
+
+    @property
+    def model_name(self) -> str:
+        """兼容旧业务代码和旧配置消费者。"""
+        return self.model
 
 
 class MilvusConfig(BaseModel):
@@ -79,31 +94,130 @@ class MySQLConfig(BaseModel):
 
 
 class ExtractionConfig(BaseModel):
-    llm_base_url: str = "http://localhost:8000/v1"
-    llm_model: str = "qwen-7b"
-    llm_api_key: str = ""
-    llm_timeout: int = Field(60, ge=1)
-    llm_retry_count: int = Field(3, ge=1)
+    base_url: str = "http://localhost:8000/v1"
+    model: str = "qwen-7b"
+    api_key: str = ""
+    timeout: int = Field(60, ge=1)
+    retry_count: int = Field(3, ge=1)
     max_context_length: int = Field(4096, ge=1)
-    llm_extra_body: Dict[str, Any] = {}
+    extra_body: Dict[str, Any] = {}
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_keys(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        data = dict(value)
+        aliases = {
+            "llm_base_url": "base_url",
+            "llm_model": "model",
+            "llm_api_key": "api_key",
+            "llm_timeout": "timeout",
+            "llm_retry_count": "retry_count",
+            "llm_extra_body": "extra_body",
+        }
+        for old, new in aliases.items():
+            if new not in data and old in data:
+                data[new] = data[old]
+        return data
+
+    @property
+    def llm_base_url(self) -> str:
+        return self.base_url
+
+    @property
+    def llm_model(self) -> str:
+        return self.model
+
+    @property
+    def llm_api_key(self) -> str:
+        return self.api_key
+
+    @property
+    def llm_timeout(self) -> int:
+        return self.timeout
+
+    @property
+    def llm_retry_count(self) -> int:
+        return self.retry_count
+
+    @property
+    def llm_extra_body(self) -> Dict[str, Any]:
+        return self.extra_body
 
 
 class TableNameValidationConfig(BaseModel):
-    llm_base_url: str | None = None
-    llm_model: str | None = None
-    llm_api_key: str | None = None
-    llm_timeout: int | None = Field(None, ge=1)
-    llm_retry_count: int | None = Field(None, ge=1)
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    timeout: int | None = Field(None, ge=1)
+    retry_count: int | None = Field(None, ge=1)
     max_context_length: int | None = Field(None, ge=1)
     max_context_lines: int | None = Field(None, ge=1)
     max_concurrency: int | None = Field(None, ge=1)
-    llm_extra_body: Dict[str, Any] | None = None
+    extra_body: Dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_keys(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        data = dict(value)
+        aliases = {
+            "llm_base_url": "base_url",
+            "llm_model": "model",
+            "llm_api_key": "api_key",
+            "llm_timeout": "timeout",
+            "llm_retry_count": "retry_count",
+            "llm_extra_body": "extra_body",
+        }
+        for old, new in aliases.items():
+            if new not in data and old in data:
+                data[new] = data[old]
+        return data
+
+    @property
+    def llm_base_url(self) -> str | None:
+        return self.base_url
+
+    @property
+    def llm_model(self) -> str | None:
+        return self.model
+
+    @property
+    def llm_api_key(self) -> str | None:
+        return self.api_key
+
+    @property
+    def llm_timeout(self) -> int | None:
+        return self.timeout
+
+    @property
+    def llm_retry_count(self) -> int | None:
+        return self.retry_count
+
+    @property
+    def llm_extra_body(self) -> Dict[str, Any] | None:
+        return self.extra_body
 
 
 class AnalysisConfig(BaseModel):
     calc_precision: int = Field(2, ge=0)
     judge_timeout: int = Field(30, ge=1)
     max_concurrency: int = Field(10, ge=1)  # 独立分析接口 item 级最大并发数
+
+
+class ConcurrencyConfig(BaseModel):
+    global_llm: int = Field(16, ge=1)
+    global_embedding: int = Field(4, ge=1)
+    global_vl: int = Field(8, ge=1)
+    global_table_validation: int = Field(10, ge=1)
+    global_extraction: int = Field(8, ge=1)
+    global_analysis: int = Field(8, ge=1)
+    task_table_validation: int = Field(4, ge=1)
+    task_extraction: int = Field(4, ge=1)
+    task_analysis: int = Field(4, ge=1)
+    global_pipeline: int = Field(4, ge=1)
 
 
 class VLModelConfig(BaseModel):
@@ -158,10 +272,33 @@ class AppConfig(BaseSettings):
     extraction: ExtractionConfig = ExtractionConfig()
     table_name_validation: TableNameValidationConfig = TableNameValidationConfig()
     analysis: AnalysisConfig = AnalysisConfig()
+    concurrency: ConcurrencyConfig = ConcurrencyConfig()
     vl_model: VLModelConfig = VLModelConfig()
     web_search: WebSearchConfig = WebSearchConfig()
     storage: StorageConfig = StorageConfig()
     settings: SettingsSecurityConfig = SettingsSecurityConfig()
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_concurrency(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        data = dict(value)
+        limits = dict(data.get("concurrency") or {})
+        table = data.get("table_name_validation") or {}
+        analysis = data.get("analysis") or {}
+        vl = data.get("vl_model") or {}
+        legacy_map = {
+            "task_table_validation": table.get("max_concurrency"),
+            "task_analysis": analysis.get("max_concurrency"),
+            "global_vl": vl.get("global_max_concurrency"),
+        }
+        for key, old_value in legacy_map.items():
+            if key not in limits and old_value is not None:
+                limits[key] = old_value
+        if limits:
+            data["concurrency"] = limits
+        return data
 
 
 def _load_yaml(path: Path) -> dict:

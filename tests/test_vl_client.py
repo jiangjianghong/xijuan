@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import base64
 import io
+import asyncio
 
 import fitz
 import pytest
 from PIL import Image
 
 from utils import vl_client
+from utils import concurrency
+from utils.config import AppConfig, get_config, replace_config
 
 
 def _make_test_pdf_bytes(num_pages: int = 2) -> bytes:
@@ -196,3 +199,30 @@ async def test_vl_chat_5xx_retries_then_fails(monkeypatch, reset_vl_semaphore):
     with pytest.raises(vl_client.VLAPIError):
         await vl_client.vl_chat([{"role": "user", "content": "x"}], max_retries=3)
     assert call_count == 3
+
+
+async def test_vl_chat_obeys_global_vl_limit(monkeypatch):
+    previous = get_config()
+    replace_config(AppConfig(concurrency={"global_vl": 2}))
+    concurrency.clear_limiters()
+    active = 0
+    peak = 0
+
+    async def fake_post(self, url, json, headers):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return _MockResponse(200, {"choices": [{"message": {"content": "ok"}}]})
+
+    import httpx
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    await asyncio.gather(*(
+        vl_client.vl_chat([{"role": "user", "content": "x"}], max_retries=1)
+        for _ in range(8)
+    ))
+
+    assert peak == 2
+    replace_config(previous)
+    concurrency.clear_limiters()

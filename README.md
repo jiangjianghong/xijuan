@@ -90,12 +90,16 @@ curl "http://localhost:5019/file/{file_id}/extraction"
 | `mineru.base_url` | MinerU 服务地址 | - |
 | `mineru.parse_timeout` | 解析超时（秒） | 1200 |
 | `chunking.chunk_size` | 分块大小（字符） | 512 |
-| `embedding.model_name` | Embedding 模型 | text-embedding-v4 |
-| `extraction.llm_model` | 提取用 LLM 模型 | qwen-max |
-| `table_name_validation.llm_model` | 表格名称校验 LLM 模型 | qwen3.5-35b-a3b |
-| `table_name_validation.max_concurrency` | 表格校验并发数 | 20 |
+| `embedding.model` | Embedding 模型 | text-embedding-v4 |
+| `extraction.model` | 提取用 LLM 模型 | qwen-max |
+| `table_name_validation.model` | 表格名称校验 LLM 模型 | qwen3.5-35b-a3b |
+| `concurrency.global_llm` | 全项目文本 LLM 并发上限 | 16 |
+| `concurrency.global_embedding` | 全项目 Embedding 并发上限 | 4 |
+| `concurrency.global_vl` | 全项目 VL 并发上限 | 8 |
+| `concurrency.global_extraction` / `task_extraction` | 抽取阶段全局 / 单任务并发 | 8 / 4 |
+| `concurrency.global_analysis` / `task_analysis` | 分析阶段全局 / 单任务并发 | 8 / 4 |
+| `concurrency.global_table_validation` / `task_table_validation` | 表格校验阶段全局 / 单任务并发 | 10 / 4 |
 | `vl_model.model` | VL 视觉模型（用于 vl 类字段，不配则 vl 字段不可用） | qwen-vl-max |
-| `vl_model.global_max_concurrency` | VL 调用全局并发上限（asyncio.Semaphore 治理） | 8 |
 | `vl_model.pdf_storage_dir` | 原始 PDF 持久化目录（vl 抽取依赖） | uploads |
 
 完整配置参考 [配置手册](docs/guides/configuration.md)

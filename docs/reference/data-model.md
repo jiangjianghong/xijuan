@@ -532,7 +532,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 }
 ```
 - `grid_pages` × `grid_cols`：第一轮每张网格图的布局（如 6 页 × 3 列 = 2 行）
-- `max_concurrent`：第一轮多网格并行上限（与全局 `vl_model.global_max_concurrency` 取小）
+- `max_concurrent`：第一轮多网格并行上限（与全局 `concurrency.global_vl` 取小）
 - `thumb_scale`：缩略图缩放系数
 - `key_pages_limit`：第一轮命中的关键页上限（去重排序后截断）
 - `fallback_pages`：第一轮一页未命中时回退取前 N 页

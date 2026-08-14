@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from loguru import logger
 
+from utils.concurrency import get_limiter
 from utils.config import get_config
 
 
@@ -32,17 +33,18 @@ async def chat_completion(
         timeout: 超时秒数，默认从配置读取。
         messages: 自定义 messages 列表，优先于 prompt。
         max_retries: 最大重试次数，默认从配置读取。
-        extra_body: 额外请求参数，与配置中的 llm_extra_body 合并（参数优先）。
+        extra_body: 额外请求参数，与配置中的 extra_body 合并（参数优先）。
 
     Returns:
         LLM 返回的文本内容。
     """
-    cfg = get_config().extraction
-    base_url = base_url or cfg.llm_base_url
-    model = model or cfg.llm_model
-    api_key = api_key or cfg.llm_api_key or "EMPTY"
-    timeout = timeout or cfg.llm_timeout
-    retry_count = max_retries or cfg.llm_retry_count or 1
+    app_cfg = get_config()
+    cfg = app_cfg.extraction
+    base_url = base_url or cfg.base_url
+    model = model or cfg.model
+    api_key = api_key or cfg.api_key or "EMPTY"
+    timeout = timeout or cfg.timeout
+    retry_count = max_retries or cfg.retry_count or 1
 
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
@@ -51,8 +53,8 @@ async def chat_completion(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    # 合并配置的 llm_extra_body 与调用方传入的 extra_body（参数优先）
-    merged_extra: Dict[str, Any] = dict(cfg.llm_extra_body)
+    # 合并配置的 extra_body 与调用方传入的 extra_body（参数优先）
+    merged_extra: Dict[str, Any] = dict(cfg.extra_body)
     if extra_body:
         merged_extra.update(extra_body)
 
@@ -64,11 +66,13 @@ async def chat_completion(
         payload["extra_body"] = merged_extra
 
     url = f"{base_url.rstrip('/')}/chat/completions"
+    limiter = get_limiter("global_llm", app_cfg.concurrency.global_llm)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         for attempt in range(retry_count):
             try:
-                resp = await client.post(url, json=payload, headers=headers)
+                async with limiter:
+                    resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
                 return data["choices"][0]["message"]["content"]
@@ -130,14 +134,16 @@ async def get_embeddings(
     Returns:
         与 texts 等长的向量列表。
     """
-    cfg = get_config().embedding
+    app_cfg = get_config()
+    cfg = app_cfg.embedding
     base_url = base_url or cfg.base_url
-    model = model or cfg.model_name
+    model = model or cfg.model
     api_key = api_key or cfg.api_key or "EMPTY"
     batch_size = batch_size or cfg.batch_size
     timeout = timeout or cfg.timeout
 
     url = f"{base_url.rstrip('/')}/embeddings"
+    limiter = get_limiter("global_embedding", app_cfg.concurrency.global_embedding)
 
     headers: Dict[str, str] = {"Content-Type": "application/json"}
     if api_key:
@@ -158,7 +164,8 @@ async def get_embeddings(
 
             for attempt in range(max_retries):
                 try:
-                    resp = await client.post(url, json=payload, headers=headers)
+                    async with limiter:
+                        resp = await client.post(url, json=payload, headers=headers)
                     resp.raise_for_status()
                     data = resp.json()
                     batch_embeddings = [item["embedding"] for item in data["data"]]

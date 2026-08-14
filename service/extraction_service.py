@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import asyncio
 import json
 import re
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from service.match_prompts import build_section_match_prompt, build_table_match_
 from utils import vl_client
 from utils.callback import notify_callback
 from utils.config import get_config
+from utils.concurrency import get_limiter
 from utils.errors import format_exception
 from utils.llm_client import chat_completion, get_embeddings
 from utils.milvus_client import MilvusClient
@@ -2313,12 +2315,20 @@ async def run_extraction(
     field_values: Dict[str, str] = {}
     field_source_pages: Dict[str, Optional[List[int]]] = {}
     field_pages_from: Dict[str, str] = {}
+    app_cfg = get_config()
+    task_semaphore = asyncio.Semaphore(app_cfg.concurrency.task_extraction)
+    global_semaphore = get_limiter(
+        "global_extraction",
+        app_cfg.concurrency.global_extraction,
+    )
 
     for idx, field in enumerate(ordered_fields):
         try:
-            extracted_value, reason, source_refs, model_pages = await _extract_field_result(
-                file_id, field, session, field_values, field_source_pages, field_pages_from
-            )
+            async with task_semaphore:
+                async with global_semaphore:
+                    extracted_value, reason, source_refs, model_pages = await _extract_field_result(
+                        file_id, field, session, field_values, field_source_pages, field_pages_from
+                    )
 
             _ensure_valid_extraction_result(field, extracted_value, reason, source_refs)
 
@@ -2492,12 +2502,20 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     field_values: Dict[str, str] = {}
     field_source_pages: Dict[str, Optional[List[int]]] = {}
     field_pages_from: Dict[str, str] = {}
+    app_cfg = get_config()
+    task_semaphore = asyncio.Semaphore(app_cfg.concurrency.task_extraction)
+    global_semaphore = get_limiter(
+        "global_extraction",
+        app_cfg.concurrency.global_extraction,
+    )
 
     for idx, field in enumerate(ordered_fields):
         try:
-            extracted_value, reason, source_refs, model_pages = await _extract_field_result(
-                file_id, field, session, field_values, field_source_pages, field_pages_from
-            )
+            async with task_semaphore:
+                async with global_semaphore:
+                    extracted_value, reason, source_refs, model_pages = await _extract_field_result(
+                        file_id, field, session, field_values, field_source_pages, field_pages_from
+                    )
 
             _ensure_valid_extraction_result(field, extracted_value, reason, source_refs)
 

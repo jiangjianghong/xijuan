@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Awaitable, Dict, List, Optional, Tuple
 
 import numexpr
 from loguru import logger
@@ -15,6 +15,7 @@ from model.database import rollback_if_broken
 from model.tables import AnalysisResult, AnalysisRule, ExtractionResult, File
 from utils.callback import notify_callback
 from utils.config import get_config
+from utils.concurrency import get_limiter
 from utils.llm_client import chat_completion
 from utils.text_utils import normalize_cjk_quotes, salvage_reason, salvage_value_reason
 from utils.output_schema import render_schema_prompt
@@ -48,6 +49,15 @@ def resolve_expression(
 
 
 WEB_SEARCH_PLACEHOLDER = "<web_search_result/>"
+
+
+async def _run_analysis_model(awaitable: Awaitable[Any]) -> Any:
+    """限制文件管线中的 judge/custom 模型调用。"""
+    app_cfg = get_config()
+    concurrency_cfg = getattr(app_cfg, "concurrency", None)
+    limit = getattr(concurrency_cfg, "global_analysis", 1_000_000)
+    async with get_limiter("global_analysis", limit):
+        return await awaitable
 
 
 async def apply_web_search(
@@ -512,7 +522,9 @@ async def run_analysis(
                 )
                 if ws_ref:
                     source_refs["_web_search"] = ws_ref
-                result_value, reason = await execute_judge(resolved_expression, system_prompt=rule.system_prompt or "")
+                result_value, reason = await _run_analysis_model(
+                    execute_judge(resolved_expression, system_prompt=rule.system_prompt or "")
+                )
             elif rule.rule_type == "calc":
                 result_value, reason = await execute_calc(resolved_expression, cfg.calc_precision)
             elif rule.rule_type == "custom":
@@ -522,11 +534,13 @@ async def run_analysis(
                 )
                 if ws_ref:
                     source_refs["_web_search"] = ws_ref
-                result_value, reason = await execute_custom(
-                    resolved_expression,
-                    is_formatted=bool(rule.is_formatted),
-                    output_schema=rule.output_schema,
-                    system_prompt=rule.system_prompt or "",
+                result_value, reason = await _run_analysis_model(
+                    execute_custom(
+                        resolved_expression,
+                        is_formatted=bool(rule.is_formatted),
+                        output_schema=rule.output_schema,
+                        system_prompt=rule.system_prompt or "",
+                    )
                 )
             else:
                 logger.warning("未知规则类型: {}", rule.rule_type)
@@ -779,7 +793,9 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
                 )
                 if ws_ref:
                     source_refs["_web_search"] = ws_ref
-                result_value, reason = await execute_judge(resolved_expression, system_prompt=rule.system_prompt or "")
+                result_value, reason = await _run_analysis_model(
+                    execute_judge(resolved_expression, system_prompt=rule.system_prompt or "")
+                )
             elif rule.rule_type == "calc":
                 result_value, reason = await execute_calc(resolved_expression, cfg.calc_precision)
             elif rule.rule_type == "custom":
@@ -789,11 +805,13 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
                 )
                 if ws_ref:
                     source_refs["_web_search"] = ws_ref
-                result_value, reason = await execute_custom(
-                    resolved_expression,
-                    is_formatted=bool(rule.is_formatted),
-                    output_schema=rule.output_schema,
-                    system_prompt=rule.system_prompt or "",
+                result_value, reason = await _run_analysis_model(
+                    execute_custom(
+                        resolved_expression,
+                        is_formatted=bool(rule.is_formatted),
+                        output_schema=rule.output_schema,
+                        system_prompt=rule.system_prompt or "",
+                    )
                 )
             else:
                 logger.warning("未知规则类型: {}", rule.rule_type)

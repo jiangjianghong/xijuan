@@ -31,7 +31,7 @@ async def embed_chunks(chunks: List[Dict]) -> List[List[float]]:
     embeddings = await get_embeddings(
         texts=texts,
         base_url=cfg.base_url,
-        model=cfg.model_name,
+        model=cfg.model,
         api_key=cfg.api_key,
         batch_size=cfg.batch_size,
         timeout=cfg.timeout,

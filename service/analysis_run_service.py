@@ -20,6 +20,7 @@ from service.analysis_service import (
     validate_field_values,
 )
 from utils.config import get_config
+from utils.concurrency import get_limiter
 
 
 @dataclass(frozen=True)
@@ -408,6 +409,18 @@ async def run_analysis_batch(
         type_ids = {str(item["type_id"]) for item in items}
 
     rules_by_type = await _load_rules_by_type(type_ids, session)
+    app_cfg = get_config()
+    concurrency_cfg = getattr(app_cfg, "concurrency", None)
+    global_analysis_limit = getattr(concurrency_cfg, "global_analysis", 1_000_000)
+    task_analysis_limit = getattr(
+        concurrency_cfg,
+        "task_analysis",
+        getattr(getattr(app_cfg, "analysis", None), "max_concurrency", 1),
+    )
+    stage_limiter = get_limiter(
+        "global_analysis",
+        global_analysis_limit,
+    )
 
     def _empty_item(
         item_index: int,
@@ -471,11 +484,12 @@ async def run_analysis_batch(
         results: list[Dict[str, Any]] = []
 
         for index, rule in enumerate(rules, start=1):
-            result = await execute_rule(
-                rule,
-                field_values,
-                require_coverage=plan.require_coverage,
-            )
+            async with stage_limiter:
+                result = await execute_rule(
+                    rule,
+                    field_values,
+                    require_coverage=plan.require_coverage,
+                )
             if from_file:
                 result = {
                     **result,
@@ -510,7 +524,7 @@ async def run_analysis_batch(
     # item 级并发闸门：限制同时执行的 item 数，避免大批量请求瞬间打爆 LLM。
     # gather 仍按传入顺序返回，Semaphore 只约束并发度不影响结果次序。
     semaphore = asyncio.Semaphore(
-        max(1, get_config().analysis.max_concurrency or 1)
+        max(1, task_analysis_limit)
     )
 
     async def run_item_guarded(

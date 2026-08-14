@@ -13,6 +13,7 @@ import httpx
 from loguru import logger
 from PIL import Image
 
+from utils.concurrency import get_limiter
 from utils.config import get_config
 
 
@@ -23,15 +24,12 @@ class VLAPIError(RuntimeError):
     """VL API 调用最终失败（重试耗尽 / 4xx 非 429）。"""
 
 
+# 兼容旧测试/外部代码的符号；实际 limiter 由 utils.concurrency registry 管理。
 _global_sem: asyncio.Semaphore | None = None
 
 
 def _get_global_sem() -> asyncio.Semaphore:
-    global _global_sem
-    if _global_sem is None:
-        cfg = get_config().vl_model
-        _global_sem = asyncio.Semaphore(cfg.global_max_concurrency)
-    return _global_sem
+    return get_limiter("global_vl", get_config().concurrency.global_vl)
 
 
 async def vl_chat(
@@ -46,7 +44,7 @@ async def vl_chat(
     返回原始 JSON dict，调用方自己解 choices/usage。
 
     重试：max_retries 次指数退避（1s/2s/4s）；4xx（除 429）直接抛 VLAPIError。
-    全局并发限：vl_model.global_max_concurrency。
+    全局并发限：concurrency.global_vl。
     """
     cfg = get_config().vl_model
 

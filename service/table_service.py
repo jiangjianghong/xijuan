@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.tables import FileTable
 from utils.config import get_config
+from utils.concurrency import get_limiter
 from utils.llm_client import chat_completion
 from utils.page_mapping import lookup_page_num
 
@@ -145,12 +146,12 @@ async def _extract_table_name_with_llm(
     if max_context_length and len(context_text) > max_context_length:
         context_text = context_text[-max_context_length:]
 
-    base_url = table_name_cfg.llm_base_url or extraction_cfg.llm_base_url
-    model = table_name_cfg.llm_model or extraction_cfg.llm_model
-    api_key = table_name_cfg.llm_api_key or extraction_cfg.llm_api_key
-    timeout = table_name_cfg.llm_timeout or extraction_cfg.llm_timeout
-    retry_count = table_name_cfg.llm_retry_count or extraction_cfg.llm_retry_count
-    extra_body = table_name_cfg.llm_extra_body or None
+    base_url = table_name_cfg.base_url or extraction_cfg.base_url
+    model = table_name_cfg.model or extraction_cfg.model
+    api_key = table_name_cfg.api_key or extraction_cfg.api_key
+    timeout = table_name_cfg.timeout or extraction_cfg.timeout
+    retry_count = table_name_cfg.retry_count or extraction_cfg.retry_count
+    extra_body = table_name_cfg.extra_body or None
 
     prompt = (
         "你是文档表格标题抽取助手。\n"
@@ -201,8 +202,12 @@ async def parse_tables(content: str, file_id: str, page_mapping: Optional[List] 
     if total_table == 0:
         return []
 
-    max_concurrency = max(1, get_config().table_name_validation.max_concurrency or 1)
-    semaphore = asyncio.Semaphore(max_concurrency)
+    app_cfg = get_config()
+    task_semaphore = asyncio.Semaphore(app_cfg.concurrency.task_table_validation)
+    global_semaphore = get_limiter(
+        "global_table_validation",
+        app_cfg.concurrency.global_table_validation,
+    )
 
     async def _process_single_table(table_index: int, match: re.Match[str]) -> Dict:
         table_content = match.group(0)
@@ -210,12 +215,13 @@ async def parse_tables(content: str, file_id: str, page_mapping: Optional[List] 
         preceding_text = content[:start_pos].rstrip()
 
         fallback_name = _extract_table_name(preceding_text)
-        async with semaphore:
-            table_name = await _extract_table_name_with_llm(
-                preceding_text=preceding_text,
-                table_index=table_index,
-                fallback_name=fallback_name,
-            )
+        async with task_semaphore:
+            async with global_semaphore:
+                table_name = await _extract_table_name_with_llm(
+                    preceding_text=preceding_text,
+                    table_index=table_index,
+                    fallback_name=fallback_name,
+                )
 
         logger.info("表格名称校验完成: file_id={}, {}/{}, name={}", file_id, table_index, total_table, table_name)
 

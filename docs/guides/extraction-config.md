@@ -224,7 +224,7 @@ JSON 示例和排错清单为主。
 | `vl_progressive` | 逐批 + 伪历史累积，模型自判相关性 | 页数/`batch_size` + 1 聚合 | 串行 | 长文档、相关页分散 |
 | `vl_locate` | 两轮：缩略图网格并行定位 → 关键页高清提取 | 页数/`grid_pages` + 1 提取 | 第一轮并行 | 长文档、要快速定位关键页 |
 
-**三法共通：** `vl_extract_prompt` 是最终提取 prompt，**必须含 `value` 与 `reason` 关键字**（大小写不敏感，因为要 VL 直接吐 JSON）；`vl_system_prompt` 可空。后端 `service/vl_service/_defaults.py` 与前端 UI 都预填了默认 prompt，保持默认即可跑通。全局并发上限 `vl_model.global_max_concurrency`（默认 8）。
+**三法共通：** `vl_extract_prompt` 是最终提取 prompt，**必须含 `value` 与 `reason` 关键字**（大小写不敏感，因为要 VL 直接吐 JSON）；`vl_system_prompt` 可空。后端 `service/vl_service/_defaults.py` 与前端 UI 都预填了默认 prompt，保持默认即可跑通。全局 VL 并发上限由 `concurrency.global_vl`（默认 8）控制；字段抽取阶段还受 `concurrency.global_extraction` 与 `concurrency.task_extraction` 限制。
 
 **三种方法共用的页码配置**（都写在 `vl_config` 里）：
 

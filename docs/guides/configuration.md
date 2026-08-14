@@ -15,7 +15,7 @@
 
 - **默认值** 列是代码内置默认（`utils/config.py` 中各 Pydantic 模型的字段默认），即省略该键时实际生效的值。
 - 仓库内 `configs/config.yaml` 是**部署示例**，会用环境实际值（真实主机 / 端口 / 密钥 / 模型名）覆盖默认。示例值与默认不同的，在「含义」列以「示例:」标注。
-- `llm_extra_body` / `extra_body` 等对象会**原样透传**到底层 OpenAI 兼容请求的 `extra_body`，可用于关闭思考等模型私有开关。
+- `extra_body` 等对象会**原样透传**到底层 OpenAI 兼容请求的 `extra_body`，可用于关闭思考等模型私有开关。
 
 ---
 
@@ -50,7 +50,7 @@
 | 配置项 | 类型 | 默认值 | 含义 |
 |---|---|---|---|
 | `base_url` | 字符串 | `"http://localhost:8000/v1"` | Embedding API 地址 |
-| `model_name` | 字符串 | `"bge-large-zh"` | 向量模型名。示例: `qwen3-embedding-8b` |
+| `model` | 字符串 | `"bge-large-zh"` | 向量模型名。示例: `qwen3-embedding-8b` |
 | `api_key` | 字符串 | `""` | API 密钥 |
 | `embedding_dim` | 整数 | `1024` | 向量维度，**必须与模型输出及 Milvus 集合维度一致**。示例: `4096` |
 | `batch_size` | 整数 | `32` | 每批向量化的文本条数。示例: `10` |
@@ -90,13 +90,13 @@
 
 | 配置项 | 类型 | 默认值 | 含义 |
 |---|---|---|---|
-| `llm_base_url` | 字符串 | `"http://localhost:8000/v1"` | LLM API 地址 |
-| `llm_model` | 字符串 | `"qwen-7b"` | 模型名。示例: `qwen3.5-122b` |
-| `llm_api_key` | 字符串 | `""` | API 密钥 |
-| `llm_timeout` | 整数 | `60` | 请求超时（秒） |
-| `llm_retry_count` | 整数 | `3` | 失败重试次数；指数退避，4xx（除 429）不重试 |
+| `base_url` | 字符串 | `"http://localhost:8000/v1"` | LLM API 地址 |
+| `model` | 字符串 | `"qwen-7b"` | 模型名。示例: `qwen3.5-122b` |
+| `api_key` | 字符串 | `""` | API 密钥 |
+| `timeout` | 整数 | `60` | 请求超时（秒） |
+| `retry_count` | 整数 | `3` | 失败重试次数；指数退避，4xx（除 429）不重试 |
 | `max_context_length` | 整数 | `4096` | 注入 prompt 的检索文本字符上限，超长从末尾截断 |
-| `llm_extra_body` | 对象 | `{}` | 透传到请求 `extra_body` 的额外参数。示例: `{chat_template_kwargs: {enable_thinking: false}}`（关闭思考） |
+| `extra_body` | 对象 | `{}` | 透传到请求 `extra_body` 的额外参数。示例: `{chat_template_kwargs: {enable_thinking: false}}`（关闭思考） |
 
 ## table_name_validation — 表名校验 LLM（tableing 阶段，独立且可回退）
 
@@ -104,15 +104,14 @@
 
 | 配置项 | 类型 | 默认值 | 含义 |
 |---|---|---|---|
-| `llm_base_url` | 字符串 / null | `null` | 为空回退 `extraction.llm_base_url` |
-| `llm_model` | 字符串 / null | `null` | 为空回退 `extraction.llm_model` |
-| `llm_api_key` | 字符串 / null | `null` | 为空回退 `extraction.llm_api_key` |
-| `llm_timeout` | 整数 / null | `null` | 为空回退 `extraction.llm_timeout` |
-| `llm_retry_count` | 整数 / null | `null` | 为空回退 `extraction.llm_retry_count` |
+| `base_url` | 字符串 / null | `null` | 为空回退 `extraction.base_url` |
+| `model` | 字符串 / null | `null` | 为空回退 `extraction.model` |
+| `api_key` | 字符串 / null | `null` | 为空回退 `extraction.api_key` |
+| `timeout` | 整数 / null | `null` | 为空回退 `extraction.timeout` |
+| `retry_count` | 整数 / null | `null` | 为空回退 `extraction.retry_count` |
 | `max_context_length` | 整数 / null | `null` | 表名上文取样的字符上限；为空回退 `extraction.max_context_length` |
 | `max_context_lines` | 整数 / null | `null` | 表格前用于推断表名的上文行数；为空按 `3` |
-| `max_concurrency` | 整数 / null | `null` | 表名校验的并发上限；为空按 `1` |
-| `llm_extra_body` | 对象 / null | `null` | 透传到请求 `extra_body` 的额外参数 |
+| `extra_body` | 对象 / null | `null` | 透传到请求 `extra_body` 的额外参数 |
 
 ## analysis — 逻辑分析
 
@@ -120,6 +119,22 @@
 |---|---|---|---|
 | `calc_precision` | 整数 | `2` | `calc` 规则 numexpr 计算结果保留的小数位 |
 | `judge_timeout` | 整数 | `30` | `judge` 规则 LLM 判断的超时（秒） |
+
+## concurrency — 并发限制
+
+所有限制均为当前进程内限制；多 worker 部署时每个 worker 各自拥有一套限制器。
+
+| 配置项 | 默认值 | 含义 |
+|---|---:|---|
+| `global_llm` | `16` | 全项目普通文本 LLM HTTP 请求并发 |
+| `global_embedding` | `4` | 全项目 Embedding HTTP 请求并发 |
+| `global_vl` | `8` | 全项目 VL HTTP 请求并发 |
+| `global_table_validation` / `task_table_validation` | `10 / 4` | 表格名校验阶段全局 / 单文件并发 |
+| `global_extraction` / `task_extraction` | `8 / 4` | 字段抽取阶段全局 / 单文件并发 |
+| `global_analysis` / `task_analysis` | `8 / 4` | 逻辑分析阶段全局 / 单请求并发 |
+| `global_pipeline` | `4` | 文件管线并发预留值，当前不改变管线入口调度 |
+
+一次模型请求同时受对应模型通道、业务阶段和单任务限制。旧配置 `vl_model.global_max_concurrency`、`table_name_validation.max_concurrency`、`analysis.max_concurrency` 会分别迁移到 `global_vl`、`task_table_validation`、`task_analysis`。
 
 ## vl_model — 视觉模型抽取（OpenAI 兼容多模态）
 
@@ -132,7 +147,6 @@
 | `max_tokens` | 整数 | `4096` | 单次生成的最大 token |
 | `timeout` | 整数 | `180` | 请求超时（秒） |
 | `extra_body` | 对象 | `{}` | 透传到请求 `extra_body` 的额外参数 |
-| `global_max_concurrency` | 整数 | `8` | 全局 VL 调用并发信号量上限（跨所有字段/文件） |
 | `default_max_pixels` | 整数 | `4000000` | 单图默认像素上限，可被字段 `vl_config.max_pixels` 覆盖 |
 | `pdf_storage_dir` | 字符串 | `"uploads"` | 上传 PDF 的持久化目录，VL 抽取直接读取原始字节 |
 
@@ -171,7 +185,7 @@
 | `session_minutes` | 整数 | `30` | 登录会话有效期（分钟） |
 | `secure_cookie` | 布尔 | `false` | HTTPS 部署时设为 `true`，为会话 Cookie 增加 `Secure` |
 
-设置页开放 `mineru`、`chunking`、`embedding`、`extraction`、`table_name_validation`、`analysis`、`vl_model`、`web_search` 和 `storage`。其中向量化只允许修改 `base_url`、`api_key`、`model_name`，其他参数只读；`server`、`mysql`、`milvus` 完全不返回且不能修改。
+设置页开放 `mineru`、`chunking`、`embedding`、`extraction`、`table_name_validation`、`analysis`、`vl_model`、`web_search`、`storage` 和 `concurrency`。其中向量化只允许修改 `base_url`、`api_key`、`model`，其他参数只读；`server`、`mysql`、`milvus` 完全不返回且不能修改。
 
 API Key 只显示“已配置/未配置”，旧值不会返回浏览器。管理员可以明确选择保留、覆盖或清除密钥。保存使用同目录临时文件和原子替换，保留 YAML 注释、顺序和未开放配置；写盘成功后，新请求和新任务立即使用新配置，已运行任务不强制切换。
 

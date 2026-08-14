@@ -126,6 +126,7 @@ def test_public_config_only_exposes_allowed_groups_and_secret_status(config_path
         "vl_model",
         "web_search",
         "storage",
+        "concurrency",
     }
     serialized = repr(payload)
     for secret in (
@@ -175,6 +176,27 @@ def test_update_changes_editable_values_and_preserves_closed_config(config_path:
     assert "milvus-secret" in written
     assert "admin-password" in written
     assert "embedding-secret" in written
+
+
+def test_update_can_change_unified_concurrency(config_path: Path):
+    service = SettingsService(config_path)
+    before = service.read_public_config()
+
+    result = service.update_config(
+        base_version=before["version"],
+        changes={
+            "concurrency": {
+                "global_llm": 6,
+                "global_embedding": 3,
+                "task_extraction": 2,
+            }
+        },
+        secrets={},
+    )
+
+    assert result["config"]["concurrency"]["global_llm"] == 6
+    assert result["config"]["concurrency"]["global_embedding"] == 3
+    assert result["config"]["concurrency"]["task_extraction"] == 2
 
 
 def test_update_supports_replace_and_clear_secret_actions(config_path: Path):
