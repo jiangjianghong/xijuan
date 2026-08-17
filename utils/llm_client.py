@@ -71,7 +71,7 @@ async def chat_completion(
     async with httpx.AsyncClient(timeout=timeout) as client:
         for attempt in range(retry_count):
             try:
-                async with limiter:
+                async with limiter.context({"stage": "model_request", "model": model}):
                     resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
@@ -164,7 +164,7 @@ async def get_embeddings(
 
             for attempt in range(max_retries):
                 try:
-                    async with limiter:
+                    async with limiter.context({"stage": "embedding", "model": model}):
                         resp = await client.post(url, json=payload, headers=headers)
                     resp.raise_for_status()
                     data = resp.json()

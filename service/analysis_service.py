@@ -56,7 +56,9 @@ async def _run_analysis_model(awaitable: Awaitable[Any]) -> Any:
     app_cfg = get_config()
     concurrency_cfg = getattr(app_cfg, "concurrency", None)
     limit = getattr(concurrency_cfg, "global_analysis", 1_000_000)
-    async with get_limiter("global_analysis", limit):
+    async with get_limiter("global_analysis", limit).context(
+        {"stage": "analyzing", "model": "analysis"}
+    ):
         return await awaitable
 
 

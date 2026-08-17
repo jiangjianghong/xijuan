@@ -13,6 +13,47 @@ from typing import Any
 
 _limiters: dict[tuple[int, str], "ObservableLimiter"] = {}
 _task_limiters: dict[tuple[int, str, str], "ObservableLimiter"] = {}
+_events: dict[int, deque[dict[str, Any]]] = {}
+
+_SAFE_CONTEXT_KEYS = {
+    "file_id",
+    "file_name",
+    "stage",
+    "field_id",
+    "rule_id",
+    "task_id",
+    "model",
+    "index",
+}
+
+
+def _safe_context(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not metadata:
+        return {}
+    return {
+        key: value
+        for key, value in metadata.items()
+        if key in _SAFE_CONTEXT_KEYS and isinstance(value, (str, int, float, bool))
+    }
+
+
+def _record_event(
+    loop_id: int,
+    pool_id: str,
+    event_type: str,
+    context: Mapping[str, Any] | None = None,
+    wait_ms: float | None = None,
+) -> None:
+    event: dict[str, Any] = {
+        "pool_id": pool_id,
+        "type": event_type,
+        "at": time.time(),
+        "context": _safe_context(context),
+    }
+    if wait_ms is not None:
+        event["wait_ms"] = round(wait_ms, 2)
+    loop_events = _events.setdefault(loop_id, deque(maxlen=100))
+    loop_events.append(event)
 
 
 def _percentile(samples: deque[float], quantile: float) -> float:
@@ -46,6 +87,8 @@ class ObservableLimiter:
         if limit < 1:
             raise ValueError(f"并发上限必须大于 0: {name}={limit}")
         self.name = name
+        self.event_pool_id = name
+        self._loop_id = id(asyncio.get_running_loop())
         self._limit = limit
         self._condition = asyncio.Condition()
         self._active = 0
@@ -83,8 +126,17 @@ class ObservableLimiter:
 
     async def acquire(self, metadata: dict[str, Any] | None = None) -> int:
         started = time.monotonic()
+        safe_metadata = _safe_context(metadata)
         async with self._condition:
             self._queued += 1
+            was_queued = self._active >= self._limit
+            if was_queued:
+                _record_event(
+                    self._loop_id,
+                    self.event_pool_id,
+                    "queued",
+                    safe_metadata,
+                )
             try:
                 while self._active >= self._limit:
                     await self._condition.wait()
@@ -96,8 +148,17 @@ class ObservableLimiter:
             self._active += 1
             self._next_token += 1
             token = self._next_token
-            self._holders[token] = dict(metadata or {})
-            self._wait_samples.append(time.monotonic() - started)
+            self._holders[token] = safe_metadata
+            wait_seconds = time.monotonic() - started
+            self._wait_samples.append(wait_seconds)
+            if was_queued:
+                _record_event(
+                    self._loop_id,
+                    self.event_pool_id,
+                    "acquired",
+                    safe_metadata,
+                    wait_seconds * 1000,
+                )
             stack = self._token_stack.get()
             self._token_stack.set(stack + (token,))
             return token
@@ -108,13 +169,21 @@ class ObservableLimiter:
             if not stack:
                 raise RuntimeError(f"limiter release without acquire: {self.name}")
             token = stack[-1]
-            self._token_stack.set(stack[:-1])
+        else:
+            stack = self._token_stack.get()
+        self._token_stack.set(tuple(item for item in stack if item != token))
 
         if token not in self._holders:
             raise RuntimeError(f"limiter release without acquire: {self.name}")
-        self._holders.pop(token, None)
+        context = self._holders.pop(token, None) or {}
         self._active -= 1
         self._completed += 1
+        _record_event(
+            self._loop_id,
+            self.event_pool_id,
+            "complete",
+            context,
+        )
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -173,11 +242,12 @@ def register_task_limiter(
     limiter = _task_limiters.get(key)
     if limiter is None:
         limiter = ObservableLimiter(f"{pool_name}:{instance_id}", limit)
+        limiter.event_pool_id = pool_name
         _task_limiters[key] = limiter
     else:
         limiter.set_limit(limit)
     if metadata:
-        limiter.instance_metadata = dict(metadata)
+        limiter.instance_metadata = _safe_context(metadata)
     return limiter
 
 
@@ -229,6 +299,7 @@ def runtime_snapshot() -> dict[str, dict[str, Any]]:
             if registered_loop_id == loop_id
         },
         "task_pools": _task_pool_snapshot(loop_id),
+        "events": list(_events.get(loop_id, ())),
     }
 
 
@@ -257,8 +328,10 @@ def clear_limiters() -> None:
     except RuntimeError:
         _limiters.clear()
         _task_limiters.clear()
+        _events.clear()
         return
     for key in [key for key in _limiters if key[0] == loop_id]:
         _limiters.pop(key, None)
     for key in [key for key in _task_limiters if key[0] == loop_id]:
         _task_limiters.pop(key, None)
+    _events.pop(loop_id, None)

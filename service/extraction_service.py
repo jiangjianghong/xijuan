@@ -2346,8 +2346,13 @@ async def run_extraction(
 
     for idx, field in enumerate(ordered_fields):
         try:
-            async with task_semaphore:
-                async with global_semaphore:
+            context = {
+                "file_id": file_id,
+                "stage": "extracting",
+                "field_id": field.field_id,
+            }
+            async with task_semaphore.context(context):
+                async with global_semaphore.context(context):
                     extracted_value, reason, source_refs, model_pages = await _extract_field_result(
                         file_id, field, session, field_values, field_source_pages, field_pages_from
                     )
@@ -2539,8 +2544,13 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
 
     for idx, field in enumerate(ordered_fields):
         try:
-            async with task_semaphore:
-                async with global_semaphore:
+            context = {
+                "file_id": file_id,
+                "stage": "extracting",
+                "field_id": field.field_id,
+            }
+            async with task_semaphore.context(context):
+                async with global_semaphore.context(context):
                     extracted_value, reason, source_refs, model_pages = await _extract_field_result(
                         file_id, field, session, field_values, field_source_pages, field_pages_from
                     )

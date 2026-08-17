@@ -488,7 +488,13 @@ async def run_analysis_batch(
         results: list[Dict[str, Any]] = []
 
         for index, rule in enumerate(rules, start=1):
-            async with stage_limiter:
+            context = {
+                "stage": "analyzing",
+                "task_id": biz_id,
+                "rule_id": rule.rule_id,
+                "index": index,
+            }
+            async with stage_limiter.context(context):
                 result = await execute_rule(
                     rule,
                     field_values,

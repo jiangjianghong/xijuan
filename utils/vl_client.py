@@ -72,7 +72,7 @@ async def vl_chat(
 
     for attempt in range(max_retries):
         try:
-            async with sem:
+            async with sem.context({"stage": "vl_request", "model": cfg.model}):
                 async with httpx.AsyncClient(timeout=cfg.timeout) as client:
                     resp = await client.post(url, json=payload, headers=headers)
                     resp.raise_for_status()

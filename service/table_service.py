@@ -224,8 +224,9 @@ async def parse_tables(content: str, file_id: str, page_mapping: Optional[List] 
         preceding_text = content[:start_pos].rstrip()
 
         fallback_name = _extract_table_name(preceding_text)
-        async with task_semaphore:
-            async with global_semaphore:
+        context = {"file_id": file_id, "stage": "tableing", "index": table_index}
+        async with task_semaphore.context(context):
+            async with global_semaphore.context(context):
                 table_name = await _extract_table_name_with_llm(
                     preceding_text=preceding_text,
                     table_index=table_index,

@@ -102,3 +102,35 @@ async def test_task_pool_reports_instances_without_fake_global_capacity():
     unregister_task_limiter("task_table_validation", "file-a")
     unregister_task_limiter("task_table_validation", "file-b")
     assert "task_table_validation" not in runtime_snapshot()["task_pools"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_events_keep_bounded_safe_context():
+    limiter = get_limiter("global_llm", 1)
+
+    async with limiter.context(
+        {
+            "file_id": "file-a",
+            "stage": "extracting",
+            "api_key": "must-not-leak",
+        }
+    ):
+        pass
+
+    events = runtime_snapshot()["events"]
+    assert events
+    assert events[-1]["pool_id"] == "global_llm"
+    assert events[-1]["type"] == "complete"
+    assert events[-1]["context"] == {"file_id": "file-a", "stage": "extracting"}
+
+
+@pytest.mark.asyncio
+async def test_context_lease_does_not_leave_stale_token():
+    limiter = get_limiter("global_llm", 1)
+
+    async with limiter.context({"file_id": "file-a"}):
+        pass
+    async with limiter:
+        assert runtime_snapshot()["pools"]["global_llm"]["active"] == 1
+
+    assert runtime_snapshot()["pools"]["global_llm"]["active"] == 0
