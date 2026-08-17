@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>析卷 AI · 并发运行台</title>
+    <link rel="stylesheet" href="../ui/vendor/fonts/google-fonts.css">
+    <script src="../ui/vendor/tailwind/tailwindcss.com.js"></script>
+    <script src="../ui/vendor/echarts/echarts.min.js"></script>
+    <script src="../ui/vendor/lucide/lucide.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        ink: '#2C4C3B',
+                        forest: '#4F775D',
+                        mint: '#4F775D',
+                        fog: '#F5F2EB',
+                        line: '#dfe7e2',
+                        amber: '#d89122',
+                        coral: '#df5a5a'
+                    },
+                    fontFamily: {
+                        sans: ['Nunito', 'Microsoft YaHei', 'sans-serif'],
+                        serif: ['Lora', 'Georgia', 'serif']
+                    }
+                }
+            }
+        };
+    </script>
+</head>
+<body class="min-h-screen overflow-x-hidden bg-[#F5F2EB] font-sans text-[#2C4C3B] antialiased">
+    <div class="min-h-screen">
+        <header class="mx-4 mt-4 rounded-3xl border border-[rgba(44,76,59,.10)] bg-white/85 shadow-[0_4px_20px_rgba(44,76,59,.08)] backdrop-blur-xl sm:mx-6">
+            <div class="mx-auto flex min-h-[68px] max-w-[1540px] flex-wrap items-center gap-4 px-5 py-3 sm:px-8">
+                <div class="flex min-w-0 items-center gap-3">
+                    <div class="grid h-9 w-9 shrink-0 place-items-center border border-[#cbd9d1] bg-[#E8EFE6] text-[#4F775D]">
+                        <i data-lucide="leaf" class="h-4 w-4" stroke-width="1.5"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <div class="flex items-baseline gap-2">
+                            <h1 class="font-serif text-[19px] font-semibold text-[#2C4C3B]">析卷 AI</h1>
+                            <span class="hidden text-[11px] font-semibold uppercase text-[#82938a] sm:inline">Runtime Observatory</span>
+                        </div>
+                        <p class="truncate text-xs text-[#6f8077]">并发池实时运行台</p>
+                    </div>
+                </div>
+
+                <div class="ml-auto flex items-center gap-2">
+                    <div id="connection-pill" class="mr-1 flex h-9 items-center gap-2 rounded-full border border-[#cfe1d7] bg-[#E8EFE6] px-3 text-xs font-semibold text-[#4F775D]">
+                        <span class="relative flex h-2 w-2">
+                            <span id="connection-ping" class="absolute inline-flex h-full w-full animate-ping bg-[#31a77e] opacity-50"></span>
+                            <span id="connection-dot" class="relative inline-flex h-2 w-2 bg-[#278b69]"></span>
+                        </span>
+                        <span id="connection-label">模拟流已连接</span>
+                    </div>
+                    <button id="toggle-live" type="button" class="inline-flex h-9 items-center gap-2 rounded-full border border-[#ccd8d1] bg-white px-3 text-xs font-semibold text-[#35483f] transition hover:border-[#8eaa9b] hover:bg-[#f6f9f7] focus:outline-none focus:ring-2 focus:ring-[#4F775D]/30" title="暂停模拟数据">
+                        <i data-lucide="pause" class="h-4 w-4" stroke-width="1.5"></i>
+                        <span>暂停</span>
+                    </button>
+                    <button id="refresh-now" type="button" class="grid h-9 w-9 place-items-center rounded-full border border-[#ccd8d1] bg-white text-[#35483f] transition hover:border-[#8eaa9b] hover:bg-[#f6f9f7] focus:outline-none focus:ring-2 focus:ring-[#4F775D]/30" title="立即刷新">
+                        <i data-lucide="refresh-cw" class="h-4 w-4" stroke-width="1.5"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <main class="mx-auto max-w-[1540px] px-5 pb-10 pt-6 sm:px-8">
+            <section aria-label="运行摘要" class="rounded-3xl border border-[rgba(44,76,59,.10)] bg-white/80 px-5 py-5 shadow-[0_4px_20px_rgba(44,76,59,.08)] backdrop-blur-xl">
+                <div class="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4 lg:grid-cols-[1.2fr_1fr_1fr_1fr_auto]">
+                    <div class="min-w-0 border-r border-[#e1e8e4] pr-5">
+                        <p class="mb-2 text-[11px] font-semibold uppercase text-[#7a8c82]">实时槽位</p>
+                        <div class="flex items-baseline gap-2">
+                            <strong id="summary-active" class="font-serif text-[30px] font-medium leading-none text-[#1f4134]" aria-live="polite">47</strong>
+                            <span id="summary-capacity" class="text-sm font-semibold text-[#85948c]">/ 66</span>
+                        </div>
+                    </div>
+                    <div class="border-r border-[#e1e8e4] pr-5">
+                        <p class="mb-2 text-[11px] font-semibold uppercase text-[#7a8c82]">排队任务</p>
+                        <div class="flex items-baseline gap-2">
+                            <strong id="summary-queued" class="font-serif text-[30px] font-medium leading-none text-[#606b66]" aria-live="polite">18</strong>
+                            <span class="text-xs text-[#8a9790]">等待调度</span>
+                        </div>
+                    </div>
+                    <div class="border-r border-[#e1e8e4] pr-5">
+                        <p class="mb-2 text-[11px] font-semibold uppercase text-[#7a8c82]">高压池</p>
+                        <div class="flex items-baseline gap-2">
+                            <strong id="summary-hot" class="font-serif text-[30px] font-medium leading-none text-[#c67d1a]" aria-live="polite">4</strong>
+                            <span class="text-xs text-[#8a9790]">利用率 ≥ 75%</span>
+                        </div>
+                    </div>
+                    <div>
+                        <p class="mb-2 text-[11px] font-semibold uppercase text-[#7a8c82]">P95 等待</p>
+                        <div class="flex items-baseline gap-2">
+                            <strong id="summary-wait" class="font-serif text-[30px] font-medium leading-none text-[#253b31]" aria-live="polite">1.8</strong>
+                            <span class="text-xs text-[#8a9790]">秒</span>
+                        </div>
+                    </div>
+                    <div class="col-span-2 flex items-end justify-between gap-4 sm:col-span-4 lg:col-span-1 lg:block lg:text-right">
+                        <p class="text-[11px] font-semibold uppercase text-[#7a8c82]">最近更新</p>
+                        <p id="last-updated" class="mt-1 font-mono text-sm font-semibold tabular-nums text-[#34483e]">--:--:--</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="pt-6" aria-labelledby="pool-canvas-title">
+                <div class="mb-4 flex flex-wrap items-end justify-between gap-4">
+                    <div>
+                        <div class="mb-1 flex items-center gap-2">
+                            <h2 id="pool-canvas-title" class="font-serif text-[22px] font-medium text-[#1b362b]">容量矩阵</h2>
+                            <span class="border border-[#d7e1db] bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-[#75867d]">Process · single worker</span>
+                        </div>
+                        <p class="text-xs text-[#75867d]">竖塔表示运行槽位，右侧灰色短条表示等待队列</p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-4 text-[11px] font-semibold text-[#66776e]" aria-label="图例">
+                        <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 bg-[#4F775D]"></span>运行中</span>
+                        <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 bg-[#d89122]"></span>高负载</span>
+                        <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 bg-[#df5a5a]"></span>已饱和</span>
+                        <span class="inline-flex items-center gap-1.5"><span class="h-1.5 w-5 bg-[#aab3ae]"></span>排队中</span>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto rounded-3xl border border-[rgba(44,76,59,.10)] bg-white/85 shadow-[0_4px_20px_rgba(44,76,59,.08)] backdrop-blur-xl" tabindex="0" aria-label="并发池容量图，可横向滚动">
+                    <div class="min-w-[1060px] px-6 pt-5">
+                        <div class="grid grid-cols-[3fr_3fr_3fr_1fr] border-b border-[#E8EFE6] pb-3">
+                            <div class="flex items-center gap-2 border-r border-[#E8EFE6] text-[11px] font-semibold text-[#4F775D]"><i data-lucide="cpu" class="h-3.5 w-3.5" stroke-width="1.5"></i><span>模型通道</span><span class="font-mono text-[8px] uppercase text-[#8DAA91]">MODEL</span></div>
+                            <div class="flex items-center gap-2 border-r border-[#E8EFE6] pl-6 text-[11px] font-semibold text-[#4F775D]"><i data-lucide="workflow" class="h-3.5 w-3.5" stroke-width="1.5"></i><span>业务阶段</span><span class="font-mono text-[8px] uppercase text-[#8DAA91]">STAGE</span></div>
+                            <div class="flex items-center gap-2 border-r border-[#E8EFE6] pl-6 text-[11px] font-semibold text-[#4F775D]"><i data-lucide="scan-line" class="h-3.5 w-3.5" stroke-width="1.5"></i><span>单任务限制</span><span class="font-mono text-[8px] uppercase text-[#8DAA91]">TASK</span></div>
+                            <div class="flex items-center gap-2 pl-6 text-[11px] font-semibold text-[#4F775D]"><i data-lucide="git-branch" class="h-3.5 w-3.5" stroke-width="1.5"></i><span>管线</span></div>
+                        </div>
+                    </div>
+                    <div id="pool-chart" class="h-[410px] min-w-[1060px] w-full px-3 py-2"></div>
+                </div>
+            </section>
+
+            <section class="mt-6 grid gap-0 overflow-hidden rounded-3xl border border-[rgba(44,76,59,.10)] bg-white/85 shadow-[0_4px_20px_rgba(44,76,59,.08)] backdrop-blur-xl lg:grid-cols-[1.55fr_1fr]" aria-label="实时压力与事件">
+                <div class="border-b border-[#e2e9e5] px-5 py-5 lg:border-b-0 lg:border-r">
+                    <div class="mb-4 flex items-center justify-between">
+                        <div>
+                            <h2 class="text-sm font-semibold text-[#283e34]">总体压力</h2>
+                            <p class="mt-0.5 text-[11px] text-[#7c8c84]">最近 60 个采样点 · 运行槽位利用率</p>
+                        </div>
+                        <div class="text-right">
+                            <strong id="pressure-value" class="font-mono text-lg font-semibold tabular-nums text-[#4F775D]">71%</strong>
+                            <p id="pressure-delta" class="text-[10px] font-semibold text-[#75867d]">较上一采样 +2%</p>
+                        </div>
+                    </div>
+                    <div class="h-[132px] w-full" id="pressure-chart" role="img" aria-label="总体压力实时曲线"></div>
+                </div>
+
+                <div class="px-5 py-5">
+                    <div class="mb-4 flex items-center justify-between">
+                        <div>
+                            <h2 class="text-sm font-semibold text-[#283e34]">调度事件</h2>
+                            <p class="mt-0.5 text-[11px] text-[#7c8c84]">完成、入队与容量变化</p>
+                        </div>
+                        <span id="event-count" class="font-mono text-[11px] font-semibold text-[#7d8c84]">05 EVENTS</span>
+                    </div>
+                    <div id="event-stream" class="h-[132px] space-y-2 overflow-hidden" aria-live="polite"></div>
+                </div>
+
+                <div class="border-t border-[#e2e9e5] px-5 pb-5 pt-4 lg:col-span-2">
+                    <div class="mb-3 flex flex-wrap items-end justify-between gap-2">
+                        <div>
+                            <h2 class="text-sm font-semibold text-[#283e34]">各池压力趋势</h2>
+                            <p class="mt-0.5 text-[11px] text-[#7c8c84]">与总体压力同步采样 · 利用率 0–100%</p>
+                        </div>
+                        <span class="text-[10px] font-semibold text-[#8b9891]">最近 60 个采样点</span>
+                    </div>
+                    <div id="pool-pressure-grid" class="grid grid-cols-1 gap-px overflow-hidden border border-[#e2e9e5] bg-[#e2e9e5] sm:grid-cols-2" aria-label="各并发池压力趋势"></div>
+                </div>
+            </section>
+
+            <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-[11px] text-[#7f8e86]">
+                <p>模拟视图 · 数值不代表真实服务状态</p>
+                <p class="flex items-center gap-2"><i data-lucide="shield-check" class="h-3.5 w-3.5" stroke-width="1.5"></i>只读监控，不修改运行配置</p>
+            </div>
+        </main>
+    </div>
+
+    <div id="drawer-backdrop" class="pointer-events-none fixed inset-0 z-40 bg-[#16231d]/10 opacity-0 backdrop-blur-[1px] transition-opacity duration-300" aria-hidden="true"></div>
+    <aside id="detail-drawer" class="fixed inset-y-0 right-0 z-50 w-full max-w-[430px] translate-x-full border-l border-[#d8e2dc] bg-white shadow-[-20px_0_60px_rgba(26,52,41,0.10)] transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]" role="dialog" aria-modal="true" aria-labelledby="detail-title" aria-hidden="true">
+        <div class="flex h-full flex-col">
+            <header class="flex items-start justify-between border-b border-[#e1e8e4] px-6 py-5">
+                <div>
+                    <p id="detail-group" class="mb-1 text-[10px] font-semibold uppercase text-[#7b8c83]">模型通道</p>
+                    <h2 id="detail-title" class="font-serif text-[22px] font-medium text-[#1c392d]">文本 LLM</h2>
+                    <p id="detail-id" class="mt-1 font-mono text-[11px] text-[#84928b]">global_llm</p>
+                </div>
+                <button id="close-drawer" type="button" class="grid h-9 w-9 place-items-center border border-[#d4ded8] text-[#506158] transition hover:bg-[#f2f6f4] focus:outline-none focus:ring-2 focus:ring-[#4F775D]/30" aria-label="关闭详情">
+                    <i data-lucide="x" class="h-4 w-4" stroke-width="1.5"></i>
+                </button>
+            </header>
+
+            <div class="flex-1 overflow-y-auto px-6 py-6">
+                <div class="grid grid-cols-3 divide-x divide-[#e0e7e3] border-y border-[#e0e7e3] py-4">
+                    <div class="pr-4"><p class="text-[10px] font-semibold uppercase text-[#84928b]">运行</p><strong id="detail-active" class="mt-1 block font-serif text-2xl font-medium">12</strong></div>
+                    <div class="px-4"><p class="text-[10px] font-semibold uppercase text-[#84928b]">容量</p><strong id="detail-limit" class="mt-1 block font-serif text-2xl font-medium">16</strong></div>
+                    <div class="pl-4"><p class="text-[10px] font-semibold uppercase text-[#84928b]">排队</p><strong id="detail-queued" class="mt-1 block font-serif text-2xl font-medium text-[#69736e]">3</strong></div>
+                </div>
+
+                <section class="mt-7">
+                    <div class="mb-3 flex items-center justify-between">
+                        <h3 class="text-xs font-semibold text-[#35483f]">约束路径</h3>
+                        <span id="detail-status" class="border border-[#cfe1d8] bg-[#f2f8f5] px-2 py-1 text-[10px] font-semibold text-[#277053]">正常</span>
+                    </div>
+                    <div id="constraint-path" class="space-y-2"></div>
+                </section>
+
+                <section class="mt-7">
+                    <div class="mb-3 flex items-center justify-between">
+                        <h3 class="text-xs font-semibold text-[#35483f]">当前占用任务</h3>
+                        <span id="detail-task-count" class="font-mono text-[10px] font-semibold text-[#86948d]">5 / 12</span>
+                    </div>
+                    <div id="detail-tasks" class="divide-y divide-[#e5ebe7] border-y border-[#e1e8e4]"></div>
+                </section>
+
+                <section class="mt-7 border-l-2 border-[#d6e2dc] pl-4">
+                    <h3 class="text-xs font-semibold text-[#35483f]">运行说明</h3>
+                    <p id="detail-note" class="mt-2 text-xs leading-6 text-[#718078]">该通道限制当前进程内所有普通文本模型 HTTP 请求。</p>
+                </section>
+            </div>
+        </div>
+    </aside>
+
+    <script>
+        const POOL_DEFINITIONS = [
+            { id: 'global_llm', label: '文本 LLM', short: 'LLM', group: '模型通道', limit: 16, active: 12, queued: 3, targetActive: 12, targetQueue: 3, note: '限制当前进程内所有普通文本模型 HTTP 请求，表名校验、字段抽取和逻辑分析共享该额度。', constraints: [] },
+            { id: 'global_embedding', label: 'Embedding', short: 'EMB', group: '模型通道', limit: 4, active: 1, queued: 0, targetActive: 2, targetQueue: 0, note: '限制向量化阶段和 vector_db 查询共同使用的 Embedding HTTP 请求。batch_size 不属于并发。', constraints: [] },
+            { id: 'global_vl', label: 'VL 视觉', short: 'VL', group: '模型通道', limit: 8, active: 8, queued: 4, targetActive: 8, targetQueue: 4, note: '限制所有 VL HTTP 请求。vl_locate 的局部并发最终会受到该池约束。', constraints: [] },
+            { id: 'global_table_validation', label: '表名校验', short: 'TABLE', group: '业务阶段', limit: 10, active: 5, queued: 0, targetActive: 6, targetQueue: 1, note: '限制跨文件并行执行的表格名称校验任务，每个任务还会占用文本 LLM 通道。', constraints: ['global_llm'] },
+            { id: 'global_extraction', label: '字段抽取', short: 'EXTRACT', group: '业务阶段', limit: 8, active: 6, queued: 2, targetActive: 7, targetQueue: 2, note: '限制跨文件同时运行的字段抽取任务。单个 VL Locate 字段可能在池内产生多个 VL 请求。', constraints: ['global_llm', 'global_embedding', 'global_vl'] },
+            { id: 'global_analysis', label: '逻辑分析', short: 'ANALYZE', group: '业务阶段', limit: 8, active: 7, queued: 1, targetActive: 7, targetQueue: 2, note: '由文件管线分析和独立分析接口共享；Judge 与 Custom 规则还会占用文本 LLM 通道。', constraints: ['global_llm'] },
+            { id: 'task_table_validation', label: '单文件表名', short: 'T-TABLE', group: '单任务限制', limit: 4, active: 3, queued: 1, targetActive: 3, targetQueue: 1, note: '单个文件内部的表名校验并发，同时受全局表名校验与文本 LLM 池制约。', constraints: ['global_table_validation', 'global_llm'] },
+            { id: 'task_extraction', label: '单文件抽取', short: 'T-EXTRACT', group: '单任务限制', limit: 4, active: 1, queued: 2, targetActive: 1, targetQueue: 2, observedLimit: 1, note: '配置上限为 4，但当前字段循环串行执行，单文件观测并发保持为 1。', constraints: ['global_extraction'] },
+            { id: 'task_analysis', label: '单请求分析', short: 'T-ANALYZE', group: '单任务限制', limit: 4, active: 4, queued: 3, targetActive: 4, targetQueue: 3, note: '限制单次独立分析请求中并发运行的 item 数，item 内规则按顺序执行。', constraints: ['global_analysis', 'global_llm'] },
+            { id: 'global_pipeline', label: '文件管线', short: 'PIPELINE', group: '管线调度', limit: 4, active: 0, queued: 0, targetActive: 0, targetQueue: 0, disconnected: true, note: '该配置目前仅为预留值，尚未接入上传、同步、流式或重试入口的调度逻辑。', constraints: [] }
+        ];
+
+        const GROUP_META = {
+            '模型通道': { kicker: 'MODEL CHANNELS', icon: 'cpu' },
+            '业务阶段': { kicker: 'STAGE LIMITERS', icon: 'workflow' },
+            '单任务限制': { kicker: 'TASK SCOPES', icon: 'scan-line' },
+            '管线调度': { kicker: 'ORCHESTRATION', icon: 'git-branch' }
+        };
+
+        const FILE_NAMES = [
+            '项目可研报告.pdf', '采购合同_终版.pdf', '尽调材料汇编.pdf', '年度审计报告.pdf',
+            '投资协议补充稿.pdf', '招股说明书.pdf', '资产评估报告.pdf', '董事会决议.pdf'
+        ];
+
+        const runtimeState = {
+            pools: POOL_DEFINITIONS.map(pool => ({ ...pool, completed: Math.floor(20 + Math.random() * 140) })),
+            live: true,
+            tick: 0,
+            selectedPoolId: null,
+            history: Array.from({ length: 60 }, (_, index) => 58 + Math.round(Math.sin(index / 6) * 8 + Math.random() * 7)),
+            pressureHistory: Object.fromEntries(POOL_DEFINITIONS.map((pool, poolIndex) => [
+                pool.id,
+                Array.from({ length: 60 }, (_, index) => {
+                    if (pool.disconnected) return 0;
+                    const base = Math.round((pool.active / pool.limit) * 100);
+                    const wave = Math.sin(index / 5 + poolIndex * 0.8) * (4 + poolIndex % 3);
+                    return Math.max(0, Math.min(100, Math.round(base + wave + (Math.random() - 0.5) * 5)));
+                })
+            ])),
+            events: [
+                { type: 'queue', pool: 'VL 视觉', text: '4 个请求等待可用槽位', ago: '刚刚' },
+                { type: 'complete', pool: '逻辑分析', text: '董事会决议.pdf 完成规则判断', ago: '4s' },
+                { type: 'pressure', pool: '单请求分析', text: '利用率达到 100%', ago: '9s' },
+                { type: 'complete', pool: 'Embedding', text: '批次 18 / 18 已写入 Milvus', ago: '14s' },
+                { type: 'queue', pool: '字段抽取', text: '2 个字段等待调度', ago: '21s' }
+            ]
+        };
+
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        let liveTimer = null;
+
+        function clampPool(pool) {
+            if (pool.disconnected) {
+                pool.active = 0;
+                pool.queued = 0;
+                return;
+            }
+            const observedLimit = pool.observedLimit || pool.limit;
+            pool.active = Math.max(0, Math.min(observedLimit, Math.round(pool.active)));
+            pool.queued = Math.max(0, Math.round(pool.queued));
+        }
+
+        function poolState(pool) {
+            if (pool.disconnected) return { key: 'offline', label: '未接入', color: '#9aa7a0', text: '#718078' };
+            const ratio = pool.active / pool.limit;
+            if (pool.active >= (pool.observedLimit || pool.limit) && pool.queued > 0) {
+                return { key: 'saturated', label: '饱和排队', color: '#df5a5a', text: '#b94444' };
+            }
+            if (ratio >= 0.75 || pool.queued >= 2) return { key: 'pressure', label: '高负载', color: '#d89122', text: '#a86610' };
+            if (pool.active === 0) return { key: 'idle', label: '空闲', color: '#8DAA91', text: '#668075' };
+            return { key: 'normal', label: '运行正常', color: '#4F775D', text: '#2C4C3B' };
+        }
+
+        let poolChart = null;
+        let pressureChart = null;
+        const poolPressureCharts = new Map();
+
+        function buildCharts() {
+            poolChart = echarts.init(document.getElementById('pool-chart'), null, { renderer: 'canvas' });
+            pressureChart = echarts.init(document.getElementById('pressure-chart'), null, { renderer: 'canvas' });
+            document.getElementById('pool-pressure-grid').innerHTML = runtimeState.pools.map(pool => `
+                <div class="min-w-0 bg-white/90 px-3 pb-2.5 pt-3">
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="truncate text-[10px] font-semibold text-[#53665c]">${pool.label}</span>
+                        <span id="pool-pressure-value-${pool.id}" class="shrink-0 font-mono text-[10px] font-semibold tabular-nums text-[#4F775D]">--</span>
+                    </div>
+                    <div id="pool-pressure-${pool.id}" class="mt-1" style="height:74px;width:100%" role="img" aria-label="${pool.label}压力趋势"></div>
+                </div>
+            `).join('');
+            runtimeState.pools.forEach(pool => {
+                const element = document.getElementById(`pool-pressure-${pool.id}`);
+                poolPressureCharts.set(pool.id, echarts.init(element, null, { renderer: 'canvas' }));
+            });
+            poolChart.on('click', params => {
+                if (params.data && params.data.poolId) openDetail(params.data.poolId);
+            });
+            window.addEventListener('resize', () => {
+                poolChart.resize();
+                pressureChart.resize();
+                poolPressureCharts.forEach(chart => chart.resize());
+            });
+        }
+
+        function renderPools() {
+            if (!poolChart) return;
+            const categories = runtimeState.pools.map(pool => `${pool.short}\n${pool.label}`);
+            const active = runtimeState.pools.map(pool => {
+                const state = poolState(pool);
+                return {
+                    value: pool.active,
+                    poolId: pool.id,
+                    itemStyle: { color: state.color, opacity: pool.disconnected ? 0.2 : 0.95 },
+                    label: { color: state.text }
+                };
+            });
+            const queued = runtimeState.pools.map(pool => ({
+                value: pool.queued,
+                poolId: pool.id,
+                itemStyle: { color: '#aab3ae', opacity: pool.disconnected ? 0.12 : 0.78 }
+            }));
+            const limits = runtimeState.pools.map((pool, index) => [index, pool.limit, pool.id]);
+            const maxAxis = Math.max(18, ...runtimeState.pools.map(pool => pool.limit + Math.min(pool.queued, 6) + 2));
+            poolChart.setOption({
+                animation: !reduceMotion,
+                animationDuration: 650,
+                animationDurationUpdate: 700,
+                animationEasing: 'cubicOut',
+                grid: { left: 42, right: 34, top: 14, bottom: 76, containLabel: true },
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: { type: 'shadow' },
+                    backgroundColor: 'rgba(44,76,59,.96)',
+                    borderWidth: 0,
+                    textStyle: { color: '#fff', fontFamily: 'Nunito, sans-serif', fontSize: 12 },
+                    formatter: params => {
+                        const index = params[0]?.dataIndex ?? 0;
+                        const pool = runtimeState.pools[index];
+                        const state = poolState(pool);
+                        return `<strong>${pool.label}</strong><br/>运行 ${pool.active} / ${pool.limit}<br/><span style="color:#cbd7d0">排队 ${pool.queued} · ${state.label}</span>`;
+                    }
+                },
+                xAxis: {
+                    type: 'category',
+                    data: categories,
+                    axisTick: { show: false },
+                    axisLine: { lineStyle: { color: '#d6dfda' } },
+                    axisLabel: { color: '#5c7065', fontFamily: 'Nunito, sans-serif', fontSize: 10, lineHeight: 15, interval: 0, margin: 15 }
+                },
+                yAxis: {
+                    type: 'value',
+                    min: 0,
+                    max: maxAxis,
+                    interval: 4,
+                    axisLabel: { color: '#91a098', fontFamily: 'Nunito, sans-serif', fontSize: 10 },
+                    splitLine: { lineStyle: { color: '#edf1ef', type: 'dashed' } },
+                    axisLine: { show: false },
+                    axisTick: { show: false }
+                },
+                series: [
+                    {
+                        name: '运行中', type: 'bar', stack: 'load', barWidth: 42, barMaxWidth: 42, showBackground: true,
+                        backgroundStyle: { color: '#edf2ef' },
+                        data: active,
+                        label: { show: true, position: 'top', distance: 7, fontFamily: 'Nunito, sans-serif', fontSize: 10, fontWeight: 700, formatter: params => `${params.value}/${runtimeState.pools[params.dataIndex].limit}` },
+                        markArea: {
+                            silent: true,
+                            itemStyle: { color: 'rgba(232,239,230,.24)' },
+                            data: [
+                                [{ xAxis: 0 }, { xAxis: 2 }],
+                                [{ xAxis: 3 }, { xAxis: 5 }],
+                                [{ xAxis: 6 }, { xAxis: 8 }],
+                                [{ xAxis: 9 }, { xAxis: 9 }]
+                            ]
+                        }
+                    },
+                    {
+                        name: '排队中', type: 'bar', stack: 'load', barWidth: 42, barMaxWidth: 42, data: queued,
+                        itemStyle: { borderRadius: [6, 6, 0, 0] },
+                        label: { show: true, position: 'top', distance: 2, color: '#758078', fontFamily: 'Nunito, sans-serif', fontSize: 9, fontWeight: 700, formatter: params => params.value ? `+${params.value} WAIT` : '' }
+                    },
+                    {
+                        name: '容量上限', type: 'custom', silent: true, z: 10,
+                        renderItem: (params, api) => {
+                            const coord = api.coord([api.value(0), api.value(1)]);
+                            const x = coord[0];
+                            return { type: 'group', children: [
+                                { type: 'line', shape: { x1: x - 25, y1: coord[1], x2: x + 25, y2: coord[1] }, style: { stroke: '#77877e', lineWidth: 1, lineDash: [3, 3] } },
+                                { type: 'text', style: { x: x + 29, y: coord[1] + 3, text: `L${api.value(1)}`, fill: '#9aa69f', font: '10px Nunito' } }
+                            ] };
+                        },
+                        data: limits
+                    }
+                ]
+            }, true);
+        }
+
+        function renderSummary() {
+            const connected = runtimeState.pools.filter(pool => !pool.disconnected);
+            const active = connected.reduce((sum, pool) => sum + pool.active, 0);
+            const capacity = connected.reduce((sum, pool) => sum + pool.limit, 0);
+            const queued = connected.reduce((sum, pool) => sum + pool.queued, 0);
+            const hot = connected.filter(pool => pool.active / pool.limit >= 0.75 || pool.queued >= 2).length;
+            const wait = Math.max(0.2, 0.35 + queued * 0.12 + Math.sin(runtimeState.tick / 3) * 0.2);
+            document.getElementById('summary-active').textContent = active;
+            document.getElementById('summary-capacity').textContent = `/ ${capacity}`;
+            document.getElementById('summary-queued').textContent = queued;
+            document.getElementById('summary-hot').textContent = hot;
+            document.getElementById('summary-wait').textContent = wait.toFixed(1);
+            document.getElementById('last-updated').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+            return Math.round((active / capacity) * 100);
+        }
+
+        function renderPressure(value) {
+            if (!pressureChart) return;
+            const history = runtimeState.history;
+            const previous = history[history.length - 2] || value;
+            const delta = value - previous;
+            document.getElementById('pressure-value').textContent = `${value}%`;
+            document.getElementById('pressure-delta').textContent = `较上一采样 ${delta >= 0 ? '+' : ''}${delta}%`;
+            document.getElementById('pressure-delta').style.color = delta > 3 ? '#b96e14' : '#75867d';
+            pressureChart.setOption({
+                animation: !reduceMotion,
+                animationDuration: 500,
+                animationDurationUpdate: 650,
+                grid: { left: 2, right: 4, top: 6, bottom: 16 },
+                xAxis: { type: 'category', data: history.map((_, index) => index), show: false },
+                yAxis: { type: 'value', min: 0, max: 100, show: false },
+                series: [{
+                    type: 'line', data: history, smooth: true, showSymbol: false,
+                    lineStyle: { color: '#4F775D', width: 2 },
+                    itemStyle: { color: '#4F775D' },
+                    areaStyle: { color: 'rgba(79,119,93,.12)' }
+                }]
+            }, false);
+        }
+
+        function pressureAxisRange(history) {
+            const minimum = Math.min(...history);
+            const maximum = Math.max(...history);
+            const center = (minimum + maximum) / 2;
+            const span = Math.max(16, maximum - minimum + 8);
+            let min = Math.max(0, Math.floor(center - span / 2));
+            let max = Math.min(100, Math.ceil(center + span / 2));
+            if (max - min < 16) {
+                if (min === 0) max = Math.min(100, min + 16);
+                else min = Math.max(0, max - 16);
+            }
+            return { min, max };
+        }
+
+        function renderPoolPressureCharts() {
+            runtimeState.pools.forEach(pool => {
+                const chart = poolPressureCharts.get(pool.id);
+                const history = runtimeState.pressureHistory[pool.id];
+                if (!chart || !history) return;
+                const state = poolState(pool);
+                const axisRange = pressureAxisRange(history);
+                const value = pool.disconnected ? 0 : Math.round((pool.active / pool.limit) * 100);
+                const valueLabel = document.getElementById(`pool-pressure-value-${pool.id}`);
+                valueLabel.textContent = pool.disconnected ? '未接入' : `${value}%`;
+                valueLabel.style.color = state.text;
+                chart.setOption({
+                    animation: !reduceMotion,
+                    animationDurationUpdate: 650,
+                    grid: { left: 0, right: 2, top: 5, bottom: 4 },
+                    tooltip: {
+                        trigger: 'axis',
+                        appendToBody: true,
+                        confine: true,
+                        backgroundColor: 'rgba(44,76,59,.94)',
+                        borderWidth: 0,
+                        padding: [5, 7],
+                        textStyle: { color: '#fff', fontFamily: 'Nunito, sans-serif', fontSize: 10 },
+                        formatter: params => `${pool.label} · ${params[0].value}%`
+                    },
+                    xAxis: { type: 'category', data: history.map((_, index) => index), show: false, boundaryGap: false },
+                    yAxis: {
+                        type: 'value',
+                        min: axisRange.min,
+                        max: axisRange.max,
+                        splitNumber: 2,
+                        axisLabel: { show: false },
+                        axisTick: { show: false },
+                        axisLine: { show: false },
+                        splitLine: { show: true, lineStyle: { color: '#e8eeeb', width: 1, type: 'dashed' } }
+                    },
+                    series: [
+                        {
+                            name: '压力趋势',
+                            type: 'line',
+                            data: history,
+                            smooth: 0.28,
+                            showSymbol: false,
+                            silent: pool.disconnected,
+                            lineStyle: { color: state.color, width: 2.25, type: pool.disconnected ? 'dashed' : 'solid', opacity: pool.disconnected ? 0.65 : 1 },
+                            areaStyle: { color: state.color, opacity: pool.disconnected ? 0.025 : 0.12 }
+                        },
+                        {
+                            name: '当前采样',
+                            type: 'scatter',
+                            data: pool.disconnected ? [] : [[history.length - 1, history[history.length - 1]]],
+                            symbol: 'circle',
+                            symbolSize: 6,
+                            silent: true,
+                            itemStyle: { color: '#ffffff', borderColor: state.color, borderWidth: 2 }
+                        }
+                    ]
+                }, true);
+            });
+        }
+
+        function eventIcon(type) {
+            if (type === 'complete') return { icon: 'check', color: '#4F775D', bg: '#E8EFE6' };
+            if (type === 'pressure') return { icon: 'triangle-alert', color: '#c47b18', bg: '#fff7e9' };
+            return { icon: 'clock-3', color: '#727f78', bg: '#f2f4f3' };
+        }
+
+        function renderEvents() {
+            const host = document.getElementById('event-stream');
+            host.innerHTML = runtimeState.events.slice(0, 5).map(event => {
+                const visual = eventIcon(event.type);
+                return `
+                    <div class="flex h-[20px] items-center gap-2 text-[10px]">
+                        <span class="grid h-5 w-5 shrink-0 place-items-center" style="background:${visual.bg}; color:${visual.color}">
+                            <i data-lucide="${visual.icon}" class="h-3 w-3" stroke-width="1.5"></i>
+                        </span>
+                        <strong class="w-[72px] shrink-0 truncate font-semibold text-[#405249]">${event.pool}</strong>
+                        <span class="min-w-0 flex-1 truncate text-[#6f7e76]">${event.text}</span>
+                        <time class="w-8 shrink-0 text-right font-mono text-[9px] text-[#9aa5a0]">${event.ago}</time>
+                    </div>
+                `;
+            }).join('');
+            document.getElementById('event-count').textContent = `${String(Math.min(runtimeState.events.length, 99)).padStart(2, '0')} EVENTS`;
+            lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+        }
+
+        function addEvent(type, pool, text) {
+            runtimeState.events.unshift({ type, pool: pool.label, text, ago: 'NOW' });
+            runtimeState.events = runtimeState.events.slice(0, 12).map((event, index) => ({
+                ...event,
+                ago: index === 0 ? 'NOW' : event.ago === 'NOW' ? `${index * 3}s` : event.ago
+            }));
+        }
+
+        function drift(current, target, max, volatility = 1) {
+            const pull = current < target ? 0.56 : current > target ? -0.56 : 0;
+            const jitter = (Math.random() - 0.5) * 2 * volatility;
+            return Math.max(0, Math.min(max, Math.round(current + pull + jitter)));
+        }
+
+        function simulateTick(force = false) {
+            runtimeState.tick += 1;
+            runtimeState.pools.forEach(pool => {
+                if (pool.disconnected) return;
+                const previousActive = pool.active;
+                const previousQueued = pool.queued;
+                const observedLimit = pool.observedLimit || pool.limit;
+                pool.active = drift(pool.active, pool.targetActive, observedLimit, force ? 1.7 : 1);
+                pool.queued = drift(pool.queued, pool.targetQueue, 10, force ? 1.5 : 0.85);
+
+                if (Math.random() > 0.82 && pool.queued > 0 && pool.active < observedLimit) {
+                    pool.active += 1;
+                    pool.queued -= 1;
+                }
+                if (Math.random() > 0.86 && pool.active > 0) {
+                    pool.completed += 1;
+                    pool.active -= 1;
+                    addEvent('complete', pool, `${FILE_NAMES[Math.floor(Math.random() * FILE_NAMES.length)]} 释放 1 个槽位`);
+                } else if (pool.queued > previousQueued) {
+                    addEvent('queue', pool, `${pool.queued} 个任务等待可用槽位`);
+                } else if (pool.active === observedLimit && pool.queued > 0 && previousActive < observedLimit) {
+                    addEvent('pressure', pool, '容量已满，新的请求进入等待轨道');
+                }
+                clampPool(pool);
+            });
+            render();
+        }
+
+        function render() {
+            renderPools();
+            const pressure = renderSummary();
+            runtimeState.history.push(Math.max(15, Math.min(98, pressure + Math.round((Math.random() - 0.5) * 7))));
+            runtimeState.history.shift();
+            runtimeState.pools.forEach(pool => {
+                const history = runtimeState.pressureHistory[pool.id];
+                const value = pool.disconnected
+                    ? 0
+                    : Math.max(0, Math.min(100, Math.round((pool.active / pool.limit) * 100 + (Math.random() - 0.5) * 4)));
+                history.push(value);
+                history.shift();
+            });
+            renderPressure(pressure);
+            renderPoolPressureCharts();
+            renderEvents();
+            if (runtimeState.selectedPoolId) updateDetail(runtimeState.selectedPoolId);
+        }
+
+        function constraintRow(pool, isCurrent = false) {
+            const state = poolState(pool);
+            const ratio = pool.disconnected ? 0 : Math.round((pool.active / pool.limit) * 100);
+            return `
+                <div class="flex items-center gap-3 border border-[#e0e7e3] px-3 py-2.5 ${isCurrent ? 'bg-[#f5f9f7]' : 'bg-white'}">
+                    <div class="h-8 w-1.5" style="background:${state.color}"></div>
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="truncate text-[11px] font-semibold text-[#35483f]">${pool.label}</span>
+                            <span class="font-mono text-[10px] font-semibold text-[#67766f]">${pool.active}/${pool.limit}</span>
+                        </div>
+                        <div class="mt-1 h-1 bg-[#e8eeeb]"><div class="h-full transition-all duration-500" style="width:${ratio}%; background:${state.color}"></div></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function updateDetail(poolId) {
+            const pool = runtimeState.pools.find(item => item.id === poolId);
+            if (!pool) return;
+            const state = poolState(pool);
+            document.getElementById('detail-group').textContent = pool.group;
+            document.getElementById('detail-title').textContent = pool.label;
+            document.getElementById('detail-id').textContent = pool.id;
+            document.getElementById('detail-active').textContent = pool.active;
+            document.getElementById('detail-limit').textContent = pool.limit;
+            document.getElementById('detail-queued').textContent = pool.queued;
+            document.getElementById('detail-note').textContent = pool.note;
+            const status = document.getElementById('detail-status');
+            status.textContent = state.label;
+            status.style.color = state.text;
+            status.style.borderColor = `${state.color}55`;
+            status.style.background = `${state.color}12`;
+
+            const constraints = [pool, ...pool.constraints.map(id => runtimeState.pools.find(item => item.id === id)).filter(Boolean)];
+            document.getElementById('constraint-path').innerHTML = constraints.map((item, index) => {
+                const arrow = index === 0 ? '' : '<div class="ml-4 h-3 border-l border-dashed border-[#aebbb4]"></div>';
+                return `${arrow}${constraintRow(item, index === 0)}`;
+            }).join('');
+
+            const visibleTasks = Math.min(pool.active, 5);
+            document.getElementById('detail-task-count').textContent = `${visibleTasks} / ${pool.active}`;
+            document.getElementById('detail-tasks').innerHTML = visibleTasks > 0
+                ? Array.from({ length: visibleTasks }, (_, index) => `
+                    <div class="flex items-center gap-3 py-3">
+                        <span class="grid h-7 w-7 shrink-0 place-items-center bg-[#eef5f1] text-[#41705b]"><i data-lucide="file-text" class="h-3.5 w-3.5" stroke-width="1.5"></i></span>
+                        <div class="min-w-0 flex-1"><p class="truncate text-[11px] font-semibold text-[#405249]">${FILE_NAMES[(index + runtimeState.tick) % FILE_NAMES.length]}</p><p class="mt-0.5 text-[9px] text-[#8a9790]">已占用 ${12 + index * 7 + runtimeState.tick % 8}s</p></div>
+                        <span class="h-1.5 w-1.5 bg-[#4F775D]"></span>
+                    </div>
+                `).join('')
+                : '<div class="py-6 text-center text-xs text-[#8a9790]">当前没有运行任务</div>';
+            lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+        }
+
+        function openDetail(poolId) {
+            runtimeState.selectedPoolId = poolId;
+            updateDetail(poolId);
+            const drawer = document.getElementById('detail-drawer');
+            const backdrop = document.getElementById('drawer-backdrop');
+            drawer.classList.remove('translate-x-full');
+            drawer.setAttribute('aria-hidden', 'false');
+            backdrop.classList.remove('pointer-events-none', 'opacity-0');
+            backdrop.classList.add('opacity-100');
+            setTimeout(() => document.getElementById('close-drawer').focus(), reduceMotion ? 0 : 250);
+        }
+
+        function closeDetail() {
+            runtimeState.selectedPoolId = null;
+            const drawer = document.getElementById('detail-drawer');
+            const backdrop = document.getElementById('drawer-backdrop');
+            drawer.classList.add('translate-x-full');
+            drawer.setAttribute('aria-hidden', 'true');
+            backdrop.classList.add('pointer-events-none', 'opacity-0');
+            backdrop.classList.remove('opacity-100');
+        }
+
+        function updateLiveControl() {
+            const button = document.getElementById('toggle-live');
+            button.innerHTML = runtimeState.live
+                ? '<i data-lucide="pause" class="h-4 w-4" stroke-width="1.5"></i><span>暂停</span>'
+                : '<i data-lucide="play" class="h-4 w-4" stroke-width="1.5"></i><span>继续</span>';
+            button.title = runtimeState.live ? '暂停模拟数据' : '继续模拟数据';
+            document.getElementById('connection-label').textContent = runtimeState.live ? '模拟流已连接' : '模拟流已暂停';
+            document.getElementById('connection-dot').style.background = runtimeState.live ? '#278b69' : '#9ba5a0';
+            document.getElementById('connection-ping').classList.toggle('animate-ping', runtimeState.live && !reduceMotion);
+            lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+        }
+
+        function startTimer() {
+            clearInterval(liveTimer);
+            liveTimer = setInterval(() => {
+                if (runtimeState.live) simulateTick();
+            }, 1400);
+        }
+
+        document.getElementById('toggle-live').addEventListener('click', () => {
+            runtimeState.live = !runtimeState.live;
+            updateLiveControl();
+        });
+        document.getElementById('refresh-now').addEventListener('click', event => {
+            const icon = event.currentTarget.querySelector('svg');
+            if (icon && !reduceMotion) {
+                icon.style.transform = 'rotate(180deg)';
+                icon.style.transition = 'transform 420ms ease';
+                setTimeout(() => { icon.style.transform = ''; }, 450);
+            }
+            simulateTick(true);
+        });
+        document.getElementById('close-drawer').addEventListener('click', closeDetail);
+        document.getElementById('drawer-backdrop').addEventListener('click', closeDetail);
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && runtimeState.selectedPoolId) closeDetail();
+        });
+
+        buildCharts();
+        lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+        render();
+        updateLiveControl();
+        startTimer();
+    </script>
+</body>
+</html>
