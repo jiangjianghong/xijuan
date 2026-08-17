@@ -71,6 +71,12 @@ const API = {
         return result.data;
     },
 
+    /** 获取当前 worker 的并发运行时只读快照。 */
+    async getRuntimeConcurrency() {
+        const result = await this.request('/runtime/concurrency');
+        return result.data;
+    },
+
     async updateRuntimeSettings(payload) {
         const result = await this.request('/settings/config', {
             method: 'PATCH',

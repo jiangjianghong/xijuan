@@ -1262,6 +1262,14 @@ const App = {
             }
         }
 
+        if (typeof RuntimeMonitor !== 'undefined') {
+            if (page === 'runtime-monitor') {
+                RuntimeMonitor.activate();
+            } else {
+                RuntimeMonitor.deactivate();
+            }
+        }
+
         if (page === 'api-docs' && typeof ApiDocs !== 'undefined') {
             ApiDocs.activate();
         }

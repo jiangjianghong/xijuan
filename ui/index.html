@@ -64,7 +64,9 @@
 
     <!-- Header -->
     <header class="header glass-card relative z-10">
-        <i data-lucide="leaf" class="w-6 h-6 text-bio-med mr-2 flex-shrink-0"></i>
+        <button class="runtime-monitor-entry" type="button" title="打开并发运行台" aria-label="打开并发运行台" onclick="App.switchPage('runtime-monitor')">
+            <i data-lucide="leaf" class="w-6 h-6 text-bio-med"></i>
+        </button>
         <h1 id="app-title" class="app-title font-serif text-bio-dark" role="button" tabindex="0"
             title="查看数据统计" onclick="App.switchPage('statistics')">析卷 AI</h1>
         <nav class="header-nav">
@@ -570,6 +572,63 @@
             </section>
         </div>
     </div><!-- /page-runtime-logs -->
+
+    <!-- Page: Runtime Monitor -->
+    <div id="page-runtime-monitor" class="page-container relative z-10">
+        <main class="runtime-monitor-page">
+            <section class="runtime-monitor-toolbar glass-card">
+                <div>
+                    <h2 class="panel-title"><i data-lucide="activity" class="w-5 h-5"></i>并发运行台</h2>
+                    <p class="runtime-monitor-subtitle">当前 worker 的只读运行状态</p>
+                </div>
+                <div class="runtime-monitor-toolbar-meta">
+                    <span class="runtime-scope-badge"><i data-lucide="server" class="w-3.5 h-3.5"></i>单进程</span>
+                    <span id="runtime-monitor-updated">等待连接</span>
+                    <button id="runtime-monitor-refresh" class="runtime-log-btn icon-only" type="button" title="立即刷新" aria-label="立即刷新" onclick="RuntimeMonitor.refresh()"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
+                </div>
+            </section>
+
+            <section class="runtime-summary-grid" aria-label="并发摘要">
+                <div class="runtime-summary-item glass-card"><span>活动任务 / 容量</span><strong id="runtime-summary-active">—</strong><small>六个全局池</small></div>
+                <div class="runtime-summary-item glass-card"><span>排队任务</span><strong id="runtime-summary-queued">—</strong><small>等待获取并发槽位</small></div>
+                <div class="runtime-summary-item glass-card"><span>高压力池</span><strong id="runtime-summary-hot">—</strong><small>压力或已饱和</small></div>
+                <div class="runtime-summary-item glass-card"><span>等待 P95</span><strong id="runtime-summary-wait">—</strong><small>最近采样</small></div>
+            </section>
+
+            <section class="runtime-monitor-grid">
+                <div class="runtime-monitor-column">
+                    <section class="runtime-monitor-section glass-card">
+                        <div class="runtime-section-heading"><h3>全局并发池</h3><span>容量占用</span></div>
+                        <div id="runtime-global-pools" class="runtime-pool-list"><div class="runtime-monitor-empty">等待快照...</div></div>
+                    </section>
+                    <section class="runtime-monitor-section glass-card">
+                        <div class="runtime-section-heading"><h3>局部任务池</h3><span>按最忙实例显示</span></div>
+                        <div id="runtime-task-pools" class="runtime-task-list"><div class="runtime-monitor-empty">等待快照...</div></div>
+                    </section>
+                </div>
+                <div class="runtime-monitor-column">
+                    <section class="runtime-monitor-section glass-card">
+                        <div class="runtime-section-heading"><h3>容量矩阵</h3><span>全局池</span></div>
+                        <div id="runtime-capacity-chart" class="runtime-chart runtime-chart-capacity"></div>
+                    </section>
+                    <section class="runtime-monitor-section glass-card">
+                        <div class="runtime-section-heading"><h3>压力趋势</h3><span>最近 60 次采样</span></div>
+                        <div id="runtime-pressure-chart" class="runtime-chart"></div>
+                    </section>
+                </div>
+            </section>
+
+            <section class="runtime-monitor-section glass-card runtime-events-section">
+                <div class="runtime-section-heading"><h3>最近事件</h3><span>最多保留 20 条</span></div>
+                <div id="runtime-events" class="runtime-events"><div class="runtime-monitor-empty">等待快照...</div></div>
+            </section>
+        </main>
+    </div><!-- /page-runtime-monitor -->
+
+    <aside id="runtime-pool-drawer" class="runtime-pool-drawer" aria-hidden="true" aria-labelledby="runtime-pool-drawer-title">
+        <div class="runtime-pool-drawer-head"><h3 id="runtime-pool-drawer-title">并发池详情</h3><button type="button" class="runtime-log-btn icon-only" title="关闭详情" aria-label="关闭详情" onclick="RuntimeMonitor.closePool()"><i data-lucide="x" class="w-4 h-4"></i></button></div>
+        <div id="runtime-pool-drawer-body" class="runtime-pool-drawer-body"></div>
+    </aside>
 
     <!-- Page: API Docs -->
     <div id="page-api-docs" class="page-container relative z-10">
@@ -1084,6 +1143,7 @@
     <script src="js/log-viewer.js"></script>
     <script src="js/api-docs.js"></script>
     <script src="js/statistics.js"></script>
+    <script src="js/runtime-monitor.js"></script>
     <!-- Initialize Lucide icons -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
