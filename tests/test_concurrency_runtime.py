@@ -4,7 +4,12 @@ import asyncio
 
 import pytest
 
-from utils.concurrency import clear_limiters, get_limiter, runtime_snapshot
+from utils.concurrency import (
+    clear_limiters,
+    get_limiter,
+    replace_limiters,
+    runtime_snapshot,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -60,3 +65,17 @@ async def test_limiter_reports_waiting_acquire_and_wait_p95():
     assert snapshot["queued"] == 0
     assert snapshot["completed"] == 2
     assert snapshot["wait_p95_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_replace_limiters_preserves_existing_holder():
+    limiter = get_limiter("global_llm", 2)
+    await limiter.acquire()
+
+    replace_limiters({"global_llm": 4})
+
+    assert get_limiter("global_llm", 4) is limiter
+    assert runtime_snapshot()["pools"]["global_llm"]["active"] == 1
+    assert limiter.limit == 4
+    limiter.release()
+    assert runtime_snapshot()["pools"]["global_llm"]["active"] == 0
