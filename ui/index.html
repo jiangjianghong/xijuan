@@ -573,61 +573,62 @@
         </div>
     </div><!-- /page-runtime-logs -->
 
-    <!-- Page: Runtime Monitor -->
+    <!-- Page: Runtime Monitor (visual structure follows design-mockups/concurrency-pools.html) -->
     <div id="page-runtime-monitor" class="page-container relative z-10">
-        <main class="runtime-monitor-page">
-            <section class="runtime-monitor-toolbar glass-card">
-                <div>
-                    <h2 class="panel-title"><i data-lucide="activity" class="w-5 h-5"></i>并发运行台</h2>
-                    <p class="runtime-monitor-subtitle">当前 worker 的只读运行状态</p>
+        <div class="runtime-design-page">
+            <header class="runtime-design-header">
+                <div class="runtime-design-brand">
+                    <button id="runtime-brand-entry" class="runtime-design-mark" type="button" title="返回文件处理" aria-label="返回文件处理" onclick="App.switchPage('file-processing')">
+                        <i data-lucide="leaf" class="runtime-design-mark-icon"></i>
+                    </button>
+                    <div class="runtime-design-brand-copy">
+                        <div class="runtime-design-brand-line"><h1>析卷 AI</h1><span>RUNTIME OBSERVATORY</span></div>
+                        <p>并发池实时运行台</p>
+                    </div>
                 </div>
-                <div class="runtime-monitor-toolbar-meta">
-                    <span class="runtime-scope-badge"><i data-lucide="server" class="w-3.5 h-3.5"></i>单进程</span>
-                    <span id="runtime-monitor-updated">等待连接</span>
-                    <button id="runtime-monitor-refresh" class="runtime-log-btn icon-only" type="button" title="立即刷新" aria-label="立即刷新" onclick="RuntimeMonitor.refresh()"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
+                <div class="runtime-design-actions">
+                    <div id="runtime-connection-pill" class="runtime-connection-pill is-online" role="status"><span class="runtime-connection-dot"><span></span></span><span id="runtime-connection-label">实时监控已连接</span></div>
+                    <button id="runtime-monitor-refresh" class="runtime-design-icon-button" type="button" title="立即刷新快照" aria-label="立即刷新快照" onclick="RuntimeMonitor.refresh()"><i data-lucide="refresh-cw"></i></button>
                 </div>
-            </section>
+            </header>
 
-            <section class="runtime-summary-grid" aria-label="并发摘要">
-                <div class="runtime-summary-item glass-card"><span>活动任务 / 容量</span><strong id="runtime-summary-active">—</strong><small>六个全局池</small></div>
-                <div class="runtime-summary-item glass-card"><span>排队任务</span><strong id="runtime-summary-queued">—</strong><small>等待获取并发槽位</small></div>
-                <div class="runtime-summary-item glass-card"><span>高压力池</span><strong id="runtime-summary-hot">—</strong><small>压力或已饱和</small></div>
-                <div class="runtime-summary-item glass-card"><span>等待 P95</span><strong id="runtime-summary-wait">—</strong><small>最近采样</small></div>
-            </section>
+            <main class="runtime-design-main">
+                <section class="runtime-design-summary" aria-label="运行摘要">
+                    <div class="runtime-summary-stat"><p>实时槽位</p><div><strong id="runtime-summary-active">—</strong><span id="runtime-summary-capacity">/ —</span></div></div>
+                    <div class="runtime-summary-stat"><p>排队任务</p><div><strong id="runtime-summary-queued">—</strong><span>等待调度</span></div></div>
+                    <div class="runtime-summary-stat"><p>高压池</p><div><strong id="runtime-summary-hot">—</strong><span>利用率 ≥ 75%</span></div></div>
+                    <div class="runtime-summary-stat"><p>P95 等待</p><div><strong id="runtime-summary-wait">—</strong><span>秒</span></div></div>
+                    <div class="runtime-summary-updated"><p>最近更新</p><strong id="runtime-monitor-updated">--:--:--</strong></div>
+                </section>
 
-            <section class="runtime-monitor-grid">
-                <div class="runtime-monitor-column">
-                    <section class="runtime-monitor-section glass-card">
-                        <div class="runtime-section-heading"><h3>全局并发池</h3><span>容量占用</span></div>
-                        <div id="runtime-global-pools" class="runtime-pool-list"><div class="runtime-monitor-empty">等待快照...</div></div>
-                    </section>
-                    <section class="runtime-monitor-section glass-card">
-                        <div class="runtime-section-heading"><h3>局部任务池</h3><span>按最忙实例显示</span></div>
-                        <div id="runtime-task-pools" class="runtime-task-list"><div class="runtime-monitor-empty">等待快照...</div></div>
-                    </section>
-                </div>
-                <div class="runtime-monitor-column">
-                    <section class="runtime-monitor-section glass-card">
-                        <div class="runtime-section-heading"><h3>容量矩阵</h3><span>全局池</span></div>
-                        <div id="runtime-capacity-chart" class="runtime-chart runtime-chart-capacity"></div>
-                    </section>
-                    <section class="runtime-monitor-section glass-card">
-                        <div class="runtime-section-heading"><h3>压力趋势</h3><span>最近 60 次采样</span></div>
-                        <div id="runtime-pressure-chart" class="runtime-chart"></div>
-                    </section>
-                </div>
-            </section>
+                <section class="runtime-design-matrix-section" aria-labelledby="runtime-pool-canvas-title">
+                    <div class="runtime-design-section-head">
+                        <div><div class="runtime-design-title-line"><h2 id="runtime-pool-canvas-title">容量矩阵</h2><span>PROCESS · SINGLE WORKER</span></div><p>竖塔表示运行槽位，右侧灰色短条表示等待队列</p></div>
+                        <div class="runtime-design-legend" aria-label="图例"><span><i class="legend-running"></i>运行中</span><span><i class="legend-pressure"></i>高负载</span><span><i class="legend-saturated"></i>已饱和</span><span><i class="legend-queued"></i>排队中</span></div>
+                    </div>
+                    <div class="runtime-design-matrix-shell" tabindex="0" aria-label="并发池容量图，可横向滚动">
+                        <div class="runtime-design-matrix-head">
+                            <div><i data-lucide="cpu"></i><span>模型通道</span><em>MODEL</em></div><div><i data-lucide="workflow"></i><span>业务阶段</span><em>STAGE</em></div><div><i data-lucide="scan-line"></i><span>单任务限制</span><em>TASK</em></div><div><i data-lucide="git-branch"></i><span>管线</span></div>
+                        </div>
+                        <div id="runtime-pool-chart" class="runtime-design-pool-chart" role="img" aria-label="并发池容量矩阵"></div>
+                        <div id="runtime-pool-accessibility" class="runtime-pool-accessibility" aria-label="并发池详情入口"></div>
+                    </div>
+                </section>
 
-            <section class="runtime-monitor-section glass-card runtime-events-section">
-                <div class="runtime-section-heading"><h3>最近事件</h3><span>最多保留 20 条</span></div>
-                <div id="runtime-events" class="runtime-events"><div class="runtime-monitor-empty">等待快照...</div></div>
-            </section>
-        </main>
+                <section class="runtime-design-lower" aria-label="实时压力与事件">
+                    <div class="runtime-design-pressure-panel"><div class="runtime-design-lower-head"><div><h2>总体压力</h2><p>最近 60 个采样点 · 运行槽位利用率</p></div><div class="runtime-pressure-reading"><strong id="runtime-pressure-value">—</strong><span id="runtime-pressure-delta">等待采样</span></div></div><div id="runtime-pressure-chart" class="runtime-design-pressure-chart" role="img" aria-label="总体压力实时曲线"></div></div>
+                    <div class="runtime-design-events-panel"><div class="runtime-design-lower-head"><div><h2>调度事件</h2><p>完成、入队与容量变化</p></div><span id="runtime-event-count">00 EVENTS</span></div><div id="runtime-event-stream" class="runtime-design-event-stream" aria-live="polite"><div class="runtime-monitor-empty">等待快照...</div></div></div>
+                    <div class="runtime-design-pool-trends"><div class="runtime-design-lower-head"><div><h2>各池压力趋势</h2><p>与总体压力同步采样 · 利用率 0–100%</p></div><span>最近 60 个采样点</span></div><div id="runtime-pool-pressure-grid" class="runtime-design-pool-pressure-grid" aria-label="各并发池压力趋势"></div></div>
+                </section>
+
+                <div class="runtime-design-footer"><span>实时视图 · 数值来自当前 worker 快照</span><span><i data-lucide="shield-check"></i>只读监控，不修改运行配置</span></div>
+            </main>
+        </div>
     </div><!-- /page-runtime-monitor -->
 
-    <aside id="runtime-pool-drawer" class="runtime-pool-drawer" aria-hidden="true" aria-labelledby="runtime-pool-drawer-title">
-        <div class="runtime-pool-drawer-head"><h3 id="runtime-pool-drawer-title">并发池详情</h3><button type="button" class="runtime-log-btn icon-only" title="关闭详情" aria-label="关闭详情" onclick="RuntimeMonitor.closePool()"><i data-lucide="x" class="w-4 h-4"></i></button></div>
-        <div id="runtime-pool-drawer-body" class="runtime-pool-drawer-body"></div>
+    <div id="runtime-drawer-backdrop" class="runtime-drawer-backdrop" aria-hidden="true"></div>
+    <aside id="runtime-detail-drawer" class="runtime-detail-drawer" role="dialog" aria-modal="true" aria-labelledby="runtime-detail-title" aria-hidden="true">
+        <div class="runtime-detail-drawer-inner"><header class="runtime-detail-header"><div><p id="runtime-detail-group">模型通道</p><h2 id="runtime-detail-title">文本 LLM</h2><span id="runtime-detail-id">global_llm</span></div><button id="runtime-detail-close" class="runtime-design-icon-button" type="button" title="关闭详情" aria-label="关闭详情"><i data-lucide="x"></i></button></header><div class="runtime-detail-body" id="runtime-detail-body"></div></div>
     </aside>
 
     <!-- Page: API Docs -->

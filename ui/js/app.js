@@ -33,6 +33,11 @@ const App = {
         this.startPolling();
         if (typeof lucide !== 'undefined') lucide.createIcons();
 
+        const requestedPage = new URLSearchParams(window.location.search).get('page');
+        if (requestedPage && document.getElementById(`page-${requestedPage}`)) {
+            this.switchPage(requestedPage);
+        }
+
         // 初始化导航滑动指示器位置
         const activeBtn = document.querySelector('.nav-btn.active');
         if (activeBtn) {
@@ -1215,6 +1220,14 @@ const App = {
     // ─────────────────────────────────────────────────────────
 
     switchPage(page) {
+        if (window.history && window.history.replaceState) {
+            const url = new URL(window.location.href);
+            if (page === 'runtime-monitor') url.searchParams.set('page', 'runtime-monitor');
+            else if (url.searchParams.get('page') === 'runtime-monitor') url.searchParams.delete('page');
+            window.history.replaceState(null, '', url.pathname + (url.search ? url.search : '') + url.hash);
+        }
+        document.body.classList.toggle('runtime-monitor-mode', page === 'runtime-monitor');
+
         // 切换导航按钮
         let targetBtn = null;
         document.querySelectorAll('.nav-btn').forEach(btn => {
