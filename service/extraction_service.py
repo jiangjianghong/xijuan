@@ -22,7 +22,11 @@ from service.match_prompts import build_section_match_prompt, build_table_match_
 from utils import vl_client
 from utils.callback import notify_callback
 from utils.config import get_config
-from utils.concurrency import get_limiter
+from utils.concurrency import (
+    get_limiter,
+    register_task_limiter,
+    unregister_task_limiter,
+)
 from utils.errors import format_exception
 from utils.llm_client import chat_completion, get_embeddings
 from utils.milvus_client import MilvusClient
@@ -2329,7 +2333,12 @@ async def run_extraction(
     field_source_pages: Dict[str, Optional[List[int]]] = {}
     field_pages_from: Dict[str, str] = {}
     app_cfg = get_config()
-    task_semaphore = asyncio.Semaphore(app_cfg.concurrency.task_extraction)
+    task_semaphore = register_task_limiter(
+        "task_extraction",
+        file_id,
+        app_cfg.concurrency.task_extraction,
+        {"file_id": file_id, "stage": "extracting"},
+    )
     global_semaphore = get_limiter(
         "global_extraction",
         app_cfg.concurrency.global_extraction,
@@ -2463,6 +2472,7 @@ async def run_extraction(
     )
 
     logger.info("字段提取完成: {}", file_id)
+    unregister_task_limiter("task_extraction", file_id)
 
 
 async def run_extraction_stream(file_id: str, session: AsyncSession):
@@ -2516,7 +2526,12 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     field_source_pages: Dict[str, Optional[List[int]]] = {}
     field_pages_from: Dict[str, str] = {}
     app_cfg = get_config()
-    task_semaphore = asyncio.Semaphore(app_cfg.concurrency.task_extraction)
+    task_semaphore = register_task_limiter(
+        "task_extraction",
+        file_id,
+        app_cfg.concurrency.task_extraction,
+        {"file_id": file_id, "stage": "extracting"},
+    )
     global_semaphore = get_limiter(
         "global_extraction",
         app_cfg.concurrency.global_extraction,
@@ -2632,6 +2647,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
             }
 
     logger.info("流式字段提取完成: {}", file_id)
+    unregister_task_limiter("task_extraction", file_id)
 
 
 async def test_field_extraction_stream(

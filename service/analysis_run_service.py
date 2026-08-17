@@ -20,7 +20,11 @@ from service.analysis_service import (
     validate_field_values,
 )
 from utils.config import get_config
-from utils.concurrency import get_limiter
+from utils.concurrency import (
+    get_limiter,
+    register_task_limiter,
+    unregister_task_limiter,
+)
 
 
 @dataclass(frozen=True)
@@ -523,8 +527,12 @@ async def run_analysis_batch(
 
     # item 级并发闸门：限制同时执行的 item 数，避免大批量请求瞬间打爆 LLM。
     # gather 仍按传入顺序返回，Semaphore 只约束并发度不影响结果次序。
-    semaphore = asyncio.Semaphore(
-        max(1, task_analysis_limit)
+    task_instance_id = f"batch-{id(items)}"
+    semaphore = register_task_limiter(
+        "task_analysis",
+        task_instance_id,
+        max(1, task_analysis_limit),
+        {"stage": "analyzing", "task_id": task_instance_id},
     )
 
     async def run_item_guarded(
@@ -538,6 +546,7 @@ async def run_analysis_batch(
         run_item_guarded(index, item)
         for index, item in enumerate(items)
     ))
+    unregister_task_limiter("task_analysis", task_instance_id)
 
     # persist 只在 file 模式有意义（values 模式无 file_id，无法定位结果行）
     if from_file and persist:

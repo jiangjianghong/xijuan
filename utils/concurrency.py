@@ -12,6 +12,7 @@ from typing import Any
 
 
 _limiters: dict[tuple[int, str], "ObservableLimiter"] = {}
+_task_limiters: dict[tuple[int, str, str], "ObservableLimiter"] = {}
 
 
 def _percentile(samples: deque[float], quantile: float) -> float:
@@ -158,6 +159,63 @@ def get_limiter(name: str, limit: int) -> ObservableLimiter:
     return limiter
 
 
+def register_task_limiter(
+    pool_name: str,
+    instance_id: str,
+    limit: int,
+    metadata: dict[str, Any] | None = None,
+) -> ObservableLimiter:
+    """注册当前文件或请求的局部 limiter 实例。"""
+    if limit < 1:
+        raise ValueError(f"并发上限必须大于 0: {pool_name}={limit}")
+    loop_id = id(asyncio.get_running_loop())
+    key = (loop_id, pool_name, str(instance_id))
+    limiter = _task_limiters.get(key)
+    if limiter is None:
+        limiter = ObservableLimiter(f"{pool_name}:{instance_id}", limit)
+        _task_limiters[key] = limiter
+    else:
+        limiter.set_limit(limit)
+    if metadata:
+        limiter.instance_metadata = dict(metadata)
+    return limiter
+
+
+def unregister_task_limiter(pool_name: str, instance_id: str) -> None:
+    """注销已完成的局部 limiter 实例。"""
+    try:
+        loop_id = id(asyncio.get_running_loop())
+    except RuntimeError:
+        return
+    _task_limiters.pop((loop_id, pool_name, str(instance_id)), None)
+
+
+def _task_pool_snapshot(loop_id: int) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[tuple[str, ObservableLimiter]]] = {}
+    for (registered_loop_id, pool_name, instance_id), limiter in _task_limiters.items():
+        if registered_loop_id == loop_id:
+            grouped.setdefault(pool_name, []).append((instance_id, limiter))
+
+    result: dict[str, dict[str, Any]] = {}
+    for pool_name, instances in grouped.items():
+        snapshots = [limiter.snapshot() for _, limiter in instances]
+        result[pool_name] = {
+            "per_instance_limit": max((item["limit"] for item in snapshots), default=0),
+            "instance_count": len(instances),
+            "busiest_active": max((item["active"] for item in snapshots), default=0),
+            "aggregate_active": sum(item["active"] for item in snapshots),
+            "aggregate_queued": sum(item["queued"] for item in snapshots),
+            "instances": [
+                {
+                    "instance_id": instance_id,
+                    **limiter.snapshot(),
+                }
+                for instance_id, limiter in instances
+            ],
+        }
+    return result
+
+
 def runtime_snapshot() -> dict[str, dict[str, Any]]:
     """返回当前事件循环中的全局 limiter 快照。"""
     try:
@@ -169,7 +227,8 @@ def runtime_snapshot() -> dict[str, dict[str, Any]]:
             name: limiter.snapshot()
             for (registered_loop_id, name), limiter in _limiters.items()
             if registered_loop_id == loop_id
-        }
+        },
+        "task_pools": _task_pool_snapshot(loop_id),
     }
 
 
@@ -197,6 +256,9 @@ def clear_limiters() -> None:
         loop_id = id(asyncio.get_running_loop())
     except RuntimeError:
         _limiters.clear()
+        _task_limiters.clear()
         return
     for key in [key for key in _limiters if key[0] == loop_id]:
         _limiters.pop(key, None)
+    for key in [key for key in _task_limiters if key[0] == loop_id]:
+        _task_limiters.pop(key, None)

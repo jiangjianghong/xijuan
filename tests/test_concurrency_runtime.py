@@ -7,8 +7,10 @@ import pytest
 from utils.concurrency import (
     clear_limiters,
     get_limiter,
+    register_task_limiter,
     replace_limiters,
     runtime_snapshot,
+    unregister_task_limiter,
 )
 
 
@@ -79,3 +81,24 @@ async def test_replace_limiters_preserves_existing_holder():
     assert limiter.limit == 4
     limiter.release()
     assert runtime_snapshot()["pools"]["global_llm"]["active"] == 0
+
+
+@pytest.mark.asyncio
+async def test_task_pool_reports_instances_without_fake_global_capacity():
+    first = register_task_limiter("task_table_validation", "file-a", 4)
+    second = register_task_limiter("task_table_validation", "file-b", 4)
+
+    await first.acquire()
+    await second.acquire()
+
+    pool = runtime_snapshot()["task_pools"]["task_table_validation"]
+    assert pool["per_instance_limit"] == 4
+    assert pool["busiest_active"] == 1
+    assert pool["aggregate_active"] == 2
+    assert pool["instance_count"] == 2
+
+    first.release()
+    second.release()
+    unregister_task_limiter("task_table_validation", "file-a")
+    unregister_task_limiter("task_table_validation", "file-b")
+    assert "task_table_validation" not in runtime_snapshot()["task_pools"]

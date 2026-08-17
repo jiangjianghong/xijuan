@@ -12,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.tables import FileTable
 from utils.config import get_config
-from utils.concurrency import get_limiter
+from utils.concurrency import (
+    get_limiter,
+    register_task_limiter,
+    unregister_task_limiter,
+)
 from utils.llm_client import chat_completion
 from utils.page_mapping import lookup_page_num
 
@@ -203,7 +207,12 @@ async def parse_tables(content: str, file_id: str, page_mapping: Optional[List] 
         return []
 
     app_cfg = get_config()
-    task_semaphore = asyncio.Semaphore(app_cfg.concurrency.task_table_validation)
+    task_semaphore = register_task_limiter(
+        "task_table_validation",
+        file_id,
+        app_cfg.concurrency.task_table_validation,
+        {"file_id": file_id, "stage": "tableing"},
+    )
     global_semaphore = get_limiter(
         "global_table_validation",
         app_cfg.concurrency.global_table_validation,
@@ -236,12 +245,15 @@ async def parse_tables(content: str, file_id: str, page_mapping: Optional[List] 
             "page_num": lookup_page_num(page_mapping or [], match.start(), match.end()),
         }
 
-    tasks = [
-        asyncio.create_task(_process_single_table(table_index, match))
-        for table_index, match in enumerate(matches, 1)
-    ]
-    tables: List[Dict] = await asyncio.gather(*tasks)
-    tables.sort(key=lambda x: x["table_index"])
+    try:
+        tasks = [
+            asyncio.create_task(_process_single_table(table_index, match))
+            for table_index, match in enumerate(matches, 1)
+        ]
+        tables: List[Dict] = await asyncio.gather(*tasks)
+        tables.sort(key=lambda x: x["table_index"])
+    finally:
+        unregister_task_limiter("task_table_validation", file_id)
 
     logger.info("AI 校验表格名称完成: file_id={}, 共 {} 个表格", file_id, total_table)
     return tables
