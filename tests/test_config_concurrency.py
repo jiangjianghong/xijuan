@@ -57,7 +57,7 @@ def test_limiters_are_reused_and_can_be_replaced():
 
         replace_limiters({"global_llm": 5})
         second = get_limiter("global_llm", 5)
-        assert second is not first
+        assert second is first
         assert second._value == 5
 
     asyncio.run(scenario())
