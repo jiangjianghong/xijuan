@@ -6,7 +6,7 @@ import asyncio
 import copy
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, AsyncIterator, Awaitable, Dict, List, Optional, Tuple
 
 import numexpr
@@ -553,7 +553,7 @@ async def execute_custom(
     return parse_custom_json_response(response)
 
 
-async def run_analysis(
+async def _legacy_run_analysis(
     file_id: str,
     session: AsyncSession,
     callback_url: Optional[str] = None,
@@ -830,7 +830,7 @@ async def run_analysis(
     logger.info("逻辑分析完成: {}", file_id)
 
 
-async def run_analysis_stream(file_id: str, session: AsyncSession):
+async def _legacy_run_analysis_stream(file_id: str, session: AsyncSession):
     """流式执行文件的完整逻辑分析流程，每分析完一条规则 yield 一次结果。
 
     1. 获取所有 enabled=1 的 analysis_rule，按 priority 排序
@@ -1081,6 +1081,225 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
     await session.execute(stmt)
     await session.commit()
 
+    logger.info("流式逻辑分析完成: {}", file_id)
+
+
+async def _load_file_analysis_context(
+    file_id: str,
+    session: AsyncSession,
+) -> tuple[list[FileRuleSnapshot], dict[str, str], dict[str, dict]]:
+    file_row = (
+        await session.execute(select(File).where(File.file_id == file_id))
+    ).scalar_one_or_none()
+    type_id = (file_row.type_id if file_row else None) or "default"
+
+    result = await session.execute(
+        select(AnalysisRule)
+        .where(AnalysisRule.enabled == 1, AnalysisRule.type_id == type_id)
+        .order_by(AnalysisRule.priority, AnalysisRule.rule_id)
+    )
+    rules = [FileRuleSnapshot.from_orm(rule) for rule in result.scalars().all()]
+
+    extraction_result = await session.execute(
+        select(ExtractionResult).where(ExtractionResult.file_id == file_id)
+    )
+    extraction_rows = extraction_result.scalars().all()
+    field_values = {
+        row.field_id: row.extracted_value
+        for row in extraction_rows
+    }
+    field_source_refs = {
+        row.field_id: copy.deepcopy(row.source_refs)
+        for row in extraction_rows
+        if row.source_refs
+    }
+    return rules, field_values, field_source_refs
+
+
+async def _persist_file_computation(
+    file_id: str,
+    item: FileRuleComputation,
+    session: AsyncSession,
+) -> None:
+    existing = (
+        await session.execute(
+            select(AnalysisResult).where(
+                AnalysisResult.file_id == file_id,
+                AnalysisResult.rule_id == item.rule_id,
+            )
+        )
+    ).scalar_one_or_none()
+    values = {
+        "result_value": item.result,
+        "input_values": item.input_values,
+        "reason": item.reason,
+        "source_refs": item.source_refs,
+    }
+    if existing:
+        for key, value in values.items():
+            setattr(existing, key, value)
+    else:
+        session.add(
+            AnalysisResult(
+                file_id=file_id,
+                rule_id=item.rule_id,
+                **values,
+            )
+        )
+    await session.commit()
+
+
+async def _persist_file_computation_safely(
+    file_id: str,
+    item: FileRuleComputation,
+    session: AsyncSession,
+) -> FileRuleComputation:
+    try:
+        await _persist_file_computation(file_id, item, session)
+        return item
+    except Exception as exc:
+        logger.error("分析结果落库失败: rule_id={}, error={}", item.rule_id, exc)
+        await rollback_if_broken(session)
+        failed = replace(
+            item,
+            result="",
+            reason=str(exc),
+            source_refs=None,
+            success=False,
+        )
+        try:
+            await _persist_file_computation(file_id, failed, session)
+        except Exception as retry_exc:
+            logger.error(
+                "失败结果落库失败: rule_id={}, error={}",
+                item.rule_id,
+                retry_exc,
+            )
+            await rollback_if_broken(session)
+        return failed
+
+
+def _callback_item(
+    item: FileRuleComputation,
+    index: int,
+    total: int,
+) -> dict[str, Any]:
+    return {
+        "rule_id": item.rule_id,
+        "rule_name": item.rule_name,
+        "rule_type": item.rule_type,
+        "result": item.result,
+        "reason": item.reason,
+        "input_values": item.input_values,
+        "source_refs": item.source_refs,
+        "success": item.success,
+        "index": index,
+        "total": total,
+    }
+
+
+def _stream_item(
+    item: FileRuleComputation,
+    index: int,
+    total: int,
+) -> dict[str, Any]:
+    return {
+        "rule_id": item.rule_id,
+        "rule_name": item.rule_name,
+        "rule_type": item.rule_type,
+        "result_value": item.result,
+        "input_values": item.input_values,
+        "reason": item.reason,
+        "source_refs": item.source_refs,
+        "success": item.success,
+        "current": index,
+        "total": total,
+    }
+
+
+async def run_analysis(
+    file_id: str,
+    session: AsyncSession,
+    callback_url: Optional[str] = None,
+) -> None:
+    """并发计算文件规则，并按配置顺序落库和发送回调。"""
+    logger.info("开始逻辑分析: {}", file_id)
+    rules, field_values, field_source_refs = await _load_file_analysis_context(
+        file_id,
+        session,
+    )
+    computed = await _compute_file_rules(
+        file_id,
+        rules,
+        field_values,
+        field_source_refs,
+        get_config().analysis.calc_precision,
+    )
+    total = len(computed)
+    aggregated: list[dict[str, Any]] = []
+    for index, computation in enumerate(computed, start=1):
+        settled = await _persist_file_computation_safely(
+            file_id,
+            computation,
+            session,
+        )
+        outward = _callback_item(settled, index, total)
+        aggregated.append(outward)
+        await notify_callback(
+            callback_url,
+            file_id,
+            "analyzing",
+            event="rule_done",
+            data=outward,
+        )
+
+    await session.execute(
+        update(File).where(File.file_id == file_id).values(progress="complete")
+    )
+    await session.commit()
+    succeeded = sum(bool(item["success"]) for item in aggregated)
+    await notify_callback(
+        callback_url,
+        file_id,
+        "analyzing",
+        event="stage_done",
+        data={
+            "total": total,
+            "succeeded": succeeded,
+            "failed": total - succeeded,
+            "results": aggregated,
+        },
+    )
+    logger.info("逻辑分析完成: {}", file_id)
+
+
+async def run_analysis_stream(file_id: str, session: AsyncSession):
+    """并发计算文件规则，并按配置顺序落库和流式输出。"""
+    logger.info("开始流式逻辑分析: {}", file_id)
+    rules, field_values, field_source_refs = await _load_file_analysis_context(
+        file_id,
+        session,
+    )
+    computed = await _compute_file_rules(
+        file_id,
+        rules,
+        field_values,
+        field_source_refs,
+        get_config().analysis.calc_precision,
+    )
+    total = len(computed)
+    for index, computation in enumerate(computed, start=1):
+        settled = await _persist_file_computation_safely(
+            file_id,
+            computation,
+            session,
+        )
+        yield _stream_item(settled, index, total)
+
+    await session.execute(
+        update(File).where(File.file_id == file_id).values(progress="complete")
+    )
+    await session.commit()
     logger.info("流式逻辑分析完成: {}", file_id)
 
 

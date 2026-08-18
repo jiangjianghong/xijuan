@@ -64,6 +64,18 @@ def _computed(
     )
 
 
+class _FinalSession:
+    def __init__(self):
+        self.execute_calls = 0
+        self.commit_calls = 0
+
+    async def execute(self, statement):
+        self.execute_calls += 1
+
+    async def commit(self):
+        self.commit_calls += 1
+
+
 @pytest.mark.asyncio
 async def test_file_rules_obey_per_file_limit_and_keep_input_order(monkeypatch):
     _install_limits(monkeypatch, file_limit=2, total_limit=10)
@@ -165,3 +177,170 @@ async def test_file_rule_cancellation_awaits_tasks_and_unregisters_pool(monkeypa
     assert active == 0
     assert cancelled == 2
     assert "task_file_analysis" not in concurrency.runtime_snapshot()["task_pools"]
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_persists_and_callbacks_in_rule_order(monkeypatch):
+    _install_limits(monkeypatch, file_limit=3, total_limit=3)
+    rules = [_rule("r1"), _rule("r2"), _rule("r3")]
+    persisted = []
+    callbacks = []
+    compute_active = 0
+
+    async def fake_load(file_id, session):
+        return rules, {}, {}
+
+    async def fake_compute(rule, *args, **kwargs):
+        nonlocal compute_active
+        compute_active += 1
+        await asyncio.sleep({"r1": .03, "r2": .02, "r3": .01}[rule.rule_id])
+        compute_active -= 1
+        return _computed(rule, result=rule.rule_id)
+
+    async def fake_persist(file_id, item, session):
+        assert compute_active == 0
+        persisted.append(item.rule_id)
+        await asyncio.sleep(0)
+
+    async def fake_callback(url, file_id, status, *, event=None, data=None):
+        if event == "rule_done":
+            callbacks.append(data["rule_id"])
+
+    monkeypatch.setattr(
+        analysis_service,
+        "_load_file_analysis_context",
+        fake_load,
+        raising=False,
+    )
+    monkeypatch.setattr(analysis_service, "_compute_file_rule", fake_compute)
+    monkeypatch.setattr(
+        analysis_service,
+        "_persist_file_computation",
+        fake_persist,
+        raising=False,
+    )
+    monkeypatch.setattr(analysis_service, "notify_callback", fake_callback)
+    session = _FinalSession()
+
+    await analysis_service.run_analysis("f1", session, "http://callback.test")
+
+    assert persisted == ["r1", "r2", "r3"]
+    assert callbacks == ["r1", "r2", "r3"]
+    assert session.execute_calls == 1
+    assert session.commit_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_stream_yields_in_rule_order(monkeypatch):
+    _install_limits(monkeypatch, file_limit=3, total_limit=3)
+    rules = [_rule("r1"), _rule("r2"), _rule("r3")]
+    persisted = []
+
+    async def fake_load(file_id, session):
+        return rules, {}, {}
+
+    async def fake_compute(rule, *args, **kwargs):
+        await asyncio.sleep({"r1": .03, "r2": .02, "r3": .01}[rule.rule_id])
+        return _computed(rule, result=rule.rule_id)
+
+    async def fake_persist(file_id, item, session):
+        persisted.append(item.rule_id)
+
+    monkeypatch.setattr(
+        analysis_service,
+        "_load_file_analysis_context",
+        fake_load,
+        raising=False,
+    )
+    monkeypatch.setattr(analysis_service, "_compute_file_rule", fake_compute)
+    monkeypatch.setattr(
+        analysis_service,
+        "_persist_file_computation",
+        fake_persist,
+        raising=False,
+    )
+    rows = [
+        row
+        async for row in analysis_service.run_analysis_stream("f1", _FinalSession())
+    ]
+
+    assert [row["rule_id"] for row in rows] == ["r1", "r2", "r3"]
+    assert [row["current"] for row in rows] == [1, 2, 3]
+    assert persisted == ["r1", "r2", "r3"]
+
+
+@pytest.mark.asyncio
+async def test_file_and_independent_rules_share_global_analysis(monkeypatch):
+    from service import analysis_run_service
+
+    limits = SimpleNamespace(
+        task_file_analysis=4,
+        independent_analysis=4,
+        global_analysis=2,
+    )
+    config = SimpleNamespace(
+        analysis=SimpleNamespace(calc_precision=2),
+        concurrency=limits,
+    )
+    monkeypatch.setattr(analysis_service, "get_config", lambda: config)
+    monkeypatch.setattr(analysis_run_service, "get_config", lambda: config)
+    active = 0
+    peak = 0
+
+    async def probe():
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(.02)
+        active -= 1
+
+    async def fake_file_compute(rule, *args, **kwargs):
+        await probe()
+        return _computed(rule)
+
+    independent_rule = analysis_run_service.AnalysisRuleSnapshot(
+        rule_id="independent",
+        type_id="contract",
+        rule_name="independent",
+        rule_type="judge",
+        expression="",
+        system_prompt="",
+        depend_fields=[],
+        web_search=None,
+        priority=1,
+        enabled=1,
+    )
+
+    async def fake_load_rules(type_ids, session):
+        return {"contract": [independent_rule]}
+
+    async def fake_independent_execute(rule, field_values, *, require_coverage=False):
+        await probe()
+        return {
+            "rule_id": rule.rule_id,
+            "rule_name": rule.rule_name,
+            "rule_type": rule.rule_type,
+            "result": "true",
+            "reason": "",
+            "input_values": {},
+            "source_refs": None,
+            "success": True,
+        }
+
+    monkeypatch.setattr(analysis_service, "_compute_file_rule", fake_file_compute)
+    monkeypatch.setattr(analysis_run_service, "_load_rules_by_type", fake_load_rules)
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_independent_execute)
+    await asyncio.gather(
+        analysis_service._compute_file_rules(
+            "f1", [_rule("f1"), _rule("f2"), _rule("f3")], {}, {}, 2
+        ),
+        analysis_run_service.run_analysis_batch(
+            [
+                {"type_id": "contract", "biz_id": f"b{i}", "field_values": {}}
+                for i in range(3)
+            ],
+            object(),
+        ),
+    )
+
+    assert peak == 2
