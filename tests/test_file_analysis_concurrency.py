@@ -31,6 +31,12 @@ def _install_limits(monkeypatch, *, file_limit: int, total_limit: int):
     )
 
 
+def test_removed_serial_analysis_implementations_are_not_retained():
+    assert not hasattr(analysis_service, "_legacy_run_analysis")
+    assert not hasattr(analysis_service, "_legacy_run_analysis_stream")
+    assert not hasattr(analysis_service, "_run_analysis_model")
+
+
 def _rule(rule_id: str, *, rule_type: str = "judge") -> FileRuleSnapshot:
     return FileRuleSnapshot(
         rule_id=rule_id,

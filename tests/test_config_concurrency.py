@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from utils.config import load_config
 from utils.concurrency import get_limiter, replace_limiters
@@ -101,3 +102,13 @@ concurrency:
     assert cfg.concurrency.task_file_analysis == 2
     assert cfg.concurrency.independent_analysis == 3
     assert cfg.concurrency.global_analysis == 5
+
+
+def test_example_config_documents_only_canonical_analysis_concurrency():
+    example = (Path(__file__).parents[1] / "configs" / "config.yaml.example").read_text(
+        encoding="utf-8"
+    )
+
+    assert "task_analysis:" not in example
+    assert "task_file_analysis: 4" in example
+    assert "independent_analysis: 4" in example

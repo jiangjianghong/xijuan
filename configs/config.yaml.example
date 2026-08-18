@@ -100,7 +100,7 @@ vl_model:
   default_max_pixels: 4000000                            # PDF 页面默认最大像素数（4MP）
   pdf_storage_dir: "uploads"                            # 原始 PDF 文件存储目录
 
-# 模型通道、业务阶段与单任务并发限制（当前进程内生效）
+# 模型通道、业务阶段、文件内任务与独立接口并发限制（当前 worker 内生效）
 concurrency:
   global_llm: 16                                        # 全项目普通文本 LLM HTTP 请求并发上限
   global_embedding: 4                                   # 全项目 Embedding HTTP 请求并发上限
@@ -110,7 +110,8 @@ concurrency:
   global_analysis: 8                                    # 所有文件/请求逻辑分析任务的并发上限
   task_table_validation: 4                              # 单文件表格名校验任务的并发上限
   task_extraction: 4                                    # 单文件字段抽取任务的并发上限
-  task_analysis: 4                                      # 单次分析请求内部的并发上限
+  task_file_analysis: 4                                 # 单文件逻辑分析规则的并发上限
+  independent_analysis: 4                               # 所有独立分析请求合计的 item 并发上限
   global_pipeline: 4                                    # 文件管线全局并发预留值；当前不改变入口调度
 
 # 网络搜索配置（博查 Bocha AI，逻辑分析 judge 规则使用）
