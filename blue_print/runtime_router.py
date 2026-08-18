@@ -19,12 +19,13 @@ _GLOBAL_POOLS = (
     ("global_vl", "VL 视觉", "模型通道", "模型通道"),
     ("global_table_validation", "表名校验", "业务阶段", "表名校验"),
     ("global_extraction", "字段抽取", "业务阶段", "字段抽取"),
-    ("global_analysis", "逻辑分析", "业务阶段", "逻辑分析"),
+    ("global_analysis", "逻辑分析总池", "业务阶段", "逻辑分析"),
+    ("independent_analysis", "独立分析", "独立接口", "独立分析"),
 )
 _TASK_POOLS = (
-    ("task_table_validation", "单文件表名", "单任务限制", "单文件表名"),
-    ("task_extraction", "单文件抽取", "单任务限制", "单文件抽取"),
-    ("task_analysis", "单请求分析", "单任务限制", "单请求分析"),
+    ("task_table_validation", "文件内表名校验", "文件内任务", "单文件表名"),
+    ("task_extraction", "文件内字段抽取", "文件内任务", "单文件抽取"),
+    ("task_file_analysis", "文件内逻辑分析", "文件内任务", "单文件分析"),
 )
 _POOL_CONSTRAINTS = {
     "global_table_validation": ["global_llm"],
@@ -32,7 +33,8 @@ _POOL_CONSTRAINTS = {
     "global_analysis": ["global_llm"],
     "task_table_validation": ["global_table_validation", "global_llm"],
     "task_extraction": ["global_extraction"],
-    "task_analysis": ["global_analysis", "global_llm"],
+    "task_file_analysis": ["global_analysis"],
+    "independent_analysis": ["global_analysis"],
 }
 
 

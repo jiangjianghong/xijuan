@@ -105,6 +105,27 @@ async def test_task_pool_reports_instances_without_fake_global_capacity():
 
 
 @pytest.mark.asyncio
+async def test_file_analysis_task_pool_tracks_and_unregisters_file_instance():
+    limiter = register_task_limiter(
+        "task_file_analysis",
+        "file-1",
+        4,
+        {"file_id": "file-1", "stage": "analyzing"},
+    )
+
+    async with limiter.context(
+        {"file_id": "file-1", "stage": "analyzing", "rule_id": "r1"}
+    ):
+        snapshot = runtime_snapshot()["task_pools"]["task_file_analysis"]
+        assert snapshot["instance_count"] == 1
+        assert snapshot["busiest_active"] == 1
+        assert snapshot["instances"][0]["instance_id"] == "file-1"
+
+    unregister_task_limiter("task_file_analysis", "file-1")
+    assert "task_file_analysis" not in runtime_snapshot()["task_pools"]
+
+
+@pytest.mark.asyncio
 async def test_runtime_events_keep_bounded_safe_context():
     limiter = get_limiter("global_llm", 1)
 

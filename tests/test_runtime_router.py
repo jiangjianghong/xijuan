@@ -19,7 +19,8 @@ async def test_runtime_concurrency_snapshot_shape(client):
         "global_analysis",
         "task_table_validation",
         "task_extraction",
-        "task_analysis",
+        "task_file_analysis",
+        "independent_analysis",
         "global_pipeline",
     }
 
@@ -34,6 +35,21 @@ async def test_runtime_concurrency_snapshot_shape(client):
     assert task_extraction["scope"] == "task"
     assert task_extraction["instance_count"] == 0
     assert task_extraction["busiest_active"] == 0
+
+    independent = next(
+        pool for pool in data["pools"] if pool["id"] == "independent_analysis"
+    )
+    assert independent["scope"] == "global"
+    assert independent["group"] == "独立接口"
+    assert independent["constraints"] == ["global_analysis"]
+
+    file_analysis = next(
+        pool for pool in data["pools"] if pool["id"] == "task_file_analysis"
+    )
+    assert file_analysis["scope"] == "task"
+    assert file_analysis["group"] == "文件内任务"
+    assert file_analysis["constraints"] == ["global_analysis"]
+    assert all(pool["id"] != "task_analysis" for pool in data["pools"])
 
     pipeline = next(pool for pool in data["pools"] if pool["id"] == "global_pipeline")
     assert pipeline["status"] == "offline"
