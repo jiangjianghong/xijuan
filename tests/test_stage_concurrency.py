@@ -21,9 +21,10 @@ def stage_config():
                 "global_table_validation": 1,
                 "task_table_validation": 3,
                 "global_analysis": 2,
-                "task_analysis": 4,
+                "task_file_analysis": 4,
+                "independent_analysis": 4,
             },
-            analysis={"max_concurrency": 4},
+            analysis={"calc_precision": 2},
         )
     )
     concurrency.clear_limiters()

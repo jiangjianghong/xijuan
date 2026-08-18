@@ -22,8 +22,6 @@ from service.analysis_service import (
 from utils.config import get_config
 from utils.concurrency import (
     get_limiter,
-    register_task_limiter,
-    unregister_task_limiter,
 )
 
 
@@ -413,17 +411,11 @@ async def run_analysis_batch(
         type_ids = {str(item["type_id"]) for item in items}
 
     rules_by_type = await _load_rules_by_type(type_ids, session)
-    app_cfg = get_config()
-    concurrency_cfg = getattr(app_cfg, "concurrency", None)
-    global_analysis_limit = getattr(concurrency_cfg, "global_analysis", 1_000_000)
-    task_analysis_limit = getattr(
-        concurrency_cfg,
-        "task_analysis",
-        getattr(getattr(app_cfg, "analysis", None), "max_concurrency", 1),
-    )
-    stage_limiter = get_limiter(
-        "global_analysis",
-        global_analysis_limit,
+    concurrency_cfg = get_config().concurrency
+    stage_limiter = get_limiter("global_analysis", concurrency_cfg.global_analysis)
+    item_limiter = get_limiter(
+        "independent_analysis",
+        concurrency_cfg.independent_analysis,
     )
 
     def _empty_item(
@@ -531,28 +523,22 @@ async def run_analysis_batch(
             "error": None,
         }
 
-    # item 级并发闸门：限制同时执行的 item 数，避免大批量请求瞬间打爆 LLM。
-    # gather 仍按传入顺序返回，Semaphore 只约束并发度不影响结果次序。
-    task_instance_id = f"batch-{id(items)}"
-    semaphore = register_task_limiter(
-        "task_analysis",
-        task_instance_id,
-        max(1, task_analysis_limit),
-        {"stage": "analyzing", "task_id": task_instance_id},
-    )
-
     async def run_item_guarded(
         item_index: int,
         item: Mapping[str, Any],
     ) -> Dict[str, Any]:
-        async with semaphore:
+        metadata = {
+            "stage": "independent_analysis",
+            "task_id": str(item.get("biz_id", item_index)),
+            "index": item_index,
+        }
+        async with item_limiter.context(metadata):
             return await run_item(item_index, item)
 
     ordered_items = await asyncio.gather(*(
         run_item_guarded(index, item)
         for index, item in enumerate(items)
     ))
-    unregister_task_limiter("task_analysis", task_instance_id)
 
     # persist 只在 file 模式有意义（values 模式无 file_id，无法定位结果行）
     if from_file and persist:

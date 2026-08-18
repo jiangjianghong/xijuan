@@ -13,6 +13,7 @@ from service.analysis_run_service import (
     plan_rules,
     select_covered_rules,
 )
+from utils import concurrency
 
 
 def _rule(
@@ -957,67 +958,88 @@ async def test_persist_ignored_when_source_is_values(monkeypatch):
     )
 
 
-# ── item 级并发上限 ─────────────────────────────────────────
+# ── worker 级独立分析 item 并发上限 ─────────────────────────
 
 
-def _patch_max_concurrency(monkeypatch, value: int):
-    """把 get_config().analysis.max_concurrency 覆盖成给定值。"""
+def _patch_analysis_concurrency(
+    monkeypatch,
+    *,
+    independent: int,
+    total: int = 20,
+):
     fake_cfg = SimpleNamespace(
-        analysis=SimpleNamespace(max_concurrency=value, calc_precision=2)
+        analysis=SimpleNamespace(max_concurrency=independent, calc_precision=2),
+        concurrency=SimpleNamespace(
+            independent_analysis=independent,
+            global_analysis=total,
+        ),
     )
     monkeypatch.setattr(analysis_run_service, "get_config", lambda: fake_cfg)
 
 
 @pytest.mark.anyio
-async def test_run_analysis_batch_caps_item_concurrency(monkeypatch):
-    """同时执行的 item 数不超过 analysis.max_concurrency。"""
-    _patch_max_concurrency(monkeypatch, 2)
+async def test_independent_item_limit_is_shared_across_concurrent_batches(monkeypatch):
+    _patch_analysis_concurrency(monkeypatch, independent=2)
+    concurrency.clear_limiters()
+    active = 0
+    peak = 0
 
-    state = {"active": 0, "peak": 0}
+    async def fake_load_rules(type_ids, session):
+        return {type_id: [_rule("r1", [])] for type_id in type_ids}
 
     async def fake_execute(rule, field_values, *, require_coverage=False):
-        state["active"] += 1
-        state["peak"] = max(state["peak"], state["active"])
-        await asyncio.sleep(0.01)
-        state["active"] -= 1
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.02)
+        active -= 1
         return _success(rule)
 
+    monkeypatch.setattr(analysis_run_service, "_load_rules_by_type", fake_load_rules)
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
-    items = [
-        {"type_id": "contract", "biz_id": f"b{i}", "field_values": {"amount": "1"}}
-        for i in range(8)
+    first = [
+        {"type_id": "contract", "biz_id": f"a{i}", "field_values": {}}
+        for i in range(3)
     ]
-    data = await analysis_run_service.run_analysis_batch(
-        items,
-        ReadOnlySession([_orm_rule("amount_check", ["amount"], priority=1)]),
+    second = [
+        {"type_id": "contract", "biz_id": f"b{i}", "field_values": {}}
+        for i in range(3)
+    ]
+
+    first_result, second_result = await asyncio.gather(
+        analysis_run_service.run_analysis_batch(first, object()),
+        analysis_run_service.run_analysis_batch(second, object()),
     )
 
-    assert state["peak"] <= 2
-    assert [item["biz_id"] for item in data["items"]] == [f"b{i}" for i in range(8)]
+    assert peak == 2
+    assert [item["biz_id"] for item in first_result["items"]] == ["a0", "a1", "a2"]
+    assert [item["biz_id"] for item in second_result["items"]] == ["b0", "b1", "b2"]
+    concurrency.clear_limiters()
 
 
 @pytest.mark.anyio
-async def test_run_analysis_batch_concurrency_one_is_serial(monkeypatch):
-    """max_concurrency=1 时退化为串行，峰值并发恒为 1。"""
-    _patch_max_concurrency(monkeypatch, 1)
+async def test_independent_item_keeps_rule_and_callback_order(monkeypatch):
+    _patch_analysis_concurrency(monkeypatch, independent=4)
+    concurrency.clear_limiters()
+    callbacks = []
 
-    state = {"active": 0, "peak": 0}
+    async def fake_load_rules(type_ids, session):
+        return {"contract": [_rule("r1", [], 1), _rule("r2", [], 2)]}
 
     async def fake_execute(rule, field_values, *, require_coverage=False):
-        state["active"] += 1
-        state["peak"] = max(state["peak"], state["active"])
-        await asyncio.sleep(0.01)
-        state["active"] -= 1
         return _success(rule)
 
+    async def on_rule_done(item):
+        callbacks.append(item["rule_id"])
+
+    monkeypatch.setattr(analysis_run_service, "_load_rules_by_type", fake_load_rules)
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
-    items = [
-        {"type_id": "contract", "biz_id": f"b{i}", "field_values": {"amount": "1"}}
-        for i in range(4)
-    ]
-    await analysis_run_service.run_analysis_batch(
-        items,
-        ReadOnlySession([_orm_rule("amount_check", ["amount"], priority=1)]),
+    response = await analysis_run_service.run_analysis_batch(
+        [{"type_id": "contract", "biz_id": "b1", "field_values": {}}],
+        object(),
+        on_rule_done=on_rule_done,
     )
 
-    assert state["peak"] == 1
+    assert [row["rule_id"] for row in response["items"][0]["results"]] == ["r1", "r2"]
+    assert callbacks == ["r1", "r2"]
+    concurrency.clear_limiters()
