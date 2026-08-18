@@ -61,3 +61,43 @@ def test_limiters_are_reused_and_can_be_replaced():
         assert second._value == 5
 
     asyncio.run(scenario())
+
+
+def test_analysis_concurrency_uses_only_canonical_keys(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+analysis:
+  max_concurrency: 19
+concurrency:
+  task_analysis: 23
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+
+    assert cfg.concurrency.task_file_analysis == 4
+    assert cfg.concurrency.independent_analysis == 4
+    assert cfg.concurrency.global_analysis == 8
+    assert not hasattr(cfg.concurrency, "task_analysis")
+    assert not hasattr(cfg.analysis, "max_concurrency")
+
+
+def test_canonical_analysis_concurrency_values_are_loaded(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+concurrency:
+  task_file_analysis: 2
+  independent_analysis: 3
+  global_analysis: 5
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+
+    assert cfg.concurrency.task_file_analysis == 2
+    assert cfg.concurrency.independent_analysis == 3
+    assert cfg.concurrency.global_analysis == 5

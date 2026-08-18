@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
+from ruamel.yaml import YAML
 
 from utils.config import get_config, replace_config
 from service.settings_service import (
@@ -68,6 +70,8 @@ analysis:
   calc_precision: 2
   judge_timeout: 30
   max_concurrency: 10
+concurrency:
+  task_analysis: 4
 vl_model:
   base_url: http://vl.test/v1
   api_key: vl-secret
@@ -197,6 +201,45 @@ def test_update_can_change_unified_concurrency(config_path: Path):
     assert result["config"]["concurrency"]["global_llm"] == 6
     assert result["config"]["concurrency"]["global_embedding"] == 3
     assert result["config"]["concurrency"]["task_extraction"] == 2
+
+
+@pytest.mark.parametrize(
+    "changes, rejected_path",
+    [
+        ({"concurrency": {"task_analysis": 7}}, "concurrency.task_analysis"),
+        ({"analysis": {"max_concurrency": 7}}, "analysis.max_concurrency"),
+    ],
+)
+def test_update_rejects_removed_analysis_concurrency_fields(
+    config_path: Path, changes: dict, rejected_path: str
+):
+    service = SettingsService(config_path)
+    version = service.read_public_config()["version"]
+
+    with pytest.raises(ConfigFieldError, match=re.escape(rejected_path)):
+        service.update_config(base_version=version, changes=changes, secrets={})
+
+
+def test_successful_save_purges_removed_analysis_concurrency_fields(
+    config_path: Path,
+):
+    service = SettingsService(config_path)
+    version = service.read_public_config()["version"]
+
+    result = service.update_config(
+        base_version=version,
+        changes={"concurrency": {"independent_analysis": 6}},
+        secrets={},
+    )
+
+    document = YAML(typ="safe").load(config_path.read_text(encoding="utf-8"))
+    assert "task_analysis" not in document["concurrency"]
+    assert "max_concurrency" not in document["analysis"]
+    assert document["table_name_validation"]["max_concurrency"] == 20
+    assert result["config"]["concurrency"]["task_file_analysis"] == 4
+    assert result["config"]["concurrency"]["independent_analysis"] == 6
+    assert "task_analysis" not in result["config"]["concurrency"]
+    assert "max_concurrency" not in result["config"]["analysis"]
 
 
 def test_update_supports_replace_and_clear_secret_actions(config_path: Path):

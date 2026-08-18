@@ -204,7 +204,6 @@ class TableNameValidationConfig(BaseModel):
 class AnalysisConfig(BaseModel):
     calc_precision: int = Field(2, ge=0)
     judge_timeout: int = Field(30, ge=1)
-    max_concurrency: int = Field(10, ge=1)  # 独立分析接口 item 级最大并发数
 
 
 class ConcurrencyConfig(BaseModel):
@@ -216,7 +215,8 @@ class ConcurrencyConfig(BaseModel):
     global_analysis: int = Field(8, ge=1)
     task_table_validation: int = Field(4, ge=1)
     task_extraction: int = Field(4, ge=1)
-    task_analysis: int = Field(4, ge=1)
+    task_file_analysis: int = Field(4, ge=1)
+    independent_analysis: int = Field(4, ge=1)
     global_pipeline: int = Field(4, ge=1)
 
 
@@ -286,11 +286,9 @@ class AppConfig(BaseSettings):
         data = dict(value)
         limits = dict(data.get("concurrency") or {})
         table = data.get("table_name_validation") or {}
-        analysis = data.get("analysis") or {}
         vl = data.get("vl_model") or {}
         legacy_map = {
             "task_table_validation": table.get("max_concurrency"),
-            "task_analysis": analysis.get("max_concurrency"),
             "global_vl": vl.get("global_max_concurrency"),
         }
         for key, old_value in legacy_map.items():

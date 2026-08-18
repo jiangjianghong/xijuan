@@ -10,7 +10,7 @@ import secrets
 import tempfile
 from pathlib import Path
 from threading import RLock
-from typing import Any, Mapping
+from typing import Any, Mapping, MutableMapping
 
 from pydantic import ValidationError
 from ruamel.yaml import YAML
@@ -114,6 +114,17 @@ def _remove_legacy_keys(document: Mapping[str, Any], canonical_path: str) -> Non
         alias_group, alias_field = alias.split(".", 1)
         if alias_group == group and alias_field != field:
             document[group].pop(alias_field, None)
+
+
+def _remove_retired_analysis_concurrency(
+    document: MutableMapping[str, Any],
+) -> None:
+    analysis = document.get("analysis")
+    if isinstance(analysis, MutableMapping):
+        analysis.pop("max_concurrency", None)
+    concurrency = document.get("concurrency")
+    if isinstance(concurrency, MutableMapping):
+        concurrency.pop("task_analysis", None)
 
 
 def _known_config(document: Mapping[str, Any]) -> dict[str, Any]:
@@ -295,6 +306,7 @@ class SettingsService:
                     document[group][canonical] = value
                     _remove_legacy_keys(document, f"{group}.{canonical}")
             self._apply_secret_operations(document, secrets)
+            _remove_retired_analysis_concurrency(document)
             validated = _validate_document(document)
 
             # 新信号量在落盘前构造；后续仅做不会失败的引用切换。
