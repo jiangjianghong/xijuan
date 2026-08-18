@@ -29,6 +29,16 @@
             }
         };
     </script>
+    <style>
+        .mockup-matrix-head { grid-template-columns: 3fr 3fr 3fr 1fr 1fr; }
+        .mockup-help-backdrop { visibility: hidden; opacity: 0; pointer-events: none; }
+        .mockup-help-backdrop.open { visibility: visible; opacity: 1; pointer-events: auto; }
+        @media (max-width: 560px) {
+            .mockup-matrix-head { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+            .mockup-matrix-head > div { justify-content: center; padding-left: 2px !important; padding-right: 2px; font-size: 9px; text-align: center; }
+            .mockup-matrix-head svg, .mockup-matrix-head .mockup-kicker { display: none; }
+        }
+    </style>
 </head>
 <body class="min-h-screen overflow-x-hidden bg-[#F5F2EB] font-sans text-[#2C4C3B] antialiased">
     <div class="min-h-screen">
@@ -58,6 +68,9 @@
                     <button id="toggle-live" type="button" class="inline-flex h-9 items-center gap-2 rounded-full border border-[#ccd8d1] bg-white px-3 text-xs font-semibold text-[#35483f] transition hover:border-[#8eaa9b] hover:bg-[#f6f9f7] focus:outline-none focus:ring-2 focus:ring-[#4F775D]/30" title="暂停模拟数据">
                         <i data-lucide="pause" class="h-4 w-4" stroke-width="1.5"></i>
                         <span>暂停</span>
+                    </button>
+                    <button id="runtime-help-open" type="button" class="grid h-9 w-9 place-items-center rounded-full border border-[#ccd8d1] bg-white text-[#35483f] transition hover:border-[#8eaa9b] hover:bg-[#f6f9f7] focus:outline-none focus:ring-2 focus:ring-[#4F775D]/30" title="查看并发池说明" aria-label="查看并发池说明">
+                        <i data-lucide="circle-help" class="h-4 w-4" stroke-width="1.5"></i>
                     </button>
                     <button id="refresh-now" type="button" class="grid h-9 w-9 place-items-center rounded-full border border-[#ccd8d1] bg-white text-[#35483f] transition hover:border-[#8eaa9b] hover:bg-[#f6f9f7] focus:outline-none focus:ring-2 focus:ring-[#4F775D]/30" title="立即刷新">
                         <i data-lucide="refresh-cw" class="h-4 w-4" stroke-width="1.5"></i>
@@ -121,16 +134,17 @@
                     </div>
                 </div>
 
-                <div class="overflow-x-auto rounded-3xl border border-[rgba(44,76,59,.10)] bg-white/85 shadow-[0_4px_20px_rgba(44,76,59,.08)] backdrop-blur-xl" tabindex="0" aria-label="并发池容量图，可横向滚动">
-                    <div class="min-w-[1060px] px-6 pt-5">
-                        <div class="grid grid-cols-[3fr_3fr_3fr_1fr] border-b border-[#E8EFE6] pb-3">
+                <div class="min-w-0 overflow-x-hidden rounded-3xl border border-[rgba(44,76,59,.10)] bg-white/85 shadow-[0_4px_20px_rgba(44,76,59,.08)] backdrop-blur-xl" tabindex="0" aria-label="并发池容量图">
+                    <div class="min-w-0 px-6 pt-5 max-[560px]:px-3">
+                        <div class="mockup-matrix-head grid border-b border-[#E8EFE6] pb-3">
                             <div class="flex items-center gap-2 border-r border-[#E8EFE6] text-[11px] font-semibold text-[#4F775D]"><i data-lucide="cpu" class="h-3.5 w-3.5" stroke-width="1.5"></i><span>模型通道</span><span class="font-mono text-[8px] uppercase text-[#8DAA91]">MODEL</span></div>
                             <div class="flex items-center gap-2 border-r border-[#E8EFE6] pl-6 text-[11px] font-semibold text-[#4F775D]"><i data-lucide="workflow" class="h-3.5 w-3.5" stroke-width="1.5"></i><span>业务阶段</span><span class="font-mono text-[8px] uppercase text-[#8DAA91]">STAGE</span></div>
-                            <div class="flex items-center gap-2 border-r border-[#E8EFE6] pl-6 text-[11px] font-semibold text-[#4F775D]"><i data-lucide="scan-line" class="h-3.5 w-3.5" stroke-width="1.5"></i><span>单任务限制</span><span class="font-mono text-[8px] uppercase text-[#8DAA91]">TASK</span></div>
-                            <div class="flex items-center gap-2 pl-6 text-[11px] font-semibold text-[#4F775D]"><i data-lucide="git-branch" class="h-3.5 w-3.5" stroke-width="1.5"></i><span>管线</span></div>
+                            <div class="flex items-center gap-2 border-r border-[#E8EFE6] pl-6 text-[11px] font-semibold text-[#4F775D]"><i data-lucide="scan-line" class="h-3.5 w-3.5" stroke-width="1.5"></i><span>文件内任务</span><span class="mockup-kicker font-mono text-[8px] uppercase text-[#8DAA91]">TASK</span></div>
+                            <div class="flex items-center gap-2 border-r border-[#E8EFE6] pl-4 text-[11px] font-semibold text-[#4F775D]"><i data-lucide="git-branch" class="h-3.5 w-3.5" stroke-width="1.5"></i><span>独立接口</span><span class="mockup-kicker font-mono text-[8px] uppercase text-[#8DAA91]">API</span></div>
+                            <div class="flex items-center gap-2 pl-4 text-[11px] font-semibold text-[#4F775D]"><i data-lucide="route" class="h-3.5 w-3.5" stroke-width="1.5"></i><span>管线</span></div>
                         </div>
                     </div>
-                    <div id="pool-chart" class="h-[410px] min-w-[1060px] w-full px-3 py-2"></div>
+                    <div id="pool-chart" class="h-[410px] min-w-0 w-full px-3 py-2"></div>
                 </div>
             </section>
 
@@ -224,6 +238,38 @@
         </div>
     </aside>
 
+    <div id="runtime-help-backdrop" class="mockup-help-backdrop fixed inset-0 z-[70] grid place-items-center bg-[#16231d]/30 p-3 backdrop-blur-sm transition" aria-hidden="true">
+        <section id="runtime-help-dialog" class="flex max-h-[calc(100vh-24px)] w-full max-w-[760px] flex-col overflow-hidden rounded-3xl border border-[#d7e1db] bg-white shadow-[0_24px_70px_rgba(28,52,42,.20)]" role="dialog" aria-modal="true" aria-labelledby="runtime-help-title" aria-hidden="true">
+            <header class="flex items-start justify-between gap-5 border-b border-[#e2e9e5] bg-[#f8faf8] px-6 py-5">
+                <div class="min-w-0"><h2 id="runtime-help-title" class="font-serif text-[22px] font-medium text-[#1c392d]">并发池说明</h2><p class="mt-1 text-[11px] font-semibold text-[#718078]">默认配置示例 · 当前 worker · 只读监控</p></div>
+                <button id="runtime-help-close" type="button" class="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[#ccd8d1] bg-white text-[#35483f]" aria-label="关闭并发池说明"><i data-lucide="x" class="h-4 w-4"></i></button>
+            </header>
+            <div class="overflow-y-auto px-6 pb-6">
+                <section class="runtime-help-group pt-5"><h3 class="mb-2 text-sm font-bold">模型通道</h3>
+                    <article class="border-b border-[#edf1ef] py-3"><h4 class="text-xs font-bold">文本 LLM</h4><code class="text-[10px] text-[#4f775d]">concurrency.global_llm</code><p class="mt-1 text-xs leading-6 text-[#66776e]">统计当前 worker 内正在执行的文本模型 HTTP 请求。默认容量 16；表名校验、文本字段抽取以及 judge/custom 分析调用共同竞争，calc 不占用。</p></article>
+                    <article class="border-b border-[#edf1ef] py-3"><h4 class="text-xs font-bold">Embedding</h4><code class="text-[10px] text-[#4f775d]">concurrency.global_embedding</code><p class="mt-1 text-xs leading-6 text-[#66776e]">默认容量 4；向量写入和 vector_db 检索共同竞争。</p></article>
+                    <article class="py-3"><h4 class="text-xs font-bold">VL 视觉</h4><code class="text-[10px] text-[#4f775d]">concurrency.global_vl</code><p class="mt-1 text-xs leading-6 text-[#66776e]">默认容量 8；所有 VL 抽取方式共享，局部 max_concurrent 不能突破该总池。</p></article>
+                </section>
+                <section class="runtime-help-group border-t border-[#edf1ef] pt-5"><h3 class="mb-2 text-sm font-bold">业务阶段</h3>
+                    <article class="border-b border-[#edf1ef] py-3"><h4 class="text-xs font-bold">表名校验</h4><code class="text-[10px] text-[#4f775d]">concurrency.global_table_validation</code><p class="mt-1 text-xs leading-6 text-[#66776e]">默认容量 10；所有文件的表名判断合计受限，并继续进入文本 LLM。</p></article>
+                    <article class="border-b border-[#edf1ef] py-3"><h4 class="text-xs font-bold">字段抽取</h4><code class="text-[10px] text-[#4f775d]">concurrency.global_extraction</code><p class="mt-1 text-xs leading-6 text-[#66776e]">默认容量 8；所有文件合计受限，实际还可能进入文本 LLM、Embedding 或 VL。</p></article>
+                    <article class="py-3"><h4 class="text-xs font-bold">逻辑分析总池</h4><code class="text-[10px] text-[#4f775d]">concurrency.global_analysis</code><p class="mt-1 text-xs leading-6 text-[#66776e]">文件管线规则与独立分析规则共享同一个总池。以默认配置为例，两类来源合计最多同时执行 8 条规则。judge 和 custom 规则还需要文本 LLM 槽位，calc 规则不占用文本模型通道。</p></article>
+                </section>
+                <section class="runtime-help-group border-t border-[#edf1ef] pt-5"><h3 class="mb-2 text-sm font-bold">文件内任务</h3>
+                    <article class="border-b border-[#edf1ef] py-3"><h4 class="text-xs font-bold">文件内表名校验</h4><code class="text-[10px] text-[#4f775d]">concurrency.task_table_validation</code><p class="mt-1 text-xs leading-6 text-[#66776e]">一个 PDF 里可能有很多张表，需要逐张调用 LLM 判断表名。以默认配置为例，每个文件最多同时校验 4 张表；所有文件合计又受“表名校验”全局上限 10 和“文本 LLM”上限 16 约束。</p></article>
+                    <article class="border-b border-[#edf1ef] py-3"><h4 class="text-xs font-bold">文件内字段抽取</h4><code class="text-[10px] text-[#4f775d]">concurrency.task_extraction</code><p class="mt-1 text-xs leading-6 text-[#66776e]">一个 PDF 可以配置多个抽取字段。默认文件级上限是 4，但当前字段循环仍按顺序执行，所以单文件真实观测并发通常为 1；多个文件共同受字段抽取总池和模型通道约束。</p></article>
+                    <article class="py-3"><h4 class="text-xs font-bold">文件内逻辑分析</h4><code class="text-[10px] text-[#4f775d]">concurrency.task_file_analysis</code><p class="mt-1 text-xs leading-6 text-[#66776e]">一个 PDF 可以配置多条规则。默认每个文件最多同时执行 4 条规则；不同文件继续共同竞争默认容量 8 的“逻辑分析总池”。</p></article>
+                </section>
+                <section class="runtime-help-group border-t border-[#edf1ef] pt-5"><h3 class="mb-2 text-sm font-bold">独立接口</h3>
+                    <article class="py-3"><h4 class="text-xs font-bold">独立分析</h4><code class="text-[10px] text-[#4f775d]">concurrency.independent_analysis</code><p class="mt-1 text-xs leading-6 text-[#66776e]">独立分析统计所有 /analysis/run 请求正在处理的 item，不限制单个请求。以默认配置为例，当前 worker 内所有独立分析请求合计最多同时处理 4 个 item；每个 item 内的规则仍按顺序执行。</p></article>
+                </section>
+                <section class="runtime-help-group border-t border-[#edf1ef] pt-5"><h3 class="mb-2 text-sm font-bold">管线</h3>
+                    <article class="py-3"><h4 class="text-xs font-bold">文件管线</h4><code class="text-[10px] text-[#4f775d]">concurrency.global_pipeline</code><p class="mt-1 text-xs leading-6 text-[#66776e]">默认配置值 4 目前尚未接入调度，只显示“未接入”，不产生控制效果。</p></article>
+                </section>
+            </div>
+        </section>
+    </div>
+
     <script>
         const POOL_DEFINITIONS = [
             { id: 'global_llm', label: '文本 LLM', short: 'LLM', group: '模型通道', limit: 16, active: 12, queued: 3, targetActive: 12, targetQueue: 3, note: '限制当前进程内所有普通文本模型 HTTP 请求，表名校验、字段抽取和逻辑分析共享该额度。', constraints: [] },
@@ -232,17 +278,19 @@
             { id: 'global_table_validation', label: '表名校验', short: 'TABLE', group: '业务阶段', limit: 10, active: 5, queued: 0, targetActive: 6, targetQueue: 1, note: '限制跨文件并行执行的表格名称校验任务，每个任务还会占用文本 LLM 通道。', constraints: ['global_llm'] },
             { id: 'global_extraction', label: '字段抽取', short: 'EXTRACT', group: '业务阶段', limit: 8, active: 6, queued: 2, targetActive: 7, targetQueue: 2, note: '限制跨文件同时运行的字段抽取任务。单个 VL Locate 字段可能在池内产生多个 VL 请求。', constraints: ['global_llm', 'global_embedding', 'global_vl'] },
             { id: 'global_analysis', label: '逻辑分析', short: 'ANALYZE', group: '业务阶段', limit: 8, active: 7, queued: 1, targetActive: 7, targetQueue: 2, note: '由文件管线分析和独立分析接口共享；Judge 与 Custom 规则还会占用文本 LLM 通道。', constraints: ['global_llm'] },
-            { id: 'task_table_validation', label: '单文件表名', short: 'T-TABLE', group: '单任务限制', limit: 4, active: 3, queued: 1, targetActive: 3, targetQueue: 1, note: '单个文件内部的表名校验并发，同时受全局表名校验与文本 LLM 池制约。', constraints: ['global_table_validation', 'global_llm'] },
-            { id: 'task_extraction', label: '单文件抽取', short: 'T-EXTRACT', group: '单任务限制', limit: 4, active: 1, queued: 2, targetActive: 1, targetQueue: 2, observedLimit: 1, note: '配置上限为 4，但当前字段循环串行执行，单文件观测并发保持为 1。', constraints: ['global_extraction'] },
-            { id: 'task_analysis', label: '单请求分析', short: 'T-ANALYZE', group: '单任务限制', limit: 4, active: 4, queued: 3, targetActive: 4, targetQueue: 3, note: '限制单次独立分析请求中并发运行的 item 数，item 内规则按顺序执行。', constraints: ['global_analysis', 'global_llm'] },
-            { id: 'global_pipeline', label: '文件管线', short: 'PIPELINE', group: '管线调度', limit: 4, active: 0, queued: 0, targetActive: 0, targetQueue: 0, disconnected: true, note: '该配置目前仅为预留值，尚未接入上传、同步、流式或重试入口的调度逻辑。', constraints: [] }
+            { id: 'task_table_validation', label: '文件内表名校验', short: 'T-TABLE', group: '文件内任务', limit: 4, active: 3, queued: 1, targetActive: 3, targetQueue: 1, note: '单个文件内部的表名校验并发，同时受全局表名校验与文本 LLM 池制约。', constraints: ['global_table_validation', 'global_llm'] },
+            { id: 'task_extraction', label: '文件内字段抽取', short: 'T-EXTRACT', group: '文件内任务', limit: 4, active: 1, queued: 2, targetActive: 1, targetQueue: 2, observedLimit: 1, note: '配置上限为 4，但当前字段循环串行执行，单文件观测并发保持为 1。', constraints: ['global_extraction'] },
+            { id: 'task_file_analysis', label: '文件内逻辑分析', short: 'T-ANALYZE', group: '文件内任务', limit: 4, active: 4, queued: 3, targetActive: 4, targetQueue: 3, note: '限制单个文件内并发运行的规则数，不同文件继续共享逻辑分析总池。', constraints: ['global_analysis', 'global_llm'] },
+            { id: 'independent_analysis', label: '独立分析', short: 'INDEPENDENT', group: '独立接口', limit: 4, active: 2, queued: 1, targetActive: 3, targetQueue: 1, note: '限制当前 worker 内所有独立分析请求合计并发运行的 item 数。', constraints: ['global_analysis'] },
+            { id: 'global_pipeline', label: '文件管线', short: 'PIPELINE', group: '管线', limit: 4, active: 0, queued: 0, targetActive: 0, targetQueue: 0, disconnected: true, note: '该配置目前仅为预留值，尚未接入上传、同步、流式或重试入口的调度逻辑。', constraints: [] }
         ];
 
         const GROUP_META = {
             '模型通道': { kicker: 'MODEL CHANNELS', icon: 'cpu' },
             '业务阶段': { kicker: 'STAGE LIMITERS', icon: 'workflow' },
-            '单任务限制': { kicker: 'TASK SCOPES', icon: 'scan-line' },
-            '管线调度': { kicker: 'ORCHESTRATION', icon: 'git-branch' }
+            '文件内任务': { kicker: 'TASK SCOPES', icon: 'scan-line' },
+            '独立接口': { kicker: 'INDEPENDENT API', icon: 'git-branch' },
+            '管线': { kicker: 'ORCHESTRATION', icon: 'route' }
         };
 
         const FILE_NAMES = [
@@ -268,7 +316,7 @@
             events: [
                 { type: 'queue', pool: 'VL 视觉', text: '4 个请求等待可用槽位', ago: '刚刚' },
                 { type: 'complete', pool: '逻辑分析', text: '董事会决议.pdf 完成规则判断', ago: '4s' },
-                { type: 'pressure', pool: '单请求分析', text: '利用率达到 100%', ago: '9s' },
+                { type: 'pressure', pool: '文件内逻辑分析', text: '利用率达到 100%', ago: '9s' },
                 { type: 'complete', pool: 'Embedding', text: '批次 18 / 18 已写入 Milvus', ago: '14s' },
                 { type: 'queue', pool: '字段抽取', text: '2 个字段等待调度', ago: '21s' }
             ]
@@ -397,7 +445,8 @@
                                 [{ xAxis: 0 }, { xAxis: 2 }],
                                 [{ xAxis: 3 }, { xAxis: 5 }],
                                 [{ xAxis: 6 }, { xAxis: 8 }],
-                                [{ xAxis: 9 }, { xAxis: 9 }]
+                                [{ xAxis: 9 }, { xAxis: 9 }],
+                                [{ xAxis: 10 }, { xAxis: 10 }]
                             ]
                         }
                     },
@@ -733,8 +782,31 @@
         });
         document.getElementById('close-drawer').addEventListener('click', closeDetail);
         document.getElementById('drawer-backdrop').addEventListener('click', closeDetail);
+        const helpBackdrop = document.getElementById('runtime-help-backdrop');
+        const helpDialog = document.getElementById('runtime-help-dialog');
+        const helpOpen = document.getElementById('runtime-help-open');
+        const helpClose = document.getElementById('runtime-help-close');
+        function openHelp() {
+            helpBackdrop.classList.add('open');
+            helpBackdrop.setAttribute('aria-hidden', 'false');
+            helpDialog.setAttribute('aria-hidden', 'false');
+            document.body.style.overflow = 'hidden';
+            helpClose.focus();
+        }
+        function closeHelp() {
+            helpBackdrop.classList.remove('open');
+            helpBackdrop.setAttribute('aria-hidden', 'true');
+            helpDialog.setAttribute('aria-hidden', 'true');
+            document.body.style.overflow = '';
+            helpOpen.focus();
+        }
+        helpOpen.addEventListener('click', openHelp);
+        helpClose.addEventListener('click', closeHelp);
+        helpBackdrop.addEventListener('click', event => { if (event.target === helpBackdrop) closeHelp(); });
         document.addEventListener('keydown', event => {
-            if (event.key === 'Escape' && runtimeState.selectedPoolId) closeDetail();
+            if (event.key !== 'Escape') return;
+            if (helpBackdrop.classList.contains('open')) closeHelp();
+            else if (runtimeState.selectedPoolId) closeDetail();
         });
 
         buildCharts();

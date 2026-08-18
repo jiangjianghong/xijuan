@@ -20,9 +20,16 @@
         global_analysis: { short: 'ANALYZE', note: '由文件管线分析和独立分析接口共享。' },
         task_table_validation: { short: 'T-TABLE', note: '展示当前最繁忙文件内部的表名校验并发。' },
         task_extraction: { short: 'T-EXTRACT', note: '展示当前最繁忙文件的字段抽取并发，详情中同时给出全部实例累计值。' },
-        task_analysis: { short: 'T-ANALYZE', note: '展示单次独立分析请求中最繁忙实例的 item 并发。' },
+        task_file_analysis: { short: 'T-ANALYZE', note: '展示当前最繁忙文件内部的逻辑分析规则并发。' },
+        independent_analysis: { short: 'INDEPENDENT', note: '展示当前 worker 内所有独立分析请求共享的 item 并发。' },
         global_pipeline: { short: 'PIPELINE', note: '该配置目前仅为预留值，尚未接入文件管线调度。' },
     };
+    const POOL_ORDER = [
+        'global_llm', 'global_embedding', 'global_vl',
+        'global_table_validation', 'global_extraction', 'global_analysis',
+        'task_table_validation', 'task_extraction', 'task_file_analysis',
+        'independent_analysis', 'global_pipeline',
+    ];
     const reduceMotion = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     function asNumber(value, fallback = 0) {
@@ -67,10 +74,13 @@
         return Number.isNaN(date.getTime()) ? '--:--:--' : date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
     }
 
-    function allPools(snapshot) {
-        const globals = snapshot.globalPools.map(pool => ({ ...pool, capacity: pool.limit }));
-        const tasks = snapshot.taskPools.map(pool => ({ ...pool, limit: pool.capacity }));
-        return [...globals, ...tasks, { ...snapshot.pipeline, capacity: snapshot.pipeline.limit }];
+    function orderedPools(snapshot) {
+        const byId = new Map([
+            ...snapshot.globalPools.map(pool => [pool.id, { ...pool, capacity: pool.limit }]),
+            ...snapshot.taskPools.map(pool => [pool.id, { ...pool, limit: pool.capacity }]),
+            [snapshot.pipeline.id, { ...snapshot.pipeline, capacity: snapshot.pipeline.limit }],
+        ]);
+        return POOL_ORDER.map(id => byId.get(id)).filter(Boolean);
     }
 
     function stateFor(pool) {
@@ -105,8 +115,10 @@
             active: false, loading: false, timer: null, last: null, selectedPoolId: null,
             history: Array(MAX_HISTORY).fill(null), poolHistory: {}, charts: { pool: null, pressure: null, mini: new Map() },
             listenersBound: false, triggerElement: null, drawerFocusTimer: null,
+            helpOpen: false, helpTriggerElement: null, helpFocusTimer: null,
         },
         normalizeSnapshot,
+        orderedPools,
 
         activate() {
             if (this.state.active) return;
@@ -131,6 +143,7 @@
             this.state.resizeHandler = null;
             this.state.visibilityHandler = null;
             this.disposeCharts();
+            this.closeHelp(false);
             this.closePool(false);
         },
 
@@ -149,10 +162,20 @@
             this.state.listenersBound = true;
             const close = document.getElementById('runtime-detail-close');
             const backdrop = document.getElementById('runtime-drawer-backdrop');
+            const helpOpen = document.getElementById('runtime-help-open');
+            const helpClose = document.getElementById('runtime-help-close');
+            const helpBackdrop = document.getElementById('runtime-help-backdrop');
             if (close) close.addEventListener('click', () => this.closePool());
             if (backdrop) backdrop.addEventListener('click', () => this.closePool());
+            if (helpOpen) helpOpen.addEventListener('click', () => this.openHelp());
+            if (helpClose) helpClose.addEventListener('click', () => this.closeHelp());
+            if (helpBackdrop) helpBackdrop.addEventListener('click', event => {
+                if (event.target === helpBackdrop) this.closeHelp();
+            });
             document.addEventListener('keydown', event => {
-                if (event.key === 'Escape' && this.state.selectedPoolId) this.closePool();
+                if (event.key !== 'Escape') return;
+                if (this.state.helpOpen) this.closeHelp();
+                else if (this.state.selectedPoolId) this.closePool();
             });
         },
 
@@ -175,7 +198,7 @@
         recordHistory(snapshot) {
             const overall = snapshot.summary.capacity ? Math.round(snapshot.summary.active / snapshot.summary.capacity * 100) : 0;
             this.state.history = appendFixedHistory(this.state.history, overall);
-            allPools(snapshot).forEach(pool => {
+            orderedPools(snapshot).forEach(pool => {
                 this.state.poolHistory[pool.id] = appendFixedHistory(this.state.poolHistory[pool.id], pressureOf(pool));
             });
         },
@@ -186,7 +209,7 @@
             page.classList.toggle('has-error', Boolean(snapshot.error));
             this.renderConnection(snapshot);
             this.renderSummary(snapshot);
-            const pools = allPools(snapshot);
+            const pools = orderedPools(snapshot);
             this.ensureCharts(pools);
             this.renderPoolChart(pools);
             this.renderPressure(snapshot);
@@ -260,7 +283,8 @@
                 const short = (POOL_META[pool.id] || {}).short || pool.id;
                 const compactShort = {
                     global_table_validation: 'TAB', global_extraction: 'EXT', global_analysis: 'ANA',
-                    task_table_validation: 'TBL', task_extraction: 'T-EXT', task_analysis: 'T-ANA',
+                    task_table_validation: 'TBL', task_extraction: 'T-EXT', task_file_analysis: 'T-ANA',
+                    independent_analysis: 'IND',
                 }[pool.id] || short;
                 return compactLabels ? compactShort : `${short}\n${pool.label || pool.id}`;
             });
@@ -275,7 +299,7 @@
                 xAxis: { type: 'category', data: categories, triggerEvent: true, axisTick: { show: false }, axisLine: { lineStyle: { color: '#d6dfda' } }, axisLabel: { color: '#5c7065', fontFamily: 'Nunito, sans-serif', fontSize: compactLabels ? 9 : 10, lineHeight: 13, interval: 0, margin: compactLabels ? 10 : 15 } },
                 yAxis: { type: 'value', min: 0, max: maxAxis, interval: 4, axisLabel: { color: '#91a098', fontSize: 10 }, splitLine: { lineStyle: { color: '#edf1ef', type: 'dashed' } }, axisLine: { show: false }, axisTick: { show: false } },
                 series: [
-                    { name: '运行中', type: 'bar', stack: 'load', barWidth: '68%', barMaxWidth: 42, showBackground: true, backgroundStyle: { color: '#edf2ef' }, data: active, label: { show: true, position: 'top', distance: 7, fontSize: 10, fontWeight: 700, formatter: params => `${params.value}/${pools[params.dataIndex].limit}` }, markArea: { silent: true, itemStyle: { color: 'rgba(232,239,230,.24)' }, data: [[{ xAxis: 0 }, { xAxis: 2 }], [{ xAxis: 3 }, { xAxis: 5 }], [{ xAxis: 6 }, { xAxis: 8 }], [{ xAxis: 9 }, { xAxis: 9 }]] } },
+                    { name: '运行中', type: 'bar', stack: 'load', barWidth: '68%', barMaxWidth: 42, showBackground: true, backgroundStyle: { color: '#edf2ef' }, data: active, label: { show: true, position: 'top', distance: 7, fontSize: 10, fontWeight: 700, formatter: params => `${params.value}/${pools[params.dataIndex].limit}` }, markArea: { silent: true, itemStyle: { color: 'rgba(232,239,230,.24)' }, data: [[{ xAxis: 0 }, { xAxis: 2 }], [{ xAxis: 3 }, { xAxis: 5 }], [{ xAxis: 6 }, { xAxis: 8 }], [{ xAxis: 9 }, { xAxis: 9 }], [{ xAxis: 10 }, { xAxis: 10 }]] } },
                     { name: '排队中', type: 'bar', stack: 'load', barWidth: '68%', barMaxWidth: 42, data: queued, itemStyle: { borderRadius: [8, 8, 0, 0] }, label: { show: true, position: 'top', distance: 2, color: '#758078', fontSize: 9, fontWeight: 700, formatter: params => params.value ? `+${params.value} WAIT` : '' } },
                     { name: '容量上限', type: 'custom', silent: true, z: 10, renderItem: (params, api) => { const coord = api.coord([api.value(0), api.value(1)]); return { type: 'group', children: [{ type: 'line', shape: { x1: coord[0] - 25, y1: coord[1], x2: coord[0] + 25, y2: coord[1] }, style: { stroke: '#77877e', lineWidth: 1, lineDash: [3, 3] } }, { type: 'text', style: { x: coord[0] + 29, y: coord[1] + 3, text: `L${api.value(1)}`, fill: '#9aa69f', font: '10px Nunito' } }] }; }, data: limits },
                 ],
@@ -327,6 +351,37 @@
             }).join('') : '<div class="runtime-monitor-empty">当前没有调度事件</div>';
         },
 
+        openHelp() {
+            const dialog = document.getElementById('runtime-help-dialog');
+            const backdrop = document.getElementById('runtime-help-backdrop');
+            const close = document.getElementById('runtime-help-close');
+            this.state.helpOpen = true;
+            this.state.helpTriggerElement = document.activeElement;
+            if (backdrop) { backdrop.classList.add('open'); backdrop.setAttribute('aria-hidden', 'false'); }
+            if (dialog) { dialog.classList.add('open'); dialog.setAttribute('aria-hidden', 'false'); }
+            document.body.classList.add('runtime-modal-open');
+            if (this.state.helpFocusTimer) clearTimeout(this.state.helpFocusTimer);
+            if (close) this.state.helpFocusTimer = setTimeout(() => {
+                this.state.helpFocusTimer = null;
+                if (this.state.helpOpen) close.focus({ preventScroll: true });
+            }, reduceMotion ? 0 : 120);
+        },
+
+        closeHelp(restoreFocus = true) {
+            if (this.state.helpFocusTimer) clearTimeout(this.state.helpFocusTimer);
+            this.state.helpFocusTimer = null;
+            const dialog = document.getElementById('runtime-help-dialog');
+            const backdrop = document.getElementById('runtime-help-backdrop');
+            if (dialog) { dialog.classList.remove('open'); dialog.setAttribute('aria-hidden', 'true'); }
+            if (backdrop) { backdrop.classList.remove('open'); backdrop.setAttribute('aria-hidden', 'true'); }
+            document.body.classList.remove('runtime-modal-open');
+            this.state.helpOpen = false;
+            if (restoreFocus && this.state.helpTriggerElement && this.state.helpTriggerElement.focus) {
+                this.state.helpTriggerElement.focus();
+            }
+            this.state.helpTriggerElement = null;
+        },
+
         openPool(poolId, trigger) {
             if (!this.state.last) return;
             this.state.selectedPoolId = poolId;
@@ -343,7 +398,7 @@
 
         renderDetail(poolId) {
             if (!this.state.last) return;
-            const pools = allPools(this.state.last);
+            const pools = orderedPools(this.state.last);
             const pool = pools.find(item => item.id === poolId);
             if (!pool) return;
             const state = stateFor(pool);

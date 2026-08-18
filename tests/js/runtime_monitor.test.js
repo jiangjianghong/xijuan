@@ -49,3 +49,29 @@ test('recordHistory keeps a fixed sampling window from the first refresh', () =>
     assert.equal(RuntimeMonitor.state.poolHistory.global_llm.length, 60);
     assert.equal(RuntimeMonitor.state.poolHistory.global_llm.at(-1), 30);
 });
+
+test('orderedPools uses canonical five-group order regardless of API order', () => {
+    const ids = [
+        'independent_analysis', 'task_file_analysis', 'global_vl',
+        'global_analysis', 'global_llm', 'global_pipeline',
+        'task_extraction', 'global_extraction', 'global_embedding',
+        'task_table_validation', 'global_table_validation',
+    ];
+    const snapshot = RuntimeMonitor.normalizeSnapshot({
+        pools: ids.map(id => ({
+            id,
+            scope: id.startsWith('task_') ? 'task' : 'global',
+            limit: 4,
+            per_instance_limit: 4,
+            active: 0,
+            queued: 0,
+        })),
+    });
+
+    assert.deepEqual(RuntimeMonitor.orderedPools(snapshot).map(pool => pool.id), [
+        'global_llm', 'global_embedding', 'global_vl',
+        'global_table_validation', 'global_extraction', 'global_analysis',
+        'task_table_validation', 'task_extraction', 'task_file_analysis',
+        'independent_analysis', 'global_pipeline',
+    ]);
+});

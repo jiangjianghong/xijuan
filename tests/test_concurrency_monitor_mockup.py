@@ -11,7 +11,8 @@ POOL_IDS = {
     "global_analysis",
     "task_table_validation",
     "task_extraction",
-    "task_analysis",
+    "task_file_analysis",
+    "independent_analysis",
     "global_pipeline",
 }
 
@@ -27,6 +28,8 @@ def test_concurrency_monitor_contains_required_runtime_contract():
         "detail-drawer",
         "pressure-chart",
         "pool-pressure-grid",
+        "runtime-help-open",
+        "runtime-help-dialog",
     ):
         assert f'id="{control_id}"' in html
     assert "stack: 'load'" in html
@@ -40,3 +43,4 @@ def test_concurrency_monitor_contains_required_runtime_contract():
     assert 'style="height:74px;width:100%"' in html
     assert "grid-cols-1" in html
     assert "sm:grid-cols-2" in html
+    assert "默认配置示例 · 当前 worker · 只读监控" in html
