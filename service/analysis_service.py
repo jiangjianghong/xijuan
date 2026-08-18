@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import json
 import re
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Dict, List, Optional, Tuple
 
 import numexpr
@@ -15,11 +18,171 @@ from model.database import rollback_if_broken
 from model.tables import AnalysisResult, AnalysisRule, ExtractionResult, File
 from utils.callback import notify_callback
 from utils.config import get_config
-from utils.concurrency import get_limiter
+from utils.concurrency import (
+    get_limiter,
+    register_task_limiter,
+    unregister_task_limiter,
+)
 from utils.llm_client import chat_completion
 from utils.text_utils import normalize_cjk_quotes, salvage_reason, salvage_value_reason
 from utils.output_schema import render_schema_prompt
 from utils.web_search import bocha_web_search
+
+
+@dataclass(frozen=True)
+class FileRuleSnapshot:
+    """脱离 AsyncSession 生命周期的文件分析规则快照。"""
+
+    rule_id: str
+    rule_name: str
+    rule_type: str
+    depend_fields: tuple[str, ...]
+    expression: str
+    web_search: dict[str, Any] | None
+    system_prompt: str
+    is_formatted: bool
+    output_schema: Any | None
+
+    @classmethod
+    def from_orm(cls, rule: AnalysisRule) -> "FileRuleSnapshot":
+        return cls(
+            rule_id=rule.rule_id,
+            rule_name=rule.rule_name,
+            rule_type=rule.rule_type,
+            depend_fields=tuple(rule.depend_fields or ()),
+            expression=rule.expression or "",
+            web_search=copy.deepcopy(rule.web_search),
+            system_prompt=rule.system_prompt or "",
+            is_formatted=bool(rule.is_formatted),
+            output_schema=copy.deepcopy(rule.output_schema),
+        )
+
+
+@dataclass(frozen=True)
+class FileRuleComputation:
+    rule_id: str
+    rule_name: str
+    rule_type: str
+    result: str
+    reason: str
+    input_values: dict[str, str]
+    source_refs: dict[str, Any] | None
+    success: bool
+
+
+async def _compute_file_rule(
+    rule: FileRuleSnapshot,
+    field_values: dict[str, str],
+    field_source_refs: dict[str, dict],
+    calc_precision: int,
+) -> FileRuleComputation:
+    input_values = {
+        field_id: field_values.get(field_id, "")
+        for field_id in rule.depend_fields
+    }
+    source_refs = {
+        field_id: field_source_refs[field_id]
+        for field_id in rule.depend_fields
+        if field_id in field_source_refs
+    }
+
+    def finish(result: str, reason: str, success: bool) -> FileRuleComputation:
+        return FileRuleComputation(
+            rule_id=rule.rule_id,
+            rule_name=rule.rule_name,
+            rule_type=rule.rule_type,
+            result=result,
+            reason=reason,
+            input_values=input_values,
+            source_refs=source_refs or None,
+            success=success,
+        )
+
+    try:
+        valid, validation_reason = validate_field_values(
+            rule.rule_type,
+            list(rule.depend_fields),
+            field_values,
+        )
+        if not valid:
+            return finish("", validation_reason, False)
+
+        resolved_expression = resolve_expression(rule.expression, field_values)
+        if rule.rule_type in {"judge", "custom"}:
+            resolved_expression, web_ref = await apply_web_search(
+                resolved_expression,
+                rule.web_search,
+                field_values,
+            )
+            if web_ref:
+                source_refs["_web_search"] = web_ref
+
+        if rule.rule_type == "judge":
+            result, reason = await execute_judge(
+                resolved_expression,
+                system_prompt=rule.system_prompt,
+            )
+        elif rule.rule_type == "calc":
+            result, reason = await execute_calc(resolved_expression, calc_precision)
+        elif rule.rule_type == "custom":
+            result, reason = await execute_custom(
+                resolved_expression,
+                is_formatted=rule.is_formatted,
+                output_schema=rule.output_schema,
+                system_prompt=rule.system_prompt,
+            )
+        else:
+            return finish("", f"未知规则类型: {rule.rule_type}", False)
+        return finish(result, reason, True)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.error("规则分析失败: rule_id={}, error={}", rule.rule_id, exc)
+        return finish("", str(exc), False)
+
+
+async def _compute_file_rules(
+    file_id: str,
+    rules: list[FileRuleSnapshot],
+    field_values: dict[str, str],
+    field_source_refs: dict[str, dict],
+    calc_precision: int,
+) -> list[FileRuleComputation]:
+    limits = get_config().concurrency
+    file_limiter = register_task_limiter(
+        "task_file_analysis",
+        file_id,
+        limits.task_file_analysis,
+        {"file_id": file_id, "stage": "analyzing"},
+    )
+    total_limiter = get_limiter("global_analysis", limits.global_analysis)
+
+    async def guarded(rule: FileRuleSnapshot) -> FileRuleComputation:
+        context = {
+            "file_id": file_id,
+            "stage": "analyzing",
+            "rule_id": rule.rule_id,
+        }
+        async with file_limiter.context(context):
+            async with total_limiter.context(context):
+                return await _compute_file_rule(
+                    rule,
+                    field_values,
+                    field_source_refs,
+                    calc_precision,
+                )
+
+    tasks = [asyncio.create_task(guarded(rule)) for rule in rules]
+    try:
+        return [await task for task in tasks]
+    except BaseException:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    finally:
+        unregister_task_limiter("task_file_analysis", file_id)
 
 
 def resolve_expression(
