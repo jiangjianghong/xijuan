@@ -93,10 +93,17 @@
         return context.file_name || context.file_id || context.field_id || context.rule_id || context.task_id || context.model || '当前请求';
     }
 
+    function appendFixedHistory(history, value) {
+        const next = Array.isArray(history) ? history.slice(-MAX_HISTORY) : [];
+        while (next.length < MAX_HISTORY) next.unshift(null);
+        next.push(value);
+        return next.slice(-MAX_HISTORY);
+    }
+
     const RuntimeMonitor = {
         state: {
             active: false, loading: false, timer: null, last: null, selectedPoolId: null,
-            history: [], poolHistory: {}, charts: { pool: null, pressure: null, mini: new Map() },
+            history: Array(MAX_HISTORY).fill(null), poolHistory: {}, charts: { pool: null, pressure: null, mini: new Map() },
             listenersBound: false, triggerElement: null, drawerFocusTimer: null,
         },
         normalizeSnapshot,
@@ -167,12 +174,9 @@
 
         recordHistory(snapshot) {
             const overall = snapshot.summary.capacity ? Math.round(snapshot.summary.active / snapshot.summary.capacity * 100) : 0;
-            this.state.history.push(overall);
-            if (this.state.history.length > MAX_HISTORY) this.state.history.shift();
+            this.state.history = appendFixedHistory(this.state.history, overall);
             allPools(snapshot).forEach(pool => {
-                const history = this.state.poolHistory[pool.id] || (this.state.poolHistory[pool.id] = []);
-                history.push(pressureOf(pool));
-                if (history.length > MAX_HISTORY) history.shift();
+                this.state.poolHistory[pool.id] = appendFixedHistory(this.state.poolHistory[pool.id], pressureOf(pool));
             });
         },
 
@@ -251,7 +255,15 @@
         renderPoolChart(pools) {
             const chart = this.state.charts.pool;
             if (!chart) return;
-            const categories = pools.map(pool => `${(POOL_META[pool.id] || {}).short || pool.id}\n${pool.label || pool.id}`);
+            const compactLabels = typeof window !== 'undefined' && window.innerWidth <= 560;
+            const categories = pools.map(pool => {
+                const short = (POOL_META[pool.id] || {}).short || pool.id;
+                const compactShort = {
+                    global_table_validation: 'TAB', global_extraction: 'EXT', global_analysis: 'ANA',
+                    task_table_validation: 'TBL', task_extraction: 'T-EXT', task_analysis: 'T-ANA',
+                }[pool.id] || short;
+                return compactLabels ? compactShort : `${short}\n${pool.label || pool.id}`;
+            });
             const active = pools.map(pool => ({ value: pool.active, poolId: pool.id, itemStyle: { color: stateFor(pool).color, opacity: pool.status === 'offline' ? .2 : .95 }, label: { color: stateFor(pool).text } }));
             const queued = pools.map(pool => ({ value: pool.queued, poolId: pool.id, itemStyle: { color: '#aab3ae', opacity: pool.status === 'offline' ? .12 : .78 } }));
             const limits = pools.map((pool, index) => [index, pool.limit, pool.id]);
@@ -260,11 +272,11 @@
                 animation: !reduceMotion, animationDuration: 500, animationDurationUpdate: 600,
                 grid: { left: 42, right: 34, top: 14, bottom: 76, containLabel: true },
                 tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: 'rgba(44,76,59,.96)', borderWidth: 0, textStyle: { color: '#fff', fontFamily: 'Nunito, sans-serif', fontSize: 12 }, formatter: params => { const pool = pools[params[0] ? params[0].dataIndex : 0]; const state = stateFor(pool); return `<strong>${escapeHtml(pool.label)}</strong><br/>运行 ${pool.active} / ${pool.limit}<br/><span style="color:#cbd7d0">排队 ${pool.queued} · ${state.label}</span>`; } },
-                xAxis: { type: 'category', data: categories, triggerEvent: true, axisTick: { show: false }, axisLine: { lineStyle: { color: '#d6dfda' } }, axisLabel: { color: '#5c7065', fontFamily: 'Nunito, sans-serif', fontSize: 10, lineHeight: 15, interval: 0, margin: 15 } },
+                xAxis: { type: 'category', data: categories, triggerEvent: true, axisTick: { show: false }, axisLine: { lineStyle: { color: '#d6dfda' } }, axisLabel: { color: '#5c7065', fontFamily: 'Nunito, sans-serif', fontSize: compactLabels ? 9 : 10, lineHeight: 13, interval: 0, margin: compactLabels ? 10 : 15 } },
                 yAxis: { type: 'value', min: 0, max: maxAxis, interval: 4, axisLabel: { color: '#91a098', fontSize: 10 }, splitLine: { lineStyle: { color: '#edf1ef', type: 'dashed' } }, axisLine: { show: false }, axisTick: { show: false } },
                 series: [
-                    { name: '运行中', type: 'bar', stack: 'load', barWidth: 42, barMaxWidth: 42, showBackground: true, backgroundStyle: { color: '#edf2ef' }, data: active, label: { show: true, position: 'top', distance: 7, fontSize: 10, fontWeight: 700, formatter: params => `${params.value}/${pools[params.dataIndex].limit}` }, markArea: { silent: true, itemStyle: { color: 'rgba(232,239,230,.24)' }, data: [[{ xAxis: 0 }, { xAxis: 2 }], [{ xAxis: 3 }, { xAxis: 5 }], [{ xAxis: 6 }, { xAxis: 8 }], [{ xAxis: 9 }, { xAxis: 9 }]] } },
-                    { name: '排队中', type: 'bar', stack: 'load', barWidth: 42, barMaxWidth: 42, data: queued, itemStyle: { borderRadius: [6, 6, 0, 0] }, label: { show: true, position: 'top', distance: 2, color: '#758078', fontSize: 9, fontWeight: 700, formatter: params => params.value ? `+${params.value} WAIT` : '' } },
+                    { name: '运行中', type: 'bar', stack: 'load', barWidth: '68%', barMaxWidth: 42, showBackground: true, backgroundStyle: { color: '#edf2ef' }, data: active, label: { show: true, position: 'top', distance: 7, fontSize: 10, fontWeight: 700, formatter: params => `${params.value}/${pools[params.dataIndex].limit}` }, markArea: { silent: true, itemStyle: { color: 'rgba(232,239,230,.24)' }, data: [[{ xAxis: 0 }, { xAxis: 2 }], [{ xAxis: 3 }, { xAxis: 5 }], [{ xAxis: 6 }, { xAxis: 8 }], [{ xAxis: 9 }, { xAxis: 9 }]] } },
+                    { name: '排队中', type: 'bar', stack: 'load', barWidth: '68%', barMaxWidth: 42, data: queued, itemStyle: { borderRadius: [8, 8, 0, 0] }, label: { show: true, position: 'top', distance: 2, color: '#758078', fontSize: 9, fontWeight: 700, formatter: params => params.value ? `+${params.value} WAIT` : '' } },
                     { name: '容量上限', type: 'custom', silent: true, z: 10, renderItem: (params, api) => { const coord = api.coord([api.value(0), api.value(1)]); return { type: 'group', children: [{ type: 'line', shape: { x1: coord[0] - 25, y1: coord[1], x2: coord[0] + 25, y2: coord[1] }, style: { stroke: '#77877e', lineWidth: 1, lineDash: [3, 3] } }, { type: 'text', style: { x: coord[0] + 29, y: coord[1] + 3, text: `L${api.value(1)}`, fill: '#9aa69f', font: '10px Nunito' } }] }; }, data: limits },
                 ],
             }, true);

@@ -31,3 +31,21 @@ test('normalizeSnapshot tolerates an empty or malformed response', () => {
     assert.equal(normalized.pipeline.status, 'offline');
     assert.equal(normalized.error, false);
 });
+
+test('recordHistory keeps a fixed sampling window from the first refresh', () => {
+    RuntimeMonitor.state.history = [];
+    RuntimeMonitor.state.poolHistory = {};
+
+    const snapshot = RuntimeMonitor.normalizeSnapshot({
+        summary: { active: 3, capacity: 10 },
+        pools: [{ id: 'global_llm', scope: 'global', limit: 10, active: 3, queued: 0, status: 'normal' }],
+    });
+
+    RuntimeMonitor.recordHistory(snapshot);
+
+    assert.equal(RuntimeMonitor.state.history.length, 60);
+    assert.equal(RuntimeMonitor.state.history.at(-1), 30);
+    assert.equal(RuntimeMonitor.state.history.slice(0, -1).every(value => value === null), true);
+    assert.equal(RuntimeMonitor.state.poolHistory.global_llm.length, 60);
+    assert.equal(RuntimeMonitor.state.poolHistory.global_llm.at(-1), 30);
+});
