@@ -219,6 +219,7 @@ async def init_database() -> None:
 async def recover_abnormal_status(session: AsyncSession) -> None:
     """将所有处理中（*ing）状态恢复为对应的失败状态。
 
+    - queued → parsing_failed
     - parsing → parsing_failed
     - tableing → tableing_failed
     - chunking → chunking_failed
@@ -242,6 +243,9 @@ async def recover_abnormal_status(session: AsyncSession) -> None:
             logger.info("归一化历史状态 {} -> {}: {} 条记录", old_status, new_status, result.rowcount)
 
     status_mapping = {
+        # 排队中的文件在重启后不会自行启动（BackgroundTasks 已丢失），
+        # 归入 parsing_failed 让用户可以显式重试
+        "queued": "parsing_failed",
         "parsing": "parsing_failed",
         "tableing": "tableing_failed",
         "chunking": "chunking_failed",

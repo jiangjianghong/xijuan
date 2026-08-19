@@ -190,6 +190,10 @@ class ObservableLimiter:
             return
         loop.create_task(self._wake_waiters())
 
+    def available(self) -> int:
+        """当前剩余可用名额（<=0 表示新请求会排队）。"""
+        return max(0, self._limit - self._active)
+
     def context(self, metadata: dict[str, Any] | None = None) -> LimiterLease:
         return LimiterLease(self, metadata)
 
