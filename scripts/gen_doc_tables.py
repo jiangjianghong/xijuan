@@ -34,6 +34,8 @@ PREFIX_MAP = [
     ("/analysis", "逻辑分析", "api/analysis.md"),
     ("/search", "向量检索", "api/search.md"),
     ("/log", "日志", "api/logs.md"),
+    ("/runtime", "并发监控", "api/runtime.md"),
+    ("/settings", "系统设置", "api/settings.md"),
 ]
 
 # openapi 里为裸 object / Any 的复杂字段 → 只出类型 + 指向唯一权威页链接

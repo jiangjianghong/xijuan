@@ -738,6 +738,74 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             ),
         }
     },
+    "/runtime/concurrency": {
+        "get": {
+            "summary": "并发运行时快照",
+            "description": (
+                "返回**当前 worker 进程内**各并发池的实时水位，供监控面板与容量排查使用。"
+                "多 worker 部署时每个进程独立计数，不聚合。\n\n"
+                "池分四组：模型通道（`global_llm` / `global_embedding` / `global_vl`）、"
+                "业务阶段（`global_table_validation` / `global_extraction` / `global_analysis`）、"
+                "文件内任务（`task_*`，按文件实例聚合，给出最繁忙实例与累计值）、"
+                "管线调度（`global_pipeline`，同时处理的文件数闸门）。\n\n"
+                "`status` 取值：`idle`（无占用）/ `normal` / `pressure`（占用 >=75% 或排队 >=2）/ "
+                "`saturated`（占满且有排队）/ `offline`（未接入或快照缺失）。`limit` 来自 "
+                "`configs/config.yaml` 的 `concurrency` 节。\n\n"
+                "返回 `data={updated_at, scope, summary, pools, events}`；`events` 为最近 20 条"
+                "获取/等待/释放事件（倒序）。"
+            ),
+        }
+    },
+    "/settings/login": {
+        "post": {
+            "summary": "设置页登录",
+            "description": (
+                "校验管理员密码，成功后写入 `settings_session` Cookie"
+                "（HttpOnly、SameSite=strict、`path=/settings`，有效期 `settings.session_minutes` 分钟）。\n\n"
+                "**错误码**：401（密码错误）/ 429（登录尝试过于频繁，按客户端 IP 限流）。"
+            ),
+        }
+    },
+    "/settings/session": {
+        "get": {
+            "summary": "设置会话状态",
+            "description": (
+                "查询当前 `settings_session` Cookie 是否仍有效。**不需要**已登录即可调用，"
+                "未登录或已过期返回 `{authenticated: false}` 而非 401。"
+            ),
+        }
+    },
+    "/settings/config": {
+        "get": {
+            "summary": "读取运行时配置",
+            "description": (
+                "返回可在设置页编辑的配置分组及当前值。**密钥类字段不返回明文**，"
+                "统一呈现为 `{configured: true|false}`。\n\n"
+                "`version` 是配置文档的 HMAC-SHA256 指纹，作为 `PATCH /settings/config` 的"
+                "乐观锁凭据（`base_version`）。`readonly` 列出不可编辑字段。\n\n"
+                "**错误码**：401（会话过期）/ 500（配置文件读取失败）。"
+            ),
+        },
+        "patch": {
+            "summary": "更新运行时配置",
+            "description": (
+                "按分组增量更新配置并**立即生效**（并发限额会同步 replace 到 limiter 注册表），"
+                "同时写回 `configs/config.yaml`。\n\n"
+                "`base_version` 必须等于最近一次 `GET /settings/config` 返回的 `version`，"
+                "否则判定为并发修改冲突（409）。`changes` 为 `{分组: {字段: 值}}`；"
+                "`secrets` 为 `{路径: {action, value}}`，`action` 取 `keep`（保持原值）/ "
+                "`replace`（写入 `value`）/ `clear`（清空）。\n\n"
+                "**错误码**：401（会话过期）/ 409（`base_version` 过期）/ "
+                "422（分组或字段不允许修改、值校验失败）/ 500（写入失败）。"
+            ),
+        },
+    },
+    "/settings/logout": {
+        "post": {
+            "summary": "退出设置页",
+            "description": "吊销当前会话令牌并清除 `settings_session` Cookie。重复调用不报错。",
+        }
+    },
     "/log/files": {
         "get": {
             "summary": "应用日志文件列表",
@@ -1756,6 +1824,28 @@ RESPONSE_DATA: Dict[tuple, Any] = {
     # log
     ("/log/files", "get"): {"current": "string — 最新日志文件名（可空）", "items": "array — 文件列表"},
     ("/log/recent", "get"): {"file": "string — 日志文件名（可空）", "lines": "array — 日志行"},
+    # runtime
+    ("/runtime/concurrency", "get"): {
+        "updated_at": "string — 快照生成时间（ISO8601，带时区）",
+        "scope": "string — 统计范围，恒为 single-process",
+        "summary": "object — 全局池汇总 {active, capacity, queued, hot_pools, wait_p95_ms}",
+        "pools": "array — 各并发池记录（模型通道 / 业务阶段 / 文件内任务 / 管线闸门）",
+        "events": "array — 最近 20 条并发事件（倒序）",
+    },
+    # settings
+    ("/settings/login", "post"): {"authenticated": "boolean — 恒为 true（失败走错误码）"},
+    ("/settings/session", "get"): {"authenticated": "boolean — 当前会话是否有效"},
+    ("/settings/config", "get"): {
+        "version": "string — 配置指纹，PATCH 时作为 base_version 回传",
+        "config": "object — 可编辑分组及当前值（密钥呈现为 configured 布尔）",
+        "readonly": "object — 各分组的只读字段清单",
+    },
+    ("/settings/config", "patch"): {
+        "version": "string — 更新后的新配置指纹",
+        "config": "object — 更新后的配置（密钥仍不返回明文）",
+        "readonly": "object — 各分组的只读字段清单",
+    },
+    ("/settings/logout", "post"): {"authenticated": "boolean — 恒为 false"},
 }
 
 

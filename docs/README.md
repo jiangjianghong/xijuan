@@ -13,7 +13,7 @@
 ## 文档地图
 
 ### 单文件总手册
-- [API_FULL_REFERENCE](API_FULL_REFERENCE.md) — 当前项目全部 51 个接口与现有文档细节的单文件详尽手册，包含公共约定、参数表、请求示例、响应示例、错误条件、回调与 SSE 契约，并在文末完整汇编 `api/`、`guides/`、`reference/`、`architecture/` 与 backlog 文档。适合外部集成方或需要一次性通读项目文档全貌时使用。
+- [API_FULL_REFERENCE](API_FULL_REFERENCE.md) — 当前项目接口与现有文档细节的单文件详尽手册，包含公共约定、参数表、请求示例、响应示例、错误条件、回调与 SSE 契约，并在文末完整汇编 `api/`、`guides/`、`reference/`、`architecture/` 与 backlog 文档。适合外部集成方或需要一次性通读项目文档全貌时使用。
 
 ### 参考层 · 接口参考（`api/`）
 - [overview](api/overview.md) — 基础信息 · 通用响应信封 · 认证 · 分页约定 · 错误码总表 · 版本
@@ -23,6 +23,8 @@
 - [analysis](api/analysis.md) — `/analysis` 逻辑分析配置 / 调试 / 独立执行
 - [search](api/search.md) — `/search` 向量检索
 - [logs](api/logs.md) — `/log` 应用日志查看 / SSE
+- [runtime](api/runtime.md) — `/runtime` 并发运行时快照（监控面板数据源）
+- [settings](api/settings.md) — `/settings` 运行时配置读写（管理员会话保护）
 - [callbacks](api/callbacks.md) — 异步回调契约（`callback_url`）
 - [sse](api/sse.md) — SSE 流式事件清单
 
@@ -41,7 +43,7 @@
 
 ## 接口总览
 
-共 51 个接口。下表由 `scripts/gen_doc_tables.py` 从 `docs/openapi.json` 生成，请勿手改。
+共 59 个接口。下表由 `scripts/gen_doc_tables.py` 从 `docs/openapi.json` 生成，请勿手改。
 
 <!-- AUTOGEN:endpoint-index -->
 | 方法 | 路径 | 分组 | 摘要 | 文档 |
@@ -98,7 +100,13 @@
 | GET | `/log/files` | 日志 | 应用日志文件列表 | [api/logs.md](api/logs.md) |
 | GET | `/log/recent` | 日志 | 读取最近日志 | [api/logs.md](api/logs.md) |
 | GET | `/log/stream` | 日志 | 实时日志流（SSE） | [api/logs.md](api/logs.md) |
+| GET | `/runtime/concurrency` | 并发监控 | 并发运行时快照 | [api/runtime.md](api/runtime.md) |
 | POST | `/search` | 向量检索 | 向量相似度检索 | [api/search.md](api/search.md) |
+| GET | `/settings/config` | 系统设置 | 读取运行时配置 | [api/settings.md](api/settings.md) |
+| PATCH | `/settings/config` | 系统设置 | 更新运行时配置 | [api/settings.md](api/settings.md) |
+| POST | `/settings/login` | 系统设置 | 设置页登录 | [api/settings.md](api/settings.md) |
+| POST | `/settings/logout` | 系统设置 | 退出设置页 | [api/settings.md](api/settings.md) |
+| GET | `/settings/session` | 系统设置 | 设置会话状态 | [api/settings.md](api/settings.md) |
 <!-- /AUTOGEN:endpoint-index -->
 
 ## 维护约定

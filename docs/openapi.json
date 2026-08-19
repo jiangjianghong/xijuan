@@ -3385,6 +3385,418 @@
           }
         }
       }
+    },
+    "/settings/login": {
+      "post": {
+        "tags": [
+          "系统设置"
+        ],
+        "summary": "设置页登录",
+        "operationId": "login_settings_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "authenticated": {
+                          "type": "boolean",
+                          "description": "恒为 true（失败走错误码）"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "description": "校验管理员密码，成功后写入 `settings_session` Cookie（HttpOnly、SameSite=strict、`path=/settings`，有效期 `settings.session_minutes` 分钟）。\n\n**错误码**：401（密码错误）/ 429（登录尝试过于频繁，按客户端 IP 限流）。"
+      }
+    },
+    "/settings/session": {
+      "get": {
+        "tags": [
+          "系统设置"
+        ],
+        "summary": "设置会话状态",
+        "operationId": "session_status_settings_session_get",
+        "parameters": [
+          {
+            "name": "settings_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Settings Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "authenticated": {
+                          "type": "boolean",
+                          "description": "当前会话是否有效"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "description": "查询当前 `settings_session` Cookie 是否仍有效。**不需要**已登录即可调用，未登录或已过期返回 `{authenticated: false}` 而非 401。"
+      }
+    },
+    "/settings/config": {
+      "get": {
+        "tags": [
+          "系统设置"
+        ],
+        "summary": "读取运行时配置",
+        "operationId": "read_config_settings_config_get",
+        "parameters": [
+          {
+            "name": "settings_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Settings Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "string",
+                          "description": "配置指纹，PATCH 时作为 base_version 回传"
+                        },
+                        "config": {
+                          "type": "object",
+                          "description": "可编辑分组及当前值（密钥呈现为 configured 布尔）"
+                        },
+                        "readonly": {
+                          "type": "object",
+                          "description": "各分组的只读字段清单"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "description": "返回可在设置页编辑的配置分组及当前值。**密钥类字段不返回明文**，统一呈现为 `{configured: true|false}`。\n\n`version` 是配置文档的 HMAC-SHA256 指纹，作为 `PATCH /settings/config` 的乐观锁凭据（`base_version`）。`readonly` 列出不可编辑字段。\n\n**错误码**：401（会话过期）/ 500（配置文件读取失败）。"
+      },
+      "patch": {
+        "tags": [
+          "系统设置"
+        ],
+        "summary": "更新运行时配置",
+        "operationId": "update_config_settings_config_patch",
+        "parameters": [
+          {
+            "name": "settings_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Settings Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsPatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "string",
+                          "description": "更新后的新配置指纹"
+                        },
+                        "config": {
+                          "type": "object",
+                          "description": "更新后的配置（密钥仍不返回明文）"
+                        },
+                        "readonly": {
+                          "type": "object",
+                          "description": "各分组的只读字段清单"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "description": "按分组增量更新配置并**立即生效**（并发限额会同步 replace 到 limiter 注册表），同时写回 `configs/config.yaml`。\n\n`base_version` 必须等于最近一次 `GET /settings/config` 返回的 `version`，否则判定为并发修改冲突（409）。`changes` 为 `{分组: {字段: 值}}`；`secrets` 为 `{路径: {action, value}}`，`action` 取 `keep`（保持原值）/ `replace`（写入 `value`）/ `clear`（清空）。\n\n**错误码**：401（会话过期）/ 409（`base_version` 过期）/ 422（分组或字段不允许修改、值校验失败）/ 500（写入失败）。"
+      }
+    },
+    "/settings/logout": {
+      "post": {
+        "tags": [
+          "系统设置"
+        ],
+        "summary": "退出设置页",
+        "operationId": "logout_settings_logout_post",
+        "parameters": [
+          {
+            "name": "settings_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Settings Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "authenticated": {
+                          "type": "boolean",
+                          "description": "恒为 false"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "description": "吊销当前会话令牌并清除 `settings_session` Cookie。重复调用不报错。"
+      }
+    },
+    "/runtime/concurrency": {
+      "get": {
+        "tags": [
+          "runtime"
+        ],
+        "summary": "并发运行时快照",
+        "description": "返回**当前 worker 进程内**各并发池的实时水位，供监控面板与容量排查使用。多 worker 部署时每个进程独立计数，不聚合。\n\n池分四组：模型通道（`global_llm` / `global_embedding` / `global_vl`）、业务阶段（`global_table_validation` / `global_extraction` / `global_analysis`）、文件内任务（`task_*`，按文件实例聚合，给出最繁忙实例与累计值）、管线调度（`global_pipeline`，同时处理的文件数闸门）。\n\n`status` 取值：`idle`（无占用）/ `normal` / `pressure`（占用 >=75% 或排队 >=2）/ `saturated`（占满且有排队）/ `offline`（未接入或快照缺失）。`limit` 来自 `configs/config.yaml` 的 `concurrency` 节。\n\n返回 `data={updated_at, scope, summary, pools, events}`；`events` 为最近 20 条获取/等待/释放事件（倒序）。",
+        "operationId": "get_concurrency_snapshot_runtime_concurrency_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "default": 200
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "updated_at": {
+                          "type": "string",
+                          "description": "快照生成时间（ISO8601，带时区）"
+                        },
+                        "scope": {
+                          "type": "string",
+                          "description": "统计范围，恒为 single-process"
+                        },
+                        "summary": {
+                          "type": "object",
+                          "description": "全局池汇总 {active, capacity, queued, hot_pools, wait_p95_ms}"
+                        },
+                        "pools": {
+                          "type": "array",
+                          "description": "各并发池记录（模型通道 / 业务阶段 / 文件内任务 / 管线闸门）"
+                        },
+                        "events": {
+                          "type": "array",
+                          "description": "最近 20 条并发事件（倒序）"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4902,6 +5314,19 @@
         "title": "ImportConfigsRequest",
         "description": "从 JSON 载荷导入字段+规则到目标类型。"
       },
+      "LoginRequest": {
+        "properties": {
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "title": "LoginRequest"
+      },
       "ProjectCreate": {
         "properties": {
           "project_id": {
@@ -5043,6 +5468,66 @@
         ],
         "title": "SearchTypeEnum",
         "description": "文本检索方式：`context` 关键词上下文 / `section` 章节匹配 / `rule` 关键词+停止词边界 / `chunk_db` MySQL 分块检索 / `vector_db` Milvus 语义检索 / `page` 按页码区间切片。"
+      },
+      "SecretOperation": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "keep",
+              "replace",
+              "clear"
+            ],
+            "title": "Action"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "SecretOperation"
+      },
+      "SettingsPatchRequest": {
+        "properties": {
+          "base_version": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Base Version"
+          },
+          "changes": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Changes"
+          },
+          "secrets": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SecretOperation"
+            },
+            "type": "object",
+            "title": "Secrets"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_version"
+        ],
+        "title": "SettingsPatchRequest"
       },
       "SourceTypeEnum": {
         "type": "string",
