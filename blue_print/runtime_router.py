@@ -115,25 +115,34 @@ async def get_concurrency_snapshot():
     limits = get_config().concurrency.model_dump(mode="python")
     for pool_id, _, _, _ in _GLOBAL_POOLS:
         get_limiter(pool_id, int(limits[pool_id]))
+    # 闸门池不在 _GLOBAL_POOLS（它单独成组展示），但同样要预注册，
+    # 否则首个文件进管线之前快照里读不到这个池
+    get_limiter("global_pipeline", int(limits["global_pipeline"]))
 
     raw = runtime_snapshot()
     global_records = _global_pool_records(raw.get("pools", {}), limits)
     task_records = _task_pool_records(raw.get("task_pools", {}), limits)
+    # global_pipeline 已由 service/pipeline_gate.py:pipeline_slot 真实接入，
+    # 读 limiter 实时水位（此前是恒 offline 的占位记录）
+    pipeline_raw = dict(raw.get("pools", {}).get("global_pipeline") or {})
+    pipeline_limit = int(limits["global_pipeline"])
+    pipeline_active = int(pipeline_raw.get("active", 0))
+    pipeline_queued = int(pipeline_raw.get("queued", 0))
     pipeline_record = {
         "id": "global_pipeline",
         "label": "文件管线",
         "group": "管线调度",
         "scope": "global",
-        "limit": int(limits["global_pipeline"]),
-        "active": 0,
-        "queued": 0,
-        "completed": 0,
-        "wait_p95_ms": 0,
-        "status": "offline",
-        "connected": False,
+        "limit": pipeline_limit,
+        "active": pipeline_active,
+        "queued": pipeline_queued,
+        "completed": int(pipeline_raw.get("completed", 0)),
+        "wait_p95_ms": float(pipeline_raw.get("wait_p95_ms", 0)),
+        "status": _status(pipeline_active, pipeline_limit, pipeline_queued),
+        "connected": True,
         "constraints": [],
-        "tasks": [],
-        "note": "当前配置尚未接入文件管线调度。",
+        "tasks": list(pipeline_raw.get("holders", [])),
+        "note": "上传与重试的六个入口全程持有令牌，超限文件落 queued 排队。",
     }
     global_for_summary = [item for item in global_records]
     summary = {

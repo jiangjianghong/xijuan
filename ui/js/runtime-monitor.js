@@ -22,7 +22,7 @@
         task_extraction: { short: 'T-EXTRACT', note: '展示当前最繁忙文件的字段抽取并发，详情中同时给出全部实例累计值。' },
         task_file_analysis: { short: 'T-ANALYZE', note: '展示当前最繁忙文件内部的逻辑分析规则并发。' },
         independent_analysis: { short: 'INDEPENDENT', note: '展示当前 worker 内所有独立分析请求共享的 item 并发。' },
-        global_pipeline: { short: 'PIPELINE', note: '该配置目前仅为预留值，尚未接入文件管线调度。' },
+        global_pipeline: { short: 'PIPELINE', note: '同时处理的文件数上限。上传与重试的六个入口全程持有令牌，超限文件落 queued 排队。' },
     };
     const POOL_ORDER = [
         'global_llm', 'global_embedding', 'global_vl',

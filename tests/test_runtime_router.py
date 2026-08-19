@@ -51,9 +51,11 @@ async def test_runtime_concurrency_snapshot_shape(client):
     assert file_analysis["constraints"] == ["global_analysis"]
     assert all(pool["id"] != "task_analysis" for pool in data["pools"])
 
+    # global_pipeline 已由 pipeline_gate 真实接入，不再是恒 offline 的占位记录
     pipeline = next(pool for pool in data["pools"] if pool["id"] == "global_pipeline")
-    assert pipeline["status"] == "offline"
-    assert pipeline["connected"] is False
+    assert pipeline["connected"] is True
+    assert pipeline["status"] != "offline"
+    assert pipeline["limit"] >= 1
 
 
 @pytest.mark.asyncio
