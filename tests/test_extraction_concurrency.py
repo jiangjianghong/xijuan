@@ -161,3 +161,117 @@ async def test_cancelled_error_propagates(monkeypatch):
             field_source_pages={}, field_pages_from={}, task_limit=4,
             global_limit=8, start_index=0,
         )
+
+
+class _FakeExecuteResult:
+    def scalar_one_or_none(self):
+        return None
+
+
+class _RecordingSession:
+    """记录写库调用的会话替身。"""
+
+    def __init__(self):
+        self.added = []
+        self.commits = 0
+
+    async def execute(self, stmt):
+        return _FakeExecuteResult()
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def commit(self):
+        self.commits += 1
+
+    async def rollback(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_advanced_fields_start_after_all_basic_finish(monkeypatch):
+    """屏障硬保证：min(进阶开始时刻) > max(普通结束时刻)。"""
+    timeline = []
+
+    async def fake_extract(file_id, field, snapshot, values, pages, pages_from=None):
+        loop = asyncio.get_running_loop()
+        timeline.append((field.field_id, "start", loop.time()))
+        # 普通字段故意慢，进阶字段快：若无屏障，进阶必然抢先完成
+        await asyncio.sleep(0.1 if not field.is_advanced else 0.01)
+        timeline.append((field.field_id, "end", loop.time()))
+        return f"值-{field.field_id}", "理由", {"label": [{"text": "x"}]}, [2]
+
+    monkeypatch.setattr(es, "_extract_field_result", fake_extract)
+    monkeypatch.setattr(es, "notify_callback", _noop_callback)
+
+    fields = [
+        _field("b1"), _field("b2"), _field("b3"),
+        _field("a1", is_advanced=1), _field("a2", is_advanced=1),
+    ]
+    session = _RecordingSession()
+    items = [
+        item async for item in es._iter_extraction_results(
+            "file1", session, snapshot=None, ordered_fields=fields,
+            basic_count=3, task_limit=4, global_limit=8,
+        )
+    ]
+
+    assert len(items) == 5
+    basic_end = max(t for fid, kind, t in timeline if kind == "end" and fid.startswith("b"))
+    adv_start = min(t for fid, kind, t in timeline if kind == "start" and fid.startswith("a"))
+    assert adv_start > basic_end, "进阶字段早于普通字段完成就启动了，屏障失效"
+
+
+@pytest.mark.asyncio
+async def test_advanced_fields_see_basic_values(monkeypatch):
+    """屏障处聚合的 field_values / source_pages 对进阶字段可见。"""
+    seen = {}
+
+    async def fake_extract(file_id, field, snapshot, values, pages, pages_from=None):
+        if field.is_advanced:
+            seen["values"] = dict(values)
+            seen["pages"] = dict(pages)
+            seen["from"] = dict(pages_from or {})
+        return f"值-{field.field_id}", "理由", {"label": [{"page_num": 3, "text": "x"}]}, [3]
+
+    monkeypatch.setattr(es, "_extract_field_result", fake_extract)
+    monkeypatch.setattr(es, "notify_callback", _noop_callback)
+
+    fields = [_field("b1"), _field("adv", is_advanced=1)]
+    session = _RecordingSession()
+    _ = [item async for item in es._iter_extraction_results(
+        "file1", session, snapshot=None, ordered_fields=fields,
+        basic_count=1, task_limit=4, global_limit=8,
+    )]
+
+    assert seen["values"] == {"b1": "值-b1"}
+    assert seen["pages"]["b1"] == [3]
+    assert seen["from"]["b1"] == "model"
+    # 进阶字段自身不进入引用映射
+    assert "adv" not in seen["values"]
+
+
+@pytest.mark.asyncio
+async def test_items_carry_config_index_and_persist(monkeypatch):
+    """产出的 item 带配置序号；每个字段都落一次库。"""
+
+    async def fake_extract(file_id, field, snapshot, values, pages, pages_from=None):
+        await asyncio.sleep(0.03 if field.field_id == "f0" else 0.0)
+        return "值", "理由", {"label": [{"text": "x"}]}, []
+
+    monkeypatch.setattr(es, "_extract_field_result", fake_extract)
+    monkeypatch.setattr(es, "notify_callback", _noop_callback)
+
+    fields = [_field("f0"), _field("f1"), _field("f2")]
+    session = _RecordingSession()
+    items = [item async for item in es._iter_extraction_results(
+        "file1", session, snapshot=None, ordered_fields=fields,
+        basic_count=3, task_limit=4, global_limit=8,
+    )]
+
+    # 完成顺序：f1、f2 先于 f0
+    assert [i["field_id"] for i in items][-1] == "f0"
+    # 但 index 恒为配置序号
+    assert {i["field_id"]: i["index"] for i in items} == {"f0": 1, "f1": 2, "f2": 3}
+    assert session.commits == 3
+    assert len(session.added) == 3

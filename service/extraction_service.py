@@ -2287,7 +2287,7 @@ class FieldComputation:
     model_pages: List[int]
 
 
-async def _run_field_group(
+async def _iter_field_group(
     file_id: str,
     fields: Sequence[Any],
     snapshot: Optional["FileExtractionSnapshot"],
@@ -2297,8 +2297,11 @@ async def _run_field_group(
     task_limit: int,
     global_limit: int,
     start_index: int,
-) -> List[FieldComputation]:
-    """并发执行一组字段，返回按配置顺序排列的计算结果。
+) -> AsyncIterator[FieldComputation]:
+    """并发执行一组字段，**按完成顺序**产出结果。
+
+    完成即产出：慢字段不会阻塞已经算完的字段落库与推送。若改成整组
+    await 再逐个产出，实时性就退化回串行时代的观感。
 
     并发段内不做任何 DB 访问：读走 snapshot，写留给主协程。单字段异常在
     worker 内部收敛成 success=False 的结果，不连坐同批其他字段。
@@ -2314,11 +2317,11 @@ async def _run_field_group(
         global_limit: 全局字段并发上限（concurrency.global_extraction）。
         start_index: 本组首个字段的配置序号偏移（普通组为 0，进阶组为普通字段数）。
 
-    Returns:
-        FieldComputation 列表，顺序与入参 fields 一致。
+    Yields:
+        FieldComputation，其 index 恒为配置序号，与产出顺序无关。
     """
     if not fields:
-        return []
+        return
 
     task_semaphore = register_task_limiter(
         "task_extraction",
@@ -2358,13 +2361,182 @@ async def _run_field_group(
 
     tasks = [asyncio.create_task(_worker(i, f)) for i, f in enumerate(fields)]
     try:
-        return [await task for task in tasks]
+        for completed in asyncio.as_completed(tasks):
+            yield await completed
     except BaseException:
         for task in tasks:
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
+
+
+async def _run_field_group(
+    file_id: str,
+    fields: Sequence[Any],
+    snapshot: Optional["FileExtractionSnapshot"],
+    field_values: Dict[str, str],
+    field_source_pages: Dict[str, Optional[List[int]]],
+    field_pages_from: Dict[str, str],
+    task_limit: int,
+    global_limit: int,
+    start_index: int,
+) -> List[FieldComputation]:
+    """并发执行一组字段，返回**按配置顺序**排列的结果。
+
+    _iter_field_group 的收集封装，供需要整组结果的调用方使用。
+    """
+    results = [
+        computation
+        async for computation in _iter_field_group(
+            file_id, fields, snapshot, field_values, field_source_pages,
+            field_pages_from, task_limit, global_limit, start_index,
+        )
+    ]
+    results.sort(key=lambda c: c.index)
+    return results
+
+
+async def _iter_extraction_results(
+    file_id: str,
+    session: AsyncSession,
+    snapshot: Optional["FileExtractionSnapshot"],
+    ordered_fields: Sequence[Any],
+    basic_count: int,
+    task_limit: int,
+    global_limit: int,
+) -> AsyncIterator[Dict[str, Any]]:
+    """两阶段并发执行字段提取，按完成顺序产出统一的结果 item。
+
+    普通字段组整体完成 → 屏障处聚合引用映射 → 进阶字段组并发执行。
+    进阶字段引用普通字段的结果，没有屏障就会读到空值。
+
+    并发只发生在组内，写库与产出都在主协程，因此 session 无竞争。
+
+    产出的 item 用统一 key（value / index），由调用方按各自对外契约改写：
+    run_extraction 直接用，run_extraction_stream 映射成 extracted_value / current。
+
+    Args:
+        file_id: 文件 ID。
+        session: 数据库会话，仅在主协程用于写 extraction_result。
+        snapshot: 提取快照。
+        ordered_fields: 普通字段在前、进阶字段在后的完整字段列表。
+        basic_count: 普通字段数量，即两组的切分点。
+        task_limit: 单文件并发上限。
+        global_limit: 全局并发上限。
+
+    Yields:
+        {field_id, field_name, value, reason, pages, source_pages, source_refs,
+         success, index, total}
+    """
+    total = len(ordered_fields)
+    field_values: Dict[str, str] = {}
+    field_source_pages: Dict[str, Optional[List[int]]] = {}
+    field_pages_from: Dict[str, str] = {}
+
+    basic_fields = list(ordered_fields[:basic_count])
+    advanced_fields = list(ordered_fields[basic_count:])
+
+    try:
+        for group, start_index in ((basic_fields, 0), (advanced_fields, basic_count)):
+            if not group:
+                continue
+            # 组内完成即产出；组间是屏障——进阶组必须等普通组全部落库后才启动
+            async for computation in _iter_field_group(
+                file_id, group, snapshot, field_values, field_source_pages,
+                field_pages_from, task_limit, global_limit, start_index,
+            ):
+                item = await _persist_field_computation(
+                    file_id, session, computation, snapshot, total,
+                    field_values, field_source_pages, field_pages_from,
+                )
+                yield item
+    finally:
+        unregister_task_limiter("task_extraction", file_id)
+
+
+async def _persist_field_computation(
+    file_id: str,
+    session: AsyncSession,
+    computation: FieldComputation,
+    snapshot: Optional["FileExtractionSnapshot"],
+    total: int,
+    field_values: Dict[str, str],
+    field_source_pages: Dict[str, Optional[List[int]]],
+    field_pages_from: Dict[str, str],
+) -> Dict[str, Any]:
+    """把一个字段的计算结果落库，并组装对外 item。仅在主协程调用。"""
+    field = computation.field
+    value = computation.value
+    reason = computation.reason
+    source_refs = computation.source_refs
+    model_pages = computation.model_pages
+
+    if computation.success:
+        # 按「抽取值 ↔ 命中页内容」包含相似度对各 label 分组内 ref 排序
+        page_contents = snapshot.page_contents if snapshot else {}
+        _sort_source_refs_by_page_containment(source_refs, value, page_contents)
+    else:
+        # 落库失败会把会话打成 DEACTIVE，不修复则下面的 execute 必抛
+        # PendingRollbackError，把单字段失败放大成整个文件卡死（2026-07-28 线上事故）。
+        # 只在真坏掉时回滚：无谓 rollback 会 expire field 等 ORM 对象。
+        await rollback_if_broken(session)
+
+    stmt = select(ExtractionResult).where(
+        ExtractionResult.file_id == file_id,
+        ExtractionResult.field_id == field.field_id,
+    )
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+
+    if existing:
+        existing.extracted_value = value
+        existing.reason = reason
+        existing.source_refs = source_refs
+        existing.model_pages = model_pages or None
+    else:
+        session.add(
+            ExtractionResult(
+                file_id=file_id,
+                field_id=field.field_id,
+                extracted_value=value,
+                reason=reason,
+                source_refs=source_refs,
+                model_pages=model_pages or None,
+            )
+        )
+
+    await session.commit()
+
+    if computation.success:
+        logger.info(
+            "字段提取成功: field_id={}, value={}",
+            field.field_id,
+            value[:100] if value else "",
+        )
+
+    # 对外页码：pages = 模型自报（可能空）；source_pages = 兜底后必定存在。
+    # 排序后再算，让 source_pages 与最终 source_refs 顺序一致。
+    source_pages = derive_source_pages(model_pages, source_refs)
+
+    # 仅普通字段进入引用映射（进阶字段不可被引用）。存 source_pages 而非
+    # 纯模型页——进阶字段联动据此兜底，不再因模型没自报页码而失败。
+    if not getattr(field, "is_advanced", 0):
+        field_values[field.field_id] = value
+        field_source_pages[field.field_id] = source_pages or None
+        field_pages_from[field.field_id] = "model" if model_pages else "refs"
+
+    return {
+        "field_id": field.field_id,
+        "field_name": field.field_name,
+        "value": value,
+        "reason": reason,
+        "pages": model_pages,
+        "source_pages": source_pages,
+        "source_refs": source_refs,
+        "success": computation.success,
+        "index": computation.index,
+        "total": total,
+    }
 
 
 async def run_extraction(
