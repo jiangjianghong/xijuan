@@ -51,6 +51,7 @@ from model.tables import (
 )
 from service.file_context_service import query_file_context
 from service.pipeline_service import run_from_stage, run_from_stage_stream, run_pipeline, run_pipeline_stream
+from service.pipeline_gate import pipeline_slot
 from service.extraction_service import (
     derive_source_pages,
     parse_sections,
@@ -129,6 +130,8 @@ async def list_files(
 
 # 处理中状态集合：必须与前端 Utils.isProcessing 一致（含遗留名 table_name_validating）
 PROCESSING_STATES = (
+    # queued 也算处理中：文件已受理、只是在等 global_pipeline 令牌
+    "queued",
     "parsing", "table_name_validating", "tableing",
     "chunking", "embedding", "extracting", "analyzing",
 )
@@ -500,12 +503,13 @@ async def _run_pipeline_background(
     from model.database import get_session_factory
 
     with log_context(file_id=file_id, type_id=type_id):
-        session_factory = get_session_factory()
-        async with session_factory() as session:
-            try:
-                await run_pipeline(file_id, file_name, file_content_bytes, session, callback_url=callback_url)
-            except Exception as e:
-                logger.exception("Pipeline 后台执行失败: type={}, repr={}", type(e).__name__, repr(e))
+        async with pipeline_slot(file_id):
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                try:
+                    await run_pipeline(file_id, file_name, file_content_bytes, session, callback_url=callback_url)
+                except Exception as e:
+                    logger.exception("Pipeline 后台执行失败: type={}, repr={}", type(e).__name__, repr(e))
 
 
 async def _stream_pipeline_generator(
@@ -518,10 +522,11 @@ async def _stream_pipeline_generator(
     from model.database import get_session_factory
 
     with log_context(file_id=file_id, type_id=type_id):
-        session_factory = get_session_factory()
-        async with session_factory() as session:
-            async for event in run_pipeline_stream(file_id, file_name, file_content_bytes, session):
-                yield event
+        async with pipeline_slot(file_id):
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                async for event in run_pipeline_stream(file_id, file_name, file_content_bytes, session):
+                    yield event
 
 
 @router.post("/parse")
@@ -569,7 +574,9 @@ async def parse_file(
         type_id=type_id,
         file_name=file_name,
         file_size=len(file_content_bytes),
-        progress="parsing",
+        # 初始即排队态：拿到 global_pipeline 令牌后由 parse_service 改写为 parsing，
+        # 排队时长因此不计入解析耗时
+        progress="queued",
     )
     db.add(new_file)
     await db.commit()
@@ -596,7 +603,8 @@ async def parse_file(
         )
     else:
         with log_context(file_id=file_id, type_id=type_id):
-            await run_pipeline(file_id, file_name, file_content_bytes, db, callback_url=callback_url)
+            async with pipeline_slot(file_id):
+                await run_pipeline(file_id, file_name, file_content_bytes, db, callback_url=callback_url)
         return ResponseWrapper(
             message="文件处理完成",
             data={"file_id": file_id},
@@ -754,10 +762,11 @@ async def retry_file(
             from model.database import get_session_factory
 
             with log_context(file_id=file_id, type_id=type_id):
-                session_factory = get_session_factory()
-                async with session_factory() as session:
-                    async for event in run_from_stage_stream(file_id, stage, session):
-                        yield event
+                async with pipeline_slot(file_id):
+                    session_factory = get_session_factory()
+                    async with session_factory() as session:
+                        async for event in run_from_stage_stream(file_id, stage, session):
+                            yield event
 
         return StreamingResponse(
             _retry_stream_generator(),
@@ -770,7 +779,8 @@ async def retry_file(
         )
     elif mode == "sync":
         with log_context(file_id=file_id, type_id=type_id):
-            await run_from_stage(file_id, stage, db, callback_url=callback_url)
+            async with pipeline_slot(file_id):
+                await run_from_stage(file_id, stage, db, callback_url=callback_url)
         return ResponseWrapper(message=f"已从 {stage} 阶段重试完成")
     else:
         # async 模式（默认）
@@ -778,17 +788,18 @@ async def retry_file(
             from model.database import get_session_factory
 
             with log_context(file_id=file_id, type_id=type_id):
-                session_factory = get_session_factory()
-                async with session_factory() as session:
-                    try:
-                        await run_from_stage(file_id, stage, session, callback_url=callback_url)
-                    except Exception as e:
-                        logger.exception(
-                            "从 {} 阶段重试失败: type={}, repr={}",
-                            stage,
-                            type(e).__name__,
-                            repr(e),
-                        )
+                async with pipeline_slot(file_id):
+                    session_factory = get_session_factory()
+                    async with session_factory() as session:
+                        try:
+                            await run_from_stage(file_id, stage, session, callback_url=callback_url)
+                        except Exception as e:
+                            logger.exception(
+                                "从 {} 阶段重试失败: type={}, repr={}",
+                                stage,
+                                type(e).__name__,
+                                repr(e),
+                            )
 
         background_tasks.add_task(_run_from_stage_background)
         return ResponseWrapper(message=f"已从 {stage} 阶段开始重试")
