@@ -49,6 +49,7 @@ const Utils = {
      */
     getStatusText(progress) {
         const map = {
+            queued: '排队中',
             parsing: '解析中',
             table_name_validating: 'AI校验表格名中',
             tableing: 'AI校验表格名中',
@@ -81,6 +82,8 @@ const Utils = {
      */
     getStageProgress(stage) {
         const map = {
+            // 排队中还没真正开始，进度为 0（默认分支同值，写出来是为了与「未知状态」区分）
+            queued: 0,
             parsing: 15,
             table_name_validating: 30,
             tableing: 30,
@@ -115,7 +118,7 @@ const Utils = {
      * 判断是否为处理中状态
      */
     isProcessing(progress) {
-        return ['parsing', 'table_name_validating', 'tableing', 'chunking', 'embedding', 'extracting', 'analyzing'].includes(progress);
+        return ['queued', 'parsing', 'table_name_validating', 'tableing', 'chunking', 'embedding', 'extracting', 'analyzing'].includes(progress);
     },
 
     /**

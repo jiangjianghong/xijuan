@@ -197,11 +197,13 @@ const App = {
             const fileId = result.data && result.data.file_id;
 
             if (fileId) {
-                // 原位切换为真实文件 ID，后续由轮询驱动管线进度
+                // 原位切换为真实文件 ID，后续由轮询驱动管线进度。
+                // 上传完成时后端状态是 queued（等 global_pipeline 令牌），
+                // 乐观显示成 parsing 会让排队中的文件看起来已经在解析
                 this.replaceQueueId(tempId, fileId, {
                     fileName: file.name,
-                    stage: 'parsing',
-                    progress: Utils.getStageProgress('parsing'),
+                    stage: 'queued',
+                    progress: Utils.getStageProgress('queued'),
                     typeId,
                 });
                 Toast.info(`${file.name} 已提交处理`);

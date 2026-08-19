@@ -91,27 +91,28 @@
 
 配置位置：`files.progress`。跟踪单个文件在六阶段管线中的处理进度。
 
-**成功路径：** `parsing` → `tableing` → `chunking` → `embedding` → `extracting` → `analyzing` → `complete`
+**成功路径：** `queued` → `parsing` → `tableing` → `chunking` → `embedding` → `extracting` → `analyzing` → `complete`
 
 每个 `*ing` 状态都有对应的 `*_failed` 失败态；阶段失败时 `progress` 置为 `<stage>_failed` 并把错误写入 `files.error`。
 
 ```
-parsing ──► tableing ──► chunking ──► embedding ──► extracting ──► analyzing ──► complete
-   │           │            │             │             │             │
-   ▼           ▼            ▼             ▼             ▼             ▼
- parsing_    tableing_    chunking_    embedding_    extracting_   analyzing_
-  failed      failed       failed        failed        failed        failed
-   │           │            │             │             │             │
-   └───────────┴────────────┴─────┬───────┴─────────────┴─────────────┘
-                                  │
-                POST /file/{id}/retry/{stage}
-        （清理该阶段及下游数据后，从对应 *ing 阶段重新进入管线）
+queued ──► parsing ──► tableing ──► chunking ──► embedding ──► extracting ──► analyzing ──► complete
+              │           │            │             │             │             │
+              ▼           ▼            ▼             ▼             ▼             ▼
+            parsing_    tableing_    chunking_    embedding_    extracting_   analyzing_
+             failed      failed       failed        failed        failed        failed
+              │           │            │             │             │             │
+              └───────────┴────────────┴─────┬───────┴─────────────┴─────────────┘
+                                             │
+                           POST /file/{id}/retry/{stage}
+                   （清理该阶段及下游数据后，从对应 *ing 阶段重新进入管线）
 ```
 
 **状态取值：**
 
 | 值 | 说明 |
 |----|------|
+| `queued` | 已受理，等待 `concurrency.global_pipeline` 令牌；拿到令牌后转 `parsing` |
 | `parsing` / `parsing_failed` | 解析（MinerU） |
 | `tableing` / `tableing_failed` | 表格识别（LLM 命名） |
 | `chunking` / `chunking_failed` | 分块 |
@@ -120,6 +121,8 @@ parsing ──► tableing ──► chunking ──► embedding ──► extr
 | `analyzing` / `analyzing_failed` | 逻辑分析 |
 | `complete` | 处理完成 |
 
-> 启动时 `init_service` 会把所有残留的 `*ing` 状态强制改为 `*_failed`（崩溃恢复），并清理对应的孤儿数据。兼容旧值 `table_name_validating` → `tableing`。
+> 启动时 `init_service` 会把所有残留的 `*ing` 状态强制改为 `*_failed`（崩溃恢复），并清理对应的孤儿数据。兼容旧值 `table_name_validating` → `tableing`。残留的 `queued` 归为 `parsing_failed`——进程重启后后台任务已丢失，排队中的文件不会自行启动，需显式重试。
+
+> `queued` 属于「处理中」：`GET /file/processing` 与 `GET /file/stats` 的 processing 计数都包含它。上传（async/sync/stream）与重试（`POST /file/{id}/retry/{stage}`）都要过 `global_pipeline` 闸门，`sync`/`stream` 模式排队时 HTTP 请求挂起等待。
 
 > 重试（`POST /file/{id}/retry/{stage}`）会重置目标阶段及所有下游阶段的开始/结束时间戳，清理下游数据后从该阶段重跑。阶段与接口详见 [api/file.md](../api/file.md)。
