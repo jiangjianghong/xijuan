@@ -2547,9 +2547,12 @@ async def run_extraction(
     """执行文件的完整字段提取流程。
 
     1. 获取所有 enabled=1 的 extraction_field，按 priority 排序
-    2. 对每个字段执行提取
-    3. 结果写入 extraction_result 表
+    2. 普通字段组并发提取 → 屏障 → 进阶字段组并发提取
+    3. 结果写入 extraction_result 表（写库在主协程串行执行）
     4. 单字段失败跳过继续
+
+    并发上限由 concurrency.task_extraction（单文件）与
+    concurrency.global_extraction（全局）双重限制。
 
     Args:
         file_id: 文件 ID。
@@ -2562,16 +2565,8 @@ async def run_extraction(
     file_row = (await session.execute(select(File).where(File.file_id == file_id))).scalar_one_or_none()
     type_id = (file_row.type_id if file_row else None) or "default"
 
-    # 预建「页码 -> 整页内容」映射，供 source_refs 按包含相似度排序复用
-    fc_row = (
-        await session.execute(select(FileContent).where(FileContent.file_id == file_id))
-    ).scalar_one_or_none()
-    page_contents: Dict[Any, str] = {}
-    if fc_row and fc_row.file_content:
-        page_contents = {
-            p["page_num"]: p["content"]
-            for p in split_md_by_pages(fc_row.file_content, fc_row.page_mapping or [])
-        }
+    # 并发开始前一次性取出全部只读数据：AsyncSession 非并发安全
+    snapshot = await load_extraction_snapshot(file_id, session, type_id)
 
     # 获取全部启用字段（两层），按 priority 排序；普通字段先于进阶字段执行
     stmt = (
@@ -2590,140 +2585,25 @@ async def run_extraction(
     failed = 0
     aggregated: List[Dict[str, Any]] = []
 
-    # 阶段间共享：普通字段的值与可用页码，供进阶字段引用解析
-    field_values: Dict[str, str] = {}
-    field_source_pages: Dict[str, Optional[List[int]]] = {}
-    field_pages_from: Dict[str, str] = {}
     app_cfg = get_config()
-    task_semaphore = register_task_limiter(
-        "task_extraction",
+    async for item in _iter_extraction_results(
         file_id,
+        session,
+        snapshot,
+        ordered_fields,
+        len(basic_fields),
         app_cfg.concurrency.task_extraction,
-        {"file_id": file_id, "stage": "extracting"},
-    )
-    global_semaphore = get_limiter(
-        "global_extraction",
         app_cfg.concurrency.global_extraction,
-    )
-
-    for idx, field in enumerate(ordered_fields):
-        try:
-            context = {
-                "file_id": file_id,
-                "stage": "extracting",
-                "field_id": field.field_id,
-            }
-            async with task_semaphore.context(context):
-                async with global_semaphore.context(context):
-                    extracted_value, reason, source_refs, model_pages = await _extract_field_result(
-                        file_id, field, session, field_values, field_source_pages, field_pages_from
-                    )
-
-            _ensure_valid_extraction_result(field, extracted_value, reason, source_refs)
-
-            # 按「抽取值 ↔ 命中页内容」包含相似度对各 label 分组内 ref 排序
-            _sort_source_refs_by_page_containment(source_refs, extracted_value, page_contents)
-
-            # 保存结果
-            stmt = select(ExtractionResult).where(
-                ExtractionResult.file_id == file_id,
-                ExtractionResult.field_id == field.field_id,
-            )
-            existing = (await session.execute(stmt)).scalar_one_or_none()
-
-            if existing:
-                existing.extracted_value = extracted_value
-                existing.reason = reason
-                existing.source_refs = source_refs
-                existing.model_pages = model_pages or None
-            else:
-                extraction_result = ExtractionResult(
-                    file_id=file_id,
-                    field_id=field.field_id,
-                    extracted_value=extracted_value,
-                    reason=reason,
-                    source_refs=source_refs,
-                    model_pages=model_pages or None,
-                )
-                session.add(extraction_result)
-
-            await session.commit()
-            logger.info("字段提取成功: field_id={}, value={}", field.field_id, extracted_value[:100] if extracted_value else "")
-
-            # 对外页码：pages = 模型自报（可能空）；source_pages = 兜底后必定存在。
-            # 排序后再算，让 source_pages 与最终 source_refs 顺序一致。
-            source_pages = derive_source_pages(model_pages, source_refs)
-
-            # 仅普通字段进入引用映射（进阶字段不可被引用）。存 source_pages 而非
-            # 纯模型页——进阶字段联动据此兜底，不再因模型没自报页码而失败。
-            if not getattr(field, "is_advanced", 0):
-                field_values[field.field_id] = extracted_value
-                field_source_pages[field.field_id] = source_pages or None
-                field_pages_from[field.field_id] = "model" if model_pages else "refs"
-
+    ):
+        if item["success"]:
             succeeded += 1
-            item = {
-                "field_id": field.field_id,
-                "field_name": field.field_name,
-                "value": extracted_value,
-                "reason": reason,
-                "pages": model_pages,
-                "source_pages": source_pages,
-                "source_refs": source_refs,
-                "success": True,
-                "index": idx + 1,
-                "total": total,
-            }
-            aggregated.append(item)
-            await notify_callback(callback_url, file_id, "extracting", event="field_done", data=item)
-
-        except Exception as e:
-            _log_field_extraction_failure(field.field_id, e)
-            failure_reason = format_exception(e)
-            # 落库失败会把会话打成 DEACTIVE，不修复则下面的 execute 必抛
-            # PendingRollbackError，把单字段失败放大成整个文件卡死（2026-07-28 线上事故）。
-            # 只在真坏掉时回滚：无谓 rollback 会 expire field 等 ORM 对象。
-            await rollback_if_broken(session)
-            # 保存空值
-            stmt = select(ExtractionResult).where(
-                ExtractionResult.file_id == file_id,
-                ExtractionResult.field_id == field.field_id,
-            )
-            existing = (await session.execute(stmt)).scalar_one_or_none()
-
-            if existing:
-                existing.extracted_value = ""
-                existing.reason = failure_reason
-                existing.source_refs = None
-                existing.model_pages = None
-            else:
-                extraction_result = ExtractionResult(
-                    file_id=file_id,
-                    field_id=field.field_id,
-                    extracted_value="",
-                    reason=failure_reason,
-                    source_refs=None,
-                    model_pages=None,
-                )
-                session.add(extraction_result)
-
-            await session.commit()
-
+        else:
             failed += 1
-            item = {
-                "field_id": field.field_id,
-                "field_name": field.field_name,
-                "value": "",
-                "reason": failure_reason,
-                "pages": [],
-                "source_pages": [],
-                "source_refs": None,
-                "success": False,
-                "index": idx + 1,
-                "total": total,
-            }
-            aggregated.append(item)
-            await notify_callback(callback_url, file_id, "extracting", event="field_done", data=item)
+        aggregated.append(item)
+        await notify_callback(callback_url, file_id, "extracting", event="field_done", data=item)
+
+    # field_done 按完成序推送，stage_done.results 按配置序回填，聚合口径与串行时代一致
+    aggregated.sort(key=lambda i: i["index"])
 
     await notify_callback(
         callback_url,
@@ -2739,15 +2619,14 @@ async def run_extraction(
     )
 
     logger.info("字段提取完成: {}", file_id)
-    unregister_task_limiter("task_extraction", file_id)
 
 
 async def run_extraction_stream(file_id: str, session: AsyncSession):
     """流式执行文件的完整字段提取流程，每提取完一个字段 yield 一次结果。
 
     1. 获取所有 enabled=1 的 extraction_field，按 priority 排序
-    2. 对每个字段执行提取，提取完成后立即 yield 结果
-    3. 结果写入 extraction_result 表
+    2. 普通字段组并发提取 → 屏障 → 进阶字段组并发提取，每完成一个立即 yield
+    3. 结果写入 extraction_result 表（写库在主协程串行执行）
     4. 单字段失败跳过继续
 
     Args:
@@ -2763,16 +2642,8 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     file_row = (await session.execute(select(File).where(File.file_id == file_id))).scalar_one_or_none()
     type_id = (file_row.type_id if file_row else None) or "default"
 
-    # 预建「页码 -> 整页内容」映射，供 source_refs 按包含相似度排序复用
-    fc_row = (
-        await session.execute(select(FileContent).where(FileContent.file_id == file_id))
-    ).scalar_one_or_none()
-    page_contents: Dict[Any, str] = {}
-    if fc_row and fc_row.file_content:
-        page_contents = {
-            p["page_num"]: p["content"]
-            for p in split_md_by_pages(fc_row.file_content, fc_row.page_mapping or [])
-        }
+    # 并发开始前一次性取出全部只读数据：AsyncSession 非并发安全
+    snapshot = await load_extraction_snapshot(file_id, session, type_id)
 
     # 获取全部启用字段（两层），按 priority 排序；普通字段先于进阶字段执行
     stmt = (
@@ -2786,140 +2657,32 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     advanced_fields = [f for f in all_fields if getattr(f, "is_advanced", 0)]
     ordered_fields = basic_fields + advanced_fields
 
-    total_fields = len(ordered_fields)
-
-    # 阶段间共享：普通字段的值与可用页码，供进阶字段引用解析
-    field_values: Dict[str, str] = {}
-    field_source_pages: Dict[str, Optional[List[int]]] = {}
-    field_pages_from: Dict[str, str] = {}
     app_cfg = get_config()
-    task_semaphore = register_task_limiter(
-        "task_extraction",
+    async for item in _iter_extraction_results(
         file_id,
+        session,
+        snapshot,
+        ordered_fields,
+        len(basic_fields),
         app_cfg.concurrency.task_extraction,
-        {"file_id": file_id, "stage": "extracting"},
-    )
-    global_semaphore = get_limiter(
-        "global_extraction",
         app_cfg.concurrency.global_extraction,
-    )
-
-    for idx, field in enumerate(ordered_fields):
-        try:
-            context = {
-                "file_id": file_id,
-                "stage": "extracting",
-                "field_id": field.field_id,
-            }
-            async with task_semaphore.context(context):
-                async with global_semaphore.context(context):
-                    extracted_value, reason, source_refs, model_pages = await _extract_field_result(
-                        file_id, field, session, field_values, field_source_pages, field_pages_from
-                    )
-
-            _ensure_valid_extraction_result(field, extracted_value, reason, source_refs)
-
-            # 按「抽取值 ↔ 命中页内容」包含相似度对各 label 分组内 ref 排序
-            _sort_source_refs_by_page_containment(source_refs, extracted_value, page_contents)
-
-            # 保存结果
-            stmt = select(ExtractionResult).where(
-                ExtractionResult.file_id == file_id,
-                ExtractionResult.field_id == field.field_id,
-            )
-            existing = (await session.execute(stmt)).scalar_one_or_none()
-
-            if existing:
-                existing.extracted_value = extracted_value
-                existing.reason = reason
-                existing.source_refs = source_refs
-                existing.model_pages = model_pages or None
-            else:
-                extraction_result = ExtractionResult(
-                    file_id=file_id,
-                    field_id=field.field_id,
-                    extracted_value=extracted_value,
-                    reason=reason,
-                    source_refs=source_refs,
-                    model_pages=model_pages or None,
-                )
-                session.add(extraction_result)
-
-            await session.commit()
-            logger.info("字段提取成功: field_id={}, value={}", field.field_id, extracted_value[:100] if extracted_value else "")
-
-            # 对外页码：pages = 模型自报（可能空）；source_pages = 兜底后必定存在
-            source_pages = derive_source_pages(model_pages, source_refs)
-
-            # 仅普通字段进入引用映射（进阶字段不可被引用）。存 source_pages 而非
-            # 纯模型页——进阶字段联动据此兜底，不再因模型没自报页码而失败。
-            if not getattr(field, "is_advanced", 0):
-                field_values[field.field_id] = extracted_value
-                field_source_pages[field.field_id] = source_pages or None
-                field_pages_from[field.field_id] = "model" if model_pages else "refs"
-
-            # yield 提取结果
-            yield {
-                "field_id": field.field_id,
-                "field_name": field.field_name,
-                "extracted_value": extracted_value,
-                "reason": reason,
-                "pages": model_pages,
-                "source_pages": source_pages,
-                "source_refs": source_refs,
-                "success": True,
-                "current": idx + 1,
-                "total": total_fields,
-            }
-
-        except Exception as e:
-            _log_field_extraction_failure(field.field_id, e)
-            failure_reason = format_exception(e)
-            # 落库失败会把会话打成 DEACTIVE，不修复则下面的 execute 必抛
-            # PendingRollbackError，把单字段失败放大成整个文件卡死（2026-07-28 线上事故）。
-            # 只在真坏掉时回滚：无谓 rollback 会 expire field 等 ORM 对象。
-            await rollback_if_broken(session)
-            # 保存空值
-            stmt = select(ExtractionResult).where(
-                ExtractionResult.file_id == file_id,
-                ExtractionResult.field_id == field.field_id,
-            )
-            existing = (await session.execute(stmt)).scalar_one_or_none()
-
-            if existing:
-                existing.extracted_value = ""
-                existing.reason = failure_reason
-                existing.source_refs = None
-                existing.model_pages = None
-            else:
-                extraction_result = ExtractionResult(
-                    file_id=file_id,
-                    field_id=field.field_id,
-                    extracted_value="",
-                    reason=failure_reason,
-                    source_refs=None,
-                    model_pages=None,
-                )
-                session.add(extraction_result)
-
-            await session.commit()
-
-            # yield 失败结果
-            yield {
-                "field_id": field.field_id,
-                "field_name": field.field_name,
-                "extracted_value": "",
-                "reason": failure_reason,
-                "pages": [],
-                "source_pages": [],
-                "source_refs": None,
-                "success": False,
-                "current": idx + 1,
-                "total": total_fields,
-            }
+    ):
+        # 流式对外契约用 extracted_value / current，与 run_extraction 的
+        # value / index 不同，此处做键名映射，不改变语义
+        yield {
+            "field_id": item["field_id"],
+            "field_name": item["field_name"],
+            "extracted_value": item["value"],
+            "reason": item["reason"],
+            "pages": item["pages"],
+            "source_pages": item["source_pages"],
+            "source_refs": item["source_refs"],
+            "success": item["success"],
+            "current": item["index"],
+            "total": item["total"],
+        }
 
     logger.info("流式字段提取完成: {}", file_id)
-    unregister_task_limiter("task_extraction", file_id)
 
 
 async def test_field_extraction_stream(

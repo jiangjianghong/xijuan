@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -194,11 +195,12 @@ async def test_advanced_fields_start_after_all_basic_finish(monkeypatch):
     timeline = []
 
     async def fake_extract(file_id, field, snapshot, values, pages, pages_from=None):
-        loop = asyncio.get_running_loop()
-        timeline.append((field.field_id, "start", loop.time()))
+        # loop.time() 在 Windows 上分辨率约 15.6ms，屏障两侧会落进同一 tick，
+        # 故用 perf_counter（~100ns）测量，避免把精度不足误判成屏障失效
+        timeline.append((field.field_id, "start", time.perf_counter()))
         # 普通字段故意慢，进阶字段快：若无屏障，进阶必然抢先完成
         await asyncio.sleep(0.1 if not field.is_advanced else 0.01)
-        timeline.append((field.field_id, "end", loop.time()))
+        timeline.append((field.field_id, "end", time.perf_counter()))
         return f"值-{field.field_id}", "理由", {"label": [{"text": "x"}]}, [2]
 
     monkeypatch.setattr(es, "_extract_field_result", fake_extract)
@@ -275,3 +277,81 @@ async def test_items_carry_config_index_and_persist(monkeypatch):
     assert {i["field_id"]: i["index"] for i in items} == {"f0": 1, "f1": 2, "f2": 3}
     assert session.commits == 3
     assert len(session.added) == 3
+
+
+async def _fake_load_snapshot(file_id, session, type_id="default"):
+    return None
+
+
+class _StubExtractionSession(_RecordingSession):
+    """run_extraction 会查 files 与 extraction_field，两次都返回空集合。"""
+
+    async def execute(self, stmt):
+        class _R:
+            def scalar_one_or_none(self):
+                return None
+
+            def scalars(self):
+                return self
+
+            def all(self):
+                return []
+
+        return _R()
+
+
+@pytest.mark.asyncio
+async def test_run_extraction_stage_done_sorted_by_config_index(monkeypatch):
+    """field_done 按完成序推送，stage_done.results 仍按配置序排列。"""
+    callbacks = []
+
+    async def record_callback(url, file_id, status, *, event=None, data=None, timeout=2.5):
+        callbacks.append((event, data))
+
+    async def fake_iter(*args, **kwargs):
+        for item in (
+            {"field_id": "f2", "index": 2, "success": True},
+            {"field_id": "f1", "index": 1, "success": True},
+            {"field_id": "f3", "index": 3, "success": False},
+        ):
+            yield item
+
+    monkeypatch.setattr(es, "notify_callback", record_callback)
+    monkeypatch.setattr(es, "_iter_extraction_results", fake_iter)
+    monkeypatch.setattr(es, "load_extraction_snapshot", _fake_load_snapshot)
+
+    session = _StubExtractionSession()
+    await es.run_extraction("file1", session, callback_url="http://cb")
+
+    field_dones = [d for e, d in callbacks if e == "field_done"]
+    stage_done = next(d for e, d in callbacks if e == "stage_done")
+
+    # 推送顺序 = 完成顺序
+    assert [d["field_id"] for d in field_dones] == ["f2", "f1", "f3"]
+    # 聚合结果 = 配置顺序
+    assert [r["index"] for r in stage_done["results"]] == [1, 2, 3]
+    assert stage_done["succeeded"] == 2
+    assert stage_done["failed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_run_extraction_stream_key_mapping(monkeypatch):
+    """流式对外键名保持 extracted_value / current，不因内部统一而变更契约。"""
+
+    async def fake_iter(*args, **kwargs):
+        yield {
+            "field_id": "f1", "field_name": "字段1", "value": "V", "reason": "R",
+            "pages": [1], "source_pages": [1], "source_refs": {"l": []},
+            "success": True, "index": 1, "total": 1,
+        }
+
+    monkeypatch.setattr(es, "_iter_extraction_results", fake_iter)
+    monkeypatch.setattr(es, "load_extraction_snapshot", _fake_load_snapshot)
+
+    session = _StubExtractionSession()
+    items = [item async for item in es.run_extraction_stream("file1", session)]
+
+    assert items[0]["extracted_value"] == "V"
+    assert items[0]["current"] == 1
+    assert "value" not in items[0]
+    assert "index" not in items[0]
