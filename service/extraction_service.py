@@ -2270,6 +2270,103 @@ async def _extract_field_result(
     return value, reason, source_refs, model_pages
 
 
+@dataclass
+class FieldComputation:
+    """单个字段的并发计算结果。
+
+    并发段只产出它、不碰 session；写库与回调由主协程按此结果串行执行。
+    形状对齐 analysis_service.FileRuleComputation。
+    """
+
+    index: int  # 配置序号（1-based），即对外 field_done.index
+    field: Any
+    success: bool
+    value: str
+    reason: str
+    source_refs: Optional[Dict]
+    model_pages: List[int]
+
+
+async def _run_field_group(
+    file_id: str,
+    fields: Sequence[Any],
+    snapshot: Optional["FileExtractionSnapshot"],
+    field_values: Dict[str, str],
+    field_source_pages: Dict[str, Optional[List[int]]],
+    field_pages_from: Dict[str, str],
+    task_limit: int,
+    global_limit: int,
+    start_index: int,
+) -> List[FieldComputation]:
+    """并发执行一组字段，返回按配置顺序排列的计算结果。
+
+    并发段内不做任何 DB 访问：读走 snapshot，写留给主协程。单字段异常在
+    worker 内部收敛成 success=False 的结果，不连坐同批其他字段。
+
+    Args:
+        file_id: 文件 ID。
+        fields: 同一层级的字段列表（普通组或进阶组），按 priority 排好序。
+        snapshot: 提取快照。
+        field_values: 普通字段值映射，供进阶字段解析引用。
+        field_source_pages: 普通字段可用页码映射。
+        field_pages_from: 页码来源标记（model/refs）。
+        task_limit: 单文件并发上限（concurrency.task_extraction）。
+        global_limit: 全局字段并发上限（concurrency.global_extraction）。
+        start_index: 本组首个字段的配置序号偏移（普通组为 0，进阶组为普通字段数）。
+
+    Returns:
+        FieldComputation 列表，顺序与入参 fields 一致。
+    """
+    if not fields:
+        return []
+
+    task_semaphore = register_task_limiter(
+        "task_extraction",
+        file_id,
+        task_limit,
+        {"file_id": file_id, "stage": "extracting"},
+    )
+    global_semaphore = get_limiter("global_extraction", global_limit)
+
+    async def _worker(offset: int, field: Any) -> FieldComputation:
+        index = start_index + offset + 1
+        context = {
+            "file_id": file_id,
+            "stage": "extracting",
+            "field_id": field.field_id,
+        }
+        try:
+            async with task_semaphore.context(context):
+                async with global_semaphore.context(context):
+                    value, reason, source_refs, model_pages = await _extract_field_result(
+                        file_id, field, snapshot, field_values, field_source_pages, field_pages_from
+                    )
+            _ensure_valid_extraction_result(field, value, reason, source_refs)
+            return FieldComputation(
+                index=index, field=field, success=True, value=value,
+                reason=reason, source_refs=source_refs, model_pages=model_pages,
+            )
+        except asyncio.CancelledError:
+            # 取消必须外抛：吞掉会让上层以为任务正常结束
+            raise
+        except Exception as e:
+            _log_field_extraction_failure(field.field_id, e)
+            return FieldComputation(
+                index=index, field=field, success=False, value="",
+                reason=format_exception(e), source_refs=None, model_pages=[],
+            )
+
+    tasks = [asyncio.create_task(_worker(i, f)) for i, f in enumerate(fields)]
+    try:
+        return [await task for task in tasks]
+    except BaseException:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
 async def run_extraction(
     file_id: str,
     session: AsyncSession,
