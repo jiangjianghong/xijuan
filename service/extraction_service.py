@@ -6,6 +6,7 @@ import copy
 import asyncio
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
@@ -18,6 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from model.database import rollback_if_broken
 from model.tables import ExtractionField, ExtractionResult, File, FileChunk, FileContent, FileTable
 from service import vl_service
+from service.extraction_snapshot import (
+    ChunkRow,
+    FileExtractionSnapshot,
+    load_extraction_snapshot,
+)
 from service.match_prompts import build_section_match_prompt, build_table_match_prompt
 from utils import vl_client
 from utils.callback import notify_callback
@@ -1432,16 +1438,17 @@ async def search_rule(
 
 
 async def search_chunk_db(
-    file_id: str, config: Dict[str, Any], session: AsyncSession
+    file_id: str, config: Dict[str, Any], chunks: Sequence["ChunkRow"]
 ) -> List[Dict[str, Any]]:
-    """关系数据库检索：从 file_chunk 表按关键词过滤分块。
+    """关系数据库检索：从快照的分块集合按关键词过滤。
 
     Args:
-        file_id: 文件 ID。
+        file_id: 文件 ID（仅用于日志）。
         config: search_config 配置，包含:
             - keyword_filter 或 keywords: 关键词（单个字符串或列表）
             - max_results 或 top_k: 返回条数（默认 10）
             - sort_order: 排序方式 asc/desc（默认 asc，按 chunk_index）
+        chunks: 快照中的分块集合（原为 session 实时查询，改为并发安全的只读快照）。
 
     Returns:
         检索结果列表，每项包含 chunk_id, chunk_index, chunk_content。
@@ -1456,12 +1463,8 @@ async def search_chunk_db(
     max_results = config.get("max_results") or config.get("top_k", 10)
     sort_order = config.get("sort_order", "asc")
 
-    stmt = select(FileChunk).where(FileChunk.file_id == file_id)
-    result = await session.execute(stmt)
-    chunks = result.scalars().all()
-
-    # 按 chunk_index 排序（设计文档要求）
-    chunks.sort(key=lambda x: x.chunk_index, reverse=(sort_order == "desc"))
+    # 按 chunk_index 排序（设计文档要求）。快照是不可变元组，故用 sorted 而非原地 sort
+    chunks = sorted(chunks, key=lambda x: x.chunk_index, reverse=(sort_order == "desc"))
 
     # 按关键词分别过滤并标记，每个关键词独立限制条数
     results = []
@@ -1722,23 +1725,20 @@ def _build_table_source_refs(
 
 
 async def extract_table_field(
-    file_id: str, field: ExtractionField, session: AsyncSession
+    file_id: str, field: ExtractionField, snapshot: "FileExtractionSnapshot"
 ) -> Tuple[str, str, Optional[Dict], List[int]]:
     """表格类字段提取。
 
     Args:
         file_id: 文件 ID。
         field: ExtractionField ORM 对象。
-        session: 数据库会话。
+        snapshot: 提取快照（并发安全，替代原先的实时 session 查询）。
 
     Returns:
         (extracted_value, reason, source_refs, model_pages) 元组。model_pages 是
         模型自报页码，use_llm=0 与各失败分支恒为 []。
     """
-    # 查询所有表格
-    stmt = select(FileTable).where(FileTable.file_id == file_id)
-    result = await session.execute(stmt)
-    tables = result.scalars().all()
+    tables = snapshot.tables
 
     if not tables:
         return "", "", None, []
@@ -1805,12 +1805,8 @@ async def extract_table_field(
     # 使用用户指定的表名作为统一 label
     label = field.table_name_pattern or "表格"
 
-    # 查 page_mapping 用于 bbox 定位（无 file_content 时为空列表，ref 不挂 bboxes）
-    page_mapping = (
-        await session.execute(
-            select(FileContent.page_mapping).where(FileContent.file_id == file_id)
-        )
-    ).scalar_one_or_none() or []
+    # page_mapping 用于 bbox 定位（无 file_content 时为空列表，ref 不挂 bboxes）
+    page_mapping = snapshot.page_mapping
 
     source_refs, results_text_by_label = _build_table_source_refs(
         matched_tables, label, page_mapping
@@ -1941,29 +1937,24 @@ def _build_text_source_refs(
 
 
 async def extract_text_field(
-    file_id: str, field: ExtractionField, session: AsyncSession
+    file_id: str, field: ExtractionField, snapshot: "FileExtractionSnapshot"
 ) -> Tuple[str, str, Optional[Dict], List[int]]:
     """文本类字段提取。
 
     Args:
         file_id: 文件 ID。
         field: ExtractionField ORM 对象。
-        session: 数据库会话。
+        snapshot: 提取快照（并发安全，替代原先的实时 session 查询）。
 
     Returns:
         (extracted_value, reason, source_refs, model_pages) 元组。model_pages 是
         模型自报页码，use_llm=0 与各失败分支恒为 []。
     """
-    # 获取文件内容
-    stmt = select(FileContent).where(FileContent.file_id == file_id)
-    result = await session.execute(stmt)
-    file_content = result.scalar_one_or_none()
-
-    if not file_content:
+    content = snapshot.content
+    if not content:
         return "", "", None, []
 
-    content = file_content.file_content
-    page_mapping = file_content.page_mapping or []
+    page_mapping = snapshot.page_mapping
     search_type = field.search_type or "context"
     search_config = field.search_config or {}
 
@@ -1980,7 +1971,7 @@ async def extract_text_field(
     elif search_type == "rule":
         search_results = await search_rule(content, search_config)
     elif search_type == "chunk_db":
-        search_results = await search_chunk_db(file_id, search_config, session)
+        search_results = await search_chunk_db(file_id, search_config, snapshot.chunks)
     elif search_type == "vector_db":
         search_results = await search_vector_db(file_id, search_config)
 
@@ -2023,7 +2014,7 @@ async def extract_text_field(
 
 
 async def extract_vl_field(
-    file_id: str, field: ExtractionField, session: AsyncSession
+    file_id: str, field: ExtractionField
 ) -> Tuple[str, str, Optional[Dict], List[int]]:
     """VL 类字段提取：基于 PDF 视觉模型直接产出 {value, reason}。
 
@@ -2234,7 +2225,7 @@ async def _vl_field_extraction_stream(
 async def _extract_field_result(
     file_id: str,
     field: ExtractionField,
-    session: AsyncSession,
+    snapshot: "FileExtractionSnapshot",
     field_values: Dict[str, str],
     field_source_pages: Dict[str, Optional[List[int]]],
     pages_from: Optional[Dict[str, str]] = None,
@@ -2244,6 +2235,8 @@ async def _extract_field_result(
     普通字段（is_advanced=0）走原有分派；进阶字段（is_advanced=1）经
     resolve_advanced_field 解析占位符与 page 联动后，用等价普通字段抽取，
     最后把 provenance（_resolved_refs / _page_link）合并进 source_refs。
+
+    并发段内调用：只读 snapshot，不碰 session。
 
     Returns:
         (value, reason, source_refs, model_pages)。model_pages 是模型自报页码，
@@ -2257,11 +2250,11 @@ async def _extract_field_result(
         run_field, provenance = field, {}
 
     if run_field.source_type == "table":
-        value, reason, source_refs, model_pages = await extract_table_field(file_id, run_field, session)
+        value, reason, source_refs, model_pages = await extract_table_field(file_id, run_field, snapshot)
     elif run_field.source_type == "vl":
-        value, reason, source_refs, model_pages = await extract_vl_field(file_id, run_field, session)
+        value, reason, source_refs, model_pages = await extract_vl_field(file_id, run_field)
     else:
-        value, reason, source_refs, model_pages = await extract_text_field(file_id, run_field, session)
+        value, reason, source_refs, model_pages = await extract_text_field(file_id, run_field, snapshot)
 
     if provenance:
         source_refs = source_refs or {}
@@ -2863,7 +2856,11 @@ async def test_field_extraction_stream(
                 elif search_type == "rule":
                     search_results = await search_rule(content, search_config)
                 elif search_type == "chunk_db":
-                    search_results = await search_chunk_db(file_id, search_config, session)
+                    # 调试流是串行路径，这里现取快照分块，与并发链路共用同一份检索语义
+                    debug_snapshot = await load_extraction_snapshot(file_id, session)
+                    search_results = await search_chunk_db(
+                        file_id, search_config, debug_snapshot.chunks
+                    )
                 elif search_type == "vector_db":
                     search_results = await search_vector_db(file_id, search_config)
 

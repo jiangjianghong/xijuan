@@ -115,3 +115,37 @@ def test_snapshot_is_immutable():
     )
     with pytest.raises(Exception):
         snapshot.content = "改写"
+
+
+@pytest.mark.asyncio
+async def test_search_chunk_db_uses_snapshot_rows():
+    """chunk 检索改吃快照后，关键词过滤语义与原 SQL 版逐字一致。"""
+    from service.extraction_service import search_chunk_db
+
+    chunks = (
+        ChunkRow("c1", 0, "本合同的甲方是张三", 0, 9, 1),
+        ChunkRow("c2", 1, "无关内容", 10, 14, 1),
+        ChunkRow("c3", 2, "乙方是李四", 15, 20, 2),
+    )
+
+    results = await search_chunk_db("f1", {"keywords": ["甲方"]}, chunks)
+
+    assert [r["chunk_id"] for r in results] == ["c1"]
+    assert results[0]["keyword"] == "甲方"
+    assert results[0]["page_num"] == 1
+
+
+@pytest.mark.asyncio
+async def test_search_chunk_db_respects_sort_and_limit():
+    from service.extraction_service import search_chunk_db
+
+    chunks = tuple(ChunkRow(f"c{i}", i, f"关键词第{i}段", i, i + 1, 1) for i in range(5))
+
+    results = await search_chunk_db("f1", {"keywords": ["关键词"], "max_results": 2}, chunks)
+
+    assert [r["chunk_index"] for r in results] == [0, 1]
+
+    desc = await search_chunk_db(
+        "f1", {"keywords": ["关键词"], "max_results": 2, "sort_order": "desc"}, chunks
+    )
+    assert [r["chunk_index"] for r in desc] == [4, 3]

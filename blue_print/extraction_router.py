@@ -34,6 +34,7 @@ from service.extraction_service import (
     search_vector_db,
     test_field_extraction_stream,
 )
+from service.extraction_snapshot import load_extraction_snapshot
 from service.match_prompts import (
     DEFAULT_SECTION_MATCH_PROMPT,
     DEFAULT_TABLE_MATCH_PROMPT,
@@ -379,6 +380,9 @@ async def test_extraction(
             raise HTTPException(status_code=400, detail=str(e))
 
     try:
+        # 调试接口每次只测一个字段，直接取一份快照复用给下面各分支
+        snapshot = await load_extraction_snapshot(file_id, db)
+
         if field.source_type == "table":
             # 表格类提取
             stmt = select(FileTable).where(FileTable.file_id == file_id)
@@ -390,13 +394,13 @@ async def test_extraction(
                 for t in tables
             ]
 
-            extracted_value, reason, refs, model_pages = await extract_table_field(file_id, field, db)
+            extracted_value, reason, refs, model_pages = await extract_table_field(file_id, field, snapshot)
             llm_input = field.table_extract_prompt or ""
             llm_output = extracted_value
 
         elif field.source_type == "vl":
             # VL 类提取：直接调用 extract_vl_field，附带元信息
-            extracted_value, reason, refs, model_pages = await extract_vl_field(file_id, field, db)
+            extracted_value, reason, refs, model_pages = await extract_vl_field(file_id, field)
             search_results = (
                 [
                     {
@@ -434,12 +438,12 @@ async def test_extraction(
             elif search_type == "rule":
                 search_results = await search_rule(content, search_config)
             elif search_type == "chunk_db":
-                search_results = await search_chunk_db(file_id, search_config, db)
+                search_results = await search_chunk_db(file_id, search_config, snapshot.chunks)
             elif search_type == "vector_db":
                 search_results = await search_vector_db(file_id, search_config)
 
             # 执行提取
-            extracted_value, reason, refs, model_pages = await extract_text_field(file_id, field, db)
+            extracted_value, reason, refs, model_pages = await extract_text_field(file_id, field, snapshot)
             llm_input = field.text_extract_prompt or ""
             llm_output = extracted_value
 
