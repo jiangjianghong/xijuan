@@ -1057,7 +1057,7 @@ const RuleConfig = {
                         </div>
                         <div class="form-group">
                             <label class="form-label">总结果数上限</label>
-                            <input class="form-input" id="fm-sc-max-total-results" type="number" value="${config.max_total_results ?? 0}" min="0" placeholder="0 表示不限制">
+                            <input class="form-input" id="fm-sc-max-total-results" type="number" value="${config.max_total_results ?? ''}" min="0" placeholder="留空 = 与每关键词上限相同；0 = 不限">
                         </div>
                     </div>
                     <div class="form-group">
@@ -1067,7 +1067,7 @@ const RuleConfig = {
                             <option value="asc" ${config.sort_order === 'asc' ? 'selected' : ''}>正序</option>
                             <option value="desc" ${config.sort_order === 'desc' ? 'selected' : ''}>倒序</option>
                         </select>
-                        <div class="form-hint">相关度 = 命中片段里出现的不同关键词的稀有度之和；配单个关键词时等价于正序。总量上限按关键词轮流裁剪，保证每个关键词的占位符都有内容。</div>
+                        <div class="form-hint">相关度 = 命中片段里出现的不同关键词的稀有度之和；配单个关键词时等价于正序。总量上限按关键词轮流裁剪，保证每个关键词的占位符都有内容。留空时总量等于每关键词上限，与旧版本的总量一致。</div>
                     </div>
                 `;
                 break;
@@ -1158,7 +1158,7 @@ const RuleConfig = {
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">总结果数上限</label>
-                            <input class="form-input" id="fm-sc-max-total-results" type="number" value="${config.max_total_results ?? 0}" min="0" placeholder="0 表示不限制">
+                            <input class="form-input" id="fm-sc-max-total-results" type="number" value="${config.max_total_results ?? ''}" min="0" placeholder="留空 = 与每关键词上限相同；0 = 不限">
                         </div>
                         <div class="form-group">
                             <label class="form-label">排序方式</label>
@@ -1188,7 +1188,7 @@ const RuleConfig = {
                         </div>
                         <div class="form-group">
                             <label class="form-label">总结果数上限</label>
-                            <input class="form-input" id="fm-sc-max-total-results" type="number" value="${config.max_total_results ?? 0}" min="0" placeholder="0 表示不限制">
+                            <input class="form-input" id="fm-sc-max-total-results" type="number" value="${config.max_total_results ?? ''}" min="0" placeholder="留空 = 与每关键词上限相同；0 = 不限">
                         </div>
                     </div>
                     <div class="form-group">
@@ -1898,7 +1898,11 @@ const RuleConfig = {
                 config.context_before = getInt('fm-sc-context-before', 200);
                 config.context_after = getInt('fm-sc-context-after', 200);
                 config.max_results = getInt('fm-sc-max-results', 5);
-                config.max_total_results = getInt('fm-sc-max-total-results', 0);
+                {
+                    const mt = getVal('fm-sc-max-total-results');
+                    // 留空 = 不写该键，后端缺省时按 max_results 处理（总量不涨）
+                    if (mt !== '') config.max_total_results = parseInt(mt, 10);
+                }
                 config.sort_order = getVal('fm-sc-sort-order') || 'relevance';
                 break;
             case 'section':
@@ -1923,13 +1927,21 @@ const RuleConfig = {
                 config.min_length = getInt('fm-sc-min-length', 0);
                 config.max_length = getInt('fm-sc-max-length', 1000);
                 config.max_results = getInt('fm-sc-max-results', 5);
-                config.max_total_results = getInt('fm-sc-max-total-results', 0);
+                {
+                    const mt = getVal('fm-sc-max-total-results');
+                    // 留空 = 不写该键，后端缺省时按 max_results 处理（总量不涨）
+                    if (mt !== '') config.max_total_results = parseInt(mt, 10);
+                }
                 config.sort_order = getVal('fm-sc-sort-order') || 'relevance';
                 break;
             case 'chunk_db':
                 config.keywords = this.getKeywordTags('fm-sc-keywords');
                 config.max_results = getInt('fm-sc-max-results', 5);
-                config.max_total_results = getInt('fm-sc-max-total-results', 0);
+                {
+                    const mt = getVal('fm-sc-max-total-results');
+                    // 留空 = 不写该键，后端缺省时按 max_results 处理（总量不涨）
+                    if (mt !== '') config.max_total_results = parseInt(mt, 10);
+                }
                 config.sort_order = getVal('fm-sc-sort-order') || 'relevance';
                 break;
             case 'vector_db':
