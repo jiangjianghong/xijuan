@@ -633,3 +633,47 @@ async def test_search_context_asc_preserves_legacy_order():
         (),
     )
     assert [r["position"] for r in results] == [0, 52, 104]
+
+
+async def test_search_rule_quota_is_per_keyword():
+    """rule 的截断同样改成每关键词限额。"""
+    from service.extraction_service import search_rule
+
+    content = "".join(f"甲方是A{i}。" for i in range(10)) + "乙方是B。"
+    results = await search_rule(
+        content,
+        {"keywords": ["甲方", "乙方"], "stop_words": ["。"],
+         "direction": "forward", "max_length": 50, "max_results": 3},
+        (),
+    )
+    assert sum(1 for r in results if r["keyword"] == "甲方") == 3
+    assert sum(1 for r in results if r["keyword"] == "乙方") == 1
+
+
+async def test_search_rule_relevance_ranks_by_extracted_text():
+    """rule 的相关度打分作用在 extracted_text 上，而非整个窗口。"""
+    from service.extraction_service import search_rule
+
+    content = "甲方是张三。" + "填" * 100 + "甲方是乙方指定的李四。"
+    results = await search_rule(
+        content,
+        {"keywords": ["甲方", "乙方"], "stop_words": ["。"],
+         "direction": "forward", "max_length": 50, "max_results": 5},
+        (),
+    )
+    # 抽取片段里同时含「甲方」「乙方」的那条覆盖度最高，排第一
+    assert "乙方" in results[0]["extracted_text"]
+
+
+async def test_search_rule_asc_preserves_legacy_order():
+    """显式 sort_order=asc 时仍按位置升序（存量配置行为不变）。"""
+    from service.extraction_service import search_rule
+
+    content = "金额是1。金额是2。金额是3。"
+    results = await search_rule(
+        content,
+        {"keywords": ["金额"], "stop_words": ["。"], "direction": "forward",
+         "max_length": 50, "max_results": 5, "sort_order": "asc"},
+        (),
+    )
+    assert [r["extracted_text"] for r in results] == ["金额是1", "金额是2", "金额是3"]
