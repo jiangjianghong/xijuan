@@ -6474,12 +6474,12 @@ files = {"files": (file_name, file_content, "application/pdf")}
 #### 6. middle_json 后处理：page_mapping（`utils/page_mapping.py`）
 
 页码映射走 `build_page_mapping`（**全局唯一锚 + 跨页表格补锚 + LIS 单调清洗**，数据源仅
-middle_json）。对每个 para_block 取足够长前缀（文本块取 span content，表格块取
-table_body span 的 html），在**整篇 md 做全局唯一匹配**（`count==1` 才认，避免歧义），
-得到可信锚 `(pos, page_num, bbox, page_size)`；跨页表格的后续页在 middle_json 里是提不出
-探针的空壳块，额外按表格组补一个末页锚（参见下方构建算法第 3 步）；锚点按位置排序后用 LIS
-保留 page_num 非降的最长子序列，剔除极少数破坏单调的假唯一匹配。bbox 直接取 middle_json
-的原生页坐标，无需反归一化。
+middle_json）。对每个 para_block 取一组候选探针（整体拼接优先、逐片段兜底；文本块取 span
+content，表格块取 caption content 与 table_body span 的 html），在**整篇 md 做全局唯一匹配**
+（`count==1` 才认，避免歧义），得到可信锚 `(pos, page_num, bbox, page_size)`；跨页表格的后续页
+在 middle_json 里是提不出探针的空壳块，额外按表格组补一个末页锚（参见下方构建算法第 3 步）；
+锚点按位置排序后用 LIS 保留 page_num 非降的最长子序列，剔除极少数破坏单调的假唯一匹配。bbox
+直接取 middle_json 的原生页坐标，无需反归一化。
 
 解析完成后，管线层（`pipeline_service.py`）调用：
 
@@ -6523,8 +6523,9 @@ page_mapping = build_page_mapping(content, middle_json_str)
 
 **构建算法**（全局唯一锚 + 跨页表格补锚 + LIS 单调清洗）：
 
-1. 逐页遍历 `para_blocks`，对每块递归收集探针文本（文本块取 span `content`，表格块取 `table_body` span 的 `html`，用空格拼接）；探针不足 8 字符的块跳过。
-2. 依次用探针的前 40 / 25 字符在**整篇 md 做全局唯一匹配**（`md.count(prefix) == 1` 才认），命中则产出锚点 `(pos, used_len, page_num, bbox, page_size)`。不唯一或找不到都不产锚——宁可缺锚，也不用歧义位置毒化映射。
+1. 逐页遍历 `para_blocks`，对每块递归收集探针文本（文本块取 span `content`，表格块取 caption 的 `content` 与 `table_body` span 的 `html`），产出一组候选探针：首个是各片段用空格拼接的整体探针，其后依次是各片段自身。
+2. 按候选顺序、每个再取前 40 / 25 字符，在**整篇 md 做全局唯一匹配**（`md.count(prefix) == 1` 才认），首个命中的候选产出锚点 `(pos, used_len, page_num, bbox, page_size)`；候选前缀不足 8 字符的跳过。所有候选都不唯一或找不到就不产锚——宁可缺锚，也不用歧义位置毒化映射。
+   - 逐片段兜底是必需的：MinerU 渲染 markdown 时片段之间未必是空格。表格上方的若干 `table_caption` 在 md 里由硬换行 `  \n` 分隔，拼接探针一旦跨过片段边界就与 md 逐字不符，`count` 恒为 0。首片段短于 25 字时前缀必然跨界，整块因而产不出锚；若该块是整页唯一的块（单页表格 PDF），`page_mapping` 会全空，导致 `search_type=page` 抽取直接失败。
 3. **跨页表格补末页锚**（`_cross_page_table_anchors`）：MinerU 把跨页表格合并成一个 `<table>` 写进 md，middle_json 里只有**首页**块携带完整 html，后续页退化成 `{"lines": [], "lines_deleted": true}` 的 `table_body` 空壳、提不出探针——表格覆盖的第 2..N 页因而一个锚点都没有。按「第 i 个表格组 ↔ md 中第 i 张 `<table>`」配对（表格枚举正则与 `table_service` 一致），给跨页组在 `</table>` 之后补一个零宽锚点（`page_num` = 组末页，**不带 bbox/page_size**——它落在表格之外，只作页码分界，挂整表框会让前端在正文位置画出表格高亮）。表格组数与 md 中表格数对不上时整体放弃补锚，避免错位污染。
 4. 锚点按 `pos` 排序，再用 LIS 保留 `page_num` 非降的最长子序列，剔除极少数破坏单调的假唯一匹配。
 5. 每个保留的锚点产出一条映射项（位置区间 + 页码 + bbox/page_size）——**`page_mapping` 完整字段结构已在本文“数据模型”汇编里的 `file_content` 小节列出；此处保留语义要点**。语义要点：`page_num` 为 1-indexed；`bbox`/`page_size` 在 middle_json 缺失时不带（存量老数据全部不带）；文本块 bbox 为该段落块的框，表格块为整表框；坐标系为左上原点、与 `page_size` 同一单位，前端按 `canvas尺寸 / page_size` 线性缩放画框。

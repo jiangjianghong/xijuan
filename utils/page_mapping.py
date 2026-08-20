@@ -30,11 +30,17 @@ def _extract_block_text(block: dict) -> str:
 _PROBE_LENS = (40, 25)
 
 
-def _block_probe_and_bbox(block: dict):
-    """从任意块递归收集探针文本(span content / 表格 html),返回 (probe, bbox)。
+def _block_probes_and_bbox(block: dict):
+    """从任意块递归收集探针候选(span content / 表格 html),返回 (probes, bbox)。
 
-    text/title/list 块取 span content;table 块取 table_body span 的 html。
-    统一用 " " 连接(与 _extract_block_text 口径一致,30~40 字前缀极少跨 span)。
+    text/title/list 块取 span content;table 块取 caption 的 content 与 table_body
+    span 的 html。probes[0] 是所有片段单空格拼接的整体探针(历史口径),其后依次是
+    各片段自身。
+
+    之所以要逐片段兜底:MinerU 渲染 markdown 时片段之间未必是单空格——表格上方的
+    若干 table_caption 在 md 里由硬换行 `  \\n` 分隔,拼接探针一旦跨过片段边界就与
+    md 逐字不符,count 恒为 0,整块产不出锚点。首片段短于 _PROBE_LENS 时必然跨界,
+    单页表格 PDF 因而 page_mapping 全空。
     """
     texts: List[str] = []
 
@@ -54,18 +60,27 @@ def _block_probe_and_bbox(block: dict):
                 walk(item)
 
     walk(block)
-    probe = " ".join(t for t in texts if t).strip()
-    return probe, block.get("bbox")
+    frags = [t for t in texts if t]
+    probes = [" ".join(frags).strip()]
+    if len(frags) > 1:
+        probes.extend(f.strip() for f in frags)
+    return probes, block.get("bbox")
 
 
-def _unique_find(md_content: str, probe: str):
-    """在整篇 md 里找 probe 的全局唯一出现;返回 (pos, used_len),不唯一返回 (-1, 0)。"""
-    for length in _PROBE_LENS:
-        candidate = probe[:length].strip()
-        if len(candidate) < 8:
-            continue
-        if md_content.count(candidate) == 1:
-            return md_content.find(candidate), len(candidate)
+def _unique_find(md_content: str, probes: List[str]):
+    """在整篇 md 里找候选探针的全局唯一出现;返回 (pos, used_len),都不唯一返回 (-1, 0)。
+
+    按 probes 顺序逐个尝试,每个再按 _PROBE_LENS 先长后短——整体探针命中时 pos 即块
+    起始,最精确;失败才退到片段。片段列表保持块内原序,故首片段命中时 pos 同样是块
+    起始。
+    """
+    for probe in probes:
+        for length in _PROBE_LENS:
+            candidate = probe[:length].strip()
+            if len(candidate) < 8:
+                continue
+            if md_content.count(candidate) == 1:
+                return md_content.find(candidate), len(candidate)
     return -1, 0
 
 
@@ -87,7 +102,7 @@ def _is_continuation_table_block(block: dict) -> bool:
     """
     if block.get("type") != "table":
         return False
-    if _block_probe_and_bbox(block)[0].strip():
+    if _block_probes_and_bbox(block)[0][0].strip():
         return False
     return any(
         isinstance(b, dict) and b.get("type") == "table_body"
@@ -202,10 +217,8 @@ def build_page_mapping(
         page_num = page.get("page_idx", 0) + 1
         page_size = page.get("page_size")
         for block in page.get("para_blocks", []):
-            probe, bbox = _block_probe_and_bbox(block)
-            if len(probe) < 8:
-                continue
-            pos, used_len = _unique_find(md_content, probe)
+            probes, bbox = _block_probes_and_bbox(block)
+            pos, used_len = _unique_find(md_content, probes)
             if pos < 0:
                 continue
             candidates.append((pos, used_len, page_num, bbox, page_size))
