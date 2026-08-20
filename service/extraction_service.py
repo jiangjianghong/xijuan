@@ -2908,13 +2908,19 @@ async def test_field_extraction_stream(
                             if sliced["ok"]:
                                 results_by_label["page_content"] = sliced["text"]
                 elif search_type == "context":
-                    search_results = await search_context(content, search_config)
+                    # 调试流是串行路径，这里现取快照分块，与并发链路共用同一份检索语义
+                    debug_snapshot = await load_extraction_snapshot(file_id, session)
+                    search_results = await search_context(
+                        content, search_config, debug_snapshot.chunks
+                    )
                 elif search_type == "section":
                     search_results = await search_section(content, search_config)
                 elif search_type == "rule":
-                    search_results = await search_rule(content, search_config)
+                    debug_snapshot = await load_extraction_snapshot(file_id, session)
+                    search_results = await search_rule(
+                        content, search_config, debug_snapshot.chunks
+                    )
                 elif search_type == "chunk_db":
-                    # 调试流是串行路径，这里现取快照分块，与并发链路共用同一份检索语义
                     debug_snapshot = await load_extraction_snapshot(file_id, session)
                     search_results = await search_chunk_db(
                         file_id, search_config, debug_snapshot.chunks
