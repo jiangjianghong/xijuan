@@ -106,6 +106,44 @@ async def _recompute_one(
     return stat
 
 
+async def _process_batch(
+    factory,
+    batch: List[str],
+    args,
+    counters: Dict[str, Any],
+    total: int,
+) -> None:
+    """处理一批文件：载入 → 逐个重算 → commit。异常由调用方按批重试。"""
+    async with factory() as session:
+        rows = (await session.execute(
+            select(FileContent).where(FileContent.file_id.in_(batch))
+        )).scalars().all()
+
+        for row in rows:
+            counters["done"] += 1
+            done = counters["done"]
+            if not row.file_content:
+                counters["skipped"] += 1
+                continue
+            try:
+                # SAVEPOINT 包住单文件：脏数据只回滚它自己，不连坐同批
+                async with session.begin_nested():
+                    stat = await _recompute_one(session, row, args.dry_run)
+            except Exception as exc:                       # noqa: BLE001
+                print(f"[{done}/{total}] {row.file_id} 失败: {exc!r}")
+                counters["failed"].append(row.file_id)
+                continue
+            if stat is None:
+                continue
+            counters["changed"].append(stat)
+            print(f"[{done}/{total}] {stat['file_id']}  锚点 {stat['anchors']}  "
+                  f"页码范围 {stat['pages']}  "
+                  f"表格改页 {stat['tables_repaged']}  分块改页 {stat['chunks_repaged']}")
+
+        if not args.dry_run:
+            await session.commit()
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description="批量重算存量 page_mapping 及下游页码")
     parser.add_argument("--dry-run", action="store_true",
@@ -114,67 +152,70 @@ async def main() -> int:
     parser.add_argument("--limit", type=int, help="最多处理多少个文件（试跑用）")
     parser.add_argument("--batch-size", type=int, default=10,
                         help="每批载入多少个文件（默认 10）")
+    parser.add_argument("--offset", type=int, default=0,
+                        help="跳过前 N 个文件（断点续跑用，顺序按 file_id 升序稳定）")
+    parser.add_argument("--retries", type=int, default=5,
+                        help="单批因连接问题失败时的重试次数（默认 5）")
     args = parser.parse_args()
 
     mode = "DRY-RUN（不写库）" if args.dry_run else "写库"
-    print(f"模式: {mode}   批大小: {args.batch_size}")
+    print(f"模式: {mode}   批大小: {args.batch_size}   起始偏移: {args.offset}")
 
     factory = get_session_factory()
 
-    # 先只查主键拿到清单：middle_json 全库合计上 GB，整表 .all() 会撑爆内存
+    # 先只查主键拿到清单：middle_json 全库合计上 GB，整表 .all() 会撑爆内存。
+    # 按 file_id 升序固定顺序，--offset 才能可靠地续跑。
     async with factory() as session:
-        stmt = select(FileContent.file_id)
+        stmt = select(FileContent.file_id).order_by(FileContent.file_id)
         if args.file_id:
             stmt = stmt.where(FileContent.file_id == args.file_id)
         if args.limit:
             stmt = stmt.limit(args.limit)
         file_ids = list((await session.execute(stmt)).scalars().all())
 
+    if args.offset:
+        file_ids = file_ids[args.offset:]
     total = len(file_ids)
     print(f"待处理文件数: {total}\n")
 
-    changed: List[Dict[str, Any]] = []
-    skipped = 0
-    failed: List[str] = []
-    done = 0
+    counters: Dict[str, Any] = {
+        "done": 0, "skipped": 0, "changed": [], "failed": [], "batch_failed": [],
+    }
 
     # 分批：每批一个独立 session，处理完即 commit 并释放，避免长事务与内存累积
     for start in range(0, total, args.batch_size):
         batch = file_ids[start:start + args.batch_size]
-        async with factory() as session:
-            rows = (await session.execute(
-                select(FileContent).where(FileContent.file_id.in_(batch))
-            )).scalars().all()
+        before = counters["done"]
+        for attempt in range(1, args.retries + 1):
+            try:
+                await _process_batch(factory, batch, args, counters, total)
+                break
+            except Exception as exc:                       # noqa: BLE001
+                # 多为瞬时网络抖动导致的建连失败。整批重试是安全的：本批未 commit，
+                # 且重算本身幂等。计数回退，避免重试把同一批重复计入进度。
+                counters["done"] = before
+                if attempt == args.retries:
+                    print(f"  !! 批 [{args.offset + start}..] 重试 {args.retries} 次仍失败: "
+                          f"{exc!r}")
+                    counters["batch_failed"].extend(batch)
+                    counters["done"] = before + len(batch)
+                    break
+                backoff = min(2 ** attempt, 30)
+                print(f"  .. 批 [{args.offset + start}..] 第 {attempt} 次失败，"
+                      f"{backoff}s 后重试: {type(exc).__name__}")
+                await asyncio.sleep(backoff)
 
-            for row in rows:
-                done += 1
-                if not row.file_content:
-                    skipped += 1
-                    continue
-                try:
-                    # SAVEPOINT 包住单文件：脏数据只回滚它自己，不连坐同批
-                    async with session.begin_nested():
-                        stat = await _recompute_one(session, row, args.dry_run)
-                except Exception as exc:                   # noqa: BLE001
-                    print(f"[{done}/{total}] {row.file_id} 失败: {exc!r}")
-                    failed.append(row.file_id)
-                    continue
-                if stat is None:
-                    continue
-                changed.append(stat)
-                print(f"[{done}/{total}] {stat['file_id']}  锚点 {stat['anchors']}  "
-                      f"页码范围 {stat['pages']}  "
-                      f"表格改页 {stat['tables_repaged']}  分块改页 {stat['chunks_repaged']}")
-
-            if not args.dry_run:
-                await session.commit()
-
+        done = counters["done"]
         if done % (args.batch_size * 20) == 0 or done >= total:
             print(f"  ... 进度 {done}/{total}（{done / total:.0%}）"
-                  f" 变更 {len(changed)}  失败 {len(failed)}")
+                  f" 变更 {len(counters['changed'])}"
+                  f"  失败 {len(counters['failed']) + len(counters['batch_failed'])}")
 
+    changed = counters["changed"]
+    failed = counters["failed"] + counters["batch_failed"]
     print(f"\n{'=' * 60}")
-    print(f"有变更的文件: {len(changed)} / {total}（内容为空跳过 {skipped} 个）")
+    print(f"有变更的文件: {len(changed)} / {total}"
+          f"（内容为空跳过 {counters['skipped']} 个）")
     print(f"表格改页合计: {sum(c['tables_repaged'] for c in changed)}")
     print(f"分块改页合计: {sum(c['chunks_repaged'] for c in changed)}")
     if failed:
