@@ -1052,16 +1052,22 @@ const RuleConfig = {
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label class="form-label">最大结果数</label>
+                            <label class="form-label">每关键词最大结果数</label>
                             <input class="form-input" id="fm-sc-max-results" type="number" value="${config.max_results ?? 5}" min="1">
                         </div>
                         <div class="form-group">
-                            <label class="form-label">排序方式</label>
-                            <select class="form-select" id="fm-sc-sort-order">
-                                <option value="asc" ${(config.sort_order || 'asc') === 'asc' ? 'selected' : ''}>正序</option>
-                                <option value="desc" ${config.sort_order === 'desc' ? 'selected' : ''}>倒序</option>
-                            </select>
+                            <label class="form-label">总结果数上限</label>
+                            <input class="form-input" id="fm-sc-max-total-results" type="number" value="${config.max_total_results ?? 0}" min="0" placeholder="0 表示不限制">
                         </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">排序方式</label>
+                        <select class="form-select" id="fm-sc-sort-order">
+                            <option value="relevance" ${(config.sort_order || 'relevance') === 'relevance' ? 'selected' : ''}>相关度</option>
+                            <option value="asc" ${config.sort_order === 'asc' ? 'selected' : ''}>正序</option>
+                            <option value="desc" ${config.sort_order === 'desc' ? 'selected' : ''}>倒序</option>
+                        </select>
+                        <div class="form-hint">相关度 = 命中片段里出现的不同关键词的稀有度之和；配单个关键词时等价于正序。总量上限按关键词轮流裁剪，保证每个关键词的占位符都有内容。</div>
                     </div>
                 `;
                 break;
@@ -1135,7 +1141,7 @@ const RuleConfig = {
                             </select>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">最大结果数</label>
+                            <label class="form-label">每关键词最大结果数</label>
                             <input class="form-input" id="fm-sc-max-results" type="number" value="${config.max_results ?? 5}" min="1">
                         </div>
                     </div>
@@ -1149,13 +1155,21 @@ const RuleConfig = {
                             <input class="form-input" id="fm-sc-max-length" type="number" value="${config.max_length ?? 1000}" min="0">
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">排序方式</label>
-                        <select class="form-select" id="fm-sc-sort-order">
-                            <option value="asc" ${(config.sort_order || 'asc') === 'asc' ? 'selected' : ''}>正序</option>
-                            <option value="desc" ${config.sort_order === 'desc' ? 'selected' : ''}>倒序</option>
-                        </select>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">总结果数上限</label>
+                            <input class="form-input" id="fm-sc-max-total-results" type="number" value="${config.max_total_results ?? 0}" min="0" placeholder="0 表示不限制">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">排序方式</label>
+                            <select class="form-select" id="fm-sc-sort-order">
+                                <option value="relevance" ${(config.sort_order || 'relevance') === 'relevance' ? 'selected' : ''}>相关度</option>
+                                <option value="asc" ${config.sort_order === 'asc' ? 'selected' : ''}>正序</option>
+                                <option value="desc" ${config.sort_order === 'desc' ? 'selected' : ''}>倒序</option>
+                            </select>
+                        </div>
                     </div>
+                    <div class="form-hint">相关度按抽取片段里出现的不同关键词的稀有度之和排序；配单个关键词时等价于正序。</div>
                 `;
                 break;
 
@@ -1169,16 +1183,21 @@ const RuleConfig = {
                     ${this.buildKeywordTagsHtml('fm-sc-keywords', '关键词', chunkKeywords, '输入关键词后按回车或点击添加', this.state.formIsAdvanced)}
                     <div class="form-row">
                         <div class="form-group">
-                            <label class="form-label">最大结果数</label>
+                            <label class="form-label">每关键词最大结果数</label>
                             <input class="form-input" id="fm-sc-max-results" type="number" value="${config.max_results ?? 5}" min="1">
                         </div>
                         <div class="form-group">
-                            <label class="form-label">排序方式</label>
-                            <select class="form-select" id="fm-sc-sort-order">
-                                <option value="asc" ${(config.sort_order || 'asc') === 'asc' ? 'selected' : ''}>正序</option>
-                                <option value="desc" ${config.sort_order === 'desc' ? 'selected' : ''}>倒序</option>
-                            </select>
+                            <label class="form-label">总结果数上限</label>
+                            <input class="form-input" id="fm-sc-max-total-results" type="number" value="${config.max_total_results ?? 0}" min="0" placeholder="0 表示不限制">
                         </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">排序方式</label>
+                        <select class="form-select" id="fm-sc-sort-order">
+                            <option value="relevance" ${(config.sort_order || 'relevance') === 'relevance' ? 'selected' : ''}>相关度</option>
+                            <option value="asc" ${config.sort_order === 'asc' ? 'selected' : ''}>正序</option>
+                            <option value="desc" ${config.sort_order === 'desc' ? 'selected' : ''}>倒序</option>
+                        </select>
                     </div>
                 `;
                 break;
@@ -1879,7 +1898,8 @@ const RuleConfig = {
                 config.context_before = getInt('fm-sc-context-before', 200);
                 config.context_after = getInt('fm-sc-context-after', 200);
                 config.max_results = getInt('fm-sc-max-results', 5);
-                config.sort_order = getVal('fm-sc-sort-order') || 'asc';
+                config.max_total_results = getInt('fm-sc-max-total-results', 0);
+                config.sort_order = getVal('fm-sc-sort-order') || 'relevance';
                 break;
             case 'section':
                 config.section_pattern = getVal('fm-sc-section-pattern');
@@ -1903,12 +1923,14 @@ const RuleConfig = {
                 config.min_length = getInt('fm-sc-min-length', 0);
                 config.max_length = getInt('fm-sc-max-length', 1000);
                 config.max_results = getInt('fm-sc-max-results', 5);
-                config.sort_order = getVal('fm-sc-sort-order') || 'asc';
+                config.max_total_results = getInt('fm-sc-max-total-results', 0);
+                config.sort_order = getVal('fm-sc-sort-order') || 'relevance';
                 break;
             case 'chunk_db':
                 config.keywords = this.getKeywordTags('fm-sc-keywords');
                 config.max_results = getInt('fm-sc-max-results', 5);
-                config.sort_order = getVal('fm-sc-sort-order') || 'asc';
+                config.max_total_results = getInt('fm-sc-max-total-results', 0);
+                config.sort_order = getVal('fm-sc-sort-order') || 'relevance';
                 break;
             case 'vector_db':
                 config.query_text = getVal('fm-sc-query-text');
