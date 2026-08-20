@@ -2,16 +2,31 @@
 
 快照口径（池清单、状态判定、汇总）集中在本模块，供 blue_print/runtime_router.py
 与后台采样循环共用——两者必须同源，否则历史曲线与实时容量矩阵会对不上。
+历史是纯内存环形缓冲（按事件循环隔离），进程重启即清零，不落库。
 """
 
 from __future__ import annotations
 
+import asyncio
+import time
+from collections import deque
 from datetime import datetime
 from typing import Any
+
+from loguru import logger
 
 from utils.concurrency import get_limiter, runtime_snapshot
 from utils.config import get_config
 
+
+SAMPLE_INTERVAL_S = 1.0
+HISTORY_MAXLEN = 1800      # 1s 一点，保留 30 分钟
+HISTORY_POINTS = 60        # 每个窗口恒返回 60 个桶，响应体积与窗口长度无关
+WINDOWS: dict[str, int] = {"60s": 60, "5m": 300, "30m": 1800}
+DEFAULT_WINDOW = "60s"
+
+# 按事件循环隔离，与 utils/concurrency.py 的 limiter 注册表同构，避免测试串味
+_history: dict[int, deque[dict[str, Any]]] = {}
 
 _GLOBAL_POOLS = (
     ("global_llm", "文本 LLM", "模型通道", "模型通道"),
@@ -162,3 +177,106 @@ def build_snapshot() -> dict[str, Any]:
         "pools": [*global_records, *task_records, _pipeline_record(pools_raw, limits)],
         "events": list(reversed(raw.get("events", [])))[:20],
     }
+
+
+def _history_deque() -> deque[dict[str, Any]]:
+    try:
+        loop_id = id(asyncio.get_running_loop())
+    except RuntimeError:
+        loop_id = 0
+    return _history.setdefault(loop_id, deque(maxlen=HISTORY_MAXLEN))
+
+
+def history_points() -> list[dict[str, Any]]:
+    """当前事件循环内已采集的原始点（从旧到新），供测试与调试使用。"""
+    return list(_history_deque())
+
+
+def clear_history() -> None:
+    """清空当前事件循环的历史，供测试使用。"""
+    _history_deque().clear()
+
+
+def pool_pressure(record: dict[str, Any]) -> int:
+    """池利用率（0-100）。task 池按「最忙实例 / 每实例上限」，与容量矩阵柱高同源。"""
+    if record.get("scope") == "task":
+        limit = int(record.get("per_instance_limit", 0) or 0)
+        active = int(record.get("busiest_active", 0) or 0)
+    else:
+        limit = int(record.get("limit", 0) or 0)
+        active = int(record.get("active", 0) or 0)
+    if limit <= 0:
+        return 0
+    return max(0, min(100, round(active / limit * 100)))
+
+
+def record_sample(snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    """采集一个历史点并入队。传入 snapshot 可复用已构建的快照（测试也走这条路）。"""
+    snapshot = snapshot if snapshot is not None else build_snapshot()
+    summary = snapshot.get("summary") or {}
+    capacity = int(summary.get("capacity", 0) or 0)
+    active = int(summary.get("active", 0) or 0)
+    point = {
+        "at": time.time(),
+        "overall": max(0, min(100, round(active / capacity * 100))) if capacity > 0 else 0,
+        "pools": {
+            record["id"]: pool_pressure(record)
+            for record in snapshot.get("pools", [])
+            if record.get("id")
+        },
+    }
+    _history_deque().append(point)
+    return point
+
+
+def _merge_bucket(items: list[dict[str, Any] | None]) -> dict[str, Any] | None:
+    """桶内取峰值：压力监控关心尖峰，均值会把短时饱和抹平。整桶无采样返回 None。"""
+    real = [item for item in items if item]
+    if not real:
+        return None
+    pools: dict[str, int] = {}
+    for item in real:
+        for pool_id, value in (item.get("pools") or {}).items():
+            pools[pool_id] = max(pools.get(pool_id, 0), int(value))
+    return {
+        "at": real[-1].get("at"),
+        "overall": max(int(item.get("overall", 0)) for item in real),
+        "pools": pools,
+    }
+
+
+def history_payload(window: str | None = None) -> dict[str, Any]:
+    """按窗口降采样成定长 60 桶。不足部分在左侧补 None，最新值恒在最右。"""
+    key = window if window in WINDOWS else DEFAULT_WINDOW
+    span = WINDOWS[key]
+    bucket = max(1, span // HISTORY_POINTS)
+    recent = list(_history_deque())[-span:]
+    padded: list[dict[str, Any] | None] = [None] * (span - len(recent)) + list(recent)
+    points = [
+        _merge_bucket(padded[index * bucket : (index + 1) * bucket])
+        for index in range(HISTORY_POINTS)
+    ]
+    return {
+        "window": key,
+        "window_seconds": span,
+        "bucket_seconds": bucket,
+        "interval_ms": int(SAMPLE_INTERVAL_S * 1000),
+        "retention_seconds": HISTORY_MAXLEN,
+        "windows": list(WINDOWS),
+        "points": points,
+    }
+
+
+async def sampler_loop() -> None:
+    """后台采样循环：每 SAMPLE_INTERVAL_S 秒记一个点。
+
+    单轮失败只记日志不杀循环；收到取消向上抛出以便优雅退出。
+    """
+    while True:
+        await asyncio.sleep(SAMPLE_INTERVAL_S)
+        try:
+            record_sample()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("并发历史采样失败: {}", e)
