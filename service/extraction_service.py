@@ -1467,9 +1467,10 @@ async def search_chunk_db(
         file_id: 文件 ID（仅用于日志）。
         config: search_config 配置，包含:
             - keyword_filter 或 keywords: 关键词（单个字符串或列表）
-            - max_results 或 top_k: 返回条数（默认 10）
-            - sort_order: 排序方式 asc/desc（默认 asc，按 chunk_index）
-        chunks: 快照中的分块集合（原为 session 实时查询，改为并发安全的只读快照）。
+            - max_results 或 top_k: **每个关键词**返回条数（默认 10）
+            - max_total_results: 总条数上限（默认 0 = 不限）
+            - sort_order: relevance（默认）/ asc / desc
+        chunks: 快照中的分块集合（并发安全的只读快照）。
 
     Returns:
         检索结果列表，每项包含 chunk_id, chunk_index, chunk_content。
@@ -1482,43 +1483,47 @@ async def search_chunk_db(
             keywords = [k.strip() for k in re.split(r"[,，]", keyword_filter) if k.strip()]
     # 兼容两种字段名：max_results（设计文档）和 top_k
     max_results = config.get("max_results") or config.get("top_k", 10)
-    sort_order = config.get("sort_order", "asc")
+    max_total = config.get("max_total_results", 0)
+    sort_order = config.get("sort_order", "relevance")
 
-    # 按 chunk_index 排序（设计文档要求）。快照是不可变元组，故用 sorted 而非原地 sort
-    chunks = sorted(chunks, key=lambda x: x.chunk_index, reverse=(sort_order == "desc"))
+    # 快照是不可变元组，故用 sorted 而非原地 sort。这里恒按 chunk_index 升序，
+    # 倒序/相关度由 rank_and_truncate 统一处理
+    ordered_chunks = sorted(chunks, key=lambda x: x.chunk_index)
 
-    # 按关键词分别过滤并标记，每个关键词独立限制条数
-    results = []
+    def _row(chunk, keyword: str = "") -> Dict[str, Any]:
+        row = {
+            "chunk_id": chunk.chunk_id,
+            "chunk_index": chunk.chunk_index,
+            "chunk_content": chunk.chunk_content,
+            "start_pos": chunk.start_pos,
+            "end_pos": chunk.end_pos,
+            "page_num": chunk.page_num or "",
+        }
+        if keyword:
+            row["keyword"] = keyword
+        return row
+
+    # 收集**全部**命中后再排序截断：早停会让相关度只能在前 N 条里排，等于没排
+    results: List[Dict[str, Any]] = []
     if keywords:
         for kw in keywords:
-            count = 0
-            for chunk in chunks:
-                if kw.lower() in chunk.chunk_content.lower():
-                    results.append({
-                        "keyword": kw,
-                        "chunk_id": chunk.chunk_id,
-                        "chunk_index": chunk.chunk_index,
-                        "chunk_content": chunk.chunk_content,
-                        "start_pos": chunk.start_pos,
-                        "end_pos": chunk.end_pos,
-                        "page_num": chunk.page_num or "",
-                    })
-                    count += 1
-                    if count >= max_results:
-                        break
+            needle = kw.lower()
+            for chunk in ordered_chunks:
+                if needle in chunk.chunk_content.lower():
+                    results.append(_row(chunk, kw))
     else:
-        # 无关键词时返回所有分块
-        for chunk in chunks[:max_results]:
-            results.append({
-                "chunk_id": chunk.chunk_id,
-                "chunk_index": chunk.chunk_index,
-                "chunk_content": chunk.chunk_content,
-                "start_pos": chunk.start_pos,
-                "end_pos": chunk.end_pos,
-                "page_num": chunk.page_num or "",
-            })
+        # 无关键词时全部纳入候选，由截断层取前 max_results 个
+        results = [_row(chunk) for chunk in ordered_chunks]
 
-    return results
+    return rank_and_truncate(
+        results,
+        weights=compute_keyword_weights(keywords, chunks),
+        segment_key="chunk_content",
+        order_key="chunk_index",
+        max_results=max_results,
+        max_total=max_total,
+        sort_order=sort_order,
+    )
 
 
 async def search_vector_db(

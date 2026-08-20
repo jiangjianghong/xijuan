@@ -677,3 +677,45 @@ async def test_search_rule_asc_preserves_legacy_order():
         (),
     )
     assert [r["extracted_text"] for r in results] == ["金额是1", "金额是2", "金额是3"]
+
+
+async def test_search_chunk_db_relevance_beats_chunk_index_order():
+    """相关度排序要看全部命中，而不是只在前 N 条里排。"""
+    from service.extraction_service import search_chunk_db
+
+    chunks = tuple(
+        [_rank_chunk(i, "项目名称") for i in range(8)]
+        + [_rank_chunk(8, "项目名称 工程名称")]
+    )
+    results = await search_chunk_db(
+        "f1",
+        {"keywords": ["项目名称", "工程名称"], "max_results": 2},
+        chunks,
+    )
+    assert results[0]["chunk_index"] == 8
+
+
+async def test_search_chunk_db_max_total_results_caps_output():
+    """chunk_db 也支持总量上限，且轮转保证每个关键词都有份。"""
+    from service.extraction_service import search_chunk_db
+
+    chunks = tuple(
+        [_rank_chunk(i, "甲方") for i in range(5)]
+        + [_rank_chunk(5 + i, "乙方") for i in range(5)]
+    )
+    results = await search_chunk_db(
+        "f1",
+        {"keywords": ["甲方", "乙方"], "max_results": 5, "max_total_results": 4},
+        chunks,
+    )
+    assert len(results) == 4
+    assert {r["keyword"] for r in results} == {"甲方", "乙方"}
+
+
+async def test_search_chunk_db_no_keywords_returns_leading_chunks():
+    """无关键词时返回前 max_results 个分块（行为不变）。"""
+    from service.extraction_service import search_chunk_db
+
+    chunks = tuple(_rank_chunk(i, f"块{i}") for i in range(10))
+    results = await search_chunk_db("f1", {"max_results": 3}, chunks)
+    assert [r["chunk_index"] for r in results] == [0, 1, 2]
