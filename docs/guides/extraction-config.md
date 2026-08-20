@@ -114,7 +114,17 @@ JSON 示例和排错清单为主。
 >
 > ⚠️ **行为变更（影响存量配置）**：`context` / `rule` 的 `max_results` 原本是跨关键词的**全局**上限，现在改成**每关键词**上限。一个配了 3 个关键词、`max_results=5` 的存量字段，注入提示词的片段数上限会从 5 条变成 15 条，**跑批的 token 用量相应上涨**。这是修复「低频关键词占位符静默为空」所必需的（原先 5 个名额会被高频关键词全部占光）。要压回原来的量级，把 `max_total_results` 设成原来的 `max_results` 值即可 —— 此时总量不变，但从「赢者通吃」变成轮转公平分配。
 >
-> 注意 `sort_order` 的默认值变更**不会**自动影响存量配置：前端历来把 `sort_order` 显式写进 `search_config`，存量字段里存的是 `"asc"`，会继续按位置排序。要切到相关度，在配置界面重新保存该字段即可。
+> 关于 `sort_order` 默认值变更对存量配置的影响：**绝大多数存量字段不受影响**——经配置界面创建的字段会把 `sort_order` 显式写进 `search_config`，存的是 `"asc"` 或 `"desc"`，会继续按位置排序。要切到相关度，在配置界面重新保存该字段即可。
+>
+> 但**经 API 直接创建、或从缺该键的 JSON 导入的字段没有这个键**（`copy_from` / `import` 都是原样透传 `search_config`，schema 层也不填默认值），这些字段会自动切到 `relevance`。其中单关键词字段行为不变（同分退化成位置升序），多关键词字段的排序会真的改变。升级前可以用这条只读 SQL 盘一下受影响范围：
+>
+> ```sql
+> SELECT type_id, field_id, search_type,
+>        JSON_LENGTH(JSON_EXTRACT(search_config, '$.keywords')) AS kw_count
+> FROM extraction_field
+> WHERE search_type IN ('context', 'rule', 'chunk_db')
+>   AND JSON_EXTRACT(search_config, '$.sort_order') IS NULL;
+> ```
 >
 > `section` 检索不适用本节（它按章节匹配，`sort_order` 仍只有 `asc` / `desc`）。
 
