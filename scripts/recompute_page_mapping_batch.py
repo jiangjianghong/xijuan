@@ -12,6 +12,11 @@ end_pos，重查 `lookup_page_num` 即可，无需重跑 MinerU 解析或 LLM �
     uv run python scripts/recompute_page_mapping_batch.py             # 实际写库
     uv run python scripts/recompute_page_mapping_batch.py --file-id abc123  # 指定文件
     uv run python scripts/recompute_page_mapping_batch.py --limit 20         # 限量试跑
+    uv run python scripts/recompute_page_mapping_batch.py --batch-size 5     # 调小批量
+
+全库 middle_json 合计上 GB，故按 `--batch-size` 分批载入、每批独立 session 并
+commit；单文件用 SAVEPOINT 隔离，脏数据不连坐同批。脚本幂等，失败的 file_id
+可单独重跑。
 
 注意：抽取结果 `extraction_result.source_refs` 里的 bboxes / page_num 是抽取当时的
 快照，本脚本**不**改写它们——那需要重跑抽取（`POST /file/{id}/retry/extracting`）。
@@ -30,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import select  # noqa: E402
 
-from model.database import get_session_factory  # noqa: E402
+from model.database import get_engine, get_session_factory  # noqa: E402
 from model.tables import FileChunk, FileContent, FileTable  # noqa: E402
 from utils.page_mapping import build_page_mapping, lookup_page_num  # noqa: E402
 
@@ -107,50 +112,82 @@ async def main() -> int:
                         help="只统计影响面，不写库")
     parser.add_argument("--file-id", help="只处理指定 file_id")
     parser.add_argument("--limit", type=int, help="最多处理多少个文件（试跑用）")
+    parser.add_argument("--batch-size", type=int, default=10,
+                        help="每批载入多少个文件（默认 10）")
     args = parser.parse_args()
 
-    stmt = select(FileContent)
-    if args.file_id:
-        stmt = stmt.where(FileContent.file_id == args.file_id)
-    if args.limit:
-        stmt = stmt.limit(args.limit)
-
     mode = "DRY-RUN（不写库）" if args.dry_run else "写库"
-    print(f"模式: {mode}")
+    print(f"模式: {mode}   批大小: {args.batch_size}")
 
-    async with get_session_factory()() as session:
-        rows = (await session.execute(stmt)).scalars().all()
-        print(f"待处理文件数: {len(rows)}\n")
+    factory = get_session_factory()
 
-        changed: List[Dict[str, Any]] = []
-        skipped = 0
-        for i, row in enumerate(rows, 1):
-            if not row.file_content:
-                skipped += 1
-                continue
-            try:
-                stat = await _recompute_one(session, row, args.dry_run)
-            except Exception as exc:                       # noqa: BLE001
-                # 单个文件的脏数据不该中断整批
-                print(f"[{i}/{len(rows)}] {row.file_id} 失败: {exc!r}")
-                await session.rollback()
-                continue
-            if stat is None:
-                continue
-            changed.append(stat)
-            print(f"[{i}/{len(rows)}] {stat['file_id']}  锚点 {stat['anchors']}  "
-                  f"页码范围 {stat['pages']}  "
-                  f"表格改页 {stat['tables_repaged']}  分块改页 {stat['chunks_repaged']}")
+    # 先只查主键拿到清单：middle_json 全库合计上 GB，整表 .all() 会撑爆内存
+    async with factory() as session:
+        stmt = select(FileContent.file_id)
+        if args.file_id:
+            stmt = stmt.where(FileContent.file_id == args.file_id)
+        if args.limit:
+            stmt = stmt.limit(args.limit)
+        file_ids = list((await session.execute(stmt)).scalars().all())
 
-        if not args.dry_run:
-            await session.commit()
+    total = len(file_ids)
+    print(f"待处理文件数: {total}\n")
+
+    changed: List[Dict[str, Any]] = []
+    skipped = 0
+    failed: List[str] = []
+    done = 0
+
+    # 分批：每批一个独立 session，处理完即 commit 并释放，避免长事务与内存累积
+    for start in range(0, total, args.batch_size):
+        batch = file_ids[start:start + args.batch_size]
+        async with factory() as session:
+            rows = (await session.execute(
+                select(FileContent).where(FileContent.file_id.in_(batch))
+            )).scalars().all()
+
+            for row in rows:
+                done += 1
+                if not row.file_content:
+                    skipped += 1
+                    continue
+                try:
+                    # SAVEPOINT 包住单文件：脏数据只回滚它自己，不连坐同批
+                    async with session.begin_nested():
+                        stat = await _recompute_one(session, row, args.dry_run)
+                except Exception as exc:                   # noqa: BLE001
+                    print(f"[{done}/{total}] {row.file_id} 失败: {exc!r}")
+                    failed.append(row.file_id)
+                    continue
+                if stat is None:
+                    continue
+                changed.append(stat)
+                print(f"[{done}/{total}] {stat['file_id']}  锚点 {stat['anchors']}  "
+                      f"页码范围 {stat['pages']}  "
+                      f"表格改页 {stat['tables_repaged']}  分块改页 {stat['chunks_repaged']}")
+
+            if not args.dry_run:
+                await session.commit()
+
+        if done % (args.batch_size * 20) == 0 or done >= total:
+            print(f"  ... 进度 {done}/{total}（{done / total:.0%}）"
+                  f" 变更 {len(changed)}  失败 {len(failed)}")
 
     print(f"\n{'=' * 60}")
-    print(f"有变更的文件: {len(changed)} / {len(rows)}（内容为空跳过 {skipped} 个）")
+    print(f"有变更的文件: {len(changed)} / {total}（内容为空跳过 {skipped} 个）")
     print(f"表格改页合计: {sum(c['tables_repaged'] for c in changed)}")
     print(f"分块改页合计: {sum(c['chunks_repaged'] for c in changed)}")
+    if failed:
+        print(f"失败 {len(failed)} 个（脚本幂等，可对这些 file_id 单独重跑）:")
+        for fid in failed[:20]:
+            print(f"  {fid}")
+        if len(failed) > 20:
+            print(f"  ... 另有 {len(failed) - 20} 个")
     if args.dry_run:
         print("\nDRY-RUN 未写库。去掉 --dry-run 实际执行。")
+
+    # 显式归还连接池，否则退出时 aiomysql 的 __del__ 会撞上已关闭的 event loop
+    await get_engine().dispose()
     return 0
 
 
