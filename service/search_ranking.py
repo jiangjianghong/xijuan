@@ -51,3 +51,19 @@ def compute_keyword_weights(
         df = sum(1 for text in lowered_chunks if needle in text)
         weights[kw] = math.log(1 + total / (1 + df))
     return weights
+
+
+def score_segment(segment: str, weights: Dict[str, float]) -> float:
+    """片段的相关度：其中出现的**不同**关键词的权重之和。
+
+    Args:
+        segment: 命中片段正文。
+        weights: compute_keyword_weights 的输出。
+
+    Returns:
+        相关度分数，无命中为 0.0。
+    """
+    if not segment:
+        return 0.0
+    lowered = segment.lower()
+    return sum(w for kw, w in weights.items() if kw.lower() in lowered)

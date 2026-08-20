@@ -49,3 +49,25 @@ def test_compute_keyword_weights_skips_empty_keywords():
 
     weights = compute_keyword_weights(["", "金额"], [_chunk(0, "金额100")])
     assert list(weights) == ["金额"]
+
+
+def test_score_segment_sums_weights_of_present_keywords():
+    """片段分数 = 其中出现的不同关键词权重之和。"""
+    from service.search_ranking import score_segment
+
+    weights = {"项目名称": 2.0, "工程名称": 4.0, "招标人": 1.0}
+    assert score_segment("本项目名称为XX，工程名称同上", weights) == 6.0
+
+
+def test_score_segment_counts_each_keyword_once():
+    """同一关键词重复出现只计一次，避免关键词堆砌的目录页拿高分。"""
+    from service.search_ranking import score_segment
+
+    assert score_segment("金额金额金额", {"金额": 3.0}) == 3.0
+
+
+def test_score_segment_empty_returns_zero():
+    """空片段得 0 分。"""
+    from service.search_ranking import score_segment
+
+    assert score_segment("", {"金额": 3.0}) == 0.0
