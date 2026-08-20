@@ -681,7 +681,12 @@ async def test_search_rule_asc_preserves_legacy_order():
 
 
 async def test_search_chunk_db_relevance_beats_chunk_index_order():
-    """相关度排序要看全部命中，而不是只在前 N 条里排。"""
+    """相关度排序要看全部命中，而不是只在前 N 条里排。
+
+    显式 max_total_results=0（不限总量）把前提固定住：本例要验的是「早停被
+    移除后，排在最后的 chunk 8 因共现两个关键词而排第一」，不是总量截断行为。
+    缺了这个键，总量会被默认值压到 max_results=2，断言虽仍成立但覆盖面变窄。
+    """
     from service.extraction_service import search_chunk_db
 
     chunks = tuple(
@@ -690,9 +695,11 @@ async def test_search_chunk_db_relevance_beats_chunk_index_order():
     )
     results = await search_chunk_db(
         "f1",
-        {"keywords": ["项目名称", "工程名称"], "max_results": 2},
+        {"keywords": ["项目名称", "工程名称"], "max_results": 2,
+         "max_total_results": 0},
         chunks,
     )
+    assert len(results) == 3
     assert results[0]["chunk_index"] == 8
 
 
