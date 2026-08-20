@@ -788,3 +788,22 @@ async def test_search_context_explicit_zero_means_unlimited():
         (),
     )
     assert len(results) == 4  # 甲方 3 + 乙方 1，不被总量压制
+
+
+async def test_search_section_not_wired_into_relevance_ranking():
+    """section 检索不接入相关度排序：传 relevance 也按章节顺序返回。
+
+    「section 不受影响」是本次改动的设计不变式之一（它按章节匹配，候选是整段
+    章节，相关度打分对它没有意义）。这条测试是护栏——将来若有人顺手把 section
+    也接进 rank_and_truncate，它会失败。
+    """
+    from service.extraction_service import search_section
+
+    content = "# 一、付款方式\n\nA\n\n# 二、付款期限\n\nB\n\n# 三、付款条件\n\nC\n"
+    results = await search_section(
+        content,
+        {"section_pattern": "付款", "section_match_type": "contains",
+         "max_results": 5, "sort_order": "relevance"},
+    )
+    # 恒按 section_index 升序，不因 sort_order=relevance 重排
+    assert [r["section_index"] for r in results] == [0, 1, 2]
