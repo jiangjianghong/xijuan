@@ -122,12 +122,15 @@ def rank_and_truncate(
             items.sort(key=lambda x: x.get(order_key) or 0, reverse=reverse_pos)
         del items[max_results:]
 
+    # max_results<=0 会把分组清空，空分组不能参与组间排序（读 g[0] 会越界）
+    non_empty = [g for g in groups.values() if g]
+
     # 组间顺序：相关度模式让最相关的关键词先出，总量紧张时它多拿一条
     if sort_order == "relevance":
-        ordered = sorted(groups.values(), key=lambda g: -g[0]["_score"])
+        ordered = sorted(non_empty, key=lambda g: -g[0]["_score"])
     else:
         ordered = sorted(
-            groups.values(),
+            non_empty,
             key=lambda g: g[0].get(order_key) or 0,
             reverse=reverse_pos,
         )

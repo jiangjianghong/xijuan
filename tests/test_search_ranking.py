@@ -180,3 +180,36 @@ def test_rank_empty_input_returns_empty():
         [], weights={}, segment_key="context", order_key="position",
         max_results=5, max_total=0, sort_order="relevance",
     ) == []
+
+
+def test_rank_zero_max_results_returns_empty_not_crash():
+    """max_results=0 返回空列表（与被替换的 results[:0] 行为一致），不得抛异常。"""
+    from service.search_ranking import rank_and_truncate
+
+    results = [_hit("A", 1, "A"), _hit("B", 2, "B")]
+    assert rank_and_truncate(
+        results, weights={"A": 1.0, "B": 1.0}, segment_key="context",
+        order_key="position", max_results=0, max_total=0, sort_order="relevance",
+    ) == []
+
+
+def test_rank_negative_max_results_does_not_crash():
+    """负数 max_results 不得抛异常（旧代码 results[:-1] 也不崩）。"""
+    from service.search_ranking import rank_and_truncate
+
+    results = [_hit("A", 1, "A"), _hit("A", 2, "A"), _hit("A", 3, "A")]
+    out = rank_and_truncate(
+        results, weights={"A": 1.0}, segment_key="context",
+        order_key="position", max_results=-1, max_total=0, sort_order="relevance",
+    )
+    assert isinstance(out, list)
+
+
+def test_rank_zero_max_results_asc_returns_empty():
+    """asc 模式下同样不崩（该分支的组间排序读的是 order_key 不是 _score）。"""
+    from service.search_ranking import rank_and_truncate
+
+    assert rank_and_truncate(
+        [_hit("A", 1, "A")], weights={"A": 1.0}, segment_key="context",
+        order_key="position", max_results=0, max_total=0, sort_order="asc",
+    ) == []
