@@ -25,6 +25,7 @@ from service.extraction_snapshot import (
     load_extraction_snapshot,
 )
 from service.match_prompts import build_section_match_prompt, build_table_match_prompt
+from service.search_ranking import compute_keyword_weights, rank_and_truncate
 from utils import vl_client
 from utils.callback import notify_callback
 from utils.config import get_config
@@ -1207,7 +1208,9 @@ def parse_sections(content: str) -> List[SectionInfo]:
 # ── 检索方法 ────────────────────────────────────────────────
 
 async def search_context(
-    content: str, config: Dict[str, Any]
+    content: str,
+    config: Dict[str, Any],
+    chunks: Sequence["ChunkRow"] = (),
 ) -> List[Dict[str, Any]]:
     """上下文检索：根据关键词在全文中定位并提取上下文。
 
@@ -1215,10 +1218,12 @@ async def search_context(
         content: 文档全文。
         config: search_config 配置，包含:
             - keywords: 关键词列表
-            - context_before: 关键词前取的字节数（默认 200）
-            - context_after: 关键词后取的字节数（默认 200）
-            - max_results: 最大返回条数（默认 5）
-            - sort_order: 排序方式 asc/desc（默认 asc，按出现位置）
+            - context_before: 关键词前取的字符数（默认 200）
+            - context_after: 关键词后取的字符数（默认 200）
+            - max_results: **每个关键词**最大返回条数（默认 5）
+            - max_total_results: 总条数上限（默认 0 = 不限）
+            - sort_order: relevance（默认）/ asc / desc
+        chunks: 该文件的分块快照，仅用于算 IDF；缺省时相关度退化为覆盖度计数。
 
     Returns:
         检索结果列表，每项包含 keyword, position, context。
@@ -1227,7 +1232,8 @@ async def search_context(
     context_before = config.get("context_before", 200)
     context_after = config.get("context_after", 200)
     max_results = config.get("max_results", 5)
-    sort_order = config.get("sort_order", "asc")
+    max_total = config.get("max_total_results", 0)
+    sort_order = config.get("sort_order", "relevance")
 
     results = []
     for keyword in keywords:
@@ -1244,11 +1250,16 @@ async def search_context(
                 "end_pos": end,
             })
 
-    # 按 position 排序
-    results.sort(key=lambda x: x["position"], reverse=(sort_order == "desc"))
-
-    # 限制返回条数
-    return results[:max_results]
+    # 分组排序 + 每关键词限额 + 轮转合并到总量上限
+    return rank_and_truncate(
+        results,
+        weights=compute_keyword_weights(keywords, chunks),
+        segment_key="context",
+        order_key="position",
+        max_results=max_results,
+        max_total=max_total,
+        sort_order=sort_order,
+    )
 
 
 async def search_section(
@@ -1965,7 +1976,7 @@ async def extract_text_field(
     # 调用对应的检索方法
     search_results = []
     if search_type == "context":
-        search_results = await search_context(content, search_config)
+        search_results = await search_context(content, search_config, snapshot.chunks)
     elif search_type == "section":
         search_results = await search_section(content, search_config)
     elif search_type == "rule":

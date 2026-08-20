@@ -553,3 +553,83 @@ def test_sort_source_refs_skips_model_pages_int_list():
     # 不抛异常即通过（就地排序）
     _sort_source_refs_by_page_containment(refs, "命中值", page_contents)
     assert refs["_model_pages"] == [216, 217, 218]  # 原样保留，未被当成 ref
+
+
+# ---------------------------------------------------------------------------
+# 关键词检索的相关度排序与两层截断
+# ---------------------------------------------------------------------------
+
+def _rank_chunk(index: int, text: str):
+    """构造分块快照，供检索方法算 IDF。"""
+    from service.extraction_snapshot import ChunkRow
+
+    return ChunkRow(
+        chunk_id=f"rk{index}",
+        chunk_index=index,
+        chunk_content=text,
+        start_pos=index * 100,
+        end_pos=index * 100 + len(text),
+        page_num="1",
+    )
+
+
+async def test_search_context_relevance_prefers_co_occurrence():
+    """relevance 排序把共现罕见关键词的命中顶到文档更靠前的孤立命中之前。"""
+    from service.extraction_service import search_context
+
+    content = "项目名称" + "填" * 500 + "项目名称与工程名称在此"
+    chunks = tuple(
+        _rank_chunk(i, text)
+        for i, text in enumerate(["项目名称"] * 9 + ["工程名称 项目名称"])
+    )
+    results = await search_context(
+        content,
+        {"keywords": ["项目名称", "工程名称"], "context_before": 20,
+         "context_after": 20, "max_results": 5},
+        chunks,
+    )
+    assert results[0]["position"] > 400
+
+
+async def test_search_context_quota_is_per_keyword():
+    """低频关键词不再被高频关键词挤空（回归保护：backlog L21）。"""
+    from service.extraction_service import search_context
+
+    content = ("甲方" + "填" * 30) * 10 + "乙方"
+    results = await search_context(
+        content,
+        {"keywords": ["甲方", "乙方"], "context_before": 10,
+         "context_after": 10, "max_results": 3},
+        (),
+    )
+    assert sum(1 for r in results if r["keyword"] == "甲方") == 3
+    assert sum(1 for r in results if r["keyword"] == "乙方") == 1
+
+
+async def test_search_context_max_total_results_caps_output():
+    """max_total_results 生效，且轮转保证每个关键词都有份。"""
+    from service.extraction_service import search_context
+
+    content = ("甲方" + "填" * 30) * 5 + ("乙方" + "填" * 30) * 5
+    results = await search_context(
+        content,
+        {"keywords": ["甲方", "乙方"], "context_before": 5, "context_after": 5,
+         "max_results": 5, "max_total_results": 4},
+        (),
+    )
+    assert len(results) == 4
+    assert {r["keyword"] for r in results} == {"甲方", "乙方"}
+
+
+async def test_search_context_asc_preserves_legacy_order():
+    """显式 sort_order=asc 时仍按位置升序（存量配置行为不变）。"""
+    from service.extraction_service import search_context
+
+    content = "甲方" + "填" * 50 + "甲方" + "填" * 50 + "甲方"
+    results = await search_context(
+        content,
+        {"keywords": ["甲方"], "context_before": 5, "context_after": 5,
+         "max_results": 5, "sort_order": "asc"},
+        (),
+    )
+    assert [r["position"] for r in results] == [0, 52, 104]
