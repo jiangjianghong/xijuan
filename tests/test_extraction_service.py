@@ -599,7 +599,7 @@ async def test_search_context_quota_is_per_keyword():
     results = await search_context(
         content,
         {"keywords": ["甲方", "乙方"], "context_before": 10,
-         "context_after": 10, "max_results": 3},
+         "context_after": 10, "max_results": 3, "max_total_results": 0},
         (),
     )
     assert sum(1 for r in results if r["keyword"] == "甲方") == 3
@@ -643,7 +643,8 @@ async def test_search_rule_quota_is_per_keyword():
     results = await search_rule(
         content,
         {"keywords": ["甲方", "乙方"], "stop_words": ["。"],
-         "direction": "forward", "max_length": 50, "max_results": 3},
+         "direction": "forward", "max_length": 50, "max_results": 3,
+         "max_total_results": 0},
         (),
     )
     assert sum(1 for r in results if r["keyword"] == "甲方") == 3
@@ -719,3 +720,64 @@ async def test_search_chunk_db_no_keywords_returns_leading_chunks():
     chunks = tuple(_rank_chunk(i, f"块{i}") for i in range(10))
     results = await search_chunk_db("f1", {"max_results": 3}, chunks)
     assert [r["chunk_index"] for r in results] == [0, 1, 2]
+
+
+async def test_search_context_max_total_defaults_to_max_results():
+    """缺省 max_total_results 时总量等于 max_results（不涨量），但轮转分配、不饿死低频词。"""
+    from service.extraction_service import search_context
+
+    content = ("甲方" + "填" * 30) * 10 + "乙方"
+    results = await search_context(
+        content,
+        {"keywords": ["甲方", "乙方"], "context_before": 10,
+         "context_after": 10, "max_results": 3},
+        (),
+    )
+    # 总量压回 max_results，与「全局截断」时代一致
+    assert len(results) == 3
+    # 但低频关键词仍保住一条——这正是 L21 要修的
+    assert sum(1 for r in results if r["keyword"] == "乙方") == 1
+
+
+async def test_search_rule_max_total_defaults_to_max_results():
+    """rule 同样：缺省时总量等于 max_results。"""
+    from service.extraction_service import search_rule
+
+    content = "".join(f"甲方是A{i}。" for i in range(10)) + "乙方是B。"
+    results = await search_rule(
+        content,
+        {"keywords": ["甲方", "乙方"], "stop_words": ["。"],
+         "direction": "forward", "max_length": 50, "max_results": 3},
+        (),
+    )
+    assert len(results) == 3
+    assert sum(1 for r in results if r["keyword"] == "乙方") == 1
+
+
+async def test_search_chunk_db_max_total_defaults_to_max_results():
+    """chunk_db 同样：缺省时总量等于 max_results（它的 max_results 可写成 top_k）。"""
+    from service.extraction_service import search_chunk_db
+
+    chunks = tuple(
+        [_rank_chunk(i, "甲方") for i in range(8)]
+        + [_rank_chunk(8, "乙方")]
+    )
+    results = await search_chunk_db(
+        "f1", {"keywords": ["甲方", "乙方"], "max_results": 3}, chunks,
+    )
+    assert len(results) == 3
+    assert sum(1 for r in results if r["keyword"] == "乙方") == 1
+
+
+async def test_search_context_explicit_zero_means_unlimited():
+    """显式 max_total_results=0 表示不限总量，与缺省区分开。"""
+    from service.extraction_service import search_context
+
+    content = ("甲方" + "填" * 30) * 10 + "乙方"
+    results = await search_context(
+        content,
+        {"keywords": ["甲方", "乙方"], "context_before": 10,
+         "context_after": 10, "max_results": 3, "max_total_results": 0},
+        (),
+    )
+    assert len(results) == 4  # 甲方 3 + 乙方 1，不被总量压制
