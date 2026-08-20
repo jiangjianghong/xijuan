@@ -135,7 +135,7 @@
 | - [ ] L18 | `vl_progressive` 逐批串行且无页数上限/无早停（200 页≈100 次串行 VL 调用 + 累积摘要线性膨胀） | 中/中 | `vl_service/progressive.py:51/80/99` | 加最大扫描页数上限 + 早停（累计信息达阈值即停）+ 累积摘要长度截断 |
 | - [ ] L19 | `vl_progressive` 每批未剥 `<think>` 标签 + `raw[:20]` 精确匹配判定相关性（换带推理模型/换措辞即误判） | 中/小 | `vl_service/progressive.py:14/81/85`、对比 `locate.py:98` | 批内先 `strip_think_tags` 再判定；无信息判定改归一化/结构化布尔字段 |
 | - [ ] L20 | 三种 VL 方法都不检查 `finish_reason`，被 `max_tokens` 截断的输出被静默解析成残缺 value | 中/小 | `vl_service/model.py:57`、`progressive.py:110`、`locate.py:153`、`config.py:105` | 解析前读 `finish_reason`，为 length 时 warning + 写 `source_refs._vl.truncated`，或自动提高 max_tokens 重试 |
-| - [ ] L21 | `context`/`rule` 检索的 `max_results` 是跨关键词全局截断，高频关键词会挤掉其他关键词命中（占位符静默为空） | 中/小 | `extraction_service.py:630/817`、对比 `:857` | 改成与 `chunk_db` 一致的"每关键词各限 max_results" |
+| - [x] L21 | `context`/`rule` 检索的 `max_results` 是跨关键词全局截断，高频关键词会挤掉其他关键词命中（占位符静默为空） | 中/小 | `extraction_service.py:630/817`、对比 `:857` | 改成与 `chunk_db` 一致的"每关键词各限 max_results"（已实现：service/search_ranking.py，每关键词限额 + 轮转合并到 max_total_results） |
 | - [ ] L22 | `search_config` 完全无子键校验（缺 `page_range`/`query_text` 等到抽取运行时才失败），与 `vl_config`/`web_search` 的 fail-fast 不一致 | 低/中 | `schemas.py:305`、对比 `:363/458` | 按 `search_type` 做最小必填校验，`model_validator` 里 fail-fast |
 | - [ ] L23 | `stage_done` 回调把整篇 markdown/全部 chunks 塞进 2.5s 超时的 POST，大文档易超时静默丢事件 | 低/中 | `pipeline_service.py:466/550`、`callback.py:50` | 大 payload 只下发摘要/计数 + 拉取地址，让消费方按需回拉（embedding 阶段已如此） |
 | - [ ] L24 | `build_page_mapping` 每块对全篇 `count+find` 全量扫描，大文档 O(块数×md长度)、且在事件循环内同步执行 | 低/中 | `page_mapping.py:60/126` | 一次性预处理"前缀→出现次数/位置"索引；或用两次 find 判唯一省去 count；必要时入线程池 |
