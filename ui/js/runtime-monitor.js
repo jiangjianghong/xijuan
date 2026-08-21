@@ -3,7 +3,8 @@
     'use strict';
 
     const POLL_MS = 2000;
-    const MAX_HISTORY = 60;
+    const DEFAULT_WINDOW = '60s';
+    const WINDOW_LABELS = { '60s': '最近 60 秒', '5m': '最近 5 分钟', '30m': '最近 30 分钟' };
     const STATUS = {
         idle: { label: '空闲', color: '#8DAA91', text: '#668075' },
         normal: { label: '运行正常', color: '#4F775D', text: '#2C4C3B' },
@@ -60,6 +61,7 @@
             taskPools,
             pipeline: { ...pipeline, limit: asNumber(pipeline.limit), active: asNumber(pipeline.active), queued: asNumber(pipeline.queued), status: pipeline.status || 'offline', connected: pipeline.connected !== false },
             events: Array.isArray(data.events) ? data.events : [],
+            history: data.history && typeof data.history === 'object' ? data.history : null,
             error: false,
         };
     }
@@ -103,17 +105,11 @@
         return context.file_name || context.file_id || context.field_id || context.rule_id || context.task_id || context.model || '当前请求';
     }
 
-    function appendFixedHistory(history, value) {
-        const next = Array.isArray(history) ? history.slice(-MAX_HISTORY) : [];
-        while (next.length < MAX_HISTORY) next.unshift(null);
-        next.push(value);
-        return next.slice(-MAX_HISTORY);
-    }
-
     const RuntimeMonitor = {
         state: {
             active: false, loading: false, timer: null, last: null, selectedPoolId: null,
-            history: Array(MAX_HISTORY).fill(null), poolHistory: {}, charts: { pool: null, pressure: null, mini: new Map() },
+            window: DEFAULT_WINDOW,
+            history: [], poolHistory: {}, charts: { pool: null, pressure: null, mini: new Map() },
             listenersBound: false, triggerElement: null, drawerFocusTimer: null,
             helpOpen: false, helpTriggerElement: null, helpFocusTimer: null,
         },
@@ -165,6 +161,11 @@
             const helpOpen = document.getElementById('runtime-help-open');
             const helpClose = document.getElementById('runtime-help-close');
             const helpBackdrop = document.getElementById('runtime-help-backdrop');
+            const windowSelect = document.getElementById('runtime-window-select');
+            if (windowSelect) {
+                windowSelect.value = this.state.window;
+                windowSelect.addEventListener('change', event => this.setWindow(event.target.value));
+            }
             if (close) close.addEventListener('click', () => this.closePool());
             if (backdrop) backdrop.addEventListener('click', () => this.closePool());
             if (helpOpen) helpOpen.addEventListener('click', () => this.openHelp());
@@ -183,9 +184,9 @@
             if (!this.state.active || this.state.loading || typeof API === 'undefined') return;
             this.state.loading = true;
             try {
-                const snapshot = normalizeSnapshot(await API.getRuntimeConcurrency());
+                const snapshot = normalizeSnapshot(await API.getRuntimeConcurrency(this.state.window));
                 this.state.last = snapshot;
-                this.recordHistory(snapshot);
+                this.applyHistory(snapshot.history);
                 this.render(snapshot);
             } catch (error) {
                 const snapshot = this.state.last || normalizeSnapshot(null);
@@ -195,12 +196,39 @@
             }
         },
 
-        recordHistory(snapshot) {
-            const overall = snapshot.summary.capacity ? Math.round(snapshot.summary.active / snapshot.summary.capacity * 100) : 0;
-            this.state.history = appendFixedHistory(this.state.history, overall);
-            orderedPools(snapshot).forEach(pool => {
-                this.state.poolHistory[pool.id] = appendFixedHistory(this.state.poolHistory[pool.id], pressureOf(pool));
+        /**
+         * 历史全部来自后端定长桶序列（60 桶）：刷新页面、切页、多开标签都看到同一条曲线。
+         * 空桶（进程刚启动或该段无采样）为 null，ECharts 会断开，视觉上等价于左侧留白。
+         */
+        applyHistory(history) {
+            const points = history && Array.isArray(history.points) ? history.points : [];
+            this.state.history = points.map(point => (point ? asNumber(point.overall) : null));
+            const poolHistory = {};
+            points.forEach((point, index) => {
+                const pools = point && point.pools && typeof point.pools === 'object' ? point.pools : {};
+                Object.keys(pools).forEach(poolId => {
+                    if (!poolHistory[poolId]) poolHistory[poolId] = Array(points.length).fill(null);
+                    poolHistory[poolId][index] = asNumber(pools[poolId]);
+                });
             });
+            this.state.poolHistory = poolHistory;
+            this.renderWindowMeta(history);
+        },
+
+        /** 曲线区文案随窗口变化，避免「最近 60 个采样点」在 30 分钟窗口下说谎。 */
+        renderWindowMeta(history) {
+            const label = WINDOW_LABELS[this.state.window] || WINDOW_LABELS[DEFAULT_WINDOW];
+            const bucket = history && history.bucket_seconds ? asNumber(history.bucket_seconds, 1) : 1;
+            const detail = bucket > 1 ? `${label} · 每 ${bucket} 秒取峰值` : `${label} · 每秒采样`;
+            ['runtime-pressure-window', 'runtime-trends-window'].forEach(id => {
+                const element = document.getElementById(id);
+                if (element) element.textContent = detail;
+            });
+        },
+
+        setWindow(window) {
+            this.state.window = WINDOW_LABELS[window] ? window : DEFAULT_WINDOW;
+            this.refresh();
         },
 
         render(snapshot) {
@@ -308,30 +336,37 @@
 
         renderPressure() {
             const chart = this.state.charts.pressure;
-            const history = this.state.history.length ? this.state.history : [0];
-            const value = history[history.length - 1];
-            const previous = history[history.length - 2] == null ? value : history[history.length - 2];
+            const history = this.state.history.length ? this.state.history : [null];
+            const real = history.filter(item => item != null);
+            const value = real.length ? real[real.length - 1] : 0;
+            const previous = real.length > 1 ? real[real.length - 2] : value;
             const delta = value - previous;
             const valueElement = document.getElementById('runtime-pressure-value');
             const deltaElement = document.getElementById('runtime-pressure-delta');
-            if (valueElement) valueElement.textContent = `${value}%`;
-            if (deltaElement) { deltaElement.textContent = `较上一采样 ${delta >= 0 ? '+' : ''}${delta}%`; deltaElement.style.color = delta > 3 ? '#b96e14' : '#75867d'; }
+            if (valueElement) valueElement.textContent = real.length ? `${value}%` : '—';
+            if (deltaElement) { deltaElement.textContent = real.length ? `较上一采样 ${delta >= 0 ? '+' : ''}${delta}%` : '等待采样'; deltaElement.style.color = delta > 3 ? '#b96e14' : '#75867d'; }
             if (!chart) return;
             chart.setOption({ animation: !reduceMotion, grid: { left: 2, right: 4, top: 6, bottom: 16 }, xAxis: { type: 'category', data: history.map((_, index) => index), show: false }, yAxis: { type: 'value', min: 0, max: 100, show: false }, series: [{ type: 'line', data: history, smooth: true, showSymbol: false, lineStyle: { color: '#4F775D', width: 2 }, itemStyle: { color: '#4F775D' }, areaStyle: { color: 'rgba(79,119,93,.12)' } }] }, true);
         },
 
         renderMiniCharts(pools) {
             pools.forEach(pool => {
-                const history = this.state.poolHistory[pool.id] || [0];
+                const history = this.state.poolHistory[pool.id] || [null];
                 const chart = this.state.charts.mini.get(pool.id);
                 const state = stateFor(pool);
-                const value = history[history.length - 1] || 0;
+                const real = history.filter(item => item != null);
+                const value = real.length ? real[real.length - 1] : 0;
                 const label = document.getElementById(`runtime-mini-value-${pool.id}`);
                 if (label) { label.textContent = pool.status === 'offline' ? '未接入' : `${value}%`; label.style.color = state.text; }
                 if (!chart) return;
-                const minValue = Math.min(...history), maxValue = Math.max(...history);
+                const minValue = real.length ? Math.min(...real) : 0;
+                const maxValue = real.length ? Math.max(...real) : 0;
                 const padding = Math.max(8, Math.round((maxValue - minValue) / 2));
-                chart.setOption({ animation: !reduceMotion, grid: { left: 0, right: 2, top: 5, bottom: 4 }, tooltip: { trigger: 'axis', appendToBody: true, confine: true, backgroundColor: 'rgba(44,76,59,.94)', borderWidth: 0, textStyle: { color: '#fff', fontSize: 10 }, formatter: params => `${escapeHtml(pool.label)} · ${params[0].value}%` }, xAxis: { type: 'category', data: history.map((_, index) => index), show: false, boundaryGap: false }, yAxis: { type: 'value', min: Math.max(0, minValue - padding), max: Math.min(100, Math.max(maxValue + padding, 16)), splitNumber: 2, axisLabel: { show: false }, axisTick: { show: false }, axisLine: { show: false }, splitLine: { show: true, lineStyle: { color: '#e8eeeb', type: 'dashed' } } }, series: [{ type: 'line', data: history, smooth: .28, showSymbol: false, silent: pool.status === 'offline', lineStyle: { color: state.color, width: 2.25, type: pool.status === 'offline' ? 'dashed' : 'solid', opacity: pool.status === 'offline' ? .65 : 1 }, areaStyle: { color: state.color, opacity: pool.status === 'offline' ? .025 : .12 } }, { type: 'scatter', data: pool.status === 'offline' ? [] : [[history.length - 1, value]], symbolSize: 6, silent: true, itemStyle: { color: '#fff', borderColor: state.color, borderWidth: 2 } }] }, true);
+                // 高亮点跟随最后一个「有采样」的桶：整段无采样时不画，否则会在右下角留一个孤点
+                let lastIndex = -1;
+                history.forEach((item, index) => { if (item != null) lastIndex = index; });
+                const marker = pool.status === 'offline' || lastIndex < 0 ? [] : [[lastIndex, value]];
+                chart.setOption({ animation: !reduceMotion, grid: { left: 0, right: 2, top: 5, bottom: 4 }, tooltip: { trigger: 'axis', appendToBody: true, confine: true, backgroundColor: 'rgba(44,76,59,.94)', borderWidth: 0, textStyle: { color: '#fff', fontSize: 10 }, formatter: params => `${escapeHtml(pool.label)} · ${params[0].value}%` }, xAxis: { type: 'category', data: history.map((_, index) => index), show: false, boundaryGap: false }, yAxis: { type: 'value', min: Math.max(0, minValue - padding), max: Math.min(100, Math.max(maxValue + padding, 16)), splitNumber: 2, axisLabel: { show: false }, axisTick: { show: false }, axisLine: { show: false }, splitLine: { show: true, lineStyle: { color: '#e8eeeb', type: 'dashed' } } }, series: [{ type: 'line', data: history, smooth: .28, showSymbol: false, silent: pool.status === 'offline', lineStyle: { color: state.color, width: 2.25, type: pool.status === 'offline' ? 'dashed' : 'solid', opacity: pool.status === 'offline' ? .65 : 1 }, areaStyle: { color: state.color, opacity: pool.status === 'offline' ? .025 : .12 } }, { type: 'scatter', data: marker, symbolSize: 6, silent: true, itemStyle: { color: '#fff', borderColor: state.color, borderWidth: 2 } }] }, true);
             });
         },
 

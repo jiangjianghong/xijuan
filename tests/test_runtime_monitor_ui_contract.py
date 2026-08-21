@@ -29,3 +29,13 @@ def test_runtime_matrix_uses_five_groups_without_horizontal_scroll():
         assert label in html
     assert "grid-template-columns:3fr3fr3fr1fr1fr" in compact_css
     assert ".runtime-design-matrix-shell{min-width:0;overflow-x:hidden" in compact_css
+
+
+def test_runtime_history_comes_from_backend_not_local_accumulation():
+    # 历史一律由后端下发；本地累积会导致刷新清零、多标签页各看各的
+    assert "appendFixedHistory" not in javascript
+    assert "applyHistory" in javascript
+    assert "getRuntimeConcurrency(this.state.window)" in javascript
+    assert 'id="runtime-window-select"' in html
+    for label in ("最近 60 秒", "最近 5 分钟", "最近 30 分钟"):
+        assert label in html

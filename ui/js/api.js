@@ -71,9 +71,10 @@ const API = {
         return result.data;
     },
 
-    /** 获取当前 worker 的并发运行时只读快照。 */
-    async getRuntimeConcurrency() {
-        const result = await this.request('/runtime/concurrency');
+    /** 获取当前 worker 的并发运行时只读快照。window ∈ 60s/5m/30m，决定 history 的时间窗。 */
+    async getRuntimeConcurrency(window) {
+        const query = window ? `?window=${encodeURIComponent(window)}` : '';
+        const result = await this.request(`/runtime/concurrency${query}`);
         return result.data;
     },
 
