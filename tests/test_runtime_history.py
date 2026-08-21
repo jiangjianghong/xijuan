@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from service import runtime_monitor_service as svc
@@ -78,3 +80,34 @@ async def test_history_is_capped_at_retention_size():
     for _ in range(svc.HISTORY_MAXLEN + 50):
         svc.record_sample(_fake_snapshot(active=1, capacity=20, llm_active=0, llm_limit=16))
     assert len(svc.history_points()) == svc.HISTORY_MAXLEN
+
+
+@pytest.mark.asyncio
+async def test_sampler_loop_propagates_cancellation():
+    """lifespan 关闭时靠 cancel + await 收尾，吞掉 CancelledError 会让进程退出时挂住。"""
+    task = asyncio.create_task(svc.sampler_loop())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_sampler_loop_survives_snapshot_failure(monkeypatch):
+    """单轮采样失败只记日志：监控出错不该拖垮后台任务。"""
+    calls = {"count": 0}
+
+    def _boom():
+        calls["count"] += 1
+        raise RuntimeError("快照构建炸了")
+
+    monkeypatch.setattr(svc, "build_snapshot", _boom)
+    monkeypatch.setattr(svc, "SAMPLE_INTERVAL_S", 0.01)
+    task = asyncio.create_task(svc.sampler_loop())
+    await asyncio.sleep(0.08)
+    still_running = not task.done()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert still_running
+    assert calls["count"] >= 2

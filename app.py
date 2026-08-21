@@ -16,6 +16,7 @@ from loguru import logger
 from blue_print import register_routers
 from service.init_service import run_init
 from service.retention_service import retention_loop
+from service.runtime_monitor_service import sampler_loop
 from utils.config import get_config
 from utils.openapi_enrich import enrich, get_version
 
@@ -46,14 +47,19 @@ async def lifespan(app: FastAPI):
         await run_init()
     # 后台 PDF 保留清理:周期扫描 uploads,按总量/时间清理(配置全关时循环内快速空转)
     cleanup_task = asyncio.create_task(retention_loop())
+    # 并发水位按秒采样,供运行台展示历史曲线(纯内存,重启清零)
+    sampler_task = asyncio.create_task(sampler_loop())
+    background_tasks = (cleanup_task, sampler_task)
     try:
         yield
     finally:
-        cleanup_task.cancel()
-        try:
-            await cleanup_task
-        except asyncio.CancelledError:
-            pass
+        for task in background_tasks:
+            task.cancel()
+        for task in background_tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title="析卷 AI", version=get_version(), lifespan=lifespan)

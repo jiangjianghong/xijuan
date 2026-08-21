@@ -66,3 +66,34 @@ async def test_runtime_concurrency_snapshot_includes_runtime_events(client):
     assert isinstance(data["events"], list)
     assert "active" in data["summary"]
     assert "wait_p95_ms" in data["summary"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_concurrency_snapshot_includes_history_window(client):
+    response = await client.get("/runtime/concurrency")
+    assert response.status_code == 200
+    history = response.json()["data"]["history"]
+    assert history["window"] == "60s"
+    assert history["bucket_seconds"] == 1
+    assert history["retention_seconds"] == 1800
+    assert history["windows"] == ["60s", "5m", "30m"]
+    # 定长 60 桶：响应体积与窗口长度无关，前端图表点数恒定
+    assert len(history["points"]) == 60
+
+
+@pytest.mark.asyncio
+async def test_runtime_concurrency_history_window_param(client):
+    response = await client.get("/runtime/concurrency", params={"window": "30m"})
+    assert response.status_code == 200
+    history = response.json()["data"]["history"]
+    assert history["window"] == "30m"
+    assert history["window_seconds"] == 1800
+    assert history["bucket_seconds"] == 30
+    assert len(history["points"]) == 60
+
+
+@pytest.mark.asyncio
+async def test_runtime_concurrency_history_bad_window_falls_back(client):
+    response = await client.get("/runtime/concurrency", params={"window": "nonsense"})
+    assert response.status_code == 200
+    assert response.json()["data"]["history"]["window"] == "60s"
