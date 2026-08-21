@@ -58,6 +58,35 @@ const pools = [
     },
 ];
 const connectedGlobals = pools.filter(pool => pool.scope === 'global' && pool.connected !== false);
+const WINDOW_SPANS = { '60s': 60, '5m': 300, '30m': 1800 };
+
+/** 后端下发的定长 60 桶序列；左侧留几个 null 桶，顺带验证前端对空桶的容错。 */
+function buildHistory(window) {
+    const key = WINDOW_SPANS[window] ? window : '60s';
+    const span = WINDOW_SPANS[key];
+    const points = Array.from({ length: 60 }, (_, index) => {
+        if (index < 12) return null;
+        const overall = Math.round(35 + 25 * Math.sin(index / 6));
+        return {
+            at: 1787025600 + index * (span / 60),
+            overall,
+            pools: Object.fromEntries(pools.map((pool, poolIndex) => [
+                pool.id,
+                Math.max(0, Math.min(100, overall + poolIndex * 4 - 12)),
+            ])),
+        };
+    });
+    return {
+        window: key,
+        window_seconds: span,
+        bucket_seconds: span / 60,
+        interval_ms: 1000,
+        retention_seconds: 1800,
+        windows: Object.keys(WINDOW_SPANS),
+        points,
+    };
+}
+
 const snapshot = {
     updated_at: '2026-08-18T12:00:00+08:00',
     scope: 'single-process',
@@ -103,6 +132,35 @@ async function assertPoolCanvasRendered(page) {
     assert.ok(uniquePixels > 2, `pool chart only contains ${uniquePixels} sampled colors`);
 }
 
+async function assertRendersAsInnerPage(page) {
+    // 运行台与统计页一样是普通内页：不接管整页，全站 header 与导航保持可见
+    const layout = await page.evaluate(() => ({
+        takeover: document.body.classList.contains('runtime-monitor-mode'),
+        headerHeight: document.querySelector('header.header')?.offsetHeight || 0,
+        toolbar: Boolean(document.querySelector('.runtime-toolbar.glass-card')),
+        legacyHeader: Boolean(document.querySelector('.runtime-design-header')),
+    }));
+    assert.equal(layout.takeover, false, JSON.stringify(layout));
+    assert.ok(layout.headerHeight > 0, JSON.stringify(layout));
+    assert.ok(layout.toolbar, JSON.stringify(layout));
+    assert.equal(layout.legacyHeader, false, JSON.stringify(layout));
+}
+
+async function assertHistoryWindowSwitch(page) {
+    // 曲线来自后端，切窗口要真的重新拉取并改写文案
+    await page.waitForFunction(
+        () => document.getElementById('runtime-pressure-window')?.textContent.includes('每秒采样'),
+    );
+    await page.selectOption('#runtime-window-select', '30m');
+    await page.waitForFunction(
+        () => document.getElementById('runtime-pressure-window')?.textContent.includes('每 30 秒取峰值'),
+    );
+    await page.selectOption('#runtime-window-select', '60s');
+    await page.waitForFunction(
+        () => document.getElementById('runtime-pressure-window')?.textContent.includes('每秒采样'),
+    );
+}
+
 async function main() {
     fs.mkdirSync(outputDir, { recursive: true });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -116,11 +174,19 @@ async function main() {
             { width: 500, height: 900 },
         ]) {
             const page = await browser.newPage({ viewport });
-            await page.route('**/runtime/concurrency', route => route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({ code: 200, message: 'success', data: snapshot }),
-            }));
+            // 通配 query：前端会带上 ?window=60s|5m|30m，不加 * 会漏匹配导致 mock 失效
+            await page.route('**/runtime/concurrency*', route => {
+                const window = new URL(route.request().url()).searchParams.get('window') || '60s';
+                route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify({
+                        code: 200,
+                        message: 'success',
+                        data: { ...snapshot, history: buildHistory(window) },
+                    }),
+                });
+            });
             await page.route('**/file/list*', route => route.fulfill({
                 status: 200,
                 contentType: 'application/json',
@@ -146,6 +212,8 @@ async function main() {
             await page.waitForSelector('#runtime-pool-chart canvas');
             await assertNoHorizontalOverflow(page);
             await assertPoolCanvasRendered(page);
+            await assertRendersAsInnerPage(page);
+            await assertHistoryWindowSwitch(page);
 
             await page.click('#runtime-help-open');
             await page.waitForSelector('#runtime-help-dialog[aria-hidden="false"]');

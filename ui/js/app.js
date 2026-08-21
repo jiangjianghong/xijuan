@@ -1228,7 +1228,6 @@ const App = {
             else if (url.searchParams.get('page') === 'runtime-monitor') url.searchParams.delete('page');
             window.history.replaceState(null, '', url.pathname + (url.search ? url.search : '') + url.hash);
         }
-        document.body.classList.toggle('runtime-monitor-mode', page === 'runtime-monitor');
 
         // 切换导航按钮
         let targetBtn = null;

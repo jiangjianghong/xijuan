@@ -7,6 +7,7 @@ javascript = (ROOT / "ui" / "js" / "runtime-monitor.js").read_text(
     encoding="utf-8"
 )
 css = (ROOT / "ui" / "css" / "style.css").read_text(encoding="utf-8")
+app_js = (ROOT / "ui" / "js" / "app.js").read_text(encoding="utf-8")
 compact_css = "".join(css.split())
 
 
@@ -39,3 +40,18 @@ def test_runtime_history_comes_from_backend_not_local_accumulation():
     assert 'id="runtime-window-select"' in html
     for label in ("最近 60 秒", "最近 5 分钟", "最近 30 分钟"):
         assert label in html
+
+
+def test_runtime_page_is_a_normal_inner_page_like_statistics():
+    # 运行台不再整页接管：全站 header 与导航保持可见，与统计页一致
+    assert "runtime-monitor-mode" not in html
+    assert "runtime-monitor-mode" not in app_js
+    assert "runtime-monitor-mode" not in css
+    # 页面自带的品牌 header 已删除，工具条下沉到内容区 glass-card
+    assert 'class="runtime-design-header"' not in html
+    assert 'id="runtime-brand-entry"' not in html
+    assert 'class="runtime-toolbar glass-card"' in html
+    # 连接状态、帮助、刷新三个控件保留，只是换了位置
+    assert 'id="runtime-connection-pill"' in html
+    assert 'id="runtime-help-open"' in html
+    assert 'id="runtime-monitor-refresh"' in html
