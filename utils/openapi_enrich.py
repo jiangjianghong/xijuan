@@ -751,8 +751,11 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "`status` 取值：`idle`（无占用）/ `normal` / `pressure`（占用 >=75% 或排队 >=2）/ "
                 "`saturated`（占满且有排队）/ `offline`（未接入或快照缺失）。`limit` 来自 "
                 "`configs/config.yaml` 的 `concurrency` 节。\n\n"
-                "返回 `data={updated_at, scope, summary, pools, events}`；`events` 为最近 20 条"
-                "获取/等待/释放事件（倒序）。"
+                "返回 `data={updated_at, scope, summary, pools, events, history}`；`events` 为最近 20 条"
+                "获取/等待/释放事件（倒序）。\n\n"
+                "`history` 是进程内按 1 秒采样、保留 30 分钟的压力序列（纯内存，重启清零）："
+                "无论 `window` 取 `60s` / `5m` / `30m`，都降采样成固定 60 个桶（桶内取峰值），"
+                "空桶为 `null`。"
             ),
         }
     },
@@ -1831,6 +1834,10 @@ RESPONSE_DATA: Dict[tuple, Any] = {
         "summary": "object — 全局池汇总 {active, capacity, queued, hot_pools, wait_p95_ms}",
         "pools": "array — 各并发池记录（模型通道 / 业务阶段 / 文件内任务 / 管线闸门）",
         "events": "array — 最近 20 条并发事件（倒序）",
+        "history": (
+            "object — 压力历史 {window, window_seconds, bucket_seconds, interval_ms, "
+            "retention_seconds, windows, points}；points 定长 60 桶，空桶为 null"
+        ),
     },
     # settings
     ("/settings/login", "post"): {"authenticated": "boolean — 恒为 true（失败走错误码）"},
