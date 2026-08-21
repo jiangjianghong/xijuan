@@ -5221,6 +5221,10 @@ input[type="checkbox"] {
 .runtime-design-matrix-shell { min-width:0; overflow-x:hidden; border:1px solid rgba(44,76,59,.10); border-radius:24px; background:rgba(255,255,255,.88); box-shadow:0 4px 20px rgba(44,76,59,.08); }
 .runtime-design-matrix-head { min-width:0; display:grid; grid-template-columns:3fr 3fr 3fr 1fr 1fr; margin:0 24px; padding:17px 0 12px; border-bottom:1px solid #e8efe6; }
 .runtime-design-matrix-head > div { display:flex; align-items:center; gap:8px; padding-left:24px; border-right:1px solid #e8efe6; color:#4f775d; font-size:11px; font-weight:700; }
+/* 后两列只占 1fr（各一个池），1280px 容器下约 107px：按 24px 内边距排会把「独立接口」挤折行，
+   故单独收紧内边距与间隙；前三列是 3fr，宽度宽松不动。span 禁折行，溢出宁可截断也不换行。 */
+.runtime-design-matrix-head > div:nth-child(4),.runtime-design-matrix-head > div:nth-child(5) { padding-left:12px; gap:5px; }
+.runtime-design-matrix-head > div span { white-space:nowrap; }
 .runtime-design-matrix-head > div:first-child { padding-left:0; }.runtime-design-matrix-head > div:last-child { border-right:0; }
 .runtime-design-matrix-head svg { width:14px; height:14px; stroke-width:1.5; }.runtime-design-matrix-head em { color:#8daa91; font-family:Consolas,monospace; font-size:8px; font-style:normal; }
 .runtime-design-pool-chart { width:100%; min-width:0; height:410px; }
