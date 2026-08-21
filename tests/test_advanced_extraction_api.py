@@ -94,7 +94,7 @@ async def test_two_phase_advanced_uses_basic_value(seeded_file, monkeypatch):
     """进阶字段解析后关键词应是普通字段的值（华为公司），而非占位符。"""
     calls: list[list[str]] = []
 
-    async def fake_search_context(content, config):
+    async def fake_search_context(content, config, chunks=()):
         kws = list(config.get("keywords", []))
         calls.append(kws)
         return [
@@ -363,7 +363,7 @@ async def test_export_import_roundtrip_advanced(client: AsyncClient):
 async def test_advanced_empty_upstream_marks_failed(seeded_file, monkeypatch):
     """P0 回归：上游普通字段抽空 → 进阶字段必须记为失败，而不是「成功但值为空」。"""
 
-    async def fake_search_context(content, config):
+    async def fake_search_context(content, config, chunks=()):
         # 关键词被剔空（上游没值）→ 无命中
         if not config.get("keywords"):
             return []
@@ -404,7 +404,7 @@ async def test_test_endpoint_resolves_advanced_refs(seeded_file, client: AsyncCl
     """非流式 /extraction/test 对进阶字段也要先解析引用（审查 §2.2）。"""
     seen = {}
 
-    async def fake_search_context(content, config):
+    async def fake_search_context(content, config, chunks=()):
         seen["kw"] = list(config.get("keywords", []))
         return [
             {"keyword": config["keywords"][0], "context": "注册资本为100万",
@@ -592,7 +592,7 @@ async def test_page_link_end_to_end(seeded_page_file, monkeypatch):
     """普通字段自报页码 [2,4] + max_pages=2 → 进阶字段只读第 2-3 页。"""
     prompts: list[str] = []
 
-    async def fake_search_context(content, config):
+    async def fake_search_context(content, config, chunks=()):
         return [{"keyword": "PAGE2", "context": "PAGE2_BBB",
                  "start_pos": 9, "end_pos": 18, "position": 9}]
 
@@ -629,7 +629,7 @@ async def test_stream_extraction_runs_two_phases(seeded_file, monkeypatch):
     """run_extraction_stream 同样两阶段：普通字段先跑，进阶字段拿到它的值。"""
     calls: list[list[str]] = []
 
-    async def fake_search_context(content, config):
+    async def fake_search_context(content, config, chunks=()):
         kws = list(config.get("keywords", []))
         calls.append(kws)
         return [{"keyword": kws[0] if kws else "", "context": "注册资本为100万",
