@@ -746,13 +746,19 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "多 worker 部署时每个进程独立计数，不聚合。\n\n"
                 "池分四组：模型通道（`global_llm` / `global_embedding` / `global_vl`）、"
                 "业务阶段（`global_table_validation` / `global_extraction` / `global_analysis`）、"
-                "文件内任务（`task_*`，按文件实例聚合，给出最繁忙实例与累计值）、"
+                "独立接口（`independent_analysis`）、"
                 "管线调度（`global_pipeline`，同时处理的文件数闸门）。\n\n"
+                "单文件限流（`task_table_validation` / `task_extraction` / `task_file_analysis`）"
+                "**仍然生效但不在本接口返回**：其每文件上限与对应全局池同量级时会常年显示饱和、"
+                "与全局池真实水位相反；被它们吸收的排队改由各池的 `total_wait_p95_ms` 体现。\n\n"
+                "每个池给出两个等待口径：`gate_wait_p95_ms` 只算在**这一道闸**上排队的时间，"
+                "`total_wait_p95_ms` 从工作项启动算起、含上游闸门（含未展示的单文件限流）的全部排队。"
+                "两者差得越大说明背压越靠上游。分位数不可加，故 total 由每个工作项各自实测后单独取分位。\n\n"
                 "`status` 取值：`idle`（无占用）/ `normal` / `pressure`（占用 >=75% 或排队 >=2）/ "
                 "`saturated`（占满且有排队）/ `offline`（未接入或快照缺失）。`limit` 来自 "
                 "`configs/config.yaml` 的 `concurrency` 节。\n\n"
                 "返回 `data={updated_at, scope, summary, pools, events, history}`；`events` 为最近 20 条"
-                "获取/等待/释放事件（倒序）。\n\n"
+                "获取/等待/释放事件（倒序，已滤掉未展示的单文件池）。\n\n"
                 "`history` 是进程内按 1 秒采样、保留 30 分钟的压力序列（纯内存，重启清零）："
                 "无论 `window` 取 `60s` / `5m` / `30m`，都降采样成固定 60 个桶（桶内取峰值），"
                 "空桶为 `null`。"
@@ -1831,8 +1837,8 @@ RESPONSE_DATA: Dict[tuple, Any] = {
     ("/runtime/concurrency", "get"): {
         "updated_at": "string — 快照生成时间（ISO8601，带时区）",
         "scope": "string — 统计范围，恒为 single-process",
-        "summary": "object — 全局池汇总 {active, capacity, queued, hot_pools, wait_p95_ms}",
-        "pools": "array — 各并发池记录（模型通道 / 业务阶段 / 文件内任务 / 管线闸门）",
+        "summary": "object — 全局池汇总 {active, capacity, queued, hot_pools, total_wait_p95_ms}",
+        "pools": "array — 各并发池记录（模型通道 / 业务阶段 / 独立接口 / 管线闸门），单文件池不在其中",
         "events": "array — 最近 20 条并发事件（倒序）",
         "history": (
             "object — 压力历史 {window, window_seconds, bucket_seconds, interval_ms, "

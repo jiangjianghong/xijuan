@@ -23,7 +23,7 @@ def _fake_snapshot(active: int, capacity: int, llm_active: int, llm_limit: int) 
         "summary": {"active": active, "capacity": capacity},
         "pools": [
             {"id": "global_llm", "scope": "global", "active": llm_active, "limit": llm_limit},
-            {"id": "task_extraction", "scope": "task", "busiest_active": 2, "per_instance_limit": 4},
+            {"id": "global_extraction", "scope": "global", "active": 2, "limit": 4},
         ],
     }
 
@@ -33,8 +33,7 @@ async def test_record_sample_converts_snapshot_to_percentages():
     point = svc.record_sample(_fake_snapshot(active=5, capacity=20, llm_active=4, llm_limit=16))
     assert point["overall"] == 25
     assert point["pools"]["global_llm"] == 25
-    # task 池按「最忙实例 / 每实例上限」算利用率
-    assert point["pools"]["task_extraction"] == 50
+    assert point["pools"]["global_extraction"] == 50
 
 
 @pytest.mark.asyncio

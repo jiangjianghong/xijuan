@@ -31,14 +31,10 @@ const server = http.createServer((request, response) => {
 
 const globalPool = (id, label, group, limit, active, queued, constraints = []) => ({
     id, label, group, scope: 'global', limit, active, queued,
-    completed: 12, wait_p95_ms: 18, status: queued ? 'pressure' : 'normal',
-    constraints, tasks: [{ task_id: `${id}-task`, stage: 'analyzing' }],
-});
-const taskPool = (id, label, limit, active, queued, constraints) => ({
-    id, label, group: '文件内任务', scope: 'task', per_instance_limit: limit,
-    instance_count: 1, busiest_active: active, aggregate_active: active,
-    aggregate_queued: queued, status: queued ? 'pressure' : 'normal', constraints,
-    instances: [{ instance_id: 'file-1', active, queued, limit }],
+    completed: 12, gate_wait_p95_ms: 18, total_wait_p95_ms: 1840,
+    status: queued ? 'pressure' : 'normal',
+    constraints,
+    tasks: [{ file_id: 'd99cfeb151067cf885822c4478b41e88', file_name: '季度经营分析报告.pdf', stage: 'analyzing' }],
 });
 const pools = [
     globalPool('global_llm', '文本 LLM', '模型通道', 16, 7, 0),
@@ -47,13 +43,11 @@ const pools = [
     globalPool('global_table_validation', '表名校验', '业务阶段', 10, 4, 0, ['global_llm']),
     globalPool('global_extraction', '字段抽取', '业务阶段', 8, 5, 1, ['global_llm', 'global_embedding', 'global_vl']),
     globalPool('global_analysis', '逻辑分析总池', '业务阶段', 8, 6, 1, ['global_llm']),
-    taskPool('task_table_validation', '文件内表名校验', 4, 3, 0, ['global_table_validation', 'global_llm']),
-    taskPool('task_extraction', '文件内字段抽取', 4, 1, 0, ['global_extraction']),
-    taskPool('task_file_analysis', '文件内逻辑分析', 4, 4, 1, ['global_analysis']),
     globalPool('independent_analysis', '独立分析', '独立接口', 4, 2, 1, ['global_analysis']),
     {
         id: 'global_pipeline', label: '文件管线', group: '管线', scope: 'global',
-        limit: 4, active: 0, queued: 0, completed: 0, wait_p95_ms: 0,
+        limit: 4, active: 0, queued: 0, completed: 0,
+        gate_wait_p95_ms: 0, total_wait_p95_ms: 0,
         status: 'offline', connected: false, constraints: [], tasks: [],
     },
 ];
@@ -95,7 +89,7 @@ const snapshot = {
         capacity: connectedGlobals.reduce((sum, pool) => sum + pool.limit, 0),
         queued: connectedGlobals.reduce((sum, pool) => sum + pool.queued, 0),
         hot_pools: connectedGlobals.filter(pool => pool.status === 'pressure').length,
-        wait_p95_ms: 18,
+        total_wait_p95_ms: 1840,
     },
     pools,
     events: [{

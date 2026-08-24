@@ -16,6 +16,7 @@ from utils.concurrency import (
     get_limiter,
     register_task_limiter,
     unregister_task_limiter,
+    work_item,
 )
 from utils.llm_client import chat_completion
 from utils.page_mapping import lookup_page_num
@@ -225,13 +226,16 @@ async def parse_tables(content: str, file_id: str, page_mapping: Optional[List] 
 
         fallback_name = _extract_table_name(preceding_text)
         context = {"file_id": file_id, "stage": "tableing", "index": table_index}
-        async with task_semaphore.context(context):
-            async with global_semaphore.context(context):
-                table_name = await _extract_table_name_with_llm(
-                    preceding_text=preceding_text,
-                    table_index=table_index,
-                    fallback_name=fallback_name,
-                )
+        # 标记本张表的等待起点：单文件闸的排队不在运行台展示，
+        # 只有端到端指标能把它暴露出来
+        with work_item():
+            async with task_semaphore.context(context):
+                async with global_semaphore.context(context):
+                    table_name = await _extract_table_name_with_llm(
+                        preceding_text=preceding_text,
+                        table_index=table_index,
+                        fallback_name=fallback_name,
+                    )
 
         logger.info("表格名称校验完成: file_id={}, {}/{}, name={}", file_id, table_index, total_table, table_name)
 

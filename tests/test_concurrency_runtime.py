@@ -66,7 +66,8 @@ async def test_limiter_reports_waiting_acquire_and_wait_p95():
     snapshot = runtime_snapshot()["pools"]["global_llm"]
     assert snapshot["queued"] == 0
     assert snapshot["completed"] == 2
-    assert snapshot["wait_p95_ms"] >= 0
+    assert snapshot["gate_wait_p95_ms"] >= 0
+    assert snapshot["total_wait_p95_ms"] >= snapshot["gate_wait_p95_ms"]
 
 
 @pytest.mark.asyncio

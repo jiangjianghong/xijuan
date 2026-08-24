@@ -7,7 +7,8 @@ import contextvars
 import math
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from typing import Any
 
 
@@ -26,15 +27,62 @@ _SAFE_CONTEXT_KEYS = {
     "index",
 }
 
+# 工作项起点：一条闸门链（如 task_table_validation → global_table_validation
+# → global_llm）上所有 limiter 共用同一个起点，用于算端到端等待。
+# 未设置时 total_wait 退化为 gate_wait（单层链下两者本就相等）。
+_chain_start: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "limiter_chain_start", default=None
+)
+
+# 环境上下文：由上游（如 pipeline_slot）绑定一次，本任务及其子任务的所有
+# limiter 事件自动携带，免去逐层改函数签名透传 file_name 之类的字段。
+_ambient_context: contextvars.ContextVar[Mapping[str, Any]] = contextvars.ContextVar(
+    "limiter_ambient_context", default={}
+)
+
+
+@contextmanager
+def work_item() -> Iterator[None]:
+    """标记一个工作项的开始，其内所有 limiter 的 total_wait 从此刻起算。
+
+    必须包在**最外层闸门之前**。放进 pipeline_slot 之类的长生命周期上下文会
+    把解析等真实工作耗时算进等待，失去意义。
+
+    contextvars 在 asyncio.create_task() 时按任务复制，所以每个并发工作项
+    自动拿到独立起点，无需显式传参。
+    """
+    token = _chain_start.set(time.monotonic())
+    try:
+        yield
+    finally:
+        _chain_start.reset(token)
+
+
+@contextmanager
+def limiter_context(**fields: Any) -> Iterator[None]:
+    """绑定环境上下文，本任务及其子任务的 limiter 事件自动带上这些字段。
+
+    与父层合并而非覆盖；只有 _SAFE_CONTEXT_KEYS 白名单内的字段会被保留。
+    """
+    merged = {**_ambient_context.get(), **_safe_context(fields)}
+    token = _ambient_context.set(merged)
+    try:
+        yield
+    finally:
+        _ambient_context.reset(token)
+
 
 def _safe_context(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
-    if not metadata:
-        return {}
-    return {
+    """白名单过滤业务上下文，并叠加当前环境上下文（显式值优先）。"""
+    explicit = {
         key: value
-        for key, value in metadata.items()
+        for key, value in (metadata or {}).items()
         if key in _SAFE_CONTEXT_KEYS and isinstance(value, (str, int, float, bool))
     }
+    ambient = _ambient_context.get()
+    if not ambient:
+        return explicit
+    return {**ambient, **explicit}
 
 
 def _record_event(
@@ -95,6 +143,7 @@ class ObservableLimiter:
         self._queued = 0
         self._completed = 0
         self._wait_samples: deque[float] = deque(maxlen=256)
+        self._total_wait_samples: deque[float] = deque(maxlen=256)
         self._holders: dict[int, dict[str, Any]] = {}
         self._next_token = 0
         self._token_stack: contextvars.ContextVar[tuple[int, ...]] = contextvars.ContextVar(
@@ -149,8 +198,15 @@ class ObservableLimiter:
             self._next_token += 1
             token = self._next_token
             self._holders[token] = safe_metadata
-            wait_seconds = time.monotonic() - started
+            now = time.monotonic()
+            wait_seconds = now - started
             self._wait_samples.append(wait_seconds)
+            # 端到端等待：从工作项起点算起，涵盖本闸之前的所有闸门排队。
+            # 未标记起点时退化为本闸等待；取 max 保证「端到端不小于本闸」恒成立。
+            chain_start = _chain_start.get()
+            self._total_wait_samples.append(
+                max(wait_seconds, now - chain_start) if chain_start is not None else wait_seconds
+            )
             if was_queued:
                 _record_event(
                     self._loop_id,
@@ -205,12 +261,21 @@ class ObservableLimiter:
         self.release()
 
     def snapshot(self) -> dict[str, Any]:
+        """当前水位。
+
+        两个等待指标口径不同，不可混用：
+        - gate_wait_p95_ms：只在**这一道闸**上排了多久（局部量）
+        - total_wait_p95_ms：从工作项起点到拿齐本闸令牌的**全部**等待
+        分位数不可加，故 total 由每个工作项各自实测后单独取分位，
+        而非把上下游的 gate_wait 分位相加。
+        """
         return {
             "limit": self._limit,
             "active": self._active,
             "queued": self._queued,
             "completed": self._completed,
-            "wait_p95_ms": _percentile(self._wait_samples, 0.95),
+            "gate_wait_p95_ms": _percentile(self._wait_samples, 0.95),
+            "total_wait_p95_ms": _percentile(self._total_wait_samples, 0.95),
             "holders": [dict(value) for value in self._holders.values()],
         }
 

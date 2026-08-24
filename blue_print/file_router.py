@@ -503,7 +503,7 @@ async def _run_pipeline_background(
     from model.database import get_session_factory
 
     with log_context(file_id=file_id, type_id=type_id):
-        async with pipeline_slot(file_id):
+        async with pipeline_slot(file_id, file_name=file_name):
             session_factory = get_session_factory()
             async with session_factory() as session:
                 try:
@@ -522,7 +522,7 @@ async def _stream_pipeline_generator(
     from model.database import get_session_factory
 
     with log_context(file_id=file_id, type_id=type_id):
-        async with pipeline_slot(file_id):
+        async with pipeline_slot(file_id, file_name=file_name):
             session_factory = get_session_factory()
             async with session_factory() as session:
                 async for event in run_pipeline_stream(file_id, file_name, file_content_bytes, session):
@@ -603,7 +603,7 @@ async def parse_file(
         )
     else:
         with log_context(file_id=file_id, type_id=type_id):
-            async with pipeline_slot(file_id):
+            async with pipeline_slot(file_id, file_name=file_name):
                 await run_pipeline(file_id, file_name, file_content_bytes, db, callback_url=callback_url)
         return ResponseWrapper(
             message="文件处理完成",
@@ -744,6 +744,8 @@ async def retry_file(
     if not file_record:
         raise HTTPException(status_code=404, detail="文件不存在")
     type_id = file_record.type_id or "default"
+    # 提前取成普通字符串：后台任务里请求会话已关闭，再读 ORM 属性会 detached
+    file_name = file_record.file_name or ""
 
     stage_aliases = {
         "table_name_validating": "tableing",
@@ -762,7 +764,7 @@ async def retry_file(
             from model.database import get_session_factory
 
             with log_context(file_id=file_id, type_id=type_id):
-                async with pipeline_slot(file_id):
+                async with pipeline_slot(file_id, file_name=file_name):
                     session_factory = get_session_factory()
                     async with session_factory() as session:
                         async for event in run_from_stage_stream(file_id, stage, session):
@@ -779,7 +781,7 @@ async def retry_file(
         )
     elif mode == "sync":
         with log_context(file_id=file_id, type_id=type_id):
-            async with pipeline_slot(file_id):
+            async with pipeline_slot(file_id, file_name=file_name):
                 await run_from_stage(file_id, stage, db, callback_url=callback_url)
         return ResponseWrapper(message=f"已从 {stage} 阶段重试完成")
     else:
@@ -788,7 +790,7 @@ async def retry_file(
             from model.database import get_session_factory
 
             with log_context(file_id=file_id, type_id=type_id):
-                async with pipeline_slot(file_id):
+                async with pipeline_slot(file_id, file_name=file_name):
                     session_factory = get_session_factory()
                     async with session_factory() as session:
                         try:

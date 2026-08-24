@@ -14,7 +14,7 @@ from loguru import logger
 from sqlalchemy import update
 
 from model.tables import File
-from utils.concurrency import get_limiter
+from utils.concurrency import get_limiter, limiter_context
 from utils.config import get_config
 
 
@@ -37,16 +37,22 @@ async def pipeline_slot(
     file_id: str,
     limit: int | None = None,
     mark_queued: Callable[[str], Awaitable[None]] | None = None,
+    file_name: str | None = None,
 ) -> AsyncIterator[None]:
     """占用一个 global_pipeline 令牌，全程持有到管线结束。
 
     有空位时直接进入，不写 queued，避免状态在 queued/parsing 之间闪烁。
     没空位时先标 queued 再阻塞等待。
 
+    同时把 file_id / file_name 绑定为并发环境上下文，管线内各阶段
+    （tableing / extracting / analyzing）的 limiter 事件自动携带，
+    运行台侧窗因此能显示文件名而不是只有 32 位 ID。
+
     Args:
         file_id: 文件 ID。
         limit: 并发上限，缺省读 concurrency.global_pipeline。
         mark_queued: 标记排队状态的回调，缺省用 mark_file_queued（测试可替换）。
+        file_name: 文件名，仅用于可观测性，缺省时侧窗回退显示 file_id。
     """
     if limit is None:
         limit = get_config().concurrency.global_pipeline
@@ -64,5 +70,10 @@ async def pipeline_slot(
         except Exception as e:
             logger.warning("标记排队状态失败（不影响管线）: file_id={}, error={}", file_id, e)
 
-    async with limiter.context(context):
-        yield
+    ambient = {"file_id": file_id}
+    if file_name:
+        ambient["file_name"] = file_name
+
+    with limiter_context(**ambient):
+        async with limiter.context(context):
+            yield

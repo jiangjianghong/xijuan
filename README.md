@@ -96,9 +96,9 @@ curl "http://localhost:5019/file/{file_id}/extraction"
 | `concurrency.global_llm` | 全项目文本 LLM 并发上限 | 16 |
 | `concurrency.global_embedding` | 全项目 Embedding 并发上限 | 4 |
 | `concurrency.global_vl` | 全项目 VL 并发上限 | 8 |
-| `concurrency.global_extraction` / `task_extraction` | 抽取阶段全局 / 单任务并发 | 8 / 4 |
-| `concurrency.global_analysis` / `task_analysis` | 分析阶段全局 / 单任务并发 | 8 / 4 |
-| `concurrency.global_table_validation` / `task_table_validation` | 表格校验阶段全局 / 单任务并发 | 10 / 4 |
+| `concurrency.global_extraction` / `task_extraction` | 抽取阶段全局 / 单文件并发（单文件值需小于全局值才生效） | 8 / 4 |
+| `concurrency.global_analysis` / `task_file_analysis` | 分析阶段全局 / 单文件并发 | 8 / 4 |
+| `concurrency.global_table_validation` / `task_table_validation` | 表格校验阶段全局 / 单文件并发 | 10 / 4 |
 | `vl_model.model` | VL 视觉模型（用于 vl 类字段，不配则 vl 字段不可用） | qwen-vl-max |
 | `vl_model.pdf_storage_dir` | 原始 PDF 持久化目录（vl 抽取依赖） | uploads |
 

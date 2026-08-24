@@ -33,6 +33,7 @@ from utils.concurrency import (
     get_limiter,
     register_task_limiter,
     unregister_task_limiter,
+    work_item,
 )
 from utils.errors import format_exception
 from utils.llm_client import chat_completion, get_embeddings
@@ -2382,11 +2383,12 @@ async def _iter_field_group(
             "field_id": field.field_id,
         }
         try:
-            async with task_semaphore.context(context):
-                async with global_semaphore.context(context):
-                    value, reason, source_refs, model_pages = await _extract_field_result(
-                        file_id, field, snapshot, field_values, field_source_pages, field_pages_from
-                    )
+            with work_item():
+                async with task_semaphore.context(context):
+                    async with global_semaphore.context(context):
+                        value, reason, source_refs, model_pages = await _extract_field_result(
+                            file_id, field, snapshot, field_values, field_source_pages, field_pages_from
+                        )
             _ensure_valid_extraction_result(field, value, reason, source_refs)
             return FieldComputation(
                 index=index, field=field, success=True, value=value,

@@ -37,18 +37,15 @@ _GLOBAL_POOLS = (
     ("global_analysis", "逻辑分析总池", "业务阶段", "逻辑分析"),
     ("independent_analysis", "独立分析", "独立接口", "独立分析"),
 )
-_TASK_POOLS = (
-    ("task_table_validation", "文件内表名校验", "文件内任务", "单文件表名"),
-    ("task_extraction", "文件内字段抽取", "文件内任务", "单文件抽取"),
-    ("task_file_analysis", "文件内逻辑分析", "文件内任务", "单文件分析"),
-)
+# 单文件池（task_table_validation / task_extraction / task_file_analysis）
+# 仍在 utils/concurrency.py 真实限流，但不在运行台展示：它们的每实例上限
+# 与对应全局池同量级时常年显示 100% 饱和，而全局池远未跑满，图与实情相反。
+# 被它们吸收的排队改由各全局池的 total_wait_p95_ms 暴露。
+_TASK_POOL_IDS = ("task_table_validation", "task_extraction", "task_file_analysis")
 _POOL_CONSTRAINTS = {
     "global_table_validation": ["global_llm"],
     "global_extraction": ["global_llm", "global_embedding", "global_vl"],
     "global_analysis": ["global_llm"],
-    "task_table_validation": ["global_table_validation", "global_llm"],
-    "task_extraction": ["global_extraction"],
-    "task_file_analysis": ["global_analysis"],
     "independent_analysis": ["global_analysis"],
 }
 
@@ -82,43 +79,11 @@ def _global_pool_records(raw: dict, limits: dict[str, int]) -> list[dict]:
                 "active": active,
                 "queued": queued,
                 "completed": int(item.get("completed", 0)),
-                "wait_p95_ms": float(item.get("wait_p95_ms", 0)),
+                "gate_wait_p95_ms": float(item.get("gate_wait_p95_ms", 0)),
+                "total_wait_p95_ms": float(item.get("total_wait_p95_ms", 0)),
                 "status": _status(active, limit, queued),
                 "constraints": _POOL_CONSTRAINTS.get(pool_id, []),
                 "tasks": list(item.get("holders", [])),
-            }
-        )
-    return records
-
-
-def _task_pool_records(raw: dict, limits: dict[str, int]) -> list[dict]:
-    records = []
-    for pool_id, label, group, _ in _TASK_POOLS:
-        item = dict(raw.get(pool_id) or {})
-        limit = int(item.get("per_instance_limit", limits[pool_id]))
-        busiest = int(item.get("busiest_active", 0))
-        aggregate_queued = int(item.get("aggregate_queued", 0))
-        instances = []
-        for instance in item.get("instances", []):
-            instance = dict(instance)
-            instance_active = int(instance.get("active", 0))
-            instance_queued = int(instance.get("queued", 0))
-            instance["status"] = _status(instance_active, limit, instance_queued)
-            instances.append(instance)
-        records.append(
-            {
-                "id": pool_id,
-                "label": label,
-                "group": group,
-                "scope": "task",
-                "per_instance_limit": limit,
-                "instance_count": int(item.get("instance_count", 0)),
-                "busiest_active": busiest,
-                "aggregate_active": int(item.get("aggregate_active", 0)),
-                "aggregate_queued": aggregate_queued,
-                "status": _status(busiest, limit, aggregate_queued),
-                "constraints": _POOL_CONSTRAINTS.get(pool_id, []),
-                "instances": instances,
             }
         )
     return records
@@ -139,7 +104,8 @@ def _pipeline_record(raw: dict, limits: dict[str, int]) -> dict:
         "active": active,
         "queued": queued,
         "completed": int(pipeline_raw.get("completed", 0)),
-        "wait_p95_ms": float(pipeline_raw.get("wait_p95_ms", 0)),
+        "gate_wait_p95_ms": float(pipeline_raw.get("gate_wait_p95_ms", 0)),
+        "total_wait_p95_ms": float(pipeline_raw.get("total_wait_p95_ms", 0)),
         "status": _status(active, limit, queued),
         "connected": True,
         "constraints": [],
@@ -160,7 +126,6 @@ def build_snapshot() -> dict[str, Any]:
     raw = runtime_snapshot()
     pools_raw = raw.get("pools", {})
     global_records = _global_pool_records(pools_raw, limits)
-    task_records = _task_pool_records(raw.get("task_pools", {}), limits)
     summary = {
         "active": sum(item["active"] for item in global_records),
         "capacity": sum(item["limit"] for item in global_records),
@@ -168,14 +133,23 @@ def build_snapshot() -> dict[str, Any]:
         "hot_pools": sum(
             item["status"] in {"pressure", "saturated"} for item in global_records
         ),
-        "wait_p95_ms": max((item["wait_p95_ms"] for item in global_records), default=0),
+        # 取端到端口径：本闸等待会被上游闸削平，不能代表最坏等待
+        "total_wait_p95_ms": max(
+            (item["total_wait_p95_ms"] for item in global_records), default=0
+        ),
     }
+    # 单文件池不展示，其事件也一并滤掉，避免事件流里冒出没有对应卡片的池
+    events = [
+        event
+        for event in reversed(raw.get("events", []))
+        if event.get("pool_id") not in _TASK_POOL_IDS
+    ]
     return {
         "updated_at": datetime.now().astimezone().isoformat(),
         "scope": "single-process",
         "summary": summary,
-        "pools": [*global_records, *task_records, _pipeline_record(pools_raw, limits)],
-        "events": list(reversed(raw.get("events", [])))[:20],
+        "pools": [*global_records, _pipeline_record(pools_raw, limits)],
+        "events": events[:20],
     }
 
 
@@ -198,13 +172,9 @@ def clear_history() -> None:
 
 
 def pool_pressure(record: dict[str, Any]) -> int:
-    """池利用率（0-100）。task 池按「最忙实例 / 每实例上限」，与容量矩阵柱高同源。"""
-    if record.get("scope") == "task":
-        limit = int(record.get("per_instance_limit", 0) or 0)
-        active = int(record.get("busiest_active", 0) or 0)
-    else:
-        limit = int(record.get("limit", 0) or 0)
-        active = int(record.get("active", 0) or 0)
+    """池利用率（0-100），与容量矩阵柱高同源。"""
+    limit = int(record.get("limit", 0) or 0)
+    active = int(record.get("active", 0) or 0)
     if limit <= 0:
         return 0
     return max(0, min(100, round(active / limit * 100)))

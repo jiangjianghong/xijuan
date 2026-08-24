@@ -22,6 +22,7 @@ from utils.concurrency import (
     get_limiter,
     register_task_limiter,
     unregister_task_limiter,
+    work_item,
 )
 from utils.llm_client import chat_completion
 from utils.text_utils import normalize_cjk_quotes, salvage_reason, salvage_value_reason
@@ -163,14 +164,15 @@ async def _compute_file_rules(
             "stage": "analyzing",
             "rule_id": rule.rule_id,
         }
-        async with file_limiter.context(context):
-            async with total_limiter.context(context):
-                return await _compute_file_rule(
-                    rule,
-                    field_values,
-                    field_source_refs,
-                    calc_precision,
-                )
+        with work_item():
+            async with file_limiter.context(context):
+                async with total_limiter.context(context):
+                    return await _compute_file_rule(
+                        rule,
+                        field_values,
+                        field_source_refs,
+                        calc_precision,
+                    )
 
     tasks = [asyncio.create_task(guarded(rule)) for rule in rules]
     try:

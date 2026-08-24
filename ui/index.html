@@ -600,7 +600,7 @@
                     <div class="runtime-summary-stat"><p>实时槽位</p><div><strong id="runtime-summary-active">—</strong><span id="runtime-summary-capacity">/ —</span></div></div>
                     <div class="runtime-summary-stat"><p>排队任务</p><div><strong id="runtime-summary-queued">—</strong><span>等待调度</span></div></div>
                     <div class="runtime-summary-stat"><p>高压池</p><div><strong id="runtime-summary-hot">—</strong><span>利用率 ≥ 75%</span></div></div>
-                    <div class="runtime-summary-stat"><p>P95 等待</p><div><strong id="runtime-summary-wait">—</strong><span>秒</span></div></div>
+                    <div class="runtime-summary-stat"><p>P95 端到端等待</p><div><strong id="runtime-summary-wait">—</strong><span>秒 · 含上游排队</span></div></div>
                     <div class="runtime-summary-updated"><p>最近更新</p><strong id="runtime-monitor-updated">--:--:--</strong></div>
                 </section>
 
@@ -654,10 +654,9 @@
                     <article class="runtime-help-item"><h4>逻辑分析总池</h4><code>concurrency.global_analysis</code><p>文件管线规则与独立分析规则共享同一个总池。以默认配置为例，两类来源合计最多同时执行 8 条规则。judge 和 custom 规则还需要文本 LLM 槽位，calc 规则不占用文本模型通道。</p></article>
                 </section>
                 <section class="runtime-help-group">
-                    <h3>文件内任务</h3>
-                    <article class="runtime-help-item"><h4>文件内表名校验</h4><code>concurrency.task_table_validation</code><p>一个 PDF 里可能有很多张表，需要逐张调用 LLM 判断表名。以默认配置为例，每个文件最多同时校验 4 张表；所有文件合计又受“表名校验”全局上限 10 和“文本 LLM”上限 16 约束。文件 A 运行 4 个、文件 B 运行 4 个、文件 C 运行 2 个时，全局表名校验池已经达到 10，其他表格需要等待。</p></article>
-                    <article class="runtime-help-item"><h4>文件内字段抽取</h4><code>concurrency.task_extraction</code><p>一个 PDF 可以配置多个抽取字段。默认配置中的文件级上限是 4，但当前字段循环仍按顺序执行，所以单文件真实观测并发通常为 1；多个文件同时抽取时，共同受“字段抽取”全局上限 8 以及文本 LLM、Embedding、VL 模型通道约束。</p></article>
-                    <article class="runtime-help-item"><h4>文件内逻辑分析</h4><code>concurrency.task_file_analysis</code><p>一个 PDF 可以配置多条判断、计算或自定义规则。以默认配置为例，每个文件最多同时执行 4 条规则；不同文件继续共同竞争“逻辑分析总池”。当两个文件各运行 4 条规则时，默认总上限 8 已被占满，其他文件或独立分析规则需要等待。</p></article>
+                    <h3>单文件限流（不在本页展示）</h3>
+                    <article class="runtime-help-item"><h4>为什么看不到</h4><code>concurrency.task_table_validation / task_extraction / task_file_analysis</code><p>这三项限制单个文件内部的并发，<strong>仍然真实生效</strong>，只是不在运行台展示：当每文件上限与对应全局池同量级时，它们会常年显示 100% 饱和，而全局池远未跑满，图与实情相反。被它们吸收的排队改由各池详情里的<strong>端到端等待</strong>体现——端到端明显大于本闸等待，就说明背压堵在这一层。</p></article>
+                    <article class="runtime-help-item"><h4>怎么配才有用</h4><p>单文件值必须<strong>小于</strong>对应全局值才起作用。<code>task_table_validation=4</code> 配 <code>global_table_validation=10</code> 能保证至少 2 个文件并行；两者相等时单个文件就能占满全局池，这一层形同虚设，后到的文件会被前一个大文件的几百张表堵在队尾。相等或更大时启动日志会给出告警。</p></article>
                 </section>
                 <section class="runtime-help-group">
                     <h3>独立接口</h3>

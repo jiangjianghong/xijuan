@@ -8,6 +8,7 @@ from threading import RLock
 from typing import Any, Dict, List, Mapping
 
 import yaml
+from loguru import logger
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -218,6 +219,35 @@ class ConcurrencyConfig(BaseModel):
     task_file_analysis: int = Field(4, ge=1)
     independent_analysis: int = Field(4, ge=1)
     global_pipeline: int = Field(4, ge=1)
+
+    @model_validator(mode="after")
+    def _warn_ineffective_task_limits(self) -> "ConcurrencyConfig":
+        """单文件上限 >= 对应全局上限时这层限流不生效，给出告警。
+
+        两者相等时单个文件就能占满全局池，文件间公平性消失——一个几百张表
+        的文件会把后到的小文件连续堵在队尾。这三个池不在运行台展示，光看
+        界面发现不了，故在配置层点出来。仅告警，不阻断启动。
+        """
+        pairs = (
+            ("task_table_validation", "global_table_validation"),
+            ("task_extraction", "global_extraction"),
+            ("task_file_analysis", "global_analysis"),
+        )
+        for task_key, global_key in pairs:
+            task_limit = getattr(self, task_key)
+            global_limit = getattr(self, global_key)
+            if task_limit >= global_limit:
+                logger.warning(
+                    "并发配置 {}={} >= {}={}，该单文件限流不会生效："
+                    "单个文件即可占满全局池，多文件并行时后到的文件会被堵在队尾。"
+                    "建议将 {} 调小到全局值以下。",
+                    task_key,
+                    task_limit,
+                    global_key,
+                    global_limit,
+                    task_key,
+                )
+        return self
 
 
 class VLModelConfig(BaseModel):

@@ -19,16 +19,12 @@
         global_table_validation: { short: 'TABLE', note: '限制跨文件并行执行的表格名称校验任务。' },
         global_extraction: { short: 'EXTRACT', note: '限制跨文件同时运行的字段抽取任务。' },
         global_analysis: { short: 'ANALYZE', note: '由文件管线分析和独立分析接口共享。' },
-        task_table_validation: { short: 'T-TABLE', note: '展示当前最繁忙文件内部的表名校验并发。' },
-        task_extraction: { short: 'T-EXTRACT', note: '展示当前最繁忙文件的字段抽取并发，详情中同时给出全部实例累计值。' },
-        task_file_analysis: { short: 'T-ANALYZE', note: '展示当前最繁忙文件内部的逻辑分析规则并发。' },
         independent_analysis: { short: 'INDEPENDENT', note: '展示当前 worker 内所有独立分析请求共享的 item 并发。' },
         global_pipeline: { short: 'PIPELINE', note: '同时处理的文件数上限。上传与重试的六个入口全程持有令牌，超限文件落 queued 排队。' },
     };
     const POOL_ORDER = [
         'global_llm', 'global_embedding', 'global_vl',
         'global_table_validation', 'global_extraction', 'global_analysis',
-        'task_table_validation', 'task_extraction', 'task_file_analysis',
         'independent_analysis', 'global_pipeline',
     ];
     const reduceMotion = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -42,9 +38,7 @@
         const data = snapshot && typeof snapshot === 'object' ? (snapshot.data || snapshot) : {};
         const pools = Array.isArray(data.pools) ? data.pools : [];
         const globalPools = pools.filter(pool => pool && pool.scope === 'global' && pool.id !== 'global_pipeline')
-            .map(pool => ({ ...pool, limit: asNumber(pool.limit, 1), active: asNumber(pool.active), queued: asNumber(pool.queued), completed: asNumber(pool.completed), wait_p95_ms: asNumber(pool.wait_p95_ms), tasks: Array.isArray(pool.tasks) ? pool.tasks : [] }));
-        const taskPools = pools.filter(pool => pool && pool.scope === 'task')
-            .map(pool => ({ ...pool, capacity: asNumber(pool.per_instance_limit || pool.limit, 1), active: asNumber(pool.busiest_active), queued: asNumber(pool.aggregate_queued), aggregate_active: asNumber(pool.aggregate_active), instance_count: asNumber(pool.instance_count), instances: Array.isArray(pool.instances) ? pool.instances : [] }));
+            .map(pool => ({ ...pool, limit: asNumber(pool.limit, 1), active: asNumber(pool.active), queued: asNumber(pool.queued), completed: asNumber(pool.completed), gate_wait_p95_ms: asNumber(pool.gate_wait_p95_ms), total_wait_p95_ms: asNumber(pool.total_wait_p95_ms), tasks: Array.isArray(pool.tasks) ? pool.tasks : [] }));
         const pipeline = pools.find(pool => pool && pool.id === 'global_pipeline') || { id: 'global_pipeline', label: '文件管线', group: '管线调度', scope: 'global', status: 'offline', connected: false, limit: 0, active: 0, queued: 0 };
         const summary = data.summary && typeof data.summary === 'object' ? data.summary : {};
         return {
@@ -55,11 +49,10 @@
                 capacity: asNumber(summary.capacity, globalPools.reduce((sum, pool) => sum + pool.limit, 0)),
                 queued: asNumber(summary.queued, globalPools.reduce((sum, pool) => sum + pool.queued, 0)),
                 hot_pools: asNumber(summary.hot_pools, globalPools.filter(pool => ['pressure', 'saturated'].includes(pool.status)).length),
-                wait_p95_ms: asNumber(summary.wait_p95_ms),
+                total_wait_p95_ms: asNumber(summary.total_wait_p95_ms),
             },
             globalPools,
-            taskPools,
-            pipeline: { ...pipeline, limit: asNumber(pipeline.limit), active: asNumber(pipeline.active), queued: asNumber(pipeline.queued), status: pipeline.status || 'offline', connected: pipeline.connected !== false },
+            pipeline: { ...pipeline, limit: asNumber(pipeline.limit), active: asNumber(pipeline.active), queued: asNumber(pipeline.queued), gate_wait_p95_ms: asNumber(pipeline.gate_wait_p95_ms), total_wait_p95_ms: asNumber(pipeline.total_wait_p95_ms), status: pipeline.status || 'offline', connected: pipeline.connected !== false },
             events: Array.isArray(data.events) ? data.events : [],
             history: data.history && typeof data.history === 'object' ? data.history : null,
             error: false,
@@ -79,7 +72,6 @@
     function orderedPools(snapshot) {
         const byId = new Map([
             ...snapshot.globalPools.map(pool => [pool.id, { ...pool, capacity: pool.limit }]),
-            ...snapshot.taskPools.map(pool => [pool.id, { ...pool, limit: pool.capacity }]),
             [snapshot.pipeline.id, { ...snapshot.pipeline, capacity: snapshot.pipeline.limit }],
         ]);
         return POOL_ORDER.map(id => byId.get(id)).filter(Boolean);
@@ -103,6 +95,13 @@
     function subjectOf(context) {
         if (!context || typeof context !== 'object') return '当前请求';
         return context.file_name || context.file_id || context.field_id || context.rule_id || context.task_id || context.model || '当前请求';
+    }
+
+    function formatWait(ms) {
+        const value = asNumber(ms);
+        if (value < 1000) return `${Math.round(value)}ms`;
+        if (value < 60000) return `${(value / 1000).toFixed(1)}s`;
+        return `${(value / 60000).toFixed(1)}min`;
     }
 
     const RuntimeMonitor = {
@@ -261,7 +260,7 @@
                 'runtime-summary-capacity': `/ ${summary.capacity}`,
                 'runtime-summary-queued': summary.queued,
                 'runtime-summary-hot': summary.hot_pools,
-                'runtime-summary-wait': (summary.wait_p95_ms / 1000).toFixed(1),
+                'runtime-summary-wait': (summary.total_wait_p95_ms / 1000).toFixed(1),
                 'runtime-monitor-updated': snapshot.error ? `最后成功 ${formatTime(snapshot.updated_at)}` : formatTime(snapshot.updated_at),
             };
             Object.entries(values).forEach(([id, value]) => { const element = document.getElementById(id); if (element) element.textContent = value; });
@@ -311,7 +310,6 @@
                 const short = (POOL_META[pool.id] || {}).short || pool.id;
                 const compactShort = {
                     global_table_validation: 'TAB', global_extraction: 'EXT', global_analysis: 'ANA',
-                    task_table_validation: 'TBL', task_extraction: 'T-EXT', task_file_analysis: 'T-ANA',
                     independent_analysis: 'IND',
                 }[pool.id] || short;
                 return compactLabels ? compactShort : `${short}\n${pool.label || pool.id}`;
@@ -438,17 +436,16 @@
             if (!pool) return;
             const state = stateFor(pool);
             const meta = POOL_META[pool.id] || {};
-            const isTask = pool.scope === 'task';
             const values = { 'runtime-detail-group': pool.group || '', 'runtime-detail-title': pool.label || pool.id, 'runtime-detail-id': pool.id };
             Object.entries(values).forEach(([id, value]) => { const element = document.getElementById(id); if (element) element.textContent = value; });
             const body = document.getElementById('runtime-detail-body');
             if (!body) return;
             const constraints = [pool, ...(pool.constraints || []).map(id => pools.find(item => item.id === id)).filter(Boolean)];
-            const holders = isTask ? (pool.instances || []) : (pool.tasks || []);
-            body.innerHTML = `<div class="runtime-detail-metrics"><div class="runtime-detail-metric"><span>${isTask ? '最忙实例' : '运行'}</span><strong>${pool.active}</strong></div><div class="runtime-detail-metric"><span>${isTask ? '每实例上限' : '容量'}</span><strong>${pool.limit}</strong></div><div class="runtime-detail-metric"><span>排队</span><strong>${pool.queued}</strong></div></div>
-                ${isTask ? `<div class="runtime-detail-section"><div class="runtime-detail-section-head"><h3>实例汇总</h3><span class="runtime-detail-status" style="color:${state.text};border-color:${state.color}55;background:${state.color}12">${state.label}</span></div><div class="runtime-constraint-row"><span class="runtime-constraint-bar" style="background:${state.color}"></span><div class="runtime-constraint-copy"><div><span>${pool.instance_count} 个活动实例</span><span>${pool.aggregate_active || 0} ACTIVE</span></div><div class="runtime-constraint-meter"><i style="width:${Math.min(100, pressureOf(pool))}%;background:${state.color}"></i></div></div></div></div>` : ''}
+            const holders = pool.tasks || [];
+            body.innerHTML = `<div class="runtime-detail-metrics"><div class="runtime-detail-metric"><span>运行</span><strong>${pool.active}</strong></div><div class="runtime-detail-metric"><span>容量</span><strong>${pool.limit}</strong></div><div class="runtime-detail-metric"><span>排队</span><strong>${pool.queued}</strong></div></div>
+                <div class="runtime-detail-section"><div class="runtime-detail-section-head"><h3>等待分解</h3><span>p95</span></div><div class="runtime-wait-row"><span>本闸等待</span><strong>${formatWait(pool.gate_wait_p95_ms)}</strong></div><div class="runtime-wait-row"><span>端到端等待</span><strong>${formatWait(pool.total_wait_p95_ms)}</strong></div><p class="runtime-detail-note">本闸等待只算在这一道闸上排的时间；端到端等待从工作项启动算起，含上游闸门（含不在本页展示的单文件限流）的全部排队。两者差得越多，说明背压越靠上游。</p></div>
                 <div class="runtime-detail-section"><div class="runtime-detail-section-head"><h3>约束路径</h3><span class="runtime-detail-status" style="color:${state.text};border-color:${state.color}55;background:${state.color}12">${state.label}</span></div>${constraints.map(item => { const itemState = stateFor(item); return `<div class="runtime-constraint-row"><span class="runtime-constraint-bar" style="background:${itemState.color}"></span><div class="runtime-constraint-copy"><div><span>${escapeHtml(item.label || item.id)}</span><span>${item.active}/${item.limit}</span></div><div class="runtime-constraint-meter"><i style="width:${pressureOf(item)}%;background:${itemState.color}"></i></div></div></div>`; }).join('')}</div>
-                <div class="runtime-detail-section"><div class="runtime-detail-section-head"><h3>${isTask ? '当前实例' : '当前占用任务'}</h3><span>${holders.length}</span></div>${holders.length ? holders.slice(0, 8).map(item => `<div class="runtime-detail-task"><span class="runtime-detail-task-icon"><i data-lucide="file-text"></i></span><span class="runtime-detail-task-copy"><strong>${escapeHtml(item.file_name || item.file_id || item.instance_id || item.task_id || '当前任务')}</strong><span>${escapeHtml(item.stage || item.model || `${item.active || 0} active · ${item.queued || 0} queued`)}</span></span></div>`).join('') : '<div class="runtime-monitor-empty">当前没有运行任务</div>'}</div>
+                <div class="runtime-detail-section"><div class="runtime-detail-section-head"><h3>当前占用任务</h3><span>${holders.length}</span></div>${holders.length ? holders.slice(0, 8).map(item => { const primary = subjectOf(item); const hasName = Boolean(item.file_name); const detail = [hasName ? item.file_id : '', item.stage || item.model].filter(Boolean).join(' · '); return `<div class="runtime-detail-task"><span class="runtime-detail-task-icon"><i data-lucide="file-text"></i></span><span class="runtime-detail-task-copy"><strong title="${escapeHtml(primary)}">${escapeHtml(primary)}</strong><span title="${escapeHtml(item.file_id || '')}">${escapeHtml(detail || '—')}</span></span></div>`; }).join('') : '<div class="runtime-monitor-empty">当前没有运行任务</div>'}</div>
                 <p class="runtime-detail-note"><strong>运行说明</strong><br>${escapeHtml(pool.note || meta.note || '当前进程内只读并发状态。')}</p>`;
             if (typeof lucide !== 'undefined') lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
         },
