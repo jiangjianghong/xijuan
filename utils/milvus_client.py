@@ -10,6 +10,46 @@ from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connec
 from utils.config import MilvusConfig, get_config
 
 
+# insert 的列顺序。schema 字段顺序、INSERT_COLUMNS、insert_data 三者必须一致，
+# 错位不会报错、只会让向量与文本静默对不上。
+INSERT_COLUMNS = [
+    "chunk_id",
+    "file_id",
+    "parent_chunk_id",
+    "chunk_index",
+    "total_chunks",
+    "chunk_content",
+    "start_pos",
+    "end_pos",
+    "page_num",
+    "embedding",
+]
+
+# 检索结果回填的标量字段（不含 embedding）。
+OUTPUT_FIELDS = [c for c in INSERT_COLUMNS if c != "embedding"]
+
+
+def build_collection_schema(dim: int) -> CollectionSchema:
+    """构造子块 collection 的 schema。
+
+    chunk_id 是**子块** id，parent_chunk_id 指回 file_chunk 表里的父块——
+    检索单元（子块）与返回单元（父块）解耦，命中子块后取父块文本喂 LLM。
+    """
+    fields = [
+        FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, is_primary=True, max_length=64),
+        FieldSchema(name="file_id", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="parent_chunk_id", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="chunk_index", dtype=DataType.INT64),
+        FieldSchema(name="total_chunks", dtype=DataType.INT64),
+        FieldSchema(name="chunk_content", dtype=DataType.VARCHAR, max_length=65535),
+        FieldSchema(name="start_pos", dtype=DataType.INT64),
+        FieldSchema(name="end_pos", dtype=DataType.INT64),
+        FieldSchema(name="page_num", dtype=DataType.VARCHAR, max_length=20),
+        FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dim),
+    ]
+    return CollectionSchema(fields=fields, description="file_subchunks")
+
+
 class MilvusClient:
     """Milvus 向量数据库客户端封装。"""
 
@@ -47,18 +87,7 @@ class MilvusClient:
             self._collection.load()
             return self._collection
 
-        fields = [
-            FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, is_primary=True, max_length=64),
-            FieldSchema(name="file_id", dtype=DataType.VARCHAR, max_length=64),
-            FieldSchema(name="chunk_index", dtype=DataType.INT64),
-            FieldSchema(name="total_chunks", dtype=DataType.INT64),
-            FieldSchema(name="chunk_content", dtype=DataType.VARCHAR, max_length=65535),
-            FieldSchema(name="start_pos", dtype=DataType.INT64),
-            FieldSchema(name="end_pos", dtype=DataType.INT64),
-            FieldSchema(name="page_num", dtype=DataType.VARCHAR, max_length=20),
-            FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dim),
-        ]
-        schema = CollectionSchema(fields=fields, description="file_chunks")
+        schema = build_collection_schema(dim)
         self._collection = Collection(name=name, schema=schema)
 
         index_params = {
@@ -85,33 +114,13 @@ class MilvusClient:
         if collection is None:
             collection = self.ensure_collection()
 
-        # 行转列格式
-        columns = {
-            "chunk_id": [],
-            "file_id": [],
-            "chunk_index": [],
-            "total_chunks": [],
-            "chunk_content": [],
-            "start_pos": [],
-            "end_pos": [],
-            "page_num": [],
-            "embedding": [],
-        }
+        # 行转列，列顺序严格按 INSERT_COLUMNS
+        columns: Dict[str, List[Any]] = {name: [] for name in INSERT_COLUMNS}
         for row in data:
-            for key in columns:
+            for key in INSERT_COLUMNS:
                 columns[key].append(row[key])
 
-        insert_data = [
-            columns["chunk_id"],
-            columns["file_id"],
-            columns["chunk_index"],
-            columns["total_chunks"],
-            columns["chunk_content"],
-            columns["start_pos"],
-            columns["end_pos"],
-            columns["page_num"],
-            columns["embedding"],
-        ]
+        insert_data = [columns[name] for name in INSERT_COLUMNS]
 
         collection.insert(insert_data)
         collection.flush()
@@ -154,7 +163,7 @@ class MilvusClient:
             param=search_params,
             limit=top_k,
             expr=expr,
-            output_fields=["chunk_id", "file_id", "chunk_index", "total_chunks", "chunk_content", "start_pos", "end_pos", "page_num"],
+            output_fields=OUTPUT_FIELDS,
         )
 
         hits = []
@@ -164,17 +173,7 @@ class MilvusClient:
                 # COSINE 相似度：越大越相似，低于阈值则丢弃
                 if score_threshold is not None and score < score_threshold:
                     continue
-                hits.append({
-                    "chunk_id": hit.entity.get("chunk_id"),
-                    "file_id": hit.entity.get("file_id"),
-                    "chunk_index": hit.entity.get("chunk_index"),
-                    "total_chunks": hit.entity.get("total_chunks"),
-                    "chunk_content": hit.entity.get("chunk_content"),
-                    "start_pos": hit.entity.get("start_pos"),
-                    "end_pos": hit.entity.get("end_pos"),
-                    "page_num": hit.entity.get("page_num"),
-                    "score": score,
-                })
+                hits.append({name: hit.entity.get(name) for name in OUTPUT_FIELDS} | {"score": score})
 
         return hits
 

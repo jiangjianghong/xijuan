@@ -81,6 +81,14 @@ class MilvusConfig(BaseModel):
     metric_type: str = "COSINE"
     nlist: int = 1024
     search_topk: int = 10
+    # 抽取链路单文件全量打分的子块数上限。超过则回落 ANN——4096 维下
+    # 20000 子块 ≈ 327MB，再往上会在多文件并发时打爆内存。
+    max_bruteforce_subchunks: int = 20000
+    # 相对分差：只保留 score >= max_score * score_ratio 的结果。
+    # 取代 top_k 硬切（硬 top_k 本身就是「召回不到」的另一半原因）。
+    score_ratio: float = 0.85
+    # 未显式配 top_k 时的返回条数安全上限。
+    max_results: int = 20
 
 
 class MySQLConfig(BaseModel):
