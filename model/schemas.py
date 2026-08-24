@@ -465,6 +465,43 @@ class ExtractionFieldCreate(BaseModel):
                 raise ValueError("source_type='vl' 时 vl_extract_prompt 必填")
         return self
 
+    @model_validator(mode="after")
+    def validate_query_text_placeholders(self):
+        """vector_db 多路检索的每个 query 都必须在提取提示词里有对应占位符。
+
+        replace_search_result_placeholders 按 label 替换，prompt 里没有的
+        label 结果会被**静默丢弃**——用户加了同义词却没改 prompt，那一路
+        检索白跑且完全不可察，故在此 fail-fast。
+        """
+        if self.__class__.__name__ != "ExtractionFieldCreate":
+            return self
+        if self.search_type != SearchTypeEnum.vector_db:
+            return self
+        # use_llm=0 直接返回检索原文，不经占位符替换
+        if self.use_llm == 0:
+            return self
+
+        config = self.search_config or {}
+        raw = config.get("query_text")
+        items = raw if isinstance(raw, list) else [raw]
+        labels = [i.strip() for i in items if isinstance(i, str) and i.strip()]
+        if not labels:
+            return self
+
+        prompt = self.text_extract_prompt or ""
+        missing = [
+            label
+            for label in labels
+            if f"<search_result>{label}</search_result>" not in prompt
+        ]
+        if missing:
+            raise ValueError(
+                f"text_extract_prompt 缺少这些 query_text 的占位符: {missing}。"
+                f"每路 query 各需一个 <search_result>查询词</search_result>，"
+                f"否则该路检索结果会被静默丢弃"
+            )
+        return self
+
 
 class ExtractionFieldResponse(ExtractionFieldCreate):
     created_at: Optional[datetime] = None
