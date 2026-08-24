@@ -37,11 +37,16 @@ _GLOBAL_POOLS = (
     ("global_analysis", "逻辑分析总池", "业务阶段", "逻辑分析"),
     ("independent_analysis", "独立分析", "独立接口", "独立分析"),
 )
-# 单文件池（task_table_validation / task_extraction / task_file_analysis）
-# 仍在 utils/concurrency.py 真实限流，但不在运行台展示：它们的每实例上限
-# 与对应全局池同量级时常年显示 100% 饱和，而全局池远未跑满，图与实情相反。
-# 被它们吸收的排队改由各全局池的 total_wait_p95_ms 暴露。
-_TASK_POOL_IDS = ("task_table_validation", "task_extraction", "task_file_analysis")
+# 单文件池（task_table_validation / task_extraction / task_file_analysis /
+# task_embedding）仍在 utils/concurrency.py 真实限流，但不在运行台展示：
+# 它们的每实例上限与对应全局池同量级时常年显示 100% 饱和，而全局池远未跑满，
+# 图与实情相反。被它们吸收的排队改由各全局池的 total_wait_p95_ms 暴露。
+_TASK_POOL_IDS = (
+    "task_table_validation",
+    "task_extraction",
+    "task_file_analysis",
+    "task_embedding",
+)
 _POOL_CONSTRAINTS = {
     "global_table_validation": ["global_llm"],
     "global_extraction": ["global_llm", "global_embedding", "global_vl"],

@@ -50,7 +50,12 @@ async def test_runtime_snapshot_hides_task_pools(client):
     """
     data = (await client.get("/runtime/concurrency")).json()["data"]
 
-    hidden = {"task_table_validation", "task_extraction", "task_file_analysis"}
+    hidden = {
+        "task_table_validation",
+        "task_extraction",
+        "task_file_analysis",
+        "task_embedding",
+    }
     assert {pool["id"] for pool in data["pools"]}.isdisjoint(hidden)
     # 顶层不再有 task 作用域的记录，前端因此不需要 isTask 分支
     assert {pool["scope"] for pool in data["pools"]} == {"global"}
@@ -59,6 +64,26 @@ async def test_runtime_snapshot_hides_task_pools(client):
     # 约束路径不应再指向被隐藏的池
     for pool in data["pools"]:
         assert hidden.isdisjoint(pool.get("constraints", []))
+
+
+@pytest.mark.asyncio
+async def test_runtime_snapshot_filters_real_task_embedding_events(client):
+    """上一个用例在无 task limiter 时跑，事件断言是空真；这里真的产生事件。"""
+    from utils.concurrency import register_task_limiter, unregister_task_limiter
+
+    limiter = register_task_limiter(
+        "task_embedding", "file-probe", 1, {"file_id": "file-probe"}
+    )
+    token = await limiter.acquire({"file_id": "file-probe", "stage": "embedding"})
+    limiter.release(token)
+
+    try:
+        data = (await client.get("/runtime/concurrency")).json()["data"]
+    finally:
+        unregister_task_limiter("task_embedding", "file-probe")
+
+    assert all(event.get("pool_id") != "task_embedding" for event in data["events"])
+    assert all(pool["id"] != "task_embedding" for pool in data["pools"])
 
 
 @pytest.mark.asyncio
