@@ -36,6 +36,7 @@ async def embed_chunks(chunks: List[Dict]) -> List[List[float]]:
         batch_size=cfg.batch_size,
         timeout=cfg.timeout,
         max_retries=cfg.retry_count,
+        task_id=chunks[0].get("file_id"),
     )
 
     logger.info("向量化完成，共 {} 个向量", len(embeddings))
