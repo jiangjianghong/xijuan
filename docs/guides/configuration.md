@@ -127,19 +127,19 @@
 | 配置项 | 默认值 | 含义 |
 |---|---:|---|
 | `global_llm` | `16` | 全项目普通文本 LLM HTTP 请求并发 |
-| `global_embedding` | `4` | 全项目 Embedding HTTP 请求并发 |
+| `global_embedding` / `task_embedding` | `8 / 4` | Embedding HTTP 请求全局 / 单文件并发 |
 | `global_vl` | `8` | 全项目 VL HTTP 请求并发 |
 | `global_table_validation` / `task_table_validation` | `10 / 4` | 表格名校验阶段全局 / 单文件并发 |
 | `global_extraction` / `task_extraction` | `8 / 4` | 字段抽取阶段全局 / 单文件并发 |
 | `global_analysis` / `task_file_analysis` | `8 / 4` | 逻辑分析阶段全局 / 单文件并发 |
-| `independent_analysis` | `4` | `POST /analysis/run` 所有请求合计的 item 并发 |
+| `independent_analysis` | `4` | `POST /analysis/run` 所有请求合计的规则并发 |
 | `global_pipeline` | `4` | 同时处理的文件数闸门，超限文件落 `queued` 排队 |
 
 一次模型请求同时受对应模型通道、业务阶段和单文件限制。旧配置 `table_name_validation.max_concurrency`、`vl_model.global_max_concurrency` 会分别迁移到 `task_table_validation`、`global_vl`。
 
 > **单文件值必须小于对应全局值才起作用。** `task_table_validation=4` 配 `global_table_validation=10` 时，能保证至少 2 个文件并行推进；两者相等则单个文件即可占满全局池，这一层形同虚设——一个几百张表的文件会把后到的小文件连续堵在队尾（head-of-line blocking）。检测到 `task_* >= global_*` 时启动日志会打 WARNING。
 >
-> 这三个单文件池**不在运行台展示**（原因见 [runtime.md](../api/runtime.md)），被它们吸收的排队通过各全局池的 `total_wait_p95_ms` 观察：该值显著大于 `gate_wait_p95_ms` 就说明堵在这一层。
+> 这四个单文件池**不在运行台展示**（原因见 [runtime.md](../api/runtime.md)），被它们吸收的排队通过各全局池的 `total_wait_p95_ms` 观察：该值显著大于 `gate_wait_p95_ms` 就说明堵在这一层。
 
 ## vl_model — 视觉模型抽取（OpenAI 兼容多模态）
 

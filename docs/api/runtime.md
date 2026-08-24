@@ -29,12 +29,12 @@
 |---|---|---|
 | 模型通道 | `global_llm` / `global_embedding` / `global_vl` | 各模型 API 的全局并发，在 client 层生效 |
 | 业务阶段 | `global_table_validation` / `global_extraction` / `global_analysis` | 跨文件的阶段级并发 |
-| 独立接口 | `independent_analysis` | `POST /analysis/run` 的 item 并发 |
+| 独立接口 | `independent_analysis` | `POST /analysis/run` 的规则并发 |
 | 管线调度 | `global_pipeline` | 同时处理的文件数闸门，超限文件落 `queued` 排队 |
 
 所有池记录的 `scope` 恒为 `global`，含 `limit` / `active` / `queued` / `completed` / `gate_wait_p95_ms` / `total_wait_p95_ms` / `tasks`（当前持有者上下文）。
 
-> **单文件限流不在本接口返回**。`concurrency.task_table_validation` / `task_extraction` / `task_file_analysis` **仍然真实生效**，只是不再作为池记录下发，其事件也从 `events` 中滤除。原因是它们的每文件上限与对应全局池同量级时会常年显示 100% 饱和，而全局池远未跑满，与实情相反。被它们吸收的排队改由各池的 `total_wait_p95_ms` 体现。配置调优见 [configuration.md](../guides/configuration.md)。
+> **单文件限流不在本接口返回**。`concurrency.task_table_validation` / `task_extraction` / `task_file_analysis` / `task_embedding` **仍然真实生效**，只是不再作为池记录下发，其事件也从 `events` 中滤除。原因是它们的每文件上限与对应全局池同量级时会常年显示 100% 饱和，而全局池远未跑满，与实情相反。被它们吸收的排队改由各池的 `total_wait_p95_ms` 体现。配置调优见 [configuration.md](../guides/configuration.md)。
 
 **两个等待口径**
 

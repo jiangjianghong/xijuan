@@ -918,7 +918,9 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "结果（`reason` 列出缺失字段）并计入 `total` / `failed`，不会从 `results` 里消失\n"
                 "- 显式点名时无视 `enabled` 开关；该 `type_id` 下不存在的 rule_id 不报错，收进 "
                 "`AnalysisRunItemResult.unknown_rule_ids` 回传\n"
-                "- items 间并发，单 item 内按 `priority, rule_id` 顺序执行；`source=file` 的读库集中在并发前、"
+                "- items 与规则双层并发（闸门在规则层，配置项 `concurrency.independent_analysis`）；"
+                "`results` 按 `priority, rule_id` 配置序回填、`rule_done` 按完成序推送；"
+                "`source=file` 的读库集中在并发前、"
                 "`persist` 写库在并发后（`AsyncSession` 非并发安全）\n"
                 "- `sync` 的最终结果在 HTTP 响应 `data`；`async` 的最终结果在 `task_done.data`；"
                 "`stream` 的最终结果在 SSE `task_done` 事件的 `data`。三者最终结果均为"
@@ -1578,7 +1580,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             ),
             "callback_url": "`async` 模式必填，用于推送 `rule_done` / `task_done` / `task_failed`",
             "items": (
-                "待分析的业务输入列表，至少 1 项。一个 item 代表一个业务对象；item 间并发执行，"
+                "待分析的业务输入列表，至少 1 项。一个 item 代表一个业务对象；item 与其规则均并发执行，"
                 "响应 `data.items[]` 按请求顺序逐项对应。即使只分析一个对象也必须传数组。"
             ),
         },

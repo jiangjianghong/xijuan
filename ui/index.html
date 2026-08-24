@@ -655,12 +655,12 @@
                 </section>
                 <section class="runtime-help-group">
                     <h3>单文件限流（不在本页展示）</h3>
-                    <article class="runtime-help-item"><h4>为什么看不到</h4><code>concurrency.task_table_validation / task_extraction / task_file_analysis</code><p>这三项限制单个文件内部的并发，<strong>仍然真实生效</strong>，只是不在运行台展示：当每文件上限与对应全局池同量级时，它们会常年显示 100% 饱和，而全局池远未跑满，图与实情相反。被它们吸收的排队改由各池详情里的<strong>端到端等待</strong>体现——端到端明显大于本闸等待，就说明背压堵在这一层。</p></article>
+                    <article class="runtime-help-item"><h4>为什么看不到</h4><code>concurrency.task_table_validation / task_extraction / task_file_analysis / task_embedding</code><p>这四项限制单个文件内部的并发，<strong>仍然真实生效</strong>，只是不在运行台展示：当每文件上限与对应全局池同量级时，它们会常年显示 100% 饱和，而全局池远未跑满，图与实情相反。被它们吸收的排队改由各池详情里的<strong>端到端等待</strong>体现——端到端明显大于本闸等待，就说明背压堵在这一层。</p></article>
                     <article class="runtime-help-item"><h4>怎么配才有用</h4><p>单文件值必须<strong>小于</strong>对应全局值才起作用。<code>task_table_validation=4</code> 配 <code>global_table_validation=10</code> 能保证至少 2 个文件并行；两者相等时单个文件就能占满全局池，这一层形同虚设，后到的文件会被前一个大文件的几百张表堵在队尾。相等或更大时启动日志会给出告警。</p></article>
                 </section>
                 <section class="runtime-help-group">
                     <h3>独立接口</h3>
-                    <article class="runtime-help-item"><h4>独立分析</h4><code>concurrency.independent_analysis</code><p>独立分析统计所有 /analysis/run 请求正在处理的 item，不限制单个请求。以默认配置为例，当前 worker 内所有独立分析请求合计最多同时处理 4 个 item。每个 item 内的规则仍按顺序执行，每条规则继续受“逻辑分析总池”默认上限 8 约束。</p></article>
+                    <article class="runtime-help-item"><h4>独立分析</h4><code>concurrency.independent_analysis</code><p>独立分析统计所有 /analysis/run 请求正在执行的<strong>规则</strong>，不限制单个请求。以默认配置为例，当前 worker 内所有独立分析请求合计最多同时执行 4 条规则；item 与规则双层都并发，每条规则继续受“逻辑分析总池”默认上限 8 约束。</p></article>
                 </section>
                 <section class="runtime-help-group">
                     <h3>管线</h3>

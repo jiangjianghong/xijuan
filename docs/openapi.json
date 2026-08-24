@@ -1967,7 +1967,7 @@
           "analysis"
         ],
         "summary": "独立逻辑分析执行",
-        "description": "按 `type_id` 加载启用规则批量执行逻辑判断 / 计算。支持 `sync` / `async` / `stream`，可批量 `items`。\n\n**先理解两层数组：** 请求 `items[]` 是待分析的业务对象列表；响应 `data.items[]` 与请求逐项对应，表示每个业务对象的执行汇总；每个响应 item 内的 `results[]` 才是该业务对象逐条执行规则的结果。即 `请求 items[0] -> 响应 data.items[0] -> data.items[0].results[]`。即使只提交 1 个业务对象或只执行 1 条规则，对应字段仍保持数组；没有规则实际执行时 `results` 为 `[]`。\n\n- 取值来源由请求级 `source` 决定：`values`（默认）用请求里的 `field_values`（不读文件提取结果、不写 `analysis_result`）；`file` 改读各 item `file_id` 已落库的 `extraction_result`，此时 `field_values` 不得传（422）、`type_id` 可省（取 `files.type_id`，传了且不一致该 item 报错）\n- `persist=true`（仅 `source=file` 可用）把结果 upsert 进 `analysis_result`，**不改 `files.progress`**；文件不存在 / 无提取结果等查库才知道的问题记在 item 级 `error` 字段，不影响同批其它 item\n- 规则范围由 item 级 `rule_ids` 决定：不传 / `null` = 该类型全部启用规则，且只执行 `field_values` 覆盖了 `depend_fields` 的那些（其余静默跳过）；`[]` = 不执行任何规则；显式点名 = 只跑指定规则，**不做**覆盖过滤，缺依赖字段的规则产出 `success=false` 结果（`reason` 列出缺失字段）并计入 `total` / `failed`，不会从 `results` 里消失\n- 显式点名时无视 `enabled` 开关；该 `type_id` 下不存在的 rule_id 不报错，收进 `AnalysisRunItemResult.unknown_rule_ids` 回传\n- items 间并发，单 item 内按 `priority, rule_id` 顺序执行；`source=file` 的读库集中在并发前、`persist` 写库在并发后（`AsyncSession` 非并发安全）\n- `sync` 的最终结果在 HTTP 响应 `data`；`async` 的最终结果在 `task_done.data`；`stream` 的最终结果在 SSE `task_done` 事件的 `data`。三者最终结果均为 `AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`\n- `async` 模式用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`",
+        "description": "按 `type_id` 加载启用规则批量执行逻辑判断 / 计算。支持 `sync` / `async` / `stream`，可批量 `items`。\n\n**先理解两层数组：** 请求 `items[]` 是待分析的业务对象列表；响应 `data.items[]` 与请求逐项对应，表示每个业务对象的执行汇总；每个响应 item 内的 `results[]` 才是该业务对象逐条执行规则的结果。即 `请求 items[0] -> 响应 data.items[0] -> data.items[0].results[]`。即使只提交 1 个业务对象或只执行 1 条规则，对应字段仍保持数组；没有规则实际执行时 `results` 为 `[]`。\n\n- 取值来源由请求级 `source` 决定：`values`（默认）用请求里的 `field_values`（不读文件提取结果、不写 `analysis_result`）；`file` 改读各 item `file_id` 已落库的 `extraction_result`，此时 `field_values` 不得传（422）、`type_id` 可省（取 `files.type_id`，传了且不一致该 item 报错）\n- `persist=true`（仅 `source=file` 可用）把结果 upsert 进 `analysis_result`，**不改 `files.progress`**；文件不存在 / 无提取结果等查库才知道的问题记在 item 级 `error` 字段，不影响同批其它 item\n- 规则范围由 item 级 `rule_ids` 决定：不传 / `null` = 该类型全部启用规则，且只执行 `field_values` 覆盖了 `depend_fields` 的那些（其余静默跳过）；`[]` = 不执行任何规则；显式点名 = 只跑指定规则，**不做**覆盖过滤，缺依赖字段的规则产出 `success=false` 结果（`reason` 列出缺失字段）并计入 `total` / `failed`，不会从 `results` 里消失\n- 显式点名时无视 `enabled` 开关；该 `type_id` 下不存在的 rule_id 不报错，收进 `AnalysisRunItemResult.unknown_rule_ids` 回传\n- items 与规则双层并发（闸门在规则层，配置项 `concurrency.independent_analysis`）；`results` 按 `priority, rule_id` 配置序回填、`rule_done` 按完成序推送；`source=file` 的读库集中在并发前、`persist` 写库在并发后（`AsyncSession` 非并发安全）\n- `sync` 的最终结果在 HTTP 响应 `data`；`async` 的最终结果在 `task_done.data`；`stream` 的最终结果在 SSE `task_done` 事件的 `data`。三者最终结果均为 `AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`\n- `async` 模式用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`",
         "operationId": "run_independent_analysis_analysis_run_post",
         "requestBody": {
           "content": {
@@ -4113,7 +4113,7 @@
             "type": "array",
             "minItems": 1,
             "title": "Items",
-            "description": "待分析的业务输入列表，至少 1 项。一个 item 代表一个业务对象；item 间并发执行，响应 `data.items[]` 按请求顺序逐项对应。即使只分析一个对象也必须传数组。"
+            "description": "待分析的业务输入列表，至少 1 项。一个 item 代表一个业务对象；item 与其规则均并发执行，响应 `data.items[]` 按请求顺序逐项对应。即使只分析一个对象也必须传数组。"
           }
         },
         "type": "object",

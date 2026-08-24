@@ -288,7 +288,7 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 | source | AnalysisRunSourceEnum | 否 | values | 字段值来源：`values`（默认）用请求里的 `field_values`；`file` 读各 item `file_id` 已落库的 `extraction_result` |
 | persist | boolean | 否 | False | 是否把结果 upsert 进 `analysis_result`；仅 `source=file` 可用，**不改 `files.progress`** |
 | callback_url | string | 否 | — | `async` 模式必填，用于推送 `rule_done` / `task_done` / `task_failed` |
-| items | array[AnalysisRunItem] | 是 | — | 待分析的业务输入列表，至少 1 项。一个 item 代表一个业务对象；item 间并发执行，响应 `data.items[]` 按请求顺序逐项对应。即使只分析一个对象也必须传数组。 |
+| items | array[AnalysisRunItem] | 是 | — | 待分析的业务输入列表，至少 1 项。一个 item 代表一个业务对象；item 与其规则均并发执行，响应 `data.items[]` 按请求顺序逐项对应。即使只分析一个对象也必须传数组。 |
 <!-- /AUTOGEN:request-body -->
 
 `items[]`（`AnalysisRunItem`）：
