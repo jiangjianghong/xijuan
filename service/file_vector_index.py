@@ -12,10 +12,22 @@ Milvus 因此在抽取链路退化成「按 file_id 取向量」的 KV 存储；
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
+from loguru import logger
+
+from utils.config import get_config
+from utils.milvus_client import get_milvus_client
+
+# 全量拉取只要打分与映射需要的三个字段。**绝不能带 chunk_content**——
+# 子块存了完整文本，1.2 万子块的文本会让传输量雪崩；父块文本从快照取。
+LOAD_OUTPUT_FIELDS = ["chunk_id", "parent_chunk_id", "embedding"]
+
+# query_iterator 单批条数。太小则往返次数多，太大则单次响应体积过大。
+_QUERY_BATCH_SIZE = 1000
 
 
 @dataclass(frozen=True)
@@ -114,3 +126,94 @@ def select_parent_hits(
 
     limit = top_k if top_k else max_results
     return ranked[:limit]
+
+
+def _max_subchunks() -> int:
+    """全量打分的子块数上限。独立成函数便于测试覆盖。"""
+    return get_config().milvus.max_bruteforce_subchunks
+
+
+def _drain_iterator(iterator: Any) -> List[Dict[str, Any]]:
+    """把 query_iterator 取空。空批表示结束。"""
+    rows: List[Dict[str, Any]] = []
+    try:
+        while True:
+            batch = iterator.next()
+            if not batch:
+                return rows
+            rows.extend(batch)
+    finally:
+        close = getattr(iterator, "close", None)
+        if close is not None:
+            close()
+
+
+def _load_sync(file_id: str, limit: int) -> List[Dict[str, Any]]:
+    """同步拉取该文件的全部子块向量。由 to_thread 调用。"""
+    collection = get_milvus_client().ensure_collection()
+    iterator = collection.query_iterator(
+        batch_size=_QUERY_BATCH_SIZE,
+        expr=f'file_id == "{file_id}"',
+        output_fields=LOAD_OUTPUT_FIELDS,
+    )
+    rows = _drain_iterator(iterator)
+    if len(rows) > limit:
+        # 超限就不必再构矩阵了，调用方会走 ANN
+        logger.warning(
+            "file_id={} 子块数 {} 超过全量打分上限 {}，本次检索回落 ANN",
+            file_id, len(rows), limit,
+        )
+    return rows
+
+
+async def load_file_vector_index(
+    file_id: str, parent_chunks: Iterable[Any]
+) -> FileVectorIndex:
+    """拉取单文件全部子块向量，构建只读索引。
+
+    Milvus 的 gRPC 是同步调用，且这里可能传输上百 MB——必须经 to_thread
+    移出事件循环，否则期间所有并发请求（含前端高频轮询）全部冻结。
+
+    Args:
+        file_id: 文件 ID。
+        parent_chunks: 该文件的父块集合（快照里的 chunks）。需有 chunk_id
+            属性；用于构建命中后取文本的查找表。
+
+    Returns:
+        FileVectorIndex。子块数超阈值时 degraded=True 且 matrix=None；
+        文件无向量（存量文件未重跑）时 size=0。
+    """
+    parents = {p.chunk_id: p for p in parent_chunks}
+    limit = _max_subchunks()
+
+    rows = await asyncio.to_thread(_load_sync, file_id, limit)
+
+    if not rows:
+        return FileVectorIndex(
+            file_id=file_id, sub_ids=(), parent_ids=(), matrix=None,
+            parents=parents, degraded=False,
+        )
+
+    if len(rows) > limit:
+        return FileVectorIndex(
+            file_id=file_id,
+            sub_ids=tuple(r["chunk_id"] for r in rows),
+            parent_ids=tuple(r["parent_chunk_id"] for r in rows),
+            matrix=None,
+            parents=parents,
+            degraded=True,
+        )
+
+    matrix = l2_normalize(
+        np.array([r["embedding"] for r in rows], dtype=np.float32)
+    )
+    logger.debug("file_id={} 载入 {} 个子块向量用于全量打分", file_id, len(rows))
+
+    return FileVectorIndex(
+        file_id=file_id,
+        sub_ids=tuple(r["chunk_id"] for r in rows),
+        parent_ids=tuple(r["parent_chunk_id"] for r in rows),
+        matrix=matrix,
+        parents=parents,
+        degraded=False,
+    )
