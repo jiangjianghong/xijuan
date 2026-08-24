@@ -237,7 +237,7 @@ async def run_pipeline_stream(
             })
         else:
             try:
-                embeddings = await embed_chunks(chunks)
+                sub_chunks, embeddings = await embed_chunks(chunks)
                 yield _sse_event("embedding", {
                     "file_id": file_id,
                     "stage": "embedding",
@@ -251,7 +251,7 @@ async def run_pipeline_stream(
                     "message": "开始提交向量到 Milvus",
                 })
 
-                await submit_to_milvus(chunks, embeddings)
+                await submit_to_milvus(sub_chunks, embeddings)
                 yield _sse_event("milvus_submitted", {
                     "file_id": file_id,
                     "stage": "milvus_submitted",
@@ -542,8 +542,8 @@ async def run_pipeline(
             await session.commit()
         else:
             try:
-                embeddings = await embed_chunks(chunks)
-                await submit_to_milvus(chunks, embeddings)
+                sub_chunks, embeddings = await embed_chunks(chunks)
+                await submit_to_milvus(sub_chunks, embeddings)
 
                 stmt = (
                     update(File)
@@ -913,7 +913,7 @@ async def run_from_stage_stream(
                 })
             else:
                 try:
-                    embeddings = await embed_chunks(chunks)
+                    sub_chunks, embeddings = await embed_chunks(chunks)
                     yield _sse_event("embedding", {
                         "file_id": file_id,
                         "stage": "embedding",
@@ -927,7 +927,7 @@ async def run_from_stage_stream(
                         "message": "开始提交向量到 Milvus",
                     })
 
-                    await submit_to_milvus(chunks, embeddings)
+                    await submit_to_milvus(sub_chunks, embeddings)
                     yield _sse_event("milvus_submitted", {
                         "file_id": file_id,
                         "stage": "milvus_submitted",
@@ -1311,8 +1311,8 @@ async def run_from_stage(
                 await session.commit()
             else:
                 try:
-                    embeddings = await embed_chunks(chunks)
-                    await submit_to_milvus(chunks, embeddings)
+                    sub_chunks, embeddings = await embed_chunks(chunks)
+                    await submit_to_milvus(sub_chunks, embeddings)
 
                     stmt = (
                         update(File)
