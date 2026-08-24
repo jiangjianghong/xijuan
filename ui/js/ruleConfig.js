@@ -555,8 +555,9 @@ const RuleConfig = {
                 if (val && val.trim()) labels = [val.trim()];
                 emptyHint = '请先填写上方「章节模式」';
             } else if (searchType === 'vector_db') {
+                // 每行一个查询词 = 一个独立占位符标签（多路检索）
                 const val = (document.getElementById('fm-sc-query-text') || {}).value;
-                if (val && val.trim()) labels = [val.trim()];
+                labels = (val || '').split('\n').map(s => s.trim()).filter(Boolean);
                 emptyHint = '请先填写上方「查询文本」';
             } else {
                 labels = this.getKeywordTags('fm-sc-keywords');
@@ -1210,17 +1211,26 @@ const RuleConfig = {
                             <label class="form-label">查询文本</label>
                             ${this.fieldRefBtnHtml('text', 'fm-sc-query-text')}
                         </div>
-                        <input class="form-input" id="fm-sc-query-text" value="${Utils.escapeHtml(config.query_text || '')}" placeholder="用于向量检索的查询文本">
-                        <div class="form-hint">查询文本同时作为 &lt;search_result&gt; 占位符的标签，检索结果会填充到该标签中</div>
+                        <textarea class="form-input" id="fm-sc-query-text" rows="3"
+                            placeholder="每行一个查询词，多行=多路检索。例：&#10;项目名称&#10;工程名称&#10;本项目名称为">${Utils.escapeHtml(
+                                Array.isArray(config.query_text)
+                                    ? config.query_text.join('\n')
+                                    : (config.query_text || '')
+                            )}</textarea>
+                        <div class="form-hint">每行一个查询词，多行=多路检索。<b>每路 query 各需在提取提示词里写一个 &lt;search_result&gt;该查询词&lt;/search_result&gt; 占位符</b>，缺了保存会报错</div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">Top K</label>
-                            <input class="form-input" id="fm-sc-top-k" type="number" value="${config.top_k ?? 5}" min="1">
+                            <input class="form-input" id="fm-sc-top-k" type="number" value="${config.top_k ?? ''}" min="1" placeholder="留空=按阈值+相对分差">
                         </div>
                         <div class="form-group">
                             <label class="form-label">分数阈值</label>
-                            <input class="form-input" id="fm-sc-score-threshold" type="number" step="0.01" value="${config.score_threshold ?? 0.5}" min="0" max="1">
+                            <input class="form-input" id="fm-sc-score-threshold" type="number" step="0.01" value="${config.score_threshold ?? ''}" min="0" max="1" placeholder="留空=不设绝对下限">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">相对分差</label>
+                            <input class="form-input" id="fm-sc-score-ratio" type="number" step="0.01" value="${config.score_ratio ?? ''}" min="0" max="1" placeholder="留空=用默认 0.85">
                         </div>
                     </div>
                 `;
@@ -1944,11 +1954,23 @@ const RuleConfig = {
                 }
                 config.sort_order = getVal('fm-sc-sort-order') || 'relevance';
                 break;
-            case 'vector_db':
-                config.query_text = getVal('fm-sc-query-text');
-                config.top_k = getInt('fm-sc-top-k', 5);
-                config.score_threshold = getFloat('fm-sc-score-threshold', 0.5);
+            case 'vector_db': {
+                // 多行 → 数组；单行仍存单串，保持存量配置形态不变
+                const queryLines = (getVal('fm-sc-query-text') || '')
+                    .split('\n')
+                    .map(s => s.trim())
+                    .filter(Boolean);
+                config.query_text = queryLines.length > 1 ? queryLines : (queryLines[0] || '');
+                // 三项均「留空 = 不写该键」：后端缺省时走阈值 + 相对分差（默认 0.85）
+                // + max_results 兜底。硬写 top_k 会让这条新路径永远不生效。
+                const tk = getVal('fm-sc-top-k');
+                if (tk !== '') config.top_k = parseInt(tk, 10);
+                const st = getVal('fm-sc-score-threshold');
+                if (st !== '') config.score_threshold = parseFloat(st);
+                const sr = getVal('fm-sc-score-ratio');
+                if (sr !== '') config.score_ratio = parseFloat(sr);
                 break;
+            }
             case 'page':
                 config.page_range = getVal('fm-sc-page-range');
                 config.max_length = getInt('fm-sc-page-max-length', 30000);
