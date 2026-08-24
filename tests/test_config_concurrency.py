@@ -112,3 +112,55 @@ def test_example_config_documents_only_canonical_analysis_concurrency():
     assert "task_analysis:" not in example
     assert "task_file_analysis: 4" in example
     assert "independent_analysis: 4" in example
+
+
+def test_task_embedding_defaults_below_global(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("mysql:\n  host: db.test\n", encoding="utf-8")
+
+    cfg = load_config(path)
+
+    assert cfg.concurrency.task_embedding == 4
+    assert cfg.concurrency.global_embedding == 8
+    assert cfg.concurrency.task_embedding < cfg.concurrency.global_embedding
+
+
+def test_task_embedding_is_configurable(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+concurrency:
+  global_embedding: 6
+  task_embedding: 3
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+
+    assert cfg.concurrency.global_embedding == 6
+    assert cfg.concurrency.task_embedding == 3
+
+
+def test_task_embedding_over_global_warns(tmp_path):
+    """项目用 loguru，pytest 的 caplog 捕获不到，必须自己挂 sink。"""
+    from loguru import logger
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+concurrency:
+  global_embedding: 4
+  task_embedding: 4
+""",
+        encoding="utf-8",
+    )
+
+    messages: list[str] = []
+    sink_id = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        load_config(path)
+    finally:
+        logger.remove(sink_id)
+
+    assert any("task_embedding" in message for message in messages)

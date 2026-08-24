@@ -209,7 +209,7 @@ class AnalysisConfig(BaseModel):
 
 class ConcurrencyConfig(BaseModel):
     global_llm: int = Field(16, ge=1)
-    global_embedding: int = Field(4, ge=1)
+    global_embedding: int = Field(8, ge=1)
     global_vl: int = Field(8, ge=1)
     global_table_validation: int = Field(10, ge=1)
     global_extraction: int = Field(8, ge=1)
@@ -217,6 +217,7 @@ class ConcurrencyConfig(BaseModel):
     task_table_validation: int = Field(4, ge=1)
     task_extraction: int = Field(4, ge=1)
     task_file_analysis: int = Field(4, ge=1)
+    task_embedding: int = Field(4, ge=1)
     independent_analysis: int = Field(4, ge=1)
     global_pipeline: int = Field(4, ge=1)
 
@@ -232,6 +233,7 @@ class ConcurrencyConfig(BaseModel):
             ("task_table_validation", "global_table_validation"),
             ("task_extraction", "global_extraction"),
             ("task_file_analysis", "global_analysis"),
+            ("task_embedding", "global_embedding"),
         )
         for task_key, global_key in pairs:
             task_limit = getattr(self, task_key)

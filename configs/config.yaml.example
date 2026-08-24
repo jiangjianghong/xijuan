@@ -103,7 +103,7 @@ vl_model:
 # 模型通道、业务阶段、文件内任务与独立接口并发限制（当前 worker 内生效）
 concurrency:
   global_llm: 16                                        # 全项目普通文本 LLM HTTP 请求并发上限
-  global_embedding: 4                                   # 全项目 Embedding HTTP 请求并发上限
+  global_embedding: 8                                   # 全项目 Embedding HTTP 请求并发上限
   global_vl: 8                                          # 全项目 VL HTTP 请求并发上限
   global_table_validation: 10                           # 所有文件表格名校验任务的并发上限
   global_extraction: 8                                  # 所有文件字段抽取任务的并发上限
@@ -111,6 +111,7 @@ concurrency:
   task_table_validation: 4                              # 单文件表格名校验任务的并发上限
   task_extraction: 4                                    # 单文件字段抽取任务的并发上限
   task_file_analysis: 4                                 # 单文件逻辑分析规则的并发上限
+  task_embedding: 4                                     # 单文件向量化批次的并发上限（须小于 global_embedding）
   independent_analysis: 4                               # 所有独立分析请求合计的 item 并发上限
   global_pipeline: 4                                    # 文件管线全局并发预留值；当前不改变入口调度
 

@@ -100,6 +100,7 @@ const SettingsManager = {
             ['task_table_validation', '单文件表格名校验并发', 'number', { min: 1 }],
             ['task_extraction', '单文件字段抽取并发', 'number', { min: 1 }],
             ['task_file_analysis', '单文件逻辑分析并发', 'number', { min: 1 }],
+            ['task_embedding', '单文件向量化并发', 'number', { min: 1, unit: '单个文件同时发出的向量化批次数，须小于全局 Embedding 并发' }],
             ['independent_analysis', '独立逻辑分析并发', 'number', { min: 1, unit: '当前 worker 内所有独立分析请求合计同时执行的 item 数' }],
             ['global_pipeline', '全局文件管线并发', 'number', { min: 1 }],
         ],
