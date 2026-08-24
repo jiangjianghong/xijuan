@@ -1043,3 +1043,70 @@ async def test_independent_item_keeps_rule_and_callback_order(monkeypatch):
     assert [row["rule_id"] for row in response["items"][0]["results"]] == ["r1", "r2"]
     assert callbacks == ["r1", "r2"]
     concurrency.clear_limiters()
+
+
+@pytest.mark.anyio
+async def test_independent_limit_applies_to_rules_not_items(monkeypatch):
+    """闸门在规则层：单个 item 的多条规则也能并发，直到吃满池上限。"""
+    _patch_analysis_concurrency(monkeypatch, independent=4)
+    concurrency.clear_limiters()
+    active = 0
+    peak = 0
+
+    async def fake_load_rules(type_ids, session):
+        return {"contract": [_rule(f"r{i}", [], i) for i in range(6)]}
+
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return _success(rule)
+
+    monkeypatch.setattr(analysis_run_service, "_load_rules_by_type", fake_load_rules)
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+
+    # 单个 item、6 条规则：闸门在 item 层时串行跑，peak 恒为 1
+    result = await analysis_run_service.run_analysis_batch(
+        [{"type_id": "contract", "biz_id": "b0", "field_values": {}}],
+        object(),
+    )
+
+    assert peak == 4
+    assert result["items"][0]["total"] == 6
+    concurrency.clear_limiters()
+
+
+@pytest.mark.anyio
+async def test_independent_results_stay_in_config_order_despite_completion_order(monkeypatch):
+    """完成序≠配置序时，results 仍按 index 排序回填，rule_done 按完成序推。"""
+    _patch_analysis_concurrency(monkeypatch, independent=4)
+    concurrency.clear_limiters()
+    callbacks = []
+
+    async def fake_load_rules(type_ids, session):
+        return {"contract": [_rule("slow", [], 1), _rule("fast", [], 2)]}
+
+    async def fake_execute(rule, field_values, *, require_coverage=False):
+        await asyncio.sleep(0.05 if rule.rule_id == "slow" else 0.0)
+        return _success(rule)
+
+    async def on_rule_done(item):
+        callbacks.append(item["rule_id"])
+
+    monkeypatch.setattr(analysis_run_service, "_load_rules_by_type", fake_load_rules)
+    monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
+
+    result = await analysis_run_service.run_analysis_batch(
+        [{"type_id": "contract", "biz_id": "b0", "field_values": {}}],
+        object(),
+        on_rule_done=on_rule_done,
+    )
+
+    # 推送按完成序：快的先到
+    assert callbacks == ["fast", "slow"]
+    # 落库/响应按配置序：index 1 在前
+    assert [row["rule_id"] for row in result["items"][0]["results"]] == ["slow", "fast"]
+    assert [row["index"] for row in result["items"][0]["results"]] == [1, 2]
+    concurrency.clear_limiters()

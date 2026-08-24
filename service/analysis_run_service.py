@@ -22,6 +22,7 @@ from service.analysis_service import (
 from utils.config import get_config
 from utils.concurrency import (
     get_limiter,
+    work_item,
 )
 
 
@@ -392,7 +393,7 @@ async def run_analysis_batch(
     source: str = "values",
     persist: bool = False,
 ) -> Dict[str, Any]:
-    """批量执行独立分析：item 间并发，item 内规则顺序执行。
+    """批量执行独立分析：item 与规则双层并发，闸门在规则层。
 
     `source="file"` 时字段值取自各 item `file_id` 已落库的 extraction_result。
     所有读库在并发前完成、写库在并发后完成（AsyncSession 非并发安全）。
@@ -413,6 +414,8 @@ async def run_analysis_batch(
     rules_by_type = await _load_rules_by_type(type_ids, session)
     concurrency_cfg = get_config().concurrency
     stage_limiter = get_limiter("global_analysis", concurrency_cfg.global_analysis)
+    # 闸门在规则层：所有独立分析请求合计同时执行的规则数，与 task_file_analysis
+    # （单文件规则并发）对称，两者共用 global_analysis 总池。
     item_limiter = get_limiter(
         "independent_analysis",
         concurrency_cfg.independent_analysis,
@@ -477,21 +480,22 @@ async def run_analysis_batch(
         )
         rules = plan.rules
         total = len(rules)
-        results: list[Dict[str, Any]] = []
 
-        for index, rule in enumerate(rules, start=1):
+        async def _one_rule(index: int, rule: AnalysisRuleSnapshot) -> Dict[str, Any]:
             context = {
                 "stage": "analyzing",
                 "task_id": biz_id,
                 "rule_id": rule.rule_id,
                 "index": index,
             }
-            async with stage_limiter.context(context):
-                result = await execute_rule(
-                    rule,
-                    field_values,
-                    require_coverage=plan.require_coverage,
-                )
+            with work_item():
+                async with item_limiter.context(context):
+                    async with stage_limiter.context(context):
+                        result = await execute_rule(
+                            rule,
+                            field_values,
+                            require_coverage=plan.require_coverage,
+                        )
             if from_file:
                 result = {
                     **result,
@@ -501,15 +505,34 @@ async def run_analysis_batch(
                         field_source_refs,
                     ),
                 }
-            result = {**result, "index": index, "total": total}
-            results.append(result)
-            if on_rule_done is not None:
-                await on_rule_done({
-                    **result,
-                    "item_index": item_index,
-                    "biz_id": biz_id,
-                })
+            return {**result, "index": index, "total": total}
 
+        # 规则之间无依赖（execute_rule 只读 field_values，异常已在内部收敛为
+        # 失败结果），故可并发；as_completed 让 rule_done 完成即推，results
+        # 再按 index 排回配置序，对外聚合口径不变。
+        results: list[Dict[str, Any]] = []
+        tasks = [
+            asyncio.create_task(_one_rule(index, rule))
+            for index, rule in enumerate(rules, start=1)
+        ]
+        try:
+            for completed in asyncio.as_completed(tasks):
+                result = await completed
+                results.append(result)
+                if on_rule_done is not None:
+                    await on_rule_done({
+                        **result,
+                        "item_index": item_index,
+                        "biz_id": biz_id,
+                    })
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        results.sort(key=lambda row: row["index"])
         succeeded = sum(1 for result in results if result["success"])
         return {
             "item_index": item_index,
@@ -523,20 +546,8 @@ async def run_analysis_batch(
             "error": None,
         }
 
-    async def run_item_guarded(
-        item_index: int,
-        item: Mapping[str, Any],
-    ) -> Dict[str, Any]:
-        metadata = {
-            "stage": "independent_analysis",
-            "task_id": str(item.get("biz_id", item_index)),
-            "index": item_index,
-        }
-        async with item_limiter.context(metadata):
-            return await run_item(item_index, item)
-
     ordered_items = await asyncio.gather(*(
-        run_item_guarded(index, item)
+        run_item(index, item)
         for index, item in enumerate(items)
     ))
 
