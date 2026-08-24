@@ -13,7 +13,10 @@ from typing import Any, Dict, List, Tuple
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loguru import logger
+
 from model.tables import FileChunk, FileContent, FileTable
+from service.file_vector_index import FileVectorIndex, load_file_vector_index
 
 
 @dataclass(frozen=True)
@@ -55,12 +58,17 @@ class FileExtractionSnapshot:
     page_contents: Dict[Any, str]
     tables: Tuple[TableRow, ...]
     chunks: Tuple[ChunkRow, ...]
+    # 单文件全部子块向量。仅当该类型确实有 vector_db 字段时加载
+    # （拉取可达上百 MB，无谓加载代价太大）；未加载或加载失败为 None。
+    vector_index: FileVectorIndex | None = None
 
 
 async def load_extraction_snapshot(
     file_id: str,
     session: AsyncSession,
     type_id: str = "default",
+    *,
+    need_vectors: bool = False,
 ) -> FileExtractionSnapshot:
     """一次性读出字段提取所需的全部只读数据（3 次查询）。
 
@@ -70,6 +78,9 @@ async def load_extraction_snapshot(
         file_id: 文件 ID。
         session: 数据库会话（仅在此函数内使用）。
         type_id: 文件归属类型，随快照透传，避免并发段回查 files 表。
+        need_vectors: True 时额外拉取该文件的全部子块向量（供 vector_db
+            检索的单文件全量打分）。调用方应按「该类型是否存在 vector_db
+            字段」决定，避免无谓的上百 MB 传输。
 
     Returns:
         冻结的 FileExtractionSnapshot。文件未解析时 content 为空串。
@@ -96,6 +107,27 @@ async def load_extraction_snapshot(
             p["page_num"]: p["content"] for p in split_md_by_pages(content, page_mapping)
         }
 
+    chunks = tuple(
+        ChunkRow(
+            chunk_id=c.chunk_id,
+            chunk_index=c.chunk_index,
+            chunk_content=c.chunk_content,
+            start_pos=c.start_pos,
+            end_pos=c.end_pos,
+            page_num=c.page_num,
+        )
+        for c in chunk_rows
+    )
+
+    vector_index = None
+    if need_vectors:
+        try:
+            vector_index = await load_file_vector_index(file_id, chunks)
+        except Exception as e:
+            # Milvus 不可用不该拖垮整个提取阶段：vector_db 字段各自失败即可，
+            # 其他 search_type 的字段照常跑。
+            logger.error("file_id={} 载入子块向量失败，vector_db 字段将无命中: {}", file_id, e)
+
     return FileExtractionSnapshot(
         file_id=file_id,
         type_id=type_id,
@@ -113,15 +145,6 @@ async def load_extraction_snapshot(
             )
             for t in table_rows
         ),
-        chunks=tuple(
-            ChunkRow(
-                chunk_id=c.chunk_id,
-                chunk_index=c.chunk_index,
-                chunk_content=c.chunk_content,
-                start_pos=c.start_pos,
-                end_pos=c.end_pos,
-                page_num=c.page_num,
-            )
-            for c in chunk_rows
-        ),
+        chunks=chunks,
+        vector_index=vector_index,
     )
