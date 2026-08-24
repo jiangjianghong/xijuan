@@ -9,8 +9,9 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Tuple
 
+import numpy as np
 from loguru import logger
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
@@ -24,6 +25,7 @@ from service.extraction_snapshot import (
     FileExtractionSnapshot,
     load_extraction_snapshot,
 )
+from service.file_vector_index import FileVectorIndex, select_parent_hits
 from service.match_prompts import build_section_match_prompt, build_table_match_prompt
 from service.search_ranking import compute_keyword_weights, rank_and_truncate
 from utils import vl_client
@@ -37,7 +39,7 @@ from utils.concurrency import (
 )
 from utils.errors import format_exception
 from utils.llm_client import chat_completion, get_embeddings
-from utils.milvus_client import MilvusClient
+from utils.milvus_client import get_milvus_client
 from utils.page_mapping import (
     lookup_bboxes,
     lookup_page_num,
@@ -1544,51 +1546,174 @@ async def search_chunk_db(
     )
 
 
+def needs_vector_index(fields: Iterable[Any]) -> bool:
+    """该批字段里是否存在 vector_db 检索，决定快照要不要拉子块向量。
+
+    进阶字段的 search_type 同样算——它解析引用后仍走同一套检索核心。
+    """
+    return any(getattr(f, "search_type", None) == "vector_db" for f in fields)
+
+
+def normalize_query_texts(raw: Any) -> List[str]:
+    """query_text 归一化：单串 / 数组 / None 一律收敛成去重后的非空字符串列表。
+
+    存量配置是单串，归一后为单元素列表——占位符标签不变，老 prompt 照常生效。
+    去首尾空白：占位符 label 匹配时会 strip，keyword 带空格会永远对不上。
+    """
+    if raw is None:
+        return []
+
+    items = raw if isinstance(raw, list) else [raw]
+    out: List[str] = []
+    seen = set()
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if text and text not in seen:
+            seen.add(text)
+            out.append(text)
+    return out
+
+
+def _parent_hit_row(parent: Any, keyword: str, score: float) -> Dict[str, Any]:
+    """把父块投影成检索结果行。
+
+    形态与 chunk_db 一致（segment_key='chunk_content'），故
+    _build_text_source_refs / bbox / 页码链路全部无需改动。
+    """
+    return {
+        "keyword": keyword,
+        "chunk_id": parent.chunk_id,
+        "chunk_index": parent.chunk_index,
+        "chunk_content": parent.chunk_content,
+        "start_pos": parent.start_pos,
+        "end_pos": parent.end_pos,
+        "page_num": parent.page_num,
+        "score": score,
+    }
+
+
 async def search_vector_db(
-    file_id: str, config: Dict[str, Any]
+    file_id: str,
+    config: Dict[str, Any],
+    index: Optional[FileVectorIndex] = None,
 ) -> List[Dict[str, Any]]:
-    """向量数据库检索：将 query_text 向量化后检索 Milvus。
+    """向量检索：多路 query 各自全量打分，命中子块映射回父块。
+
+    **不走 ANN**：抽取链路的检索恒带 file_id 过滤，范围只有单文件几千个
+    子块，IVF 先选簇再过滤只探 0.4% 的簇，会静默丢召回。改为对 index 里
+    该文件的全部子块向量做内存点积。
 
     Args:
         file_id: 文件 ID。
-        config: search_config 配置，包含:
-            - query_text: 查询文本
-            - top_k: 返回条数（默认 5）
-            - score_threshold: 分数阈值（可选）
+        config: search_config，包含:
+            - query_text: 查询文本，单串或数组。数组时多路检索，
+              **每路结果挂自己的 keyword 作为独立占位符标签**。
+            - top_k: 返回条数上限（可选）。不配则走阈值 + 相对分差，
+              以 milvus.max_results 兜底。
+            - score_threshold: 绝对相似度下限（可选）。
+            - score_ratio: 相对分差系数（可选，默认 milvus.score_ratio）。
+        index: 该文件的子块向量索引（来自 extraction_snapshot）。为 None
+            表示未装载（存量文件未重跑 / Milvus 不可用），返回空。
 
     Returns:
-        检索结果列表，每项包含 keyword(=query_text), chunk_id, chunk_index, chunk_content, start_pos, end_pos, score。
+        检索结果列表，每项是一个**父块**，含 keyword / chunk_id /
+        chunk_index / chunk_content / start_pos / end_pos / page_num / score。
     """
-    # 去首尾空白：占位符 label 匹配时会 strip，keyword 带空格会永远对不上
-    query_text = (config.get("query_text", "") or "").strip()
-    top_k = config.get("top_k", 5)
+    query_texts = normalize_query_texts(config.get("query_text"))
+    if not query_texts:
+        return []
+
+    if index is None:
+        logger.warning(
+            "file_id={} 未装载子块向量，vector_db 检索无命中"
+            "（存量文件需 POST /file/{}/retry/chunking 重跑）",
+            file_id, file_id,
+        )
+        return []
+
+    if index.size == 0:
+        logger.warning(
+            "file_id={} 在当前 Milvus collection 中无任何子块向量，"
+            "vector_db 检索无命中（存量文件需 POST /file/{}/retry/chunking 重跑）",
+            file_id, file_id,
+        )
+        return []
+
+    if index.degraded:
+        logger.warning(
+            "file_id={} 子块数超全量打分上限，本次 vector_db 检索降级为 ANN",
+            file_id,
+        )
+        return await _search_vector_db_ann(file_id, config, query_texts, index)
+
+    vectors = await get_embeddings(query_texts)
+    if not vectors or len(vectors) != len(query_texts):
+        logger.warning("query 向量化失败或数量不符，vector_db 检索放弃")
+        return []
+
+    milvus_cfg = get_config().milvus
     score_threshold = config.get("score_threshold")
+    score_ratio = config.get("score_ratio", milvus_cfg.score_ratio)
+    top_k = config.get("top_k")
+    max_results = milvus_cfg.max_results
 
-    if not query_text:
+    results: List[Dict[str, Any]] = []
+    for keyword, vector in zip(query_texts, vectors):
+        hits = select_parent_hits(
+            index,
+            np.asarray(vector, dtype=np.float32),
+            score_threshold=score_threshold,
+            score_ratio=score_ratio,
+            top_k=top_k,
+            max_results=max_results,
+        )
+        for parent_id, score in hits:
+            parent = index.parents.get(parent_id)
+            if parent is None:
+                # Milvus 有向量但父块已不在 MySQL（删除竞态 / 孤儿向量）
+                continue
+            results.append(_parent_hit_row(parent, keyword, score))
+
+    return results
+
+
+async def _search_vector_db_ann(
+    file_id: str,
+    config: Dict[str, Any],
+    query_texts: List[str],
+    index: FileVectorIndex,
+) -> List[Dict[str, Any]]:
+    """降级路径：子块数超全量打分上限时走 Milvus ANN。
+
+    命中的是子块，仍按 parent_chunk_id 映射回父块，返回形态与全量路径一致。
+    """
+    vectors = await get_embeddings(query_texts)
+    if not vectors or len(vectors) != len(query_texts):
         return []
 
-    # 向量化查询文本
-    embeddings = await get_embeddings([query_text])
-    if not embeddings:
-        return []
+    top_k = config.get("top_k") or get_config().milvus.max_results
+    score_threshold = config.get("score_threshold")
+    client = get_milvus_client()
 
-    query_vector = embeddings[0]
-
-    # Milvus 检索
-    milvus_client = MilvusClient()
-    milvus_client.connect()
-    milvus_client.ensure_collection()
-
-    results = milvus_client.search(
-        query_vector=query_vector,
-        top_k=top_k,
-        file_id=file_id,
-        score_threshold=score_threshold,
-    )
-
-    # query_text 作为占位符标签：下游按 keyword 分组注入 <search_result>query_text</search_result>
-    for r in results:
-        r["keyword"] = query_text
+    results: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for keyword, vector in zip(query_texts, vectors):
+        hits = await asyncio.to_thread(
+            client.search,
+            query_vector=vector,
+            top_k=top_k,
+            file_id=file_id,
+            score_threshold=score_threshold,
+        )
+        for hit in hits:
+            parent_id = hit.get("parent_chunk_id")
+            parent = index.parents.get(parent_id)
+            if parent is None or (keyword, parent_id) in seen:
+                continue
+            seen.add((keyword, parent_id))
+            results.append(_parent_hit_row(parent, keyword, hit.get("score", 0.0)))
 
     return results
 
@@ -2017,7 +2142,9 @@ async def extract_text_field(
     elif search_type == "chunk_db":
         search_results = await search_chunk_db(file_id, search_config, snapshot.chunks)
     elif search_type == "vector_db":
-        search_results = await search_vector_db(file_id, search_config)
+        search_results = await search_vector_db(
+            file_id, search_config, snapshot.vector_index
+        )
 
     if not search_results:
         return "", "", None, []
@@ -2610,9 +2737,6 @@ async def run_extraction(
     file_row = (await session.execute(select(File).where(File.file_id == file_id))).scalar_one_or_none()
     type_id = (file_row.type_id if file_row else None) or "default"
 
-    # 并发开始前一次性取出全部只读数据：AsyncSession 非并发安全
-    snapshot = await load_extraction_snapshot(file_id, session, type_id)
-
     # 获取全部启用字段（两层），按 priority 排序；普通字段先于进阶字段执行
     stmt = (
         select(ExtractionField)
@@ -2624,6 +2748,12 @@ async def run_extraction(
     basic_fields = [f for f in all_fields if not getattr(f, "is_advanced", 0)]
     advanced_fields = [f for f in all_fields if getattr(f, "is_advanced", 0)]
     ordered_fields = basic_fields + advanced_fields
+
+    # 并发开始前一次性取出全部只读数据：AsyncSession 非并发安全。
+    # 字段列表必须先查——快照要据此决定是否拉子块向量。
+    snapshot = await load_extraction_snapshot(
+        file_id, session, type_id, need_vectors=needs_vector_index(all_fields)
+    )
 
     total = len(ordered_fields)
     succeeded = 0
@@ -2687,9 +2817,6 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     file_row = (await session.execute(select(File).where(File.file_id == file_id))).scalar_one_or_none()
     type_id = (file_row.type_id if file_row else None) or "default"
 
-    # 并发开始前一次性取出全部只读数据：AsyncSession 非并发安全
-    snapshot = await load_extraction_snapshot(file_id, session, type_id)
-
     # 获取全部启用字段（两层），按 priority 排序；普通字段先于进阶字段执行
     stmt = (
         select(ExtractionField)
@@ -2701,6 +2828,12 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     basic_fields = [f for f in all_fields if not getattr(f, "is_advanced", 0)]
     advanced_fields = [f for f in all_fields if getattr(f, "is_advanced", 0)]
     ordered_fields = basic_fields + advanced_fields
+
+    # 并发开始前一次性取出全部只读数据：AsyncSession 非并发安全。
+    # 字段列表必须先查——快照要据此决定是否拉子块向量。
+    snapshot = await load_extraction_snapshot(
+        file_id, session, type_id, need_vectors=needs_vector_index(all_fields)
+    )
 
     app_cfg = get_config()
     async for item in _iter_extraction_results(
@@ -2945,7 +3078,12 @@ async def test_field_extraction_stream(
                         file_id, search_config, debug_snapshot.chunks
                     )
                 elif search_type == "vector_db":
-                    search_results = await search_vector_db(file_id, search_config)
+                    debug_snapshot = await load_extraction_snapshot(
+                        file_id, session, need_vectors=True
+                    )
+                    search_results = await search_vector_db(
+                        file_id, search_config, debug_snapshot.vector_index
+                    )
 
                 # 按关键词分组构建 results_by_label
                 results_by_keyword: Dict[str, List[Dict]] = {}

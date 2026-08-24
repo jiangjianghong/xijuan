@@ -194,38 +194,42 @@ def test_build_text_source_refs_chunk_result_with_own_page_num_gets_bboxes():
 
 
 async def test_search_vector_db_attaches_query_text_as_keyword(monkeypatch):
-    """vector_db 检索结果每条挂 keyword=query_text，作为占位符标签。"""
+    """vector_db 检索结果每条挂 keyword=query_text，作为占位符标签。
+
+    改造后走内存全量打分（不再 monkeypatch MilvusClient），命中子块
+    映射回父块；详尽用例见 tests/test_search_vector_db.py。
+    """
+    import numpy as np
+
     from service import extraction_service
+    from service.file_vector_index import FileVectorIndex, l2_normalize
 
-    async def fake_get_embeddings(texts):
-        return [[0.1, 0.2]]
+    class Parent:
+        def __init__(self, chunk_id, content, page_num, index):
+            self.chunk_id = chunk_id
+            self.chunk_content = content
+            self.chunk_index = index
+            self.start_pos = index * 5
+            self.end_pos = index * 5 + 2
+            self.page_num = page_num
 
-    class FakeMilvusClient:
-        def connect(self):
-            pass
-
-        def ensure_collection(self):
-            pass
-
-        def search(self, query_vector, top_k, file_id, score_threshold):
-            return [
-                {
-                    "chunk_id": "c1", "file_id": file_id, "chunk_index": 0,
-                    "total_chunks": 2, "chunk_content": "块1",
-                    "start_pos": 0, "end_pos": 2, "page_num": "1", "score": 0.1,
-                },
-                {
-                    "chunk_id": "c2", "file_id": file_id, "chunk_index": 1,
-                    "total_chunks": 2, "chunk_content": "块2",
-                    "start_pos": 5, "end_pos": 7, "page_num": "2", "score": 0.2,
-                },
-            ]
+    async def fake_get_embeddings(texts, **kwargs):
+        return [[1.0, 0.0] for _ in texts]
 
     monkeypatch.setattr(extraction_service, "get_embeddings", fake_get_embeddings)
-    monkeypatch.setattr(extraction_service, "MilvusClient", FakeMilvusClient)
+
+    parents = [Parent("c1", "块1", "1", 0), Parent("c2", "块2", "2", 1)]
+    index = FileVectorIndex(
+        file_id="f1",
+        sub_ids=("c1_s0", "c2_s0"),
+        parent_ids=("c1", "c2"),
+        matrix=l2_normalize(np.array([[1.0, 0.0], [0.99, 0.1]], dtype=np.float32)),
+        parents={p.chunk_id: p for p in parents},
+        degraded=False,
+    )
 
     results = await extraction_service.search_vector_db(
-        "f1", {"query_text": " 合同总金额 ", "top_k": 5}
+        "f1", {"query_text": " 合同总金额 ", "top_k": 5}, index
     )
     assert len(results) == 2
     assert all(r["keyword"] == "合同总金额" for r in results)
