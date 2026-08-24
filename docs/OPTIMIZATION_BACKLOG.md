@@ -16,7 +16,7 @@
 ## ⭐ 快速见效清单（改动小、收益高，建议最先做）
 
 - [ ] **R2** 删除 `extraction_service.py:948` 的"value 不得含英文标点"半句
-- [ ] **R9** Milvus `nprobe` 16 → 64 并配置化（`milvus_client.py:144`）
+- [x] **R9** ~~Milvus `nprobe` 16 → 64 并配置化~~ → **已被取代**：抽取链路直接去掉 ANN，改单文件全量打分（`service/file_vector_index.py`），不是调参
 - [ ] **R4** MinerU 空结果抛错 / 置 `parsing_failed`（`mineru_client.py:86`）
 - [ ] **R3** 文件名 XSS 转义（`app.js:360`）
 - [ ] **R1** 加一层统一 API Key（写/删接口优先）
@@ -66,10 +66,10 @@
   - 问题：传 `x" or file_id != "` 可篡改过滤条件越过文件隔离读其它文件分块；`top_k` 无上限/可为负触发超大扫描或报错。
   - 建议：`file_id` 施加白名单校验（`^[A-Za-z0-9_-]+$`）并转义/参数化；`top_k`/`score_threshold` 加边界。
 
-- [ ] **R9 · Milvus `nprobe` 硬编码 16，召回率偏低** — 高 / 小
-  - 证据：`milvus_client.py:144`（`nprobe: 16`）、`config.py:58`（nlist 默认 1024）
-  - 问题：每次向量检索只扫 1024 桶中的 16 个（≈1.5%），相关 chunk 极易漏召回，直接导致字段抽取拿不到原文、判断/计算依据错误，**完全静默不可察**。
-  - 建议：`nprobe` 提到 nlist 的 4%~12%（32~128）并做成 `MilvusConfig` 配置项；按数据规模复核 nlist 默认值。
+- [x] **R9 · Milvus `nprobe` 硬编码 16，召回率偏低** — 高 / 小 —— **已解决（方式与原建议不同）**
+  - 原建议：`nprobe` 提到 32~128 并配置化
+  - 实际做法：**去掉 ANN**。抽取链路的检索恒带 `file_id` 过滤，范围只有单文件几千个子块，调 nprobe 只是缓解；改为把该文件全部子块向量拉进 `extraction_snapshot` 做内存全量打分（`service/file_vector_index.py`），召回率问题从根上消失。`index_type` / `nlist` / `nprobe` 之后只对 `/search` 跨文件检索有意义。
+  - 同批还修了另两个成因：父子分块（`service/subchunk_service.py`）与 query 侧多路检索。
 
 - [ ] **R10 · `vl_model` 默认 `page_range=all`，大文档必失败/爆成本** — 高 / 中
   - 证据：`vl_service/model.py:18/38/46`、`extraction_service.py:1426`、`vl_client.py:133`
@@ -92,7 +92,7 @@
 | - [ ] H3 | `files.progress` 无索引，而"处理中队列"每 3s 轮询 `WHERE progress IN(...)`，文件表只增不删 → 逐渐全表扫描 + filesort | 中/小 | `tables.py:83/89`、`file_router.py:146`、`init_service.py:127` | 加 `(progress, create_time)` 复合索引，ORM `__table_args__` 与 `index_migrations` 同步补 |
 | - [ ] H4 | `AnalysisRuleResponse` 复用创建期校验器且无子类豁免 → 一条不合规规则入库使 `GET /analysis/rules` 整体 500（非跳过单条） | 中/小 | `schemas.py:451/472`、`analysis_router.py:47`、对比 `:317` | 给两个校验器加 `cls.__name__` 子类豁免（响应模型读库不跑创建校验）；import 落库前复核 |
 | - [ ] H5 | `run_extraction` 逐字段串行 LLM（N 字段≈N×时延），且每字段重新从 MySQL 拉整篇 FileContent 大 blob | 中/中 | `extraction_service.py:1632/1332/1608` | 引入可配置并发（`Semaphore` + 独立 session）；`run_extraction` 层把已加载 content/page_mapping 下传，整文件只加载一次 |
-| - [ ] H6 | Milvus 单例形同虚设：入库/检索/抽取处处 `new MilvusClient()+connect()+load()` 未复用 `get_milvus_client()` | 中/中 | `embedding_service.py:74`、`search_service.py:44`、`extraction_service.py:920`、`milvus_client.py:45` | 统一改用 `get_milvus_client()`；或对 `ensure_collection` 已存在分支做一次性 load 缓存 |
+| - [ ] H6 | Milvus 单例形同虚设：入库/检索/抽取处处 `new MilvusClient()+connect()+load()` 未复用 `get_milvus_client()` | 中/中 | `embedding_service.py:74`、`search_service.py:44`、`extraction_service.py:920`、`milvus_client.py:45` | 统一改用 `get_milvus_client()`；或对 `ensure_collection` 已存在分支做一次性 load 缓存（**部分已修**：`embedding_service` / `extraction_service` 已改用 `get_milvus_client()`；`search_service.py:44` 仍待改） |
 | - [ ] H7 | httpx 客户端每次现建现弃（无连接池/keep-alive），每次外部调用重新 TCP+TLS 握手 | 中/中 | `llm_client.py:68/150`、`vl_client.py:78`、`callback.py:23` | 每类外部服务维护进程级复用 `AsyncClient`，lifespan 关闭时统一 aclose |
 | - [ ] H8 | 指数退避无 jitter → 429 时并发请求锁步在 1s/2s/4s 同时重发形成惊群 | 中/小 | `llm_client.py:84/169`、`vl_client.py:89` | 退避加 full jitter；429 优先解析 `Retry-After` |
 | - [ ] H9 | `get_embeddings` 对 4xx 也重试（与 chat/vl 不一致，确定性错误拖满退避才抛） | 中/小 | `llm_client.py:168`、对比 `:78` | 4xx（非 429）直接 raise 不进退避 |

@@ -470,9 +470,10 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 **vector_db 模式**
 ```json
 {
-  "query_text": "查询文本",
+  "query_text": "查询文本或查询文本数组（数组=多路检索，每路一个独立占位符标签）",
   "top_k": 5,
-  "score_threshold": 0.5
+  "score_threshold": 0.5,
+  "score_ratio": 0.85
 }
 ```
 

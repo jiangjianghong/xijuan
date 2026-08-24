@@ -26,7 +26,7 @@ JSON 示例和排错清单为主。
 | `text` | `search_type=section` | 整段章节 | `section_pattern`、`section_match_type` |
 | `text` | `search_type=rule` | 停用词边界精确切片 | `keywords`、`stop_words`、`direction` |
 | `text` | `search_type=chunk_db` | 分块库关键词过滤 | `keywords`、`max_results` |
-| `text` | `search_type=vector_db` | 语义相似检索 | `query_text`、`top_k` |
+| `text` | `search_type=vector_db` | 语义相似检索 | `query_text`（可数组）、`score_ratio` |
 | `text` | `search_type=page` | 按页码整片喂 LLM | `page_range`、`max_length` |
 | `vl` | `vl_method=vl_model` | 短文档 / 相关页固定，一次视觉抽取 | `page_range`、`max_pages` |
 | `vl` | `vl_method=vl_progressive` | 长文档、相关页分散，逐批扫描 | `field_hints`、`batch_size`、`page_range` |
@@ -101,7 +101,7 @@ JSON 示例和排错清单为主。
 | `section` | 匹配 Markdown 章节标题，取整段 | `section_pattern` 的值 |
 | `rule` | 找到关键词后扩展到停用词边界，精确切片 | `keywords` 里的关键词 |
 | `chunk_db` | 从预分块（MySQL）按关键词过滤 | `keywords` 里的关键词 |
-| `vector_db` | 查询文本向量化，Milvus 语义召回 | `query_text` 的值 |
+| `vector_db` | 查询文本向量化，子块全量打分后映射回父块 | `query_text` 每一项各一个标签 |
 | `page` | 按页码直接切 Markdown 整片喂 LLM | 固定 `page_content` |
 
 > 下面每种只列**常用可调项**；`search_config` 是自由 JSON，全部键与默认值见 [data-model#extraction_field](../reference/data-model.md#extraction_field)。
@@ -200,7 +200,7 @@ JSON 示例和排错清单为主。
 
 ### 3.5 向量检索 `vector_db`
 
-`query_text` 向量化后从 Milvus 召回 `top_k`（默认 5）条最相似分块，`score_threshold`（L2 距离，越小越相似）可选过滤。适合关键词不固定、要「语义找」的抽象字段。**占位符标签用 `query_text` 的值。**
+`query_text` 向量化后在**该文件的全部子块**上做全量打分（不走 ANN——抽取链路恒带 `file_id` 过滤，IVF 先选簇再过滤只探 0.4% 的簇会静默丢召回），命中子块映射回**父块**注入 prompt。`query_text` 可以是单串，也可以是数组做多路检索（如 `["项目名称", "工程名称", "本项目名称为"]`）——**数组的每一项各需一个独立占位符** `<search_result>该查询词</search_result>`，缺了保存时 422。`top_k` 可选，不配则按 `score_threshold`（绝对下限）+ `score_ratio`（相对分差，默认 0.85，只留与最高分同档的）筛选，以 `milvus.max_results`（默认 20）兜底。适合关键词不固定、要「语义找」的抽象字段。
 
 ```json
 {
@@ -208,8 +208,8 @@ JSON 示例和排错清单为主。
   "field_name": "核心竞争力",
   "source_type": "text",
   "search_type": "vector_db",
-  "search_config": { "query_text": "公司的核心竞争力和竞争优势是什么", "top_k": 3, "score_threshold": 0.5 },
-  "text_extract_prompt": "以下是与核心竞争力相关的内容：\n<search_result>公司的核心竞争力和竞争优势是什么</search_result>\n\n请总结公司核心竞争力（不超过 5 条）。"
+  "search_config": { "query_text": ["核心竞争力", "竞争优势"], "score_ratio": 0.85 },
+  "text_extract_prompt": "以下是与核心竞争力相关的内容：\n<search_result>核心竞争力</search_result>\n<search_result>竞争优势</search_result>\n\n请总结公司核心竞争力（不超过 5 条）。"
 }
 ```
 
@@ -453,7 +453,7 @@ JSON 示例和排错清单为主。
 | table | `table_name_pattern` 的值 |
 | text · context / rule / chunk_db | `keywords` 里的每个关键词（各一个占位符） |
 | text · section | `section_pattern` 的值 |
-| text · vector_db | `query_text` 的值 |
+| text · vector_db | `query_text` 每一项各一个标签（数组=多路检索） |
 | text · page | 固定 `page_content` |
 
 无命中时占位符被替换为 `（未找到 '标签' 的相关内容）`，LLM 仍会执行、通常返回空值。
@@ -583,7 +583,7 @@ text / table 抽取时，可在 prompt 里要求 LLM 除 `value` / `reason` 外�
 ### 9.1 保存报 422（占位符）
 
 对照 §7.2。最常见：
-- text/table 的提取 prompt 忘了写 `<search_result>标签</search_result>`，或标签与检索配置对不上（如 vector_db 标签没用 `query_text` 的值）。
+- text/table 的提取 prompt 忘了写 `<search_result>标签</search_result>`，或标签与检索配置对不上（如 vector_db 标签没用 `query_text` 的值）。`vector_db` 的 `query_text` 若是数组，**每一项**都要有对应占位符，否则该路结果被静默丢弃（现已在保存时 422 拦下）。
 - vl 的 `vl_extract_prompt` 里没有 `value` / `reason` 字样。
 - 自定义 VL 模板缺占位符，或字面花括号没转义成 `{{ }}`（§4.3）。
 
@@ -592,7 +592,7 @@ text / table 抽取时，可在 prompt 里要求 LLM 除 `value` / `reason` 外�
 多半是**没检索到内容**，而非 LLM 出错。逐步排查：
 1. 用 `POST /extraction/test`（同步）或 `POST /extraction/test/stream`（SSE）传 `file_id` + `field_id`/`config` 调试，看返回的 `search_results` / `llm_input` 是不是空——占位符被替换成了「未找到」就说明检索没命中。
 2. table：`table_match_type` 从严放宽（`exact` → `fuzzy` → `contains`），或确认表名是否被 tableing 阶段正确识别（看文件详情的表格页）。
-3. text：确认 `keywords` / `section_pattern` / `query_text` 在文档里确实存在；关键词太生僻或写法不一致时多给几个近义词。
+3. text：确认 `keywords` / `section_pattern` / `query_text` 在文档里确实存在；关键词太生僻或写法不一致时多给几个近义词。`vector_db` 若整体无命中，先确认该文件是否在当前 Milvus collection 里有子块向量——`_base_4` 上线前解析的存量文件需 `POST /file/{id}/retry/chunking` 重跑才会产出子块。
 4. 文档本身是扫描图、Markdown 里根本没有该文字 → 改用 `vl`。
 
 ### 9.3 VL 抽取报 404 / 无输出

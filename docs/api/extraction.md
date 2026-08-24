@@ -93,7 +93,7 @@ _data 为数组，每个元素：_
 - `section`：`section_pattern` / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)；`section_match_type=llm` 时另可配 `section_match_prompt`（自定义匹配提示词，空=用系统默认，须含 `{section_list}`）
 - `rule`：`keywords`[必] / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)
 - `chunk_db`：`keywords`[必] / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)
-- `vector_db`：`query_text` / `top_k`(5) / `score_threshold`
+- `vector_db`：`query_text`（单串或数组，数组=多路检索，每路一个独立占位符标签） / `top_k`（可选，不配则走阈值+相对分差）/ `score_threshold` / `score_ratio`(0.85)
 - `page`：`page_range`（如 `"1-3"` / `"all"` / `"2"`）/ `max_length`(30000，末尾截断)；进阶字段另可配 `page_source_field`（来源普通字段 ID，取其模型自报页码派生区间并覆盖 `page_range`）/ `max_pages`（派生区间最大跨度）（结构详见 [search_config](../reference/data-model.md#extraction_field)） |
 | text_system_prompt | string | 否 | — | [text] LLM system prompt（可空）。 |
 | text_extract_prompt | string | 否 | — | [text] 抽取 prompt；`source_type=text` 时须含至少一个 `<search_result>标签</search_result>`。 |

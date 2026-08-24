@@ -144,7 +144,7 @@ Multi-type configuration support: each file is bound to one `type_id` (default `
 ### Extraction System (`service/extraction_service.py`)
 Three source types:
 - **table** - Matches tables by name (exact/fuzzy/contains/llm), extracts via LLM with `<search_result>label</search_result>` placeholder system in prompts.
-- **text** - 6 search methods: `context` (keyword+surrounding text), `section` (chapter matching), `rule` (keyword+stopword boundary), `chunk_db` (MySQL chunk search), `vector_db` (Milvus semantic search；`query_text` 同时作为占位符标签，结果以 `<search_result>query_text</search_result>` 注入), `page` (按 `page_range` 直接切 markdown 喂 LLM；占位符固定为 `<search_result>page_content</search_result>`，可配 `max_length` 末尾截断). Results injected into prompt via same placeholder system.
+- **text** - 6 search methods: `context` (keyword+surrounding text), `section` (chapter matching), `rule` (keyword+stopword boundary), `chunk_db` (MySQL chunk search), `vector_db`（**单文件全量打分，不走 ANN**：`query_text` 可为单串或数组，数组=多路检索且**每路一个独立占位符标签**）, `page` (按 `page_range` 直接切 markdown 喂 LLM；占位符固定为 `<search_result>page_content</search_result>`，可配 `max_length` 末尾截断). Results injected into prompt via same placeholder system.
 - **vl** - 三种基于 VL 视觉模型的端到端 PDF 抽取。直接读 `uploads/{file_id}.pdf`，跳过 MinerU 解析的 Markdown：
   - `vl_model`：指定页全部塞 VL 一次出 JSON。配置 `page_range`。
   - `vl_progressive`：分批扫描 + 伪历史累积 + 最后文本聚合。配置 `field_hints`、`batch_size`，可自定义 `batch_prompt_template`。
@@ -172,6 +172,12 @@ Three source types:
   - **调试接口**：`/extraction/test` 与 `/test/stream` 共用 `_build_temp_field`（透传 `is_advanced`），进阶字段先经 `resolve_advanced_field_from_db`（读该文件**已落库**的普通字段结果）解析再调试；非流式在响应里多回 `resolved_refs`，流式先推 `resolved_refs` 事件。
   - **复制/导入**：`_remap_advanced_field_config` 返回 `(attrs, missing)`，未被一起复制的引用记入 `missing_dependencies`（格式 `字段名::源field_id`），不静默留悬空引用。
   - 前端：字段配置页拆「普通字段」白框 + 「进阶字段」浅绿框两区，进阶表单用 K 按钮插入字段引用（chip 显示被引字段中文名，原始占位符存 `data-value`），`page` 检索多出「页码来源字段 + 最大页数」。
+- **向量检索的父子分块与全量打分**：检索单元与返回单元解耦。父块（512 字，`file_chunk` 表）是喂 LLM 的返回单元；**子块**（128 字，`service/subchunk_service.py`，只进 Milvus，带 `parent_chunk_id`）是向量匹配单元——512 字块压成一个向量时目标信号被稀释，切小又丢上下文。表格块不切子块（整表一个语义单元）。子块**不落 MySQL**，纯粹是「向量化实现细节」，命中后靠 `parent_chunk_id` 回快照取父块文本。`embed_chunks` 返回 `(sub_chunks, embeddings)` 二元组，pipeline 4 处调用点都要解包。
+  - **抽取链路不走 ANN**（`service/file_vector_index.py`）：检索恒带 `file_id` 过滤，范围只有单文件几千子块，而 IVF 先选簇再过滤、`nprobe 16/nlist 4096` 只探 0.4% 的簇，该文件的块大概率不落在被探到的簇里 → **静默丢召回且完全不可察**。改为按 `file_id` 把子块向量整批拉进 `extraction_snapshot`、内存归一化点积（点积即余弦，与 Milvus `COSINE` 对齐）。Milvus 在此退化成 KV 存储，ANN 索引只服务 `/search`。
+  - **三条硬约束**：① 全量拉取的 `output_fields` **绝不含 `chunk_content`**（子块存了完整文本，1.2 万子块的文本会让传输量雪崩，父块文本从快照取）；② Milvus gRPC 同步且单次可传上百 MB，**必须 `asyncio.to_thread`**，否则期间所有并发请求冻结；③ 子块数超 `milvus.max_bruteforce_subchunks`（默认 20000，4096 维下 ≈ 327MB）时 `degraded=True` 回落 ANN。
+  - **快照顺序**：`load_extraction_snapshot` 的 `need_vectors` 由 `needs_vector_index(all_fields)` 决定，故**字段列表必须在快照之前查**（原先相反）。Milvus 挂了只让 `vector_index=None`（vector_db 字段无命中），不拖垮整个提取阶段。
+  - **返回条数**：`top_k` 未配时走 `score_threshold`（绝对下限）+ `score_ratio`（相对分差，默认 0.85）+ `milvus.max_results`（默认 20）兜底；显式配了 `top_k` 则尊重存量配置。硬 top_k 本身就是「召回不到」的另一半原因。前端三项均「留空=不下发」，否则硬写 `top_k` 会让新路径永不生效。
+  - **存量文件**：collection 换成 `_base_4`（新增 `parent_chunk_id`），`_base_3` 的父块向量**不迁移**。存量文件的 `vector_db` 检索返空并打 warning，需 `POST /file/{id}/retry/chunking` 重跑（**从 chunking 起**，从 embedding 起不会重切子块）。
 
 ### Analysis System (`service/analysis_service.py`)
 Two rule types:
@@ -185,7 +191,7 @@ Two rule types:
 - **MinerU** (`service/mineru_client.py`) - External PDF parsing service. Polled async via httpx. Returns md_content + middle_json; page_mapping is built via `build_page_mapping`（全局唯一锚 + LIS 单调清洗，数据源 middle_json，bbox 为原生页坐标）。存量文件可经 `POST /file/{id}/recompute_page_mapping` 用落库 md+middle_json 重算刷新（无需重传）。
 - **LLM** (`utils/llm_client.py`) - OpenAI-compatible API (default: Qwen via DashScope). Retry with exponential backoff; skips 4xx errors except 429.
 - **Embedding** - OpenAI-compatible embedding API (default: text-embedding-v4 via DashScope). Batches requests, truncates to 8192 chars.
-- **Milvus** (`utils/milvus_client.py`) - Vector database for semantic search. Collection auto-created on startup with IVF_FLAT index.
+- **Milvus** (`utils/milvus_client.py`) - Vector database for semantic search. Collection auto-created on startup with IVF_FLAT index. 存**子块**向量（`chunk_id`=子块 id、`parent_chunk_id`→父块），schema 由 `build_collection_schema()` 单点定义；`INSERT_COLUMNS` 与 schema 字段顺序**必须一致**，错位不报错只会让向量与文本静默对不上。ANN 索引只对 `/search` 跨文件检索有意义——抽取链路走 `file_vector_index` 的内存全量打分。
 
 ## Key Patterns
 
