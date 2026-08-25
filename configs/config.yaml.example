@@ -45,6 +45,7 @@ milvus:
   metric_type: "L2"                                  # 向量距离度量类型，如 L2/COSINE
   nlist: 4096                                         # IVF 索引聚类数
   search_topk: 10                                     # 向量检索默认返回条数
+  max_insert_bytes: 33554432                         # 单次 insert 估算上限，默认 32 MiB，低于 gRPC 64 MiB 限制
 
 # MySQL 数据库配置
 mysql:

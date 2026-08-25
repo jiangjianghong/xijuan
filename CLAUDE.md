@@ -191,7 +191,7 @@ Two rule types:
 - **MinerU** (`service/mineru_client.py`) - External PDF parsing service. Polled async via httpx. Returns md_content + middle_json; page_mapping is built via `build_page_mapping`（全局唯一锚 + LIS 单调清洗，数据源 middle_json，bbox 为原生页坐标）。存量文件可经 `POST /file/{id}/recompute_page_mapping` 用落库 md+middle_json 重算刷新（无需重传）。
 - **LLM** (`utils/llm_client.py`) - OpenAI-compatible API (default: Qwen via DashScope). Retry with exponential backoff; skips 4xx errors except 429.
 - **Embedding** - OpenAI-compatible embedding API (default: text-embedding-v4 via DashScope). Batches requests, truncates to 8192 chars.
-- **Milvus** (`utils/milvus_client.py`) - Vector database for semantic search. Collection auto-created on startup with IVF_FLAT index. 存**子块**向量（`chunk_id`=子块 id、`parent_chunk_id`→父块），schema 由 `build_collection_schema()` 单点定义；`INSERT_COLUMNS` 与 schema 字段顺序**必须一致**，错位不报错只会让向量与文本静默对不上。ANN 索引只对 `/search` 跨文件检索有意义——抽取链路走 `file_vector_index` 的内存全量打分。
+- **Milvus** (`utils/milvus_client.py`) - Vector database for semantic search. Collection auto-created on startup with IVF_FLAT index. 存**子块**向量（`chunk_id`=子块 id、`parent_chunk_id`→父块），schema 由 `build_collection_schema()` 单点定义；`INSERT_COLUMNS` 与 schema 字段顺序**必须一致**，错位不报错只会让向量与文本静默对不上（回归保护见 `tests/test_milvus_insert_contract.py`）。**自动建库只在 collection 不存在时发生**：同名 collection 已存在时 `ensure_collection` 先用 `describe_schema_mismatch` 比对字段名 + 顺序 + 向量维度，不一致抛 `MilvusSchemaMismatchError`（`init_service` 吞成 error 日志，应用照常启动、只有向量功能不可用）。漏了这层校验时，`collection_name` 指向改造前的旧库（9 字段、无 `parent_chunk_id`）会一路潜伏到 embedding 末尾的 insert 才爆成 `expect 9 list, got 10`，白烧一整轮 embedding 且看不出是配置指错了库（2026-08-25 线上事故）。维度读不到时**跳过**校验而非报错——误判会让守卫自己变成故障源。ANN 索引只对 `/search` 跨文件检索有意义——抽取链路走 `file_vector_index` 的内存全量打分。
 
 ## Key Patterns
 

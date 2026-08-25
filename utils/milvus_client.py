@@ -28,6 +28,49 @@ INSERT_COLUMNS = [
 # 检索结果回填的标量字段（不含 embedding）。
 OUTPUT_FIELDS = [c for c in INSERT_COLUMNS if c != "embedding"]
 
+# protobuf 每行还有字段标签、长度和列级元数据。这里按行额外预留空间，
+# 再配合默认 32 MiB 预算，共同保证实际请求明显低于 64 MiB 服务端上限。
+_INSERT_ROW_OVERHEAD_BYTES = 256
+
+
+def estimate_row_bytes(row: Dict[str, Any]) -> int:
+    """保守估算一条 Milvus insert 记录的序列化体积。"""
+    size = _INSERT_ROW_OVERHEAD_BYTES
+    for name in INSERT_COLUMNS:
+        value = row.get(name)
+        if name == "embedding":
+            size += len(value or []) * 4
+        elif isinstance(value, str):
+            size += len(value.encode("utf-8"))
+        elif value is not None:
+            size += 8
+    return size
+
+
+def plan_insert_batches(
+    data: List[Dict[str, Any]], max_bytes: int
+) -> List[List[Dict[str, Any]]]:
+    """按估算报文体积切分 insert 批次，保持原始行顺序。"""
+    if not data:
+        return []
+
+    batches: List[List[Dict[str, Any]]] = []
+    current: List[Dict[str, Any]] = []
+    current_bytes = 0
+
+    for row in data:
+        row_bytes = estimate_row_bytes(row)
+        if current and current_bytes + row_bytes > max_bytes:
+            batches.append(current)
+            current = []
+            current_bytes = 0
+        current.append(row)
+        current_bytes += row_bytes
+
+    if current:
+        batches.append(current)
+    return batches
+
 
 def build_collection_schema(dim: int) -> CollectionSchema:
     """构造子块 collection 的 schema。
@@ -48,6 +91,67 @@ def build_collection_schema(dim: int) -> CollectionSchema:
         FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dim),
     ]
     return CollectionSchema(fields=fields, description="file_subchunks")
+
+
+class MilvusSchemaMismatchError(RuntimeError):
+    """已存在的 collection 与当前代码的 schema 不一致。
+
+    典型成因：`milvus.collection_name` 指向了父子分块改造前建的旧库（9 字段、
+    无 parent_chunk_id）。不校验就复用，错误会一路潜伏到 embedding 末尾的
+    insert 才爆成 `expect 9 list, got 10`——既看不出是配置指错了库，
+    又白烧了一整轮 embedding 调用。
+    """
+
+
+def _vector_dim(field: Any) -> Optional[int]:
+    """取向量字段声明的维度，非向量字段返回 None。"""
+    return (getattr(field, "params", None) or {}).get("dim")
+
+
+def describe_schema_mismatch(existing_fields: List[Any], expected_fields: List[Any]) -> Optional[str]:
+    """比对已存在 collection 与期望 schema 的字段，一致返回 None。
+
+    顺序也必须一致：insert 按 INSERT_COLUMNS 行转列，pymilvus 按 schema 字段
+    顺序对位，顺序错了**不报错**、只会让向量与文本静默对不上。
+
+    Args:
+        existing_fields: 已存在 collection 的 schema.fields。
+        expected_fields: build_collection_schema() 的 fields。
+
+    Returns:
+        人类可读的差异描述；完全一致时返回 None。
+    """
+    existing_names = [f.name for f in existing_fields]
+    expected_names = [f.name for f in expected_fields]
+
+    if existing_names != expected_names:
+        missing = [n for n in expected_names if n not in existing_names]
+        extra = [n for n in existing_names if n not in expected_names]
+        parts = []
+        if missing:
+            parts.append(f"缺少字段 {missing}")
+        if extra:
+            parts.append(f"多出字段 {extra}")
+        if not parts:
+            parts.append(f"字段顺序不一致（现有 {existing_names}，期望 {expected_names}）")
+        return "；".join(parts)
+
+    existing_by_name = {f.name: f for f in existing_fields}
+    for expected in expected_fields:
+        expected_dim = _vector_dim(expected)
+        if expected_dim is None:
+            continue
+        actual_dim = _vector_dim(existing_by_name[expected.name])
+        # actual 读不到时不报警：pymilvus 从服务端还原 schema 的表示可能没带 dim，
+        # 误判会让守卫自己变成故障源（向量化 / 检索全线不可用）。真实的维度不符
+        # 一律带得出整数，读不到就交给 insert 自己报维度错。
+        if actual_dim is None:
+            logger.warning("无法读取已存在字段 {} 的向量维度，跳过维度校验", expected.name)
+            continue
+        if actual_dim != expected_dim:
+            return f"字段 {expected.name} 的向量维度不一致（现有 {actual_dim}，期望 {expected_dim}）"
+
+    return None
 
 
 class MilvusClient:
@@ -71,23 +175,41 @@ class MilvusClient:
         connections.connect(**connect_kwargs)
 
     def ensure_collection(self, embedding_dim: Optional[int] = None) -> Collection:
-        """确保 Collection 存在，不存在则创建。
+        """确保 Collection 存在，不存在则创建；已存在则校验 schema 后复用。
 
         Args:
             embedding_dim: 向量维度，默认从 embedding 配置读取。
 
         Returns:
             Milvus Collection 对象。
+
+        Raises:
+            MilvusSchemaMismatchError: 同名 collection 已存在但 schema 与当前
+                代码不一致（如指向了改造前的旧库）。
         """
         dim = embedding_dim or get_config().embedding.embedding_dim
         name = self.config.collection_name
+        schema = build_collection_schema(dim)
 
         if utility.has_collection(name):
-            self._collection = Collection(name)
-            self._collection.load()
-            return self._collection
+            collection = Collection(name)
+            # 已存在不等于可用：schema 不匹配必须当场炸，别留到 insert
+            mismatch = describe_schema_mismatch(collection.schema.fields, schema.fields)
+            if mismatch:
+                raise MilvusSchemaMismatchError(
+                    f"Milvus collection '{name}' 的 schema 与当前代码不一致：{mismatch}。"
+                    f"这通常是 milvus.collection_name 指向了父子分块改造前建的旧库"
+                    f"（9 字段、无 parent_chunk_id）。处理方式二选一："
+                    f"①把 configs/config.yaml 的 milvus.collection_name 换成一个全新的名字，"
+                    f"重启后会自动按当前 schema 建库；"
+                    f"②先 uv run python scripts/drop_milvus_collection.py 删掉旧库再重启。"
+                    f"两种方式下存量文件都需 POST /file/{{file_id}}/retry/embedding "
+                    f"重新切分并灌入子块向量。"
+                )
+            collection.load()
+            self._collection = collection
+            return collection
 
-        schema = build_collection_schema(dim)
         self._collection = Collection(name=name, schema=schema)
 
         index_params = {
@@ -114,15 +236,27 @@ class MilvusClient:
         if collection is None:
             collection = self.ensure_collection()
 
-        # 行转列，列顺序严格按 INSERT_COLUMNS
-        columns: Dict[str, List[Any]] = {name: [] for name in INSERT_COLUMNS}
-        for row in data:
-            for key in INSERT_COLUMNS:
-                columns[key].append(row[key])
+        batches = plan_insert_batches(data, self.config.max_insert_bytes)
+        logger.info(
+            "Milvus 准备分 {} 批插入 {} 条记录，单批预算 {} MiB",
+            len(batches),
+            len(data),
+            self.config.max_insert_bytes // (1024 * 1024),
+        )
+        for batch_index, batch in enumerate(batches, start=1):
+            # 行转列，列顺序严格按 INSERT_COLUMNS
+            columns: Dict[str, List[Any]] = {name: [] for name in INSERT_COLUMNS}
+            for row in batch:
+                for key in INSERT_COLUMNS:
+                    columns[key].append(row[key])
+            collection.insert([columns[name] for name in INSERT_COLUMNS])
+            logger.info(
+                "Milvus 插入批次 {}/{} 完成，本批 {} 条",
+                batch_index,
+                len(batches),
+                len(batch),
+            )
 
-        insert_data = [columns[name] for name in INSERT_COLUMNS]
-
-        collection.insert(insert_data)
         collection.flush()
         logger.info("Milvus 插入 {} 条记录", len(data))
 

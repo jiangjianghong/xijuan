@@ -89,6 +89,9 @@ class MilvusConfig(BaseModel):
     score_ratio: float = 0.85
     # 未显式配 top_k 时的返回条数安全上限。
     max_results: int = 20
+    # 单次 insert 的保守报文预算。Milvus 默认 gRPC 接收上限为 64 MiB，
+    # 留一半空间给 protobuf 列编码、字段元数据和估算误差。
+    max_insert_bytes: int = Field(32 * 1024 * 1024, ge=1)
 
 
 class MySQLConfig(BaseModel):
