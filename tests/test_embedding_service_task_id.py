@@ -19,14 +19,16 @@ async def test_embed_chunks_passes_file_id_as_task_id(monkeypatch):
     monkeypatch.setattr(embedding_service, "get_embeddings", fake_get_embeddings)
 
     chunks = [
-        {"chunk_content": "a", "file_id": "file-xyz"},
-        {"chunk_content": "b", "file_id": "file-xyz"},
+        {"chunk_content": "a", "file_id": "file-xyz", "chunk_id": "p1"},
+        {"chunk_content": "b", "file_id": "file-xyz", "chunk_id": "p2"},
     ]
-    result = await embedding_service.embed_chunks(chunks)
+    sub_chunks, embeddings = await embedding_service.embed_chunks(chunks)
 
     assert captured["task_id"] == "file-xyz"
     assert captured["texts"] == ["a", "b"]
-    assert len(result) == 2
+    # 两个短父块各自成一个子块，向量数 = 子块数
+    assert len(sub_chunks) == 2
+    assert len(embeddings) == 2
 
 
 @pytest.mark.asyncio
@@ -39,6 +41,6 @@ async def test_embed_chunks_without_file_id_passes_none(monkeypatch):
 
     monkeypatch.setattr(embedding_service, "get_embeddings", fake_get_embeddings)
 
-    await embedding_service.embed_chunks([{"chunk_content": "a"}])
+    await embedding_service.embed_chunks([{"chunk_content": "a", "chunk_id": "p1"}])
 
     assert captured["task_id"] is None

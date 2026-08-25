@@ -70,7 +70,10 @@ def split_into_subchunks(parent_chunks: List[Dict]) -> List[Dict]:
             subs.append({
                 "chunk_id": f"{parent_id}_s{index}",
                 "parent_chunk_id": parent_id,
-                "file_id": parent["file_id"],
+                # file_id 用 get：缺失时 embed_chunks 的 task_id 为 None，
+                # 退化成只受 global_embedding 约束（chunk_id 则是父块映射的
+                # 结构性依赖，缺了必须炸，不能静默产出无法映射的向量）
+                "file_id": parent.get("file_id"),
                 "chunk_index": parent.get("chunk_index", 0),
                 "total_chunks": parent.get("total_chunks", 0),
                 "chunk_content": piece,
