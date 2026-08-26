@@ -730,6 +730,7 @@ class AnalysisTestRequest(BaseModel):
     file_id: str
     rule_id: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
+    re_extract: bool = False
 
 
 class AnalysisTestResponse(BaseModel):
