@@ -9,6 +9,8 @@ import pytest
 
 from service.table_name_utils import (
     _contains_table_type_word,
+    _extract_last_line,
+    _extract_table_name,
     _is_unknown_table_name,
     _looks_like_invalid_candidate,
     _looks_like_non_caption,
@@ -117,3 +119,35 @@ def test_is_unknown_keeps_real_names(name):
 def test_is_unknown_checks_image_syntax_before_bracket_stripping():
     """"![" 的括号会被 strip 掉，必须对未剥括号的原始候选做格式判断。"""
     assert _is_unknown_table_name("![](images/9c2.jpg)") is True
+
+
+def test_extract_last_line_skips_garbage_and_walks_up():
+    """最后一行是 HTML 残片时，继续向上找——旧实现死取最后一行会整条作废。"""
+    preceding = "\n".join([
+        "表 3-6 现状供水管道统计表",
+        "![](images/4b1.jpg)",
+        "</td></tr></table>",
+        "",
+    ])
+    assert _extract_last_line(preceding) == "表 3-6 现状供水管道统计表"
+
+
+def test_extract_last_line_skips_list_lead_lines():
+    preceding = "涉税基本情况\n1、货币资金"
+    assert _extract_last_line(preceding) == "涉税基本情况"
+
+
+def test_extract_last_line_returns_empty_when_nothing_valid():
+    assert _extract_last_line("![](a.png)\n</table>") == ""
+    assert _extract_last_line("") == ""
+
+
+def test_extract_table_name_falls_back_to_empty_not_unknown():
+    """找不到时返回空串：下游 `table_name or f'表格{index}'` 会兜底成「表格3」，
+    而「未知」会绕过这个兜底，还让多张表在 exact 模式下命中同一个名字。"""
+    assert _extract_table_name("![](a.png)") == ""
+
+
+def test_extract_table_name_truncates_to_30_chars():
+    long_name = "现状供水管道统计表" * 5
+    assert len(_extract_table_name(long_name)) == 30

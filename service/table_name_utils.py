@@ -104,16 +104,25 @@ def _looks_like_non_caption(name: str) -> bool:
 
 
 def _extract_last_line(preceding_text: str) -> str:
-    """提取表格前最后一行（模型失败时唯一回退）。"""
-    text = preceding_text.rstrip()
+    """回退：从表格上文由近及远找第一条合法行。
+
+    旧实现只取最后一行，而 MinerU 输出里表格紧邻的常常是图片语法或上一个表的
+    HTML 残片，取到就等于整条回退作废。
+    """
+    text = (preceding_text or "").rstrip()
     if not text:
         return ""
 
-    lines = text.splitlines()
-    if not lines:
-        return ""
-
-    return _clean_text_line(lines[-1])
+    for line in reversed(text.splitlines()):
+        candidate = _clean_text_line(line)
+        if not candidate:
+            continue
+        if _looks_like_invalid_candidate(candidate):
+            continue
+        if _looks_like_non_caption(candidate):
+            continue
+        return candidate
+    return ""
 
 
 def _build_llm_context_text(preceding_text: str, max_lines: int = 3) -> str:
@@ -140,9 +149,13 @@ def _build_llm_context_text(preceding_text: str, max_lines: int = 3) -> str:
 
 
 def _extract_table_name(preceding_text: str) -> str:
-    """规则回退：只取表格前最后一行。"""
-    name = _extract_last_line(preceding_text) or "未知"
-    return name[:30]
+    """规则回退表名；一条合法行都没有时返回空串。
+
+    返回空串而非「未知」：下游 extraction_service 已有
+    `table.table_name or f'表格{table.table_index}'` 兜底，空串会显示成「表格3」；
+    「未知」会绕过这个兜底，还让多张无名表在 exact 模式下命中同一个名字。
+    """
+    return _extract_last_line(preceding_text)[:30]
 
 
 def _is_unknown_table_name(name: str) -> bool:
