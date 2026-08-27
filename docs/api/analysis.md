@@ -192,6 +192,7 @@ _data 为数组，每个元素：_
 | file_id | string | 是 | — | 目标文件 ID（其 `extraction_result` 提供依赖字段值）。 |
 | rule_id | string | 否 | — | 已保存规则 ID；与 `config` 二选一。 |
 | config | object | 否 | — | 临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`；custom 另含 `is_formatted` / `output_schema`）；与 `rule_id` 二选一。 |
+| re_extract | boolean | 否 | False |  |
 <!-- /AUTOGEN:request-body -->
 
 ```jsonc
@@ -234,6 +235,7 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 | file_id | string | 是 | — | 目标文件 ID（其 `extraction_result` 提供依赖字段值）。 |
 | rule_id | string | 否 | — | 已保存规则 ID；与 `config` 二选一。 |
 | config | object | 否 | — | 临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`；custom 另含 `is_formatted` / `output_schema`）；与 `rule_id` 二选一。 |
+| re_extract | boolean | 否 | False |  |
 <!-- /AUTOGEN:request-body -->
 
 响应为 `text/event-stream`，事件清单见 [sse.md](sse.md)。

@@ -332,7 +332,11 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "**不要**重新上传（会产生新记录）。\n\n"
                 "原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n"
                 "**文件大小限制**：受 `mineru.max_file_size` 控制（默认 100MB / 104857600 字节），超限返回 "
-                "`ResponseWrapper{code:400, message:\"文件大小超过限制 (100MB)\"}`（不抛 HTTP 错误）。"
+                "`ResponseWrapper{code:400, message:\"文件大小超过限制 (100MB)\"}`（不抛 HTTP 错误）。\n\n"
+                "**`type_id` 校验**：类型必须已存在于 `doc_type`，否则返回 **HTTP 400** "
+                "`{detail:\"文档类型不存在: xxx\"}`（区别于文件大小超限的 body 内 `code`——"
+                "这里抛真正的 HTTP 错误，且不建档、不写盘）。"
+                "只校验存在性，**不校验 `enabled`**——禁用类型仍可上传。`default` 由启动流程保证存在。"
             ),
         }
     },
@@ -984,7 +988,7 @@ PARAM_OVERRIDES: Dict[tuple, Dict[str, Any]] = {
             "description": "处理模式：`async`（默认，后台任务立即返回）/ `sync`（阻塞至完成）/ `stream`（SSE 流）。其它值按 `sync` 处理。",
             "enum": ["async", "sync", "stream"],
         },
-        "type_id": "归属文档类型，默认 `default`；决定使用哪套字段/规则配置。",
+        "type_id": "归属文档类型，默认 `default`；决定使用哪套字段/规则配置。**必须已存在于 `doc_type`**，否则返回 HTTP 400。",
     },
     ("/file/{file_id}/retry/{stage}", "post"): {
         "stage": {

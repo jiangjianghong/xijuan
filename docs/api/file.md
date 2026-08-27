@@ -19,7 +19,7 @@
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
 | mode | string | 否 | async | 处理模式：`async`（默认，后台任务立即返回）/ `sync`（阻塞至完成）/ `stream`（SSE 流）。其它值按 `sync` 处理。（可选: async / sync / stream） |
-| type_id | string | 否 | default | 归属文档类型，默认 `default`；决定使用哪套字段/规则配置。 |
+| type_id | string | 否 | default | 归属文档类型，默认 `default`；决定使用哪套字段/规则配置。**必须已存在于 `doc_type`**，否则返回 HTTP 400。 |
 | callback_url | string | 否 | — | 可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时 2.5s，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。 |
 <!-- /AUTOGEN:query-params -->
 
@@ -50,6 +50,9 @@ curl -X POST "http://localhost:5019/file/parse?type_id=default&mode=async" \
 |---|---|---|
 | 200 | 已受理（async）/ 完成（sync） | ResponseWrapper |
 | 400 | 文件大小超限 | ResponseWrapper（`code:400`） |
+| 400 | `type_id` 在 `doc_type` 中不存在 | `{detail:"文档类型不存在: xxx"}`（真正的 HTTP 400） |
+
+> `type_id` 只校验存在性，不校验 `enabled`——被禁用的类型仍可上传。校验在建档与写盘之前，拒绝时不产生 `files` 记录与 `uploads/*.pdf`。
 
 > `callback_url` 在 async/sync 生效（每阶段 + 每条 field_done/rule_done + stage_done 都 POST，见 [callbacks.md](callbacks.md)）；stream 忽略它，走 [SSE](sse.md)。`mode` 非法值按 sync 处理。
 

@@ -556,6 +556,21 @@ async def parse_file(
 
     file_name = file.filename or "unknown.pdf"
     type_id = (type_id or "default").strip() or "default"
+
+    # 校验文档类型存在。不校验的话，错的 type_id 会静默建档并跑完整条管线，
+    # 最终 progress=complete 但字段/规则查不到任何配置、提取与分析结果全空——
+    # 调用方只看到「处理完成」，排查不到是类型传错了。
+    # 用 HTTPException 而非 ResponseWrapper(code=400)：前端三条上传路径都只认
+    # HTTP 状态码（ui/js/api.js 的 request / xhr.status / response.ok），body 里的
+    # code 无人消费；stream 模式下更会被当成 SSE 流读进去然后静默 resolve。
+    # 只校验存在性，不看 enabled：禁用类型的上传维持原行为。
+    # 'default' 由 init_service 启动时 INSERT IGNORE 保证存在，无需特例放行。
+    type_exists = (
+        await db.execute(select(DocType.type_id).where(DocType.type_id == type_id))
+    ).scalar_one_or_none()
+    if not type_exists:
+        raise HTTPException(status_code=400, detail=f"文档类型不存在: {type_id}")
+
     file_id = generate_file_id(type_id, file_name)
 
     # 持久化原始 PDF 字节，VL 抽取依赖（写盘失败不阻断主流程）
