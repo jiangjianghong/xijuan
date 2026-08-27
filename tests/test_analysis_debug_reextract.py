@@ -1,10 +1,15 @@
 """逻辑分析调试临时重新抽取测试。"""
 
+import importlib
 from types import SimpleNamespace
+
+import pytest
 
 from model.schemas import AnalysisTestRequest
 from model.tables import ExtractionField, File
-from service import extraction_service
+from service import analysis_service, extraction_service
+
+analysis_router = importlib.import_module("blue_print.analysis_router")
 
 
 def test_analysis_test_request_re_extract_defaults_false():
@@ -212,3 +217,199 @@ async def test_temporary_extraction_uses_same_run_basic_value_without_db_writes(
     assert items[1]["value"] == "本次进阶值"
     assert items[1]["source_pages"] == [2]
     assert unregister_calls == [("task_extraction", "f1")]
+
+
+def _temporary_item(*, value="7", success=True):
+    return {
+        "field_id": "a",
+        "field_name": "字段 a",
+        "value": value,
+        "reason": "本次理由",
+        "pages": [2],
+        "source_pages": [2],
+        "source_refs": None,
+        "success": success,
+        "index": 1,
+        "total": 1,
+        "is_direct_dependency": True,
+    }
+
+
+async def _collect_rule_events(session, *, re_extract):
+    return [
+        event
+        async for event in analysis_service.test_rule_analysis_stream(
+            "f1",
+            "calc",
+            "<field_result>a</field_result> + 1",
+            ["a"],
+            "",
+            session,
+            re_extract=re_extract,
+        )
+    ]
+
+
+async def test_rule_debug_reextract_uses_only_ephemeral_values(monkeypatch):
+    plan = SimpleNamespace(
+        ordered_fields=(SimpleNamespace(field_id="a"),),
+        direct_field_ids=("a",),
+    )
+
+    async def fake_build(*_args, **_kwargs):
+        return plan
+
+    async def fake_iter(_plan):
+        yield _temporary_item()
+
+    monkeypatch.setattr(
+        analysis_service, "build_temporary_extraction_plan", fake_build
+    )
+    monkeypatch.setattr(
+        analysis_service, "iter_temporary_extraction_results", fake_iter
+    )
+    old_session = _QueuedSession(
+        [_ScalarResult(rows=[SimpleNamespace(field_id="a", extracted_value="100")])]
+    )
+
+    events = await _collect_rule_events(old_session, re_extract=True)
+
+    assert [event["event"] for event in events[:3]] == [
+        "extraction_started",
+        "extraction_field",
+        "extraction_done",
+    ]
+    input_event = next(event for event in events if event["event"] == "input_values")
+    assert input_event["data"]["input_values"] == {"a": "7"}
+    resolved = next(
+        event for event in events if event["event"] == "resolved_expression"
+    )
+    assert resolved["data"]["resolved_expression"] == "7 + 1"
+    assert old_session._results, "重新抽取开启时不应查询数据库旧结果"
+
+
+async def test_rule_debug_without_reextract_keeps_existing_event_sequence():
+    session = _QueuedSession(
+        [_ScalarResult(rows=[SimpleNamespace(field_id="a", extracted_value="5")])]
+    )
+
+    events = await _collect_rule_events(session, re_extract=False)
+
+    assert events[0]["event"] == "input_values"
+    assert all(not event["event"].startswith("extraction_") for event in events)
+
+
+@pytest.mark.parametrize(
+    ("item", "message_fragment"),
+    [
+        (_temporary_item(value="", success=False), "a"),
+        (_temporary_item(value="", success=True), "a"),
+    ],
+)
+async def test_rule_debug_reextract_stops_when_direct_field_invalid(
+    monkeypatch,
+    item,
+    message_fragment,
+):
+    plan = SimpleNamespace(
+        ordered_fields=(SimpleNamespace(field_id="a"),),
+        direct_field_ids=("a",),
+    )
+
+    async def fake_build(*_args, **_kwargs):
+        return plan
+
+    async def fake_iter(_plan):
+        yield item
+
+    monkeypatch.setattr(
+        analysis_service, "build_temporary_extraction_plan", fake_build
+    )
+    monkeypatch.setattr(
+        analysis_service, "iter_temporary_extraction_results", fake_iter
+    )
+
+    events = await _collect_rule_events(_QueuedSession([]), re_extract=True)
+
+    assert [event["event"] for event in events[:3]] == [
+        "extraction_started",
+        "extraction_field",
+        "extraction_done",
+    ]
+    error = next(event for event in events if event["event"] == "error")
+    assert message_fragment in error["data"]["message"]
+    assert all(event["event"] != "resolved_expression" for event in events)
+
+
+def _debug_request(*, re_extract=True):
+    return AnalysisTestRequest(
+        file_id="f1",
+        config={
+            "rule_type": "calc",
+            "expression": "<field_result>a</field_result> + 1",
+            "depend_fields": ["a"],
+        },
+        re_extract=re_extract,
+    )
+
+
+async def test_analysis_stream_router_passes_reextract_flag(monkeypatch):
+    captured = {}
+
+    async def fake_stream(*_args, **kwargs):
+        captured["re_extract"] = kwargs["re_extract"]
+        yield {"event": "done", "data": {}}
+
+    monkeypatch.setattr(analysis_router, "test_rule_analysis_stream", fake_stream)
+
+    response = await analysis_router.test_analysis_stream(
+        _debug_request(), _QueuedSession([])
+    )
+    body = b""
+    async for chunk in response.body_iterator:
+        body += chunk.encode() if isinstance(chunk, str) else chunk
+
+    assert captured["re_extract"] is True
+    assert b"event: done" in body
+
+
+async def test_analysis_nonstream_router_collects_shared_stream(monkeypatch):
+    captured = {}
+
+    async def fake_stream(*_args, **kwargs):
+        captured["re_extract"] = kwargs["re_extract"]
+        yield {
+            "event": "input_values",
+            "data": {"input_values": {"a": "7"}},
+        }
+        yield {
+            "event": "resolved_expression",
+            "data": {"resolved_expression": "7 + 1"},
+        }
+        yield {
+            "event": "result",
+            "data": {"result_value": "8", "reason": "计算完成"},
+        }
+        yield {"event": "done", "data": {}}
+
+    monkeypatch.setattr(analysis_router, "test_rule_analysis_stream", fake_stream)
+
+    response = await analysis_router.test_analysis(_debug_request(), _QueuedSession([]))
+
+    assert captured["re_extract"] is True
+    assert response.data["input_values"] == {"a": "7"}
+    assert response.data["expression_resolved"] == "7 + 1"
+    assert response.data["result_value"] == "8"
+
+
+async def test_analysis_nonstream_router_turns_stream_error_into_422(monkeypatch):
+    async def fake_stream(*_args, **_kwargs):
+        yield {"event": "error", "data": {"message": "字段 a 抽取失败"}}
+
+    monkeypatch.setattr(analysis_router, "test_rule_analysis_stream", fake_stream)
+
+    with pytest.raises(Exception) as exc_info:
+        await analysis_router.test_analysis(_debug_request(), _QueuedSession([]))
+
+    assert getattr(exc_info.value, "status_code", None) == 422
+    assert "字段 a 抽取失败" in str(getattr(exc_info.value, "detail", ""))

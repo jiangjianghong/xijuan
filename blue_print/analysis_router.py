@@ -24,11 +24,10 @@ from model.schemas import (
     AnalysisTestResponse,
     ResponseWrapper,
 )
-from model.tables import AnalysisRule, ExtractionResult
-from service.analysis_service import apply_web_search, execute_calc, execute_custom, execute_judge, resolve_expression, test_rule_analysis_stream
+from model.tables import AnalysisRule
+from service.analysis_service import test_rule_analysis_stream
 from service.analysis_run_service import run_analysis_batch
 from utils.callback import build_analysis_task_payload, notify_analysis_task_callback
-from utils.config import get_config
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -192,48 +191,32 @@ async def test_analysis(
     else:
         raise HTTPException(status_code=400, detail="必须提供 rule_id 或 config")
 
-    try:
-        # 获取依赖字段值
-        stmt = select(ExtractionResult).where(ExtractionResult.file_id == file_id)
-        result = await db.execute(stmt)
-        extraction_results = result.scalars().all()
-        field_values: Dict[str, str] = {
-            er.field_id: er.extracted_value for er in extraction_results
-        }
-
-        # 构建 input_values
-        for field_id in depend_fields:
-            input_values[field_id] = field_values.get(field_id, "")
-
-        # 解析表达式
-        expression_resolved = resolve_expression(expression, field_values)
-
-        # 执行计算/判断
-        cfg = get_config().analysis
-        if rule_type == "judge":
-            expression_resolved, _ws_ref = await apply_web_search(
-                expression_resolved, web_search, field_values
+    async for item in test_rule_analysis_stream(
+        file_id,
+        rule_type,
+        expression,
+        depend_fields,
+        system_prompt,
+        db,
+        web_search=web_search,
+        is_formatted=is_formatted,
+        output_schema=output_schema,
+        re_extract=req.re_extract,
+    ):
+        event = item["event"]
+        data = item["data"]
+        if event == "input_values":
+            input_values = data.get("input_values", {})
+        elif event == "resolved_expression":
+            expression_resolved = data.get("resolved_expression", "")
+        elif event == "result":
+            result_value = data.get("result_value", "")
+            reason = data.get("reason", "")
+        elif event == "error":
+            raise HTTPException(
+                status_code=422,
+                detail=data.get("message", "分析测试失败"),
             )
-            result_value, reason = await execute_judge(expression_resolved, system_prompt=system_prompt)
-        elif rule_type == "calc":
-            result_value, reason = await execute_calc(expression_resolved, cfg.calc_precision)
-        elif rule_type == "custom":
-            expression_resolved, _ws_ref = await apply_web_search(
-                expression_resolved, web_search, field_values
-            )
-            result_value, reason = await execute_custom(
-                expression_resolved,
-                is_formatted=bool(is_formatted),
-                output_schema=output_schema,
-                system_prompt=system_prompt,
-            )
-        else:
-            result_value = f"未知规则类型: {rule_type}"
-            reason = ""
-
-    except Exception as e:
-        logger.error("分析测试失败: {}", e)
-        raise HTTPException(status_code=500, detail=str(e))
 
     return ResponseWrapper(
         data=AnalysisTestResponse(
@@ -497,6 +480,7 @@ async def test_analysis_stream(
         async for item in test_rule_analysis_stream(
             file_id, rule_type, expression, depend_fields, system_prompt, db,
             web_search=web_search, is_formatted=is_formatted, output_schema=output_schema,
+            re_extract=req.re_extract,
         ):
             yield _sse_event(item["event"], item["data"])
 

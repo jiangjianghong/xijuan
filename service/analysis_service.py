@@ -16,6 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.database import rollback_if_broken
 from model.tables import AnalysisResult, AnalysisRule, ExtractionResult, File
+from service.extraction_service import (
+    build_temporary_extraction_plan,
+    iter_temporary_extraction_results,
+)
 from utils.callback import notify_callback
 from utils.config import get_config
 from utils.concurrency import (
@@ -773,6 +777,7 @@ async def test_rule_analysis_stream(
     web_search: Optional[dict] = None,
     is_formatted: int = 0,
     output_schema: Optional[list] = None,
+    re_extract: bool = False,
 ) -> AsyncIterator[Dict[str, Any]]:
     """单条规则调试流式接口，分步 yield 各阶段结果。
 
@@ -800,13 +805,58 @@ async def test_rule_analysis_stream(
 
     # ── Step 1: 获取依赖字段值 ──
     try:
-        stmt = select(ExtractionResult).where(ExtractionResult.file_id == file_id)
-        result = await session.execute(stmt)
-        extraction_results = result.scalars().all()
+        if re_extract:
+            plan = await build_temporary_extraction_plan(
+                file_id, depend_fields, session
+            )
+            yield {
+                "event": "extraction_started",
+                "data": {"total": len(plan.ordered_fields)},
+            }
+            extraction_items = []
+            async for item in iter_temporary_extraction_results(plan):
+                extraction_items.append(item)
+                yield {"event": "extraction_field", "data": item}
 
-        field_values: Dict[str, str] = {
-            er.field_id: er.extracted_value for er in extraction_results
-        }
+            succeeded = sum(1 for item in extraction_items if item["success"])
+            yield {
+                "event": "extraction_done",
+                "data": {
+                    "total": len(extraction_items),
+                    "succeeded": succeeded,
+                    "failed": len(extraction_items) - succeeded,
+                },
+            }
+            items_by_id = {item["field_id"]: item for item in extraction_items}
+            invalid_fields = []
+            for field_id in depend_fields:
+                item = items_by_id.get(field_id)
+                if (
+                    not item
+                    or not item["success"]
+                    or not str(item["value"] or "").strip()
+                ):
+                    invalid_fields.append(field_id)
+            if invalid_fields:
+                yield {
+                    "event": "error",
+                    "data": {
+                        "message": "本次抽取的依赖字段失败或为空: "
+                        + ", ".join(invalid_fields)
+                    },
+                }
+                return
+            field_values = {
+                field_id: str(item["value"] or "")
+                for field_id, item in items_by_id.items()
+            }
+        else:
+            stmt = select(ExtractionResult).where(ExtractionResult.file_id == file_id)
+            result = await session.execute(stmt)
+            extraction_results = result.scalars().all()
+            field_values = {
+                er.field_id: er.extracted_value for er in extraction_results
+            }
 
         input_values: Dict[str, str] = {}
         for fid in depend_fields:
