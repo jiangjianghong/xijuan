@@ -7,6 +7,19 @@ from typing import Any, Dict, Optional
 import httpx
 from loguru import logger
 
+from utils.config import get_config
+
+
+def _resolve_timeout(timeout: Optional[float]) -> float:
+    """显式参数优先，否则取当前配置快照。
+
+    每次调用都重读配置，故设置页改完即生效，无需重启（默认参数写死会在
+    函数定义时求值一次，热配置就失效了）。
+    """
+    if timeout is not None:
+        return timeout
+    return get_config().callback.timeout
+
 
 async def _post_callback_payload(
     callback_url: Optional[str],
@@ -47,7 +60,7 @@ async def notify_callback(
     *,
     event: Optional[str] = None,
     data: Optional[Dict[str, Any]] = None,
-    timeout: float = 2.5,
+    timeout: Optional[float] = None,
 ) -> None:
     """向回调地址 POST 阶段状态。
 
@@ -63,7 +76,8 @@ async def notify_callback(
         status: 当前阶段状态（parsing / tableing / chunking / embedding / extracting / analyzing / complete）。
         event: 可选事件类型（field_done / rule_done / stage_done）。
         data: 可选事件数据，仅在 event 非空时携带。
-        timeout: HTTP 请求超时（秒）。默认 2.5s，避免接收端慢拖累主流程。
+        timeout: HTTP 请求超时（秒）。为空时取 callback.timeout 配置（默认
+            2.5s，避免接收端慢拖累主流程）。
     """
     payload: Dict[str, Any] = {"file_id": file_id, "status": status}
     if event:
@@ -71,7 +85,9 @@ async def notify_callback(
         if data is not None:
             payload["data"] = data
 
-    await _post_callback_payload(callback_url, payload, timeout=timeout)
+    await _post_callback_payload(
+        callback_url, payload, timeout=_resolve_timeout(timeout)
+    )
 
 
 def build_analysis_task_payload(
@@ -98,9 +114,12 @@ async def notify_analysis_task_callback(
     *,
     event: Optional[str] = None,
     data: Optional[Dict[str, Any]] = None,
-    timeout: float = 2.5,
+    timeout: Optional[float] = None,
 ) -> None:
-    """发送独立逻辑分析任务事件，失败不影响任务执行。"""
+    """发送独立逻辑分析任务事件，失败不影响任务执行。
+
+    timeout 为空时取 callback.timeout 配置。
+    """
 
     await _post_callback_payload(
         callback_url,
@@ -110,5 +129,5 @@ async def notify_analysis_task_callback(
             event=event,
             data=data,
         ),
-        timeout=timeout,
+        timeout=_resolve_timeout(timeout),
     )

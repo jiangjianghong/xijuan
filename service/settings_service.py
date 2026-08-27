@@ -28,6 +28,7 @@ OPEN_GROUPS = (
     "analysis",
     "vl_model",
     "web_search",
+    "callback",
     "storage",
     "concurrency",
 )

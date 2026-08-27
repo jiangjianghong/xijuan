@@ -670,7 +670,7 @@ curl -N -X POST "http://localhost:5019/file/parse?type_id=default&mode=stream" \
 
 - 每次上传都会生成新 `file_id`，不会因为文件名相同而复用旧记录。
 - 上传时会尝试把原始 PDF 写到 `uploads/{file_id}.pdf`，VL 字段和 PDF 预览依赖该文件；写盘失败只记 warning，不阻断管线。
-- `callback_url` 每次回调超时 2.5 秒，失败不影响主流程。
+- `callback_url` 每次回调超时默认 2.5 秒（`callback.timeout` 可配），失败不影响主流程。
 - `mode=stream` 的响应是 SSE，不再返回 JSON 信封。
 
 ### 3.6 `GET /file/{file_id}/status` 查询文件处理状态
@@ -3015,7 +3015,7 @@ data: {"file":"app_2026-08-07.log","ts":1786087200.123}
 | 项 | 说明 |
 |---|---|
 | 方法 | 后端向 `callback_url` 发起 `POST` |
-| 超时 | 2.5 秒 |
+| 超时 | 默认 2.5 秒，由 `callback.timeout` 配置（可在设置页热改） |
 | 失败处理 | 只记录 warning，不影响主流程 |
 | `stream` 模式 | 忽略 `callback_url`，改用 SSE |
 
@@ -3975,7 +3975,7 @@ calc 更短：`input_values → resolved_expression → result → done`。事�
 | 配置项 | 类型 | 默认值 | 含义 |
 |---|---|---|---|
 | `calc_precision` | 整数 | `2` | `calc` 规则 numexpr 计算结果保留的小数位 |
-| `judge_timeout` | 整数 | `30` | `judge` 规则 LLM 判断的超时（秒） |
+| `judge_timeout` | 整数 | `60` | 分析阶段单次 LLM 请求超时（秒）。覆盖 `judge` 与 `custom` 两种规则，正式与调试路径共用；`calc` 走 numexpr 不调模型，不受影响 |
 
 #### vl_model — 视觉模型抽取（OpenAI 兼容多模态）
 
@@ -4006,6 +4006,16 @@ calc 更短：`input_values → resolved_expression → result → done`。事�
 | `max_result_length` | 整数 | `4000` | 注入 prompt 的搜索文本字符上限，超长从末尾截断 |
 
 > 搜索失败不致命：占位符替换为失败提示后继续判断。溯源存 `source_refs._web_search`。
+
+#### callback — 异步回调
+
+`POST /file/parse` / `retry`（`async` / `sync` 模式）携带 `callback_url` 时，管线每阶段开始、每条 `field_done` / `rule_done`、每阶段 `stage_done` 都会 POST 通知；`POST /analysis/run` 的异步模式同样使用这一超时。回调失败只记 warning，**绝不阻断主流程**，故该值宁短勿长——接收端慢会直接占住管线协程。
+
+| 配置项 | 类型 | 默认值 | 含义 |
+|---|---|---|---|
+| `timeout` | 浮点 | `2.5` | 单次回调 HTTP 请求超时（秒），必须大于 0 |
+
+> `stage_done` 会把整篇 markdown / 全部 chunks 塞进一次 POST，大文档下 2.5s 容易不够。消费端接收慢时调大这里，而不是让事件静默丢失。
 
 #### storage — PDF 保留治理
 

@@ -137,9 +137,9 @@
 | - [ ] L20 | 三种 VL 方法都不检查 `finish_reason`，被 `max_tokens` 截断的输出被静默解析成残缺 value | 中/小 | `vl_service/model.py:57`、`progressive.py:110`、`locate.py:153`、`config.py:105` | 解析前读 `finish_reason`，为 length 时 warning + 写 `source_refs._vl.truncated`，或自动提高 max_tokens 重试 |
 | - [x] L21 | `context`/`rule` 检索的 `max_results` 是跨关键词全局截断，高频关键词会挤掉其他关键词命中（占位符静默为空） | 中/小 | `extraction_service.py:630/817`、对比 `:857` | 改成与 `chunk_db` 一致的"每关键词各限 max_results"（已实现：service/search_ranking.py，每关键词限额 + 轮转合并到 max_total_results） |
 | - [ ] L22 | `search_config` 完全无子键校验（缺 `page_range`/`query_text` 等到抽取运行时才失败），与 `vl_config`/`web_search` 的 fail-fast 不一致 | 低/中 | `schemas.py:305`、对比 `:363/458` | 按 `search_type` 做最小必填校验，`model_validator` 里 fail-fast |
-| - [ ] L23 | `stage_done` 回调把整篇 markdown/全部 chunks 塞进 2.5s 超时的 POST，大文档易超时静默丢事件 | 低/中 | `pipeline_service.py:466/550`、`callback.py:50` | 大 payload 只下发摘要/计数 + 拉取地址，让消费方按需回拉（embedding 阶段已如此） |
+| - [ ] L23 | `stage_done` 回调把整篇 markdown/全部 chunks 塞进 2.5s 超时的 POST，大文档易超时静默丢事件 | 低/中 | `pipeline_service.py:466/550`、`callback.py:50` | 大 payload 只下发摘要/计数 + 拉取地址，让消费方按需回拉（embedding 阶段已如此）。超时现已可配（`callback.timeout`），调大可缓解但治标 |
 | - [ ] L24 | `build_page_mapping` 每块对全篇 `count+find` 全量扫描，大文档 O(块数×md长度)、且在事件循环内同步执行 | 低/中 | `page_mapping.py:60/126` | 一次性预处理"前缀→出现次数/位置"索引；或用两次 find 判唯一省去 count；必要时入线程池 |
-| - [ ] L25 | `analysis.judge_timeout` 配置定义了却从未透传生效（judge 仍用全局 llm_timeout） | 低/小 | `config.py:97`、`analysis_service.py:177`、`llm_client.py:44` | `execute_judge` 透传 `judge_timeout`；或删除该无效配置 |
+| - [x] L25 | `analysis.judge_timeout` 配置定义了却从未透传生效（judge 仍用全局 llm_timeout） | 低/小 | `config.py:97`、`analysis_service.py:177`、`llm_client.py:44` | 已实现：judge 与 custom、正式与调试四个调用点全部透传 `judge_timeout`（默认值同步提到 60 以保持既有行为）；`tests/test_model_timeout_config.py` 用 AST 检查防漏传 |
 | - [ ] L26 | `chunking.max_chunk_size` 配置声明但分块逻辑从不引用（真正生效的表格上限是硬编码 8192） | 低/小 | `config.py:36`、`chunk_service.py:278/316` | 让分块真正使用它（作为超长块/表格切分上限替换硬编码），或移除 |
 | - [ ] L27 | 四张明细表存在与复合主键最左前缀重复的 `file_id` 二级索引，纯写放大/占空间 | 低/小 | `tables.py:119/138/232/249` | 删除四个冗余 `ix_*_file_id`（复合主键 file_id 最左列已覆盖 `WHERE file_id=?`） |
 | - [ ] L28 | 类型列表分页排序键 `created_at`（无小数秒）非唯一，同秒批量建类型时翻页漏行/重复 | 低/小 | `doctype_router.py:134` | 排序末尾追加唯一 tiebreaker（`type_id`） |

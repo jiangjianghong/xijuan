@@ -4,7 +4,7 @@
 
 当 `POST /file/parse` / `POST /file/{file_id}/retry/{stage}`（`async` 或 `sync` 模式）携带 `callback_url` 时，管线在每阶段开始、每条 `field_done` / `rule_done`、每阶段 `stage_done` 都会向该地址 **POST** 通知。`stream` 模式忽略 `callback_url`，事件改走 [SSE](sse.md)。
 
-> **契约要点**：每次回调超时 **2.5s**；失败仅记 warning、**绝不阻断主流程**。回调载荷**不在 openapi 里**，故本页字段表全部人工维护。老消费者只读 `status` 字段不受影响（新事件靠 `event` 字段区分）。
+> **契约要点**：每次回调超时默认 **2.5s**（由 `callback.timeout` 配置，可在设置页热改）；失败仅记 warning、**绝不阻断主流程**。回调载荷**不在 openapi 里**，故本页字段表全部人工维护。老消费者只读 `status` 字段不受影响（新事件靠 `event` 字段区分）。
 
 ## 事件模板速览
 

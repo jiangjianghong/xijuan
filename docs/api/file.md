@@ -20,7 +20,7 @@
 |---|---|:--:|---|---|
 | mode | string | 否 | async | 处理模式：`async`（默认，后台任务立即返回）/ `sync`（阻塞至完成）/ `stream`（SSE 流）。其它值按 `sync` 处理。（可选: async / sync / stream） |
 | type_id | string | 否 | default | 归属文档类型，默认 `default`；决定使用哪套字段/规则配置。**必须已存在于 `doc_type`**，否则返回 HTTP 400。 |
-| callback_url | string | 否 | — | 可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时 2.5s，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。 |
+| callback_url | string | 否 | — | 可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时默认 2.5s，由 `callback.timeout` 配置，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。 |
 <!-- /AUTOGEN:query-params -->
 
 **请求体**（`multipart/form-data`）
@@ -378,7 +378,7 @@ _data 为数组，每个元素：_
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
 | mode | string | 否 | async | 处理模式：`async`（默认）/ `sync` / `stream`。（可选: async / sync / stream） |
-| callback_url | string | 否 | — | 可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时 2.5s，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。 |
+| callback_url | string | 否 | — | 可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时默认 2.5s，由 `callback.timeout` 配置，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。 |
 <!-- /AUTOGEN:query-params -->
 
 **状态码 / 错误**
@@ -412,7 +412,7 @@ _data 为数组，每个元素：_
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
 | mode | string | 否 | async | 处理模式：`async`（默认）/ `sync` / `stream`。（可选: async / sync / stream） |
-| callback_url | string | 否 | — | 可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时 2.5s，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。 |
+| callback_url | string | 否 | — | 可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时默认 2.5s，由 `callback.timeout` 配置，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。 |
 <!-- /AUTOGEN:query-params -->
 
 **状态码 / 错误**
@@ -443,7 +443,7 @@ _data 为数组，每个元素：_
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
 | mode | string | 否 | async | 处理模式：`async`（默认）/ `sync` / `stream`。（可选: async / sync / stream） |
-| callback_url | string | 否 | — | 可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时 2.5s，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。 |
+| callback_url | string | 否 | — | 可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时默认 2.5s，由 `callback.timeout` 配置，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。 |
 <!-- /AUTOGEN:query-params -->
 
 **状态码 / 错误**

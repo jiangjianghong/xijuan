@@ -16,9 +16,10 @@ const SettingsManager = {
         { id: 'embedding', label: '向量化', icon: 'binary', description: 'Embedding 服务连接与只读运行参数' },
         { id: 'extraction', label: '字段提取', icon: 'scan-text', description: '字段提取使用的语言模型' },
         { id: 'table_name_validation', label: '表格名校验', icon: 'table-properties', description: '独立的表格名称识别模型配置' },
-        { id: 'analysis', label: '逻辑分析', icon: 'waypoints', description: '计算精度、判定超时与并发' },
+        { id: 'analysis', label: '逻辑分析', icon: 'waypoints', description: '计算精度与分析模型超时' },
         { id: 'vl_model', label: 'VL 视觉模型', icon: 'scan-eye', description: '视觉模型、图像限制与并发' },
         { id: 'web_search', label: '博查网络搜索', icon: 'search', description: 'Judge 规则使用的联网搜索服务' },
+        { id: 'callback', label: '异步回调', icon: 'webhook', description: '管线阶段通知 POST 的请求超时' },
         { id: 'storage', label: 'PDF 存储', icon: 'hard-drive', description: '原始 PDF 容量和保留时间' },
         { id: 'concurrency', label: '模型并发', icon: 'gauge', description: '模型通道、业务阶段与单任务并发上限' },
     ],
@@ -64,7 +65,7 @@ const SettingsManager = {
         ],
         analysis: [
             ['calc_precision', '计算精度', 'number', { min: 0, unit: '位小数' }],
-            ['judge_timeout', '判定超时', 'number', { min: 1, unit: '秒' }],
+            ['judge_timeout', '分析超时', 'number', { min: 1, unit: '秒，judge 与 custom 规则共用' }],
         ],
         vl_model: [
             ['base_url', '服务地址', 'url'], ['model', '模型名称', 'text'],
@@ -84,6 +85,9 @@ const SettingsManager = {
             ['timeout', '请求超时', 'number', { min: 1, unit: '秒' }],
             ['retry_count', '重试次数', 'number', { min: 1 }],
             ['max_result_length', '搜索文本上限', 'number', { min: 1, unit: '字符' }],
+        ],
+        callback: [
+            ['timeout', '请求超时', 'number', { min: 0.1, step: 0.1, unit: '秒，回调失败仅记日志、不影响主流程' }],
         ],
         storage: [
             ['max_total_bytes', 'PDF 总容量上限', 'number', { min: 0, unit: '字节，0 为不限' }],

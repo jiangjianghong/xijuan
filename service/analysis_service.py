@@ -341,14 +341,15 @@ async def execute_judge(resolved_expression: str, *, system_prompt: str = "") ->
 
     try:
         sys_prompt = (system_prompt or "").strip()
+        timeout = get_config().analysis.judge_timeout
         if sys_prompt:
             messages = [
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": prompt},
             ]
-            response = await chat_completion("", messages=messages)
+            response = await chat_completion("", messages=messages, timeout=timeout)
         else:
-            response = await chat_completion(prompt)
+            response = await chat_completion(prompt, timeout=timeout)
         response = response.strip()
 
         # 尝试提取 JSON 块
@@ -537,14 +538,15 @@ async def execute_custom(
     """
     prompt = _build_custom_prompt(resolved_expression, is_formatted, output_schema)
     sys_prompt = (system_prompt or "").strip()
+    timeout = get_config().analysis.judge_timeout
     if sys_prompt:
         messages = [
             {"role": "system", "content": sys_prompt},
             {"role": "user", "content": prompt},
         ]
-        response = await chat_completion("", messages=messages)
+        response = await chat_completion("", messages=messages, timeout=timeout)
     else:
-        response = await chat_completion(prompt)
+        response = await chat_completion(prompt, timeout=timeout)
     return parse_custom_json_response(response)
 
 
@@ -932,9 +934,13 @@ async def test_rule_analysis_stream(
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user_prompt},
                 ]
-                raw_response = await chat_completion("", messages=messages)
+                raw_response = await chat_completion(
+                    "", messages=messages, timeout=cfg.judge_timeout
+                )
             else:
-                raw_response = await chat_completion(user_prompt)
+                raw_response = await chat_completion(
+                    user_prompt, timeout=cfg.judge_timeout
+                )
             raw_response = raw_response.strip()
 
             yield {
@@ -1055,9 +1061,13 @@ async def test_rule_analysis_stream(
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user_prompt},
                 ]
-                raw_response = await chat_completion("", messages=messages)
+                raw_response = await chat_completion(
+                    "", messages=messages, timeout=cfg.judge_timeout
+                )
             else:
-                raw_response = await chat_completion(user_prompt)
+                raw_response = await chat_completion(
+                    user_prompt, timeout=cfg.judge_timeout
+                )
             raw_response = raw_response.strip()
             yield {"event": "llm_response", "data": {"raw_response": raw_response}}
         except Exception as e:

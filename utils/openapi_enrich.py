@@ -71,7 +71,7 @@ parsing → tableing → chunking → embedding → extracting → analyzing →
   重跑），**不要**重新上传（上传必产生新 `file_id` 与新记录）。
 - **回调 (`callback_url`)** —— `POST /file/parse` / `retry`（`async` / `sync` 模式）携带时，
   管线在「每阶段开始」「每条 `field_done` / `rule_done`」「每阶段 `stage_done`」都会向该
-  地址 POST 通知（超时 **2.5s**，失败仅 warning，绝不阻断主流程）。完整 payload 形态见
+  地址 POST 通知（超时默认 **2.5s**，可用 `callback.timeout` 配置；失败仅 warning，绝不阻断主流程）。完整 payload 形态见
   `docs/api/callbacks.md`。
 - **SSE 流** —— `mode=stream` 与 `/extraction/test/stream` / `/analysis/test/stream`
   返回 `text/event-stream`，逐阶段/逐步推送事件。
@@ -325,7 +325,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `docs/api/sse.md`）\n"
                 "- 其它任意值按 `sync` 处理（代码 fallback 分支）\n\n"
                 "**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 "
-                "`field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时 2.5s，失败仅 warning，"
+                "`field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时默认 2.5s（`callback.timeout` 可配），失败仅 warning，"
                 "不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n"
                 "**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— "
                 "每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`，"
@@ -948,7 +948,7 @@ GLOBAL_PARAM_DOCS: Dict[str, str] = {
     "project_id": "项目 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。",
     "page": "页码，从 1 开始。",
     "page_size": "每页条数。",
-    "callback_url": "可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时 2.5s，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。",
+    "callback_url": "可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时默认 2.5s，由 `callback.timeout` 配置，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。",
 }
 
 PARAM_OVERRIDES: Dict[tuple, Dict[str, Any]] = {

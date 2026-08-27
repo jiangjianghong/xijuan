@@ -87,7 +87,7 @@ table_name_validation:
 # 逻辑分析配置
 analysis:
   calc_precision: 2                                     # calc 规则结果保留的小数位数
-  judge_timeout: 30                                     # judge 规则判定超时（秒）
+  judge_timeout: 60                                     # 分析单次 LLM 请求超时（秒）；judge 与 custom 规则、正式与调试路径共用
 
 # VL（视觉模型）抽取配置
 vl_model:
@@ -126,6 +126,10 @@ web_search:
   timeout: 10                                           # 单次搜索请求超时（秒）
   retry_count: 2                                        # 搜索失败后的最大尝试次数
   max_result_length: 4000                               # 注入分析 prompt 的搜索文本最大字符数
+
+# 异步回调配置（callback_url 生效时，管线阶段/单项事件的 POST 通知）
+callback:
+  timeout: 2.5                                          # 单次回调请求超时（秒）；失败仅记日志，不阻断主流程
 
 # PDF 存储治理配置
 # 只删除 uploads 下的物理 PDF，不删除数据库中的解析和抽取结果

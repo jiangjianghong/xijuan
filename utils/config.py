@@ -215,7 +215,9 @@ class TableNameValidationConfig(BaseModel):
 
 class AnalysisConfig(BaseModel):
     calc_precision: int = Field(2, ge=0)
-    judge_timeout: int = Field(30, ge=1)
+    # 分析阶段（judge 与 custom，正式与调试）单次 LLM 请求超时。
+    # 默认与 extraction.timeout 一致，是这份配置真正生效前的历史行为。
+    judge_timeout: int = Field(60, ge=1)
 
 
 class ConcurrencyConfig(BaseModel):
@@ -287,6 +289,14 @@ class WebSearchConfig(BaseModel):
     max_result_length: int = Field(4000, ge=1)
 
 
+class CallbackConfig(BaseModel):
+    """异步回调 POST 的请求参数。"""
+
+    # 单次回调 HTTP 超时（秒）。默认 2.5s——回调失败只记日志、不阻断主流程，
+    # 故这个值宁短不长，避免接收端慢把管线拖住。
+    timeout: float = Field(2.5, gt=0)
+
+
 class StorageConfig(BaseModel):
     max_total_bytes: int = Field(0, ge=0)            # uploads 下 PDF 总大小上限(字节)，0=不限
     max_retention_minutes: int = Field(0, ge=0)      # PDF 最久保存时间(分钟)，0=不限
@@ -318,6 +328,7 @@ class AppConfig(BaseSettings):
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
     vl_model: VLModelConfig = VLModelConfig()
     web_search: WebSearchConfig = WebSearchConfig()
+    callback: CallbackConfig = CallbackConfig()
     storage: StorageConfig = StorageConfig()
     settings: SettingsSecurityConfig = SettingsSecurityConfig()
 

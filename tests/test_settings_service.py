@@ -129,6 +129,7 @@ def test_public_config_only_exposes_allowed_groups_and_secret_status(config_path
         "analysis",
         "vl_model",
         "web_search",
+        "callback",
         "storage",
         "concurrency",
     }

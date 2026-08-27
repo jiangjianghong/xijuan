@@ -118,7 +118,7 @@
 | 配置项 | 类型 | 默认值 | 含义 |
 |---|---|---|---|
 | `calc_precision` | 整数 | `2` | `calc` 规则 numexpr 计算结果保留的小数位 |
-| `judge_timeout` | 整数 | `30` | `judge` 规则 LLM 判断的超时（秒） |
+| `judge_timeout` | 整数 | `60` | 分析阶段单次 LLM 请求超时（秒）。覆盖 `judge` 与 `custom` 两种规则，正式与调试路径共用；`calc` 走 numexpr 不调模型，不受影响 |
 
 ## concurrency — 并发限制
 
@@ -170,6 +170,16 @@
 
 > 搜索失败不致命：占位符替换为失败提示后继续判断。溯源存 `source_refs._web_search`。
 
+## callback — 异步回调
+
+`POST /file/parse` / `retry`（`async` / `sync` 模式）携带 `callback_url` 时，管线每阶段开始、每条 `field_done` / `rule_done`、每阶段 `stage_done` 都会 POST 通知；`POST /analysis/run` 的异步模式同样使用这一超时。回调失败只记 warning，**绝不阻断主流程**，故该值宁短勿长——接收端慢会直接占住管线协程。契约细节见 [callbacks.md](../api/callbacks.md)。
+
+| 配置项 | 类型 | 默认值 | 含义 |
+|---|---|---|---|
+| `timeout` | 浮点 | `2.5` | 单次回调 HTTP 请求超时（秒），必须大于 0 |
+
+> `stage_done` 会把整篇 markdown / 全部 chunks 塞进一次 POST，大文档下 2.5s 容易不够。消费端接收慢时调大这里，而不是让事件静默丢失。
+
 ## storage — PDF 保留治理
 
 治理 `uploads` 下的原始 PDF，**只删物理文件、不动数据库**；被清文件的解析 / 抽取结果仍可查，仅 PDF 预览与 VL 抽取会返回 404。启动时、每 `cleanup_interval_minutes` 分钟、每次上传后各触发一次清理。
@@ -190,7 +200,7 @@
 | `session_minutes` | 整数 | `30` | 登录会话有效期（分钟） |
 | `secure_cookie` | 布尔 | `false` | HTTPS 部署时设为 `true`，为会话 Cookie 增加 `Secure` |
 
-设置页开放 `mineru`、`chunking`、`embedding`、`extraction`、`table_name_validation`、`analysis`、`vl_model`、`web_search`、`storage` 和 `concurrency`。其中向量化只允许修改 `base_url`、`api_key`、`model`，其他参数只读；`server`、`mysql`、`milvus` 完全不返回且不能修改。
+设置页开放 `mineru`、`chunking`、`embedding`、`extraction`、`table_name_validation`、`analysis`、`vl_model`、`web_search`、`callback`、`storage` 和 `concurrency`。其中向量化只允许修改 `base_url`、`api_key`、`model`，其他参数只读；`server`、`mysql`、`milvus` 完全不返回且不能修改。
 
 API Key 只显示“已配置/未配置”，旧值不会返回浏览器。管理员可以明确选择保留、覆盖或清除密钥。保存使用同目录临时文件和原子替换，保留 YAML 注释、顺序和未开放配置；写盘成功后，新请求和新任务立即使用新配置，已运行任务不强制切换。
 

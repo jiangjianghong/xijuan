@@ -56,7 +56,7 @@ The core orchestrator. Six stages: parsing → tableing → chunking → embeddi
 Both `run_pipeline` and `run_from_stage` (retry from any stage) exist in sync/stream variants. Failed stages are retried by cleaning downstream data and re-running from that point.
 
 ### Async Callback Contract (`utils/callback.py`)
-When `callback_url` is supplied to `run_pipeline` / `run_from_stage`, the orchestrator and the per-item services (`run_extraction`, `run_analysis`) POST status updates to that URL. Timeout is **2.5s** per call; failures are logged and swallowed (never affect the main flow).
+When `callback_url` is supplied to `run_pipeline` / `run_from_stage`, the orchestrator and the per-item services (`run_extraction`, `run_analysis`) POST status updates to that URL. Timeout defaults to **2.5s** per call and is configurable via `callback.timeout`（热配置，`utils/callback.py:_resolve_timeout` 每次调用现读，故默认参数不能写死）; failures are logged and swallowed (never affect the main flow).
 
 **Payload shape:**
 ```json

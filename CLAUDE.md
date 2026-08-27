@@ -68,7 +68,7 @@ Both `run_pipeline` and `run_from_stage` (retry from any stage) exist in sync/st
 **字段提取的两阶段屏障**：`run_extraction` / `run_extraction_stream` 并发执行字段，但**普通字段组整体完成后才启动进阶字段组**（`_iter_extraction_results`）——进阶字段引用普通字段结果，没有屏障就会读到空值。并发段禁止任何 `session` 访问：只读数据在并发前经 `service/extraction_snapshot.py:load_extraction_snapshot` 一次性快照（content / tables / chunks，三次查询），写库与回调回到主协程串行执行（`AsyncSession` 非并发安全）。组内用 `_iter_field_group` 的 `as_completed` **完成即产出**，`field_done` 因此按完成序推送、`index` 仍是配置序号；`stage_done.results` 按 `index` 排序回填，聚合口径不变。单字段异常在 worker 内收敛为 `success=False`，不连坐同批；`CancelledError` 必须外抛。
 
 ### Async Callback Contract (`utils/callback.py`)
-When `callback_url` is supplied to `run_pipeline` / `run_from_stage`, the orchestrator and the per-item services (`run_extraction`, `run_analysis`) POST status updates to that URL. Timeout is **2.5s** per call; failures are logged and swallowed (never affect the main flow).
+When `callback_url` is supplied to `run_pipeline` / `run_from_stage`, the orchestrator and the per-item services (`run_extraction`, `run_analysis`) POST status updates to that URL. Timeout defaults to **2.5s** per call and is configurable via `callback.timeout`（热配置，`utils/callback.py:_resolve_timeout` 每次调用现读，故默认参数不能写死）; failures are logged and swallowed (never affect the main flow).
 
 **Payload shape:**
 ```json
@@ -180,9 +180,11 @@ Three source types:
   - **存量文件**：collection 换成 `_base_4`（新增 `parent_chunk_id`），`_base_3` 的父块向量**不迁移**。存量文件的 `vector_db` 检索返空并打 warning，需 `POST /file/{id}/retry/chunking` 重跑（**从 chunking 起**，从 embedding 起不会重切子块）。
 
 ### Analysis System (`service/analysis_service.py`)
-Two rule types:
+Three rule types:
 - **judge** - LLM-based true/false determination. Uses `<field_result>field_id</field_result>` placeholders resolved with extraction results.
 - **calc** - Mathematical expressions evaluated with `numexpr`. Same placeholder resolution.
+- **custom** - LLM 自由生成（`is_formatted=1` 时按 `output_schema` 注入结构说明），返回 `(value, reason)`。
+- **超时**：`analysis.judge_timeout`（默认 60s）覆盖**分析阶段全部 LLM 调用**——judge 与 custom、正式与调试（`test_rule_analysis_stream`）四个调用点都显式透传；`calc` 走 numexpr 不调模型。抽取侧**刻意不传** timeout，继续吃 `extraction.timeout`。两条契约由 `tests/test_model_timeout_config.py` 的 AST 检查兜底：分析侧漏传会静默回落到 `extraction.timeout`，配置改了看不出效果。
 - **独立分析接口** - `POST /analysis/run` 支持 sync/async/stream 与批量 items，实现位于 `service/analysis_run_service.py`。**items 与规则双层并发，闸门（`independent_analysis`）在规则层**——与 `task_file_analysis`（单文件规则并发）对称、共用 `global_analysis` 总池；闸门装在 item 层时 item 内规则串行，在途模型调用被卡死在 item 并发数上，总池吃不满。规则间无依赖（`execute_rule` 只读 `field_values`，异常已在内部收敛为失败结果），组内 `as_completed` **完成即推** `rule_done`、`index` 恒为 `priority, rule_id` 排序后的配置序，`results` 按 `index` 排序回填，聚合口径不变。async 用 `task_id` 推送 `rule_done/task_done/task_failed`。规则范围由 item 级 `rule_ids` 经 `plan_rules` 决定：**不传/null** = 全部启用规则且只跑 `depend_fields` 被输入键完整覆盖的（其余静默跳过，旧行为）；**`[]`** = 不跑任何规则；**显式点名** = 只跑指定规则且**跳过覆盖门控**，缺键的规则由 `execute_rule(require_coverage=True)` 产出 `success=false` 结果（reason 列出缺失字段）并计入 total/failed，避免点名的规则从 results 里凭空消失。点名了不存在/未启用/跨 type_id 的 rule_id **不报错**，收进 `AnalysisRunItemResult.unknown_rule_ids` 回传（sync 走 schema 序列化，故新增此类响应字段**必须同步加进 `AnalysisRunItemResult`**，否则被 pydantic 静默丢弃；async/stream 的 `task_done` 直接透传服务层 dict 不受影响）。
 - **`/analysis/run` 的取值来源（`source`）**：`values`（默认）接收外部 `field_values`，仅按 `type_id` 读启用规则，不读文件提取结果、不写库；`file` 改按 item 的 `file_id` 读该文件已落库的 `extraction_result` 当字段值，`type_id` 省略则取 `files.type_id`。`persist=true`（仅 `source=file` 合法）把结果 upsert 进 `analysis_result`，但**从不修改 `files.progress`** —— 管线状态机只归 pipeline/retry 管。**并发安全约束**：`AsyncSession` 非并发安全，故所有读库集中在 `asyncio.gather` **之前**（`load_file_snapshots` 一次 2 条查询转成 `FileFieldSnapshot` 只读快照），写库集中在 gather **之后**（`persist_analysis_results`），并发段只碰快照与纯计算。`source=file` 的结果 `source_refs` 经 `merge_field_source_refs` 并入依赖字段的提取溯源（键为 `field_id`，与 `_web_search` 同级，与管线版一致）。**校验分层**：能从请求体判断的 → 422（Pydantic `model_validator`）；查库才知道的（文件不存在/type_id 不一致/无提取结果）→ 该 item 的 `AnalysisRunItemResult.error` 字段 + HTTP 200，不让一个坏 item 拖垮整批。
 - **judge 网络搜索**：规则可配置 `web_search` JSON（`{"enabled", "query", "count", "freshness"}`，仅 judge 类型）。启用时执行判断前先调博查 Bocha AI 搜索（`utils/web_search.py`），搜索词支持 `<field_result>field_id</field_result>` 占位符拼接提取结果，搜索文本替换 expression 中的 `<web_search_result/>` 占位符（schema 层强制要求存在）。搜索失败不致命（占位符替换为失败提示继续判断）。溯源数据存 `source_refs._web_search`（`{query, results: [{name,url,siteName,datePublished,summary}], error?}`），`GET /file/{id}/analysis` 与回调 `rule_done` 透出。调试流新增 `web_search` 事件。`copy_from` 复制时 expression 与 `web_search.query` 中的 `<field_result>` 占位符随 depend_fields 重映射；导出/导入原样携带。全局参数在 `configs/config.yaml` 的 `web_search` 节。
@@ -212,7 +214,7 @@ Two rule types:
 
 ## Configuration
 
-Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`, `storage`. Each maps to a Pydantic model in `utils/config.py`. `storage`（`max_total_bytes` / `max_retention_minutes` / `cleanup_interval_minutes`，默认 `0/0/10`，0=关闭）治理 `uploads` 下 PDF：启动时 + 每 `cleanup_interval_minutes` 分钟 + 每次上传后触发 `service/retention_service.py:enforce_pdf_retention`，只删物理 PDF（按 `create_time` 最旧优先淘汰 / 超时删除），不动数据库；被清文件的 PDF 预览与 VL 抽取返回 404。
+Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`, `callback`, `storage`. Each maps to a Pydantic model in `utils/config.py`. `storage`（`max_total_bytes` / `max_retention_minutes` / `cleanup_interval_minutes`，默认 `0/0/10`，0=关闭）治理 `uploads` 下 PDF：启动时 + 每 `cleanup_interval_minutes` 分钟 + 每次上传后触发 `service/retention_service.py:enforce_pdf_retention`，只删物理 PDF（按 `create_time` 最旧优先淘汰 / 超时删除），不动数据库；被清文件的 PDF 预览与 VL 抽取返回 404。
 
 ## API Documentation
 
