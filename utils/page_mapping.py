@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from bisect import bisect_right
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 
 def _parse_middle_json(middle_json_raw: Union[str, dict]) -> dict:
@@ -129,6 +129,175 @@ def _collect_table_groups(pdf_info: List[dict]) -> List[Dict[str, int]]:
                 continue
             groups.append({"first_page": page_num, "last_page": page_num})
     return groups
+
+
+def _collect_table_block_groups(pdf_info: List[dict]) -> List[Dict[str, Any]]:
+    """收集跨页表格组，并保留首页块与每页 bbox 的直接引用。
+
+    仅供页码取文使用：页级投影不需要把 middle_json 再反向匹配到整篇 Markdown，
+    因而必须保留表格首次出现的块和所有续页块。分组规则与
+    ``_collect_table_groups`` 保持一致。
+    """
+    groups: List[Dict[str, Any]] = []
+    for page in pdf_info:
+        page_num = page.get("page_idx", 0) + 1
+        page_size = page.get("page_size")
+        for block_index, block in enumerate(page.get("para_blocks", [])):
+            if block.get("type") != "table":
+                continue
+            if _is_continuation_table_block(block):
+                if groups and page_num == groups[-1]["last_page"] + 1:
+                    groups[-1]["last_page"] = page_num
+                    groups[-1]["blocks"].append((page_num, block, page_size))
+                continue
+            groups.append(
+                {
+                    "first_page": page_num,
+                    "last_page": page_num,
+                    "owner_page": page_num,
+                    "owner_block_index": block_index,
+                    "owner_block": block,
+                    "blocks": [(page_num, block, page_size)],
+                }
+            )
+    return groups
+
+
+def _projection_bbox(page_num: int, block: dict, page_size: Any) -> List[Dict[str, Any]]:
+    """把 middle_json 的块坐标转换为页码取文 ref 可直接使用的 bbox。"""
+    bbox = block.get("bbox")
+    if not bbox:
+        return []
+    item: Dict[str, Any] = {"page_num": page_num, "bbox": bbox}
+    if page_size:
+        item["page_size"] = page_size
+    return [item]
+
+
+def _has_valid_page_projection_structure(pdf_info: List[Any]) -> bool:
+    """校验页级投影会直接遍历的 middle_json 基本结构。"""
+    for page in pdf_info:
+        if not isinstance(page, dict):
+            return False
+        page_idx = page.get("page_idx", 0)
+        if isinstance(page_idx, bool) or not isinstance(page_idx, int) or page_idx < 0:
+            return False
+        para_blocks = page.get("para_blocks", [])
+        if not isinstance(para_blocks, list):
+            return False
+        for block in para_blocks:
+            if not isinstance(block, dict):
+                return False
+            child_blocks = block.get("blocks")
+            if child_blocks is not None and not isinstance(child_blocks, list):
+                return False
+    return True
+
+
+def build_page_projection(
+    middle_json_raw: Union[str, dict],
+) -> Optional[List[Dict[str, Any]]]:
+    """将 MinerU 的页级结构投影为可供 ``search_type=page`` 使用的有序文本段。
+
+    返回 ``None`` 表示 middle_json 缺失或格式非法，应走历史 page_mapping 兼容路径；
+    返回空列表表示结构数据有效，但页面没有可提取文本（例如纯图片或空白 PDF）。
+    """
+    if not middle_json_raw:
+        return None
+    try:
+        middle = _parse_middle_json(middle_json_raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(middle, dict):
+        return None
+    pdf_info = middle.get("pdf_info")
+    if not isinstance(pdf_info, list):
+        return None
+    if not _has_valid_page_projection_structure(pdf_info):
+        return None
+
+    table_groups = _collect_table_block_groups(pdf_info)
+    owner_groups = {
+        (group["owner_page"], group["owner_block_index"]): group
+        for group in table_groups
+    }
+    projection: List[Dict[str, Any]] = []
+
+    for page in pdf_info:
+        page_num = page.get("page_idx", 0) + 1
+        page_size = page.get("page_size")
+        pending_text: List[str] = []
+        pending_bboxes: List[Dict[str, Any]] = []
+
+        def flush_pending() -> None:
+            if not pending_text:
+                return
+            projection.append(
+                {
+                    "page_num": page_num,
+                    "source_pages": [page_num],
+                    "content": "\n".join(pending_text),
+                    "bboxes": list(pending_bboxes),
+                    "mapping_quality": "middle_json",
+                }
+            )
+            pending_text.clear()
+            pending_bboxes.clear()
+
+        for block_index, block in enumerate(page.get("para_blocks", [])):
+            if block.get("type") == "table":
+                if _is_continuation_table_block(block):
+                    continue
+                flush_pending()
+                group = owner_groups.get((page_num, block_index))
+                if not group:
+                    continue
+                content = _block_probes_and_bbox(group["owner_block"])[0][0].strip()
+                if not content:
+                    continue
+                source_pages = list(range(group["first_page"], group["last_page"] + 1))
+                page_label: Union[int, str] = (
+                    source_pages[0]
+                    if len(source_pages) == 1
+                    else f"{source_pages[0]}-{source_pages[-1]}"
+                )
+                bboxes: List[Dict[str, Any]] = []
+                for block_page_num, group_block, group_page_size in group["blocks"]:
+                    bboxes.extend(_projection_bbox(block_page_num, group_block, group_page_size))
+                projection.append(
+                    {
+                        "page_num": page_label,
+                        "source_pages": source_pages,
+                        "content": content,
+                        "bboxes": bboxes,
+                        "mapping_quality": "middle_json",
+                    }
+                )
+                continue
+
+            content = _block_probes_and_bbox(block)[0][0].strip()
+            if not content:
+                continue
+            pending_text.append(content)
+            pending_bboxes.extend(_projection_bbox(page_num, block, page_size))
+        flush_pending()
+
+    return projection
+
+
+def select_page_projection(
+    projection: Optional[Sequence[Dict[str, Any]]], start_page: int, end_page: int
+) -> List[Dict[str, Any]]:
+    """选择与请求范围相交的页级文本段；跨页表格会完整保留一次。"""
+    if not projection:
+        return []
+    return [
+        item
+        for item in projection
+        if item.get("source_pages")
+        and min(item["source_pages"]) <= end_page
+        and max(item["source_pages"]) >= start_page
+    ]
 
 
 def _cross_page_table_anchors(

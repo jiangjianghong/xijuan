@@ -43,7 +43,8 @@ def test_parse_page_range_invalid(raw):
     assert _parse_page_range(raw) is None
 
 
-from service.extraction_service import slice_by_page_range
+from service.extraction_service import slice_by_page_range, slice_pages_in_range
+from utils.page_mapping import build_page_projection
 
 
 def _make_mapping():
@@ -116,6 +117,36 @@ def test_slice_by_page_range_truncate():
     assert r["truncated"] is True
     assert r["start_pos"] == 0
     assert r["end_pos"] == 10
+
+
+def test_slice_by_page_range_returns_leading_content_before_first_anchor():
+    md = "COVER_ONECOVER_TWOPAGE3_TEXTPAGE4_TEXT"
+    mapping = [
+        {"start_pos": 18, "end_pos": 28, "page_num": 3},
+        {"start_pos": 28, "end_pos": 38, "page_num": 4},
+    ]
+
+    r = slice_by_page_range(md, mapping, 1, 2, 30000)
+
+    assert r["ok"] is True
+    assert r["text"] == "COVER_ONECOVER_TWO"
+    assert r["leading_unmapped"] is True
+    assert r["start_pos"] == 0
+    assert r["end_pos"] == 18
+
+
+def test_slice_pages_in_range_does_not_assign_leading_content_to_first_anchor_page():
+    md = "COVER_ONECOVER_TWOPAGE3_TEXTPAGE4_TEXT"
+    mapping = [
+        {"start_pos": 18, "end_pos": 28, "page_num": 3},
+        {"start_pos": 28, "end_pos": 38, "page_num": 4},
+    ]
+
+    pages = slice_pages_in_range(md, mapping, 1, 3)
+
+    assert pages == [
+        {"page_num": 3, "content": "PAGE3_TEXT", "start_pos": 18, "end_pos": 28}
+    ]
 
 
 from service.extraction_service import split_md_by_pages
@@ -260,6 +291,78 @@ async def test_extract_page_field_per_page_injection(monkeypatch):
     # 注入文本原样进入 prompt。不数 prompt 里的标记个数——JSON_OUTPUT_INSTRUCTION
     # 本身也含【第X页】字面量说明，计数会被指令文案干扰。
     assert injected in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_extract_page_field_prefers_middle_json_projection(monkeypatch):
+    captured = {}
+
+    async def fake_chat(prompt, messages=None):
+        captured["prompt"] = prompt
+        return '{"value": "方案名", "reason": "封面"}'
+
+    monkeypatch.setattr(ext_svc, "chat_completion", fake_chat)
+    middle = {
+        "pdf_info": [
+            {"page_idx": 0, "page_size": [600, 800], "para_blocks": [
+                {"type": "title", "bbox": [1, 1, 2, 2], "lines": [{"spans": [{"content": "重复封面"}]}]},
+            ]},
+            {"page_idx": 1, "page_size": [600, 800], "para_blocks": [
+                {"type": "title", "bbox": [1, 1, 2, 2], "lines": [{"spans": [{"content": "重复封面"}]}]},
+            ]},
+        ]
+    }
+
+    value, _reason, refs, _model_pages = await _extract_page_field(
+        "UNTRUSTED_MARKDOWN",
+        [{"page_num": 3, "start_pos": 0, "end_pos": 1}],
+        {"page_range": "1-2", "max_length": 30000},
+        _make_field(),
+        page_projection=build_page_projection(middle),
+    )
+
+    assert value == "方案名"
+    assert [ref["page_num"] for ref in refs["page_content"]] == [1, 2]
+    assert all(ref["mapping_quality"] == "middle_json" for ref in refs["page_content"])
+    assert refs["_texts"]["page_content"] == "【第1页】\n重复封面\n---\n【第2页】\n重复封面"
+    assert refs["_texts"]["page_content"] in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_extract_page_field_does_not_fallback_when_projection_has_no_text():
+    value, reason, refs, model_pages = await _extract_page_field(
+        "UNTRUSTED_MARKDOWN",
+        [{"page_num": 1, "start_pos": 0, "end_pos": 1}],
+        {"page_range": "1-2", "max_length": 30000},
+        _make_field(),
+        page_projection=[],
+    )
+
+    assert value == ""
+    assert reason == "页码区间 1-2 无可提取文本"
+    assert refs is None
+    assert model_pages == []
+
+
+@pytest.mark.asyncio
+async def test_extract_page_field_uses_single_fallback_for_leading_unmapped_content():
+    field = _make_field()
+    field.use_llm = 0
+    mapping = [
+        {"start_pos": 18, "end_pos": 28, "page_num": 3},
+        {"start_pos": 28, "end_pos": 38, "page_num": 4},
+    ]
+
+    _value, _reason, refs, _model_pages = await _extract_page_field(
+        "COVER_ONECOVER_TWOPAGE3_TEXTPAGE4_TEXT",
+        mapping,
+        {"page_range": "1-3", "max_length": 30000},
+        field,
+    )
+
+    assert refs["page_content"][0]["page_num"] == "1-3"
+    assert refs["page_content"][0]["leading_unmapped"] is True
+    assert refs["page_content"][0]["text"] == "COVER_ONECOVER_TWOPAGE3_TEXT"
 
 
 @pytest.mark.asyncio

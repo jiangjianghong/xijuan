@@ -50,6 +50,7 @@ async def test_load_snapshot_maps_all_columns():
     file_content = SimpleNamespace(
         file_content="# 标题\n正文",
         page_mapping=[{"page_num": 1, "start_pos": 0, "end_pos": 8}],
+        middle_json='{"pdf_info": [{"page_idx": 0, "page_size": [600, 800], "para_blocks": [{"type": "text", "bbox": [1, 2, 3, 4], "lines": [{"spans": [{"content": "正文"}]}]}]}]}',
     )
     table_row = SimpleNamespace(
         table_index=0, table_name="资产表", table_content="<table></table>",
@@ -70,6 +71,15 @@ async def test_load_snapshot_maps_all_columns():
     assert snapshot.file_id == "f1"
     assert snapshot.content == "# 标题\n正文"
     assert snapshot.page_mapping == [{"page_num": 1, "start_pos": 0, "end_pos": 8}]
+    assert snapshot.page_projection == (
+        {
+            "page_num": 1,
+            "source_pages": [1],
+            "content": "正文",
+            "bboxes": [{"page_num": 1, "bbox": [1, 2, 3, 4], "page_size": [600, 800]}],
+            "mapping_quality": "middle_json",
+        },
+    )
     assert snapshot.tables == (TableRow(0, "资产表", "<table></table>", 1, 5, 2),)
     assert snapshot.chunks == (ChunkRow("c1", 0, "分块内容", 0, 4, 1),)
     # 三次查询：file_content / file_table / file_chunk
@@ -88,6 +98,7 @@ async def test_load_snapshot_without_file_content():
     assert snapshot.tables == ()
     assert snapshot.chunks == ()
     assert snapshot.page_contents == {}
+    assert snapshot.page_projection is None
 
 
 @pytest.mark.asyncio

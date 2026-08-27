@@ -17,6 +17,7 @@ from loguru import logger
 
 from model.tables import FileChunk, FileContent, FileTable
 from service.file_vector_index import FileVectorIndex, load_file_vector_index
+from utils.page_mapping import build_page_projection
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,9 @@ class FileExtractionSnapshot:
     # 单文件全部子块向量。仅当该类型确实有 vector_db 字段时加载
     # （拉取可达上百 MB，无谓加载代价太大）；未加载或加载失败为 None。
     vector_index: FileVectorIndex | None = None
+    # middle_json 的页级文本投影。None 表示存量记录缺失或结构数据损坏；
+    # 空 tuple 表示结构有效但所请求页面没有可提取文本。
+    page_projection: Tuple[Dict[str, Any], ...] | None = None
 
 
 async def load_extraction_snapshot(
@@ -93,6 +97,12 @@ async def load_extraction_snapshot(
     ).scalar_one_or_none()
     content = (fc_row.file_content if fc_row else "") or ""
     page_mapping = (fc_row.page_mapping if fc_row else None) or []
+    projected_pages = build_page_projection(
+        getattr(fc_row, "middle_json", None) if fc_row else None
+    )
+    page_projection = (
+        tuple(projected_pages) if projected_pages is not None else None
+    )
 
     table_rows = (
         await session.execute(select(FileTable).where(FileTable.file_id == file_id))
@@ -147,4 +157,5 @@ async def load_extraction_snapshot(
         ),
         chunks=chunks,
         vector_index=vector_index,
+        page_projection=page_projection,
     )

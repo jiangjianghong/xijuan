@@ -41,8 +41,10 @@ from utils.errors import format_exception
 from utils.llm_client import chat_completion, get_embeddings
 from utils.milvus_client import get_milvus_client
 from utils.page_mapping import (
+    build_page_projection,
     lookup_bboxes,
     lookup_page_num,
+    select_page_projection,
     split_span_by_pages,
     to_int_page,
 )
@@ -835,11 +837,32 @@ def slice_by_page_range(
             "reason": "该文件无 page_mapping，无法按页码取文本",
         }
 
-    slice_start: Optional[int] = None
-    for entry in page_mapping:
-        if entry["page_num"] >= start_page:
-            slice_start = entry["start_pos"]
-            break
+    anchors = [
+        (page_num, entry["start_pos"])
+        for entry in page_mapping
+        if (page_num := to_int_page(entry.get("page_num"))) is not None
+        and isinstance(entry.get("start_pos"), int)
+    ]
+    if not anchors:
+        return {
+            "ok": False,
+            "reason": "该文件无有效 page_mapping，无法按页码取文本",
+        }
+    anchors.sort(key=lambda item: item[1])
+
+    first_anchor_page = min(page_num for page_num, _ in anchors)
+    leading_unmapped = start_page < first_anchor_page
+    if leading_unmapped:
+        slice_start = 0
+    else:
+        slice_start = next(
+            (
+                start_pos
+                for page_num, start_pos in anchors
+                if start_page <= page_num <= end_page
+            ),
+            None,
+        )
     if slice_start is None:
         return {
             "ok": False,
@@ -847,9 +870,9 @@ def slice_by_page_range(
         }
 
     slice_end = len(md)
-    for entry in page_mapping:
-        if entry["page_num"] > end_page:
-            slice_end = entry["start_pos"]
+    for page_num, start_pos in anchors:
+        if page_num > end_page:
+            slice_end = start_pos
             break
 
     if slice_end <= slice_start:
@@ -864,7 +887,7 @@ def slice_by_page_range(
         text = text[:max_length]
         truncated = True
 
-    return {
+    result = {
         "ok": True,
         "text": text,
         "start_pos": slice_start,
@@ -872,6 +895,9 @@ def slice_by_page_range(
         "length": len(text),
         "truncated": truncated,
     }
+    if leading_unmapped:
+        result["leading_unmapped"] = True
+    return result
 
 
 def split_md_by_pages(
@@ -880,8 +906,9 @@ def split_md_by_pages(
 ) -> List[Dict[str, Any]]:
     """把整篇 markdown 按 page_mapping 拆成逐页列表。
 
-    以每一页首个 block 锚点的 start_pos 作为页边界；首页从 0 起（含首个锚点
-    之前的前导内容），末页切到文末。无内容（空白）的页码跳过。
+    以每一页首个 block 锚点的 start_pos 作为页边界；仅首个锚点确为第 1 页时才
+    从 0 起纳入前导内容，避免把未知前导内容错误标为后续页，末页切到文末。
+    无内容（空白）的页码跳过。
 
     Args:
         md: 整篇 markdown。
@@ -908,8 +935,8 @@ def split_md_by_pages(
 
     results: List[Dict[str, Any]] = []
     for i, (page_num, start_pos) in enumerate(page_starts):
-        # 首页从 0 起，纳入首个锚点前的前导内容
-        slice_start = 0 if i == 0 else start_pos
+        # 只有首个锚点本身属于第 1 页，前导内容才可安全归属为第 1 页。
+        slice_start = 0 if i == 0 and page_num == 1 else start_pos
         slice_end = page_starts[i + 1][1] if i + 1 < len(page_starts) else len(md)
         content = md[slice_start:slice_end]
         if not content.strip():
@@ -929,8 +956,9 @@ def slice_pages_in_range(
 
     与 slice_by_page_range 返回单块整片不同，这里保留逐页边界，供 page 检索
     把区间拆成若干「单页」分别喂给模型（每页各带真实页码）。切片逻辑同
-    split_md_by_pages（首页含前导内容，末页切到文末），只额外做区间过滤并
-    带上位置。空白页跳过。md 为空或无 page_mapping 返回空列表。
+    split_md_by_pages（仅第 1 页锚点可含前导内容，末页切到文末），只额外做区间
+    过滤并带上位置。未知前导内容不伪装成任何单页，交给 slice_by_page_range
+    作为低置信范围回退。空白页跳过。md 为空或无 page_mapping 返回空列表。
     """
     if not md or not page_mapping:
         return []
@@ -946,7 +974,7 @@ def slice_pages_in_range(
 
     results: List[Dict[str, Any]] = []
     for i, (page_num, start_pos) in enumerate(page_starts):
-        slice_start = 0 if i == 0 else start_pos
+        slice_start = 0 if i == 0 and page_num == 1 else start_pos
         slice_end = page_starts[i + 1][1] if i + 1 < len(page_starts) else len(md)
         if page_num < start_page or page_num > end_page:
             continue
@@ -1738,13 +1766,15 @@ async def _extract_page_field(
     page_mapping: List[Dict[str, Any]],
     search_config: Dict[str, Any],
     field: ExtractionField,
+    *,
+    page_projection: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> Tuple[str, str, Optional[Dict], List[int]]:
     """page 检索方式：按页码切 markdown 喂 LLM，区间内**逐页**注入。
 
     与其他 5 种 text 方法不同，page 不做关键词过滤，只用一个固定 label
-    `page_content` 作为 prompt 占位符。区间（如 1-5 页）会被拆成若干单页，
-    每页各带真实【第X页】标记后用 `\\n---\\n` 拼接，模型看到的页码与 source_refs
-    逐页 ref 一致。无 page_mapping 时回退到整片切法（不带逐页页码）。
+    `page_content` 作为 prompt 占位符。优先采用 MinerU middle_json 的原生页段；
+    区间（如 1-5 页）会被拆成若干页段，每段各带真实【第X页】标记后用
+    `\\n---\\n` 拼接。只有 middle_json 缺失或损坏的存量记录才回退 page_mapping。
 
     Returns:
         (value, reason, source_refs, model_pages)。model_pages 是模型自报页码，
@@ -1760,32 +1790,30 @@ async def _extract_page_field(
     if not isinstance(max_length, int) or max_length <= 0:
         return "", f"max_length 配置非法：{max_length!r}", None, []
 
-    pages = slice_pages_in_range(content, page_mapping, start_page, end_page)
+    if page_projection is not None:
+        projected_pages = select_page_projection(page_projection, start_page, end_page)
+        if not projected_pages:
+            return "", f"页码区间 {start_page}-{end_page} 无可提取文本", None, []
 
-    if pages:
-        # 逐页构建：每页一条 ref（带真实 page_num + bbox），注入文本各带页码标记
         page_refs: List[Dict[str, Any]] = []
         parts: List[str] = []
         used = 0
         truncated = False
-        for pg in pages:
+        for pg in projected_pages:
             piece = _page_prefix(pg["page_num"]) + pg["content"]
-            # 按累计长度截断，保留整页边界；超限则本页截断后停止
             if used + len(piece) > max_length:
                 piece = piece[: max_length - used]
                 truncated = True
             ref: Dict[str, Any] = {
                 "type": "page",
                 "page_range": page_range_raw,
-                "start_pos": pg["start_pos"],
-                "end_pos": pg["end_pos"],
                 "length": len(pg["content"]),
                 "page_num": pg["page_num"],
+                "source_pages": list(pg["source_pages"]),
                 "text": pg["content"],
+                "bboxes": list(pg.get("bboxes", [])),
+                "mapping_quality": pg["mapping_quality"],
             }
-            bboxes = lookup_bboxes(page_mapping, pg["start_pos"], pg["end_pos"])
-            if bboxes:
-                ref["bboxes"] = bboxes
             page_refs.append(ref)
             parts.append(piece)
             used += len(piece)
@@ -1799,26 +1827,74 @@ async def _extract_page_field(
             "_texts": {"page_content": injected},
         }
     else:
-        # 无 page_mapping：回退整片切法（不带逐页页码，兼容老数据）
-        sliced = slice_by_page_range(content, page_mapping, start_page, end_page, max_length)
-        if not sliced["ok"]:
-            return "", sliced["reason"], None, []
-        results_text_by_label = {"page_content": sliced["text"]}
-        source_refs = {
-            "page_content": [
-                {
+        # 历史 mapping 无法为首锚点之前的文本断言单页归属。此时只保留一个
+        # 低置信范围 ref，不能同时混入已切出的单页内容，否则会重复注入前导文本。
+        legacy_sliced = slice_by_page_range(
+            content, page_mapping, start_page, end_page, max_length
+        )
+        pages = (
+            []
+            if legacy_sliced.get("leading_unmapped")
+            else slice_pages_in_range(content, page_mapping, start_page, end_page)
+        )
+
+        if pages:
+            # 逐页构建：每页一条 ref（带真实 page_num + bbox），注入文本各带页码标记
+            page_refs: List[Dict[str, Any]] = []
+            parts: List[str] = []
+            used = 0
+            truncated = False
+            for pg in pages:
+                piece = _page_prefix(pg["page_num"]) + pg["content"]
+                # 按累计长度截断，保留整页边界；超限则本页截断后停止
+                if used + len(piece) > max_length:
+                    piece = piece[: max_length - used]
+                    truncated = True
+                ref: Dict[str, Any] = {
                     "type": "page",
                     "page_range": page_range_raw,
-                    "start_pos": sliced["start_pos"],
-                    "end_pos": sliced["end_pos"],
-                    "length": sliced["length"],
-                    "truncated": sliced["truncated"],
-                    "page_num": page_range_raw,
-                    "text": sliced["text"],
+                    "start_pos": pg["start_pos"],
+                    "end_pos": pg["end_pos"],
+                    "length": len(pg["content"]),
+                    "page_num": pg["page_num"],
+                    "text": pg["content"],
                 }
-            ],
-            "_texts": {"page_content": sliced["text"]},
-        }
+                bboxes = lookup_bboxes(page_mapping, pg["start_pos"], pg["end_pos"])
+                if bboxes:
+                    ref["bboxes"] = bboxes
+                page_refs.append(ref)
+                parts.append(piece)
+                used += len(piece)
+                if truncated:
+                    break
+
+            injected = "\n---\n".join(parts)
+            results_text_by_label = {"page_content": injected}
+            source_refs = {
+                "page_content": page_refs,
+                "_texts": {"page_content": injected},
+            }
+        else:
+            # 无 page_mapping 或未知前导区：回退整片切法（不逐页标注）。
+            if not legacy_sliced["ok"]:
+                return "", legacy_sliced["reason"], None, []
+            legacy_ref: Dict[str, Any] = {
+                "type": "page",
+                "page_range": page_range_raw,
+                "start_pos": legacy_sliced["start_pos"],
+                "end_pos": legacy_sliced["end_pos"],
+                "length": legacy_sliced["length"],
+                "truncated": legacy_sliced["truncated"],
+                "page_num": page_range_raw,
+                "text": legacy_sliced["text"],
+            }
+            if legacy_sliced.get("leading_unmapped"):
+                legacy_ref["leading_unmapped"] = True
+            results_text_by_label = {"page_content": legacy_sliced["text"]}
+            source_refs = {
+                "page_content": [legacy_ref],
+                "_texts": {"page_content": legacy_sliced["text"]},
+            }
 
     # use_llm 关闭：直接返回切片原文，不校验占位符 / 不调 LLM
     if _is_llm_disabled(field):
@@ -2129,7 +2205,13 @@ async def extract_text_field(
 
     # page 方法走独立路径（不经按 keyword 分组的通用流程）
     if search_type == "page":
-        return await _extract_page_field(content, page_mapping, search_config, field)
+        return await _extract_page_field(
+            content,
+            page_mapping,
+            search_config,
+            field,
+            page_projection=snapshot.page_projection,
+        )
 
     # 调用对应的检索方法
     search_results = []
@@ -3197,7 +3279,25 @@ async def test_field_extraction_stream(
                         max_len = (search_config or {}).get("max_length", _DEFAULT_PAGE_MAX_LENGTH)
                         if not isinstance(max_len, int) or max_len <= 0:
                             max_len = _DEFAULT_PAGE_MAX_LENGTH
-                        pages = slice_pages_in_range(content, page_mapping, start_p, end_p)
+                        page_projection = build_page_projection(
+                            getattr(file_content, "middle_json", None)
+                        )
+                        legacy_sliced = None
+                        if page_projection is not None:
+                            pages = select_page_projection(
+                                page_projection, start_p, end_p
+                            )
+                        else:
+                            legacy_sliced = slice_by_page_range(
+                                content, page_mapping, start_p, end_p, max_len
+                            )
+                            pages = (
+                                []
+                                if legacy_sliced.get("leading_unmapped")
+                                else slice_pages_in_range(
+                                    content, page_mapping, start_p, end_p
+                                )
+                            )
                         if pages:
                             parts_pg = []
                             used = 0
@@ -3210,10 +3310,8 @@ async def test_field_extraction_stream(
                                 parts_pg.append(piece)
                                 used += len(piece)
                             results_by_label["page_content"] = "\n---\n".join(parts_pg)
-                        else:
-                            sliced = slice_by_page_range(content, page_mapping, start_p, end_p, max_len)
-                            if sliced["ok"]:
-                                results_by_label["page_content"] = sliced["text"]
+                        elif page_projection is None and legacy_sliced["ok"]:
+                            results_by_label["page_content"] = legacy_sliced["text"]
                 elif search_type == "context":
                     # 调试流是串行路径，这里现取快照分块，与并发链路共用同一份检索语义
                     debug_snapshot = await load_extraction_snapshot(file_id, session)
