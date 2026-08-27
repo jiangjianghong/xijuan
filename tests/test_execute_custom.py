@@ -29,7 +29,7 @@ def test_parse_fenced_json():
 async def test_execute_custom_plain(monkeypatch):
     captured = {}
 
-    async def fake_chat(prompt, messages=None):
+    async def fake_chat(prompt, messages=None, **kwargs):
         captured["prompt"] = prompt
         captured["messages"] = messages
         return '{"value": "结果文本", "reason": "依据"}'
@@ -44,7 +44,7 @@ async def test_execute_custom_plain(monkeypatch):
 async def test_execute_custom_formatted_injects_schema(monkeypatch):
     captured = {}
 
-    async def fake_chat(prompt, messages=None):
+    async def fake_chat(prompt, messages=None, **kwargs):
         captured["prompt"] = prompt
         return '{"value": {"公司名称": "华为"}, "reason": "ok"}'
 
@@ -61,7 +61,7 @@ async def test_execute_custom_formatted_injects_schema(monkeypatch):
 async def test_execute_custom_uses_system_prompt(monkeypatch):
     captured = {}
 
-    async def fake_chat(prompt, messages=None):
+    async def fake_chat(prompt, messages=None, **kwargs):
         captured["messages"] = messages
         return '{"value": "v", "reason": "r"}'
 

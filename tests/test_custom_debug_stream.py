@@ -30,7 +30,7 @@ class _Session:
 
 
 async def test_custom_stream_formatted(monkeypatch):
-    async def fake_chat(prompt, messages=None):
+    async def fake_chat(prompt, messages=None, **kwargs):
         return '{"value": {"公司名称": "华为"}, "reason": "ok"}'
 
     monkeypatch.setattr(analysis_service, "chat_completion", fake_chat)
