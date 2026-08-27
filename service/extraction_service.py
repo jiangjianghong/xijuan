@@ -2458,6 +2458,94 @@ class FieldComputation:
     model_pages: List[int]
 
 
+@dataclass(frozen=True)
+class TemporaryExtractionPlan:
+    """规则调试使用的只读临时抽取计划。"""
+
+    file_id: str
+    direct_field_ids: Tuple[str, ...]
+    ordered_fields: Tuple[Any, ...]
+    basic_count: int
+    snapshot: FileExtractionSnapshot
+
+
+async def build_temporary_extraction_plan(
+    file_id: str,
+    direct_field_ids: Sequence[str],
+    session: AsyncSession,
+) -> TemporaryExtractionPlan:
+    """按文件类型加载规则依赖链，并预取一次只读抽取快照。"""
+    file_row = (
+        await session.execute(select(File).where(File.file_id == file_id))
+    ).scalar_one_or_none()
+    if not file_row:
+        raise ValueError(f"文件不存在: {file_id}")
+
+    type_id = file_row.type_id or "default"
+    unique_direct = tuple(dict.fromkeys(direct_field_ids))
+    fields = (
+        await session.execute(
+            select(ExtractionField)
+            .where(ExtractionField.type_id == type_id)
+            .order_by(ExtractionField.priority, ExtractionField.field_id)
+        )
+    ).scalars().all()
+    fields_by_id = {field.field_id: field for field in fields}
+
+    missing = [field_id for field_id in unique_direct if field_id not in fields_by_id]
+    if missing:
+        raise ValueError(f"依赖字段配置不存在: {', '.join(missing)}")
+
+    selected_ids = set(unique_direct)
+    for field_id in unique_direct:
+        field = fields_by_id[field_id]
+        if getattr(field, "is_advanced", 0):
+            selected_ids.update(field.depend_fields or [])
+
+    missing_predecessors = sorted(
+        field_id for field_id in selected_ids if field_id not in fields_by_id
+    )
+    if missing_predecessors:
+        raise ValueError(
+            f"进阶字段前置配置不存在: {', '.join(missing_predecessors)}"
+        )
+
+    invalid_predecessors = sorted(
+        field_id
+        for field_id in selected_ids - set(unique_direct)
+        if getattr(fields_by_id[field_id], "is_advanced", 0)
+    )
+    if invalid_predecessors:
+        raise ValueError(
+            f"进阶字段只能引用普通字段: {', '.join(invalid_predecessors)}"
+        )
+
+    selected = [field for field in fields if field.field_id in selected_ids]
+    order_key = lambda field: (field.priority or 0, field.field_id)
+    basic_fields = sorted(
+        (field for field in selected if not getattr(field, "is_advanced", 0)),
+        key=order_key,
+    )
+    advanced_fields = sorted(
+        (field for field in selected if getattr(field, "is_advanced", 0)),
+        key=order_key,
+    )
+    ordered_fields = tuple(basic_fields + advanced_fields)
+    snapshot = await load_extraction_snapshot(
+        file_id,
+        session,
+        type_id,
+        need_vectors=needs_vector_index(ordered_fields),
+    )
+    return TemporaryExtractionPlan(
+        file_id=file_id,
+        direct_field_ids=unique_direct,
+        ordered_fields=ordered_fields,
+        basic_count=len(basic_fields),
+        snapshot=snapshot,
+    )
+
+
 async def _iter_field_group(
     file_id: str,
     fields: Sequence[Any],
@@ -2627,17 +2715,17 @@ async def _iter_extraction_results(
         unregister_task_limiter("task_extraction", file_id)
 
 
-async def _persist_field_computation(
-    file_id: str,
-    session: AsyncSession,
+def _format_field_computation(
     computation: FieldComputation,
     snapshot: Optional["FileExtractionSnapshot"],
     total: int,
     field_values: Dict[str, str],
     field_source_pages: Dict[str, Optional[List[int]]],
     field_pages_from: Dict[str, str],
+    *,
+    is_direct_dependency: Optional[bool] = None,
 ) -> Dict[str, Any]:
-    """把一个字段的计算结果落库，并组装对外 item。仅在主协程调用。"""
+    """整理字段计算结果，并更新进阶字段所需的请求内映射。"""
     field = computation.field
     value = computation.value
     reason = computation.reason
@@ -2648,43 +2736,6 @@ async def _persist_field_computation(
         # 按「抽取值 ↔ 命中页内容」包含相似度对各 label 分组内 ref 排序
         page_contents = snapshot.page_contents if snapshot else {}
         _sort_source_refs_by_page_containment(source_refs, value, page_contents)
-    else:
-        # 落库失败会把会话打成 DEACTIVE，不修复则下面的 execute 必抛
-        # PendingRollbackError，把单字段失败放大成整个文件卡死（2026-07-28 线上事故）。
-        # 只在真坏掉时回滚：无谓 rollback 会 expire field 等 ORM 对象。
-        await rollback_if_broken(session)
-
-    stmt = select(ExtractionResult).where(
-        ExtractionResult.file_id == file_id,
-        ExtractionResult.field_id == field.field_id,
-    )
-    existing = (await session.execute(stmt)).scalar_one_or_none()
-
-    if existing:
-        existing.extracted_value = value
-        existing.reason = reason
-        existing.source_refs = source_refs
-        existing.model_pages = model_pages or None
-    else:
-        session.add(
-            ExtractionResult(
-                file_id=file_id,
-                field_id=field.field_id,
-                extracted_value=value,
-                reason=reason,
-                source_refs=source_refs,
-                model_pages=model_pages or None,
-            )
-        )
-
-    await session.commit()
-
-    if computation.success:
-        logger.info(
-            "字段提取成功: field_id={}, value={}",
-            field.field_id,
-            value[:100] if value else "",
-        )
 
     # 对外页码：pages = 模型自报（可能空）；source_pages = 兜底后必定存在。
     # 排序后再算，让 source_pages 与最终 source_refs 顺序一致。
@@ -2697,7 +2748,7 @@ async def _persist_field_computation(
         field_source_pages[field.field_id] = source_pages or None
         field_pages_from[field.field_id] = "model" if model_pages else "refs"
 
-    return {
+    item = {
         "field_id": field.field_id,
         "field_name": field.field_name,
         "value": value,
@@ -2709,6 +2760,110 @@ async def _persist_field_computation(
         "index": computation.index,
         "total": total,
     }
+    if is_direct_dependency is not None:
+        item["is_direct_dependency"] = is_direct_dependency
+    return item
+
+
+async def _persist_field_computation(
+    file_id: str,
+    session: AsyncSession,
+    computation: FieldComputation,
+    snapshot: Optional["FileExtractionSnapshot"],
+    total: int,
+    field_values: Dict[str, str],
+    field_source_pages: Dict[str, Optional[List[int]]],
+    field_pages_from: Dict[str, str],
+) -> Dict[str, Any]:
+    """把一个字段的计算结果落库，并组装对外 item。仅在主协程调用。"""
+    if not computation.success:
+        # 落库失败会把会话打成 DEACTIVE，不修复则下面的 execute 必抛
+        # PendingRollbackError，把单字段失败放大成整个文件卡死（2026-07-28 线上事故）。
+        # 只在真坏掉时回滚：无谓 rollback 会 expire field 等 ORM 对象。
+        await rollback_if_broken(session)
+
+    item = _format_field_computation(
+        computation,
+        snapshot,
+        total,
+        field_values,
+        field_source_pages,
+        field_pages_from,
+    )
+    field = computation.field
+    stmt = select(ExtractionResult).where(
+        ExtractionResult.file_id == file_id,
+        ExtractionResult.field_id == field.field_id,
+    )
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+
+    if existing:
+        existing.extracted_value = computation.value
+        existing.reason = computation.reason
+        existing.source_refs = computation.source_refs
+        existing.model_pages = computation.model_pages or None
+    else:
+        session.add(
+            ExtractionResult(
+                file_id=file_id,
+                field_id=field.field_id,
+                extracted_value=computation.value,
+                reason=computation.reason,
+                source_refs=computation.source_refs,
+                model_pages=computation.model_pages or None,
+            )
+        )
+
+    await session.commit()
+    if computation.success:
+        logger.info(
+            "字段提取成功: field_id={}, value={}",
+            field.field_id,
+            computation.value[:100] if computation.value else "",
+        )
+    return item
+
+
+async def iter_temporary_extraction_results(
+    plan: TemporaryExtractionPlan,
+) -> AsyncIterator[Dict[str, Any]]:
+    """执行调试依赖链并只返回请求内结果，不接收会话也不落库。"""
+    field_values: Dict[str, str] = {}
+    field_source_pages: Dict[str, Optional[List[int]]] = {}
+    field_pages_from: Dict[str, str] = {}
+    direct_ids = set(plan.direct_field_ids)
+    app_cfg = get_config()
+    groups = (
+        (plan.ordered_fields[:plan.basic_count], 0),
+        (plan.ordered_fields[plan.basic_count:], plan.basic_count),
+    )
+
+    try:
+        for fields, start_index in groups:
+            if not fields:
+                continue
+            async for computation in _iter_field_group(
+                plan.file_id,
+                fields,
+                plan.snapshot,
+                field_values,
+                field_source_pages,
+                field_pages_from,
+                app_cfg.concurrency.task_extraction,
+                app_cfg.concurrency.global_extraction,
+                start_index,
+            ):
+                yield _format_field_computation(
+                    computation,
+                    plan.snapshot,
+                    len(plan.ordered_fields),
+                    field_values,
+                    field_source_pages,
+                    field_pages_from,
+                    is_direct_dependency=computation.field.field_id in direct_ids,
+                )
+    finally:
+        unregister_task_limiter("task_extraction", plan.file_id)
 
 
 async def run_extraction(
