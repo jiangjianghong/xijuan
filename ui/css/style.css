@@ -1860,6 +1860,72 @@ h1, h2, h3, h4, h5, h6,
     font-size: 13px;
 }
 
+.debug-reextract-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: -4px 0 16px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.debug-reextract-option:has(input:disabled) {
+    opacity: 0.6;
+}
+
+.debug-reextract-option .toggle-switch {
+    flex: 0 0 36px;
+}
+
+.debug-extraction-result .debug-result-group-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.debug-extraction-kind,
+.debug-extraction-status {
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.debug-extraction-kind {
+    color: var(--text-secondary);
+}
+
+.debug-extraction-result.is-success .debug-extraction-status {
+    color: #287A45;
+}
+
+.debug-extraction-result.is-failed .debug-extraction-status {
+    color: var(--error);
+}
+
+.debug-extraction-result.is-failed {
+    border-left: 3px solid var(--error);
+    padding-left: 10px;
+}
+
+.debug-extraction-pending {
+    opacity: 0.65;
+}
+
+.debug-extraction-meta {
+    margin-bottom: 6px;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+}
+
+.debug-extraction-result .debug-result-item-content > div {
+    margin-top: 4px;
+    overflow-wrap: anywhere;
+}
+
 .debug-test-btn {
     padding: 8px 20px;
     border: none;

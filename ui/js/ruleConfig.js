@@ -13,6 +13,7 @@ const RuleConfig = {
         loaded: { fields: false, rules: false },
         debugMode: false,
         debugTestRunning: false,
+        ruleExtractionResults: [],
         // 当前字段表单是否为「进阶字段」（可引用普通字段的提取结果）
         formIsAdvanced: false,
     },
@@ -2352,6 +2353,7 @@ const RuleConfig = {
     exitDebugMode() {
         this.state.debugMode = false;
         this.state.debugTestRunning = false;
+        this.state.ruleExtractionResults = [];
 
         // 保存关键词 tags 值
         const savedKeywords = this._saveKeywordTagsState();
@@ -2940,11 +2942,24 @@ const RuleConfig = {
                     <button class="debug-test-btn" id="debug-test-btn" onclick="RuleConfig.runRuleTest()" disabled>测试</button>
                 </div>
 
+                <label class="debug-reextract-option">
+                    <span>重新抽取依赖字段</span>
+                    <span class="toggle-switch">
+                        <input type="checkbox" id="debug-reextract-toggle">
+                        <span class="toggle-slider"></span>
+                    </span>
+                </label>
+
                 <div class="debug-section" id="debug-sec-config" style="display:none;">
                     <div class="debug-section-header">规则配置</div>
                     <div class="debug-section-body">
                         <div class="debug-code-block" id="debug-config-preview"></div>
                     </div>
+                </div>
+
+                <div class="debug-section" id="debug-sec-extraction-results" style="display:none;">
+                    <div class="debug-section-header">本次抽取结果</div>
+                    <div class="debug-section-body" id="debug-extraction-results-content"></div>
                 </div>
 
                 <div class="debug-section" id="debug-sec-input-values" style="display:none;">
@@ -2987,6 +3002,7 @@ const RuleConfig = {
 
     async runRuleTest() {
         const fileSelect = document.getElementById('debug-file-select');
+        const reExtractToggle = document.getElementById('debug-reextract-toggle');
         const fileId = fileSelect ? fileSelect.value : '';
         if (!fileId) {
             Toast.error('请先选择测试文件');
@@ -3006,10 +3022,12 @@ const RuleConfig = {
         this.resetRuleDebugResults();
 
         // 显示 loading
-        this._showDebugLoading('正在获取依赖字段值...');
+        this._showDebugLoading(reExtractToggle?.checked ? '准备重新抽取依赖字段...' : '正在获取依赖字段值...');
 
-        // 禁用测试按钮
+        // 锁定本次请求上下文
         const testBtn = document.getElementById('debug-test-btn');
+        if (fileSelect) fileSelect.disabled = true;
+        if (reExtractToggle) reExtractToggle.disabled = true;
         if (testBtn) {
             testBtn.disabled = true;
             testBtn.textContent = '测试中...';
@@ -3018,6 +3036,7 @@ const RuleConfig = {
         const payload = {
             file_id: fileId,
             config: formData,
+            re_extract: !!reExtractToggle?.checked,
         };
 
         try {
@@ -3029,6 +3048,8 @@ const RuleConfig = {
         } finally {
             this.state.debugTestRunning = false;
             this._hideDebugLoading();
+            if (fileSelect) fileSelect.disabled = false;
+            if (reExtractToggle) reExtractToggle.disabled = false;
             if (testBtn) {
                 testBtn.disabled = !fileSelect.value;
                 testBtn.textContent = '测试';
@@ -3054,6 +3075,18 @@ const RuleConfig = {
     handleRuleDebugEvent(evt) {
         const { event, data } = evt;
         switch (event) {
+            case 'extraction_started':
+                this.startRuleExtractionResults(data);
+                this._showDebugLoading(`正在重新抽取依赖字段（0/${data.total || 0}）...`);
+                break;
+            case 'extraction_field':
+                this.renderRuleExtractionField(data);
+                this._showDebugLoading(`正在重新抽取依赖字段（${data.index || 0}/${data.total || 0}）...`);
+                break;
+            case 'extraction_done':
+                this._hideDebugLoading();
+                this._showDebugLoading('正在获取依赖字段值...');
+                break;
             case 'input_values':
                 this._hideDebugLoading();
                 this._showDebugLoading('正在解析表达式...');
@@ -3091,6 +3124,61 @@ const RuleConfig = {
                 this._hideDebugLoading();
                 break;
         }
+    },
+
+    startRuleExtractionResults(data) {
+        const total = Number(data.total) || 0;
+        this.state.ruleExtractionResults = Array(total).fill(null);
+        this.renderRuleExtractionResults();
+    },
+
+    renderRuleExtractionField(data) {
+        if (!Array.isArray(this.state.ruleExtractionResults)) {
+            this.state.ruleExtractionResults = [];
+        }
+        const index = Math.max(0, (Number(data.index) || 1) - 1);
+        this.state.ruleExtractionResults[index] = data;
+        this.renderRuleExtractionResults();
+    },
+
+    renderRuleExtractionResults() {
+        const section = document.getElementById('debug-sec-extraction-results');
+        const container = document.getElementById('debug-extraction-results-content');
+        if (!section || !container) return;
+
+        const results = Array.isArray(this.state.ruleExtractionResults)
+            ? this.state.ruleExtractionResults
+            : [];
+        container.innerHTML = results.map((item, index) => {
+            if (!item) {
+                return `
+                    <div class="debug-result-group debug-extraction-pending">
+                        <div class="debug-result-group-header">字段 ${index + 1} · 等待抽取</div>
+                    </div>
+                `;
+            }
+            const statusText = item.success ? '成功' : '失败';
+            const dependencyText = item.is_direct_dependency ? '规则依赖' : '前置字段';
+            const pages = Array.isArray(item.source_pages) && item.source_pages.length
+                ? item.source_pages.join(', ')
+                : '(无)';
+            return `
+                <div class="debug-result-group debug-extraction-result ${item.success ? 'is-success' : 'is-failed'}">
+                    <div class="debug-result-group-header">
+                        <span>${Utils.escapeHtml(item.field_name || item.field_id || '')}</span>
+                        <span class="debug-extraction-kind">${dependencyText}</span>
+                        <span class="debug-extraction-status">${statusText}</span>
+                    </div>
+                    <div class="debug-result-item-content">
+                        <div class="debug-extraction-meta">字段 ID：${Utils.escapeHtml(item.field_id || '')}</div>
+                        <div><strong>抽取值：</strong>${Utils.escapeHtml(item.value || '(空)')}</div>
+                        <div><strong>理由：</strong>${Utils.escapeHtml(item.reason || '(无)')}</div>
+                        <div><strong>可用页码：</strong>${Utils.escapeHtml(pages)}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        section.style.display = '';
     },
 
     renderRuleInputValues(data) {
@@ -3190,7 +3278,8 @@ const RuleConfig = {
     },
 
     resetRuleDebugResults() {
-        ['debug-sec-input-values', 'debug-sec-resolved', 'debug-sec-web-search', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
+        this.state.ruleExtractionResults = [];
+        ['debug-sec-extraction-results', 'debug-sec-input-values', 'debug-sec-resolved', 'debug-sec-web-search', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
         });
