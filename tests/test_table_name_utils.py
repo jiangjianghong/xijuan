@@ -5,16 +5,27 @@ case 全部来自 30 个真实文档 / 1718 张表的抽样，不是构造出来
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from service.table_name_utils import (
     _contains_table_type_word,
     _extract_last_line,
     _extract_table_name,
+    _gap_has_title,
+    _is_same_page,
     _is_unknown_table_name,
     _looks_like_invalid_candidate,
     _looks_like_non_caption,
+    _resolve_continuation_names,
 )
+
+TABLE_RE = re.compile(r"<table>.*?</table>", re.DOTALL | re.IGNORECASE)
+
+
+def _matches(content: str):
+    return list(TABLE_RE.finditer(content))
 
 
 @pytest.mark.parametrize(
@@ -151,3 +162,85 @@ def test_extract_table_name_falls_back_to_empty_not_unknown():
 def test_extract_table_name_truncates_to_30_chars():
     long_name = "现状供水管道统计表" * 5
     assert len(_extract_table_name(long_name)) == 30
+
+
+def test_gap_has_title_ignores_page_numbers_and_garbage():
+    assert _gap_has_title("\n51\n") is False
+    assert _gap_has_title("\n第 51 页\n") is False
+    assert _gap_has_title("\n![](img/a.png)\n") is False
+    assert _gap_has_title("\n-----\n") is False
+    assert _gap_has_title("\n表 3-7 管网水压统计表\n") is True
+
+
+def test_same_page_only_when_both_are_plain_equal_numbers():
+    assert _is_same_page("30", "30") is True
+    assert _is_same_page("30", "31") is False
+    assert _is_same_page("31-32", "32") is False   # 跨页表：无法确定，不否决
+    assert _is_same_page("", "30") is False
+    assert _is_same_page("30", "") is False
+
+
+def test_continuation_inherits_parent_name_without_suffix():
+    """续表存与父表完全相同的名字。
+
+    加 (1)(2) 会让续表在 exact 模式下匹配不到父名，fuzzy 也只有 0.769、
+    卡在 0.8 阈值下——而跨页续表恰恰是数据被拆开、最需要被全部命中的。
+    """
+    content = (
+        "<table><tr><td>A</td></tr></table>\n"
+        "<table><tr><td>B</td></tr></table>\n"
+        "<table><tr><td>C</td></tr></table>"
+    )
+    names = ["表 3-6 现状供水管道统计表", "", ""]
+    pages = ["12", "13", "14"]
+    assert _resolve_continuation_names(names, content, _matches(content), pages) == [
+        "表 3-6 现状供水管道统计表",
+        "表 3-6 现状供水管道统计表",
+        "表 3-6 现状供水管道统计表",
+    ]
+
+
+def test_same_page_neighbours_are_not_continuations():
+    """同一页上紧邻的两张独立表不该继承前表名。"""
+    content = "<table><tr><td>A</td></tr></table>\n<table><tr><td>B</td></tr></table>"
+    names = ["投资估算表", "材料价格表"]
+    pages = ["7", "7"]
+    assert _resolve_continuation_names(names, content, _matches(content), pages) == [
+        "投资估算表",
+        "材料价格表",
+    ]
+
+
+def test_title_in_gap_breaks_continuation():
+    content = (
+        "<table><tr><td>A</td></tr></table>\n"
+        "表 3-7 管网水压统计表\n"
+        "<table><tr><td>B</td></tr></table>"
+    )
+    names = ["表 3-6 现状供水管道统计表", "表 3-7 管网水压统计表"]
+    pages = ["12", "13"]
+    assert _resolve_continuation_names(names, content, _matches(content), pages) == [
+        "表 3-6 现状供水管道统计表",
+        "表 3-7 管网水压统计表",
+    ]
+
+
+def test_empty_parent_name_is_not_inherited():
+    """父表自己没名字时不继承，让续表保留自己抽到的名字。"""
+    content = "<table><tr><td>A</td></tr></table>\n<table><tr><td>B</td></tr></table>"
+    names = ["", "材料价格表"]
+    pages = ["7", "8"]
+    assert _resolve_continuation_names(names, content, _matches(content), pages) == [
+        "",
+        "材料价格表",
+    ]
+
+
+def test_missing_page_nums_falls_back_to_gap_rule():
+    """page_nums 缺省时不报错，退回纯 gap 判据。"""
+    content = "<table><tr><td>A</td></tr></table>\n<table><tr><td>B</td></tr></table>"
+    names = ["投资估算表", ""]
+    assert _resolve_continuation_names(names, content, _matches(content)) == [
+        "投资估算表",
+        "投资估算表",
+    ]

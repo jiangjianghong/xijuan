@@ -8,6 +8,7 @@ parse_service._clean_text_line / _extract_table_name 等旧引用继续可用。
 from __future__ import annotations
 
 import re
+from typing import List, Sequence
 
 
 _UNKNOWN_TABLE_NAME_VALUES = {
@@ -181,3 +182,71 @@ def _is_unknown_table_name(name: str) -> bool:
         return True
     # 语义硬过滤：日期 / 比例尺 / 公司名 / 行首序号 / 正文句
     return _looks_like_non_caption(cleaned)
+
+
+def _gap_has_title(gap_text: str) -> bool:
+    """相邻两表之间的文本是否含标题行。
+
+    空行、图片 / 公式 / HTML 残留、纯数字或页码（「51」「第 51 页」「-----」）都不算。
+    """
+    for line in (gap_text or "").splitlines():
+        candidate = _clean_text_line(line)
+        if not candidate:
+            continue
+        if _looks_like_invalid_candidate(candidate):
+            continue
+        if re.fullmatch(r"[\d\s\-—–]+", candidate):
+            continue
+        if re.fullmatch(r"第\s*\d+\s*页", candidate):
+            continue
+        return True
+    return False
+
+
+def _is_same_page(prev_page: str, cur_page: str) -> bool:
+    """两张表是否确定在同一页。
+
+    page_num 形如 "30" 或跨页的 "31-32"（见 utils.page_mapping.lookup_page_num）。
+    只有两边都是纯数字且相等才判定同页；空值或跨页串一律返回 False——
+    「无法确定」不该否决续表。
+    """
+    a = (prev_page or "").strip()
+    b = (cur_page or "").strip()
+    if not a or not b:
+        return False
+    if not a.isdigit() or not b.isdigit():
+        return False
+    return a == b
+
+
+def _resolve_continuation_names(
+    base_names: Sequence[str],
+    content: str,
+    matches: Sequence,
+    page_nums: Sequence[str] = (),
+) -> List[str]:
+    """回填跨页续表名：判定为续表时沿用上一张表的最终名。
+
+    base_names 与 matches 同序（文档顺序），返回等长列表。
+
+    不加 (k) 后缀：table_name 是下游表格匹配的键，「投资估算表(1)」在 exact 模式下
+    匹配不到「投资估算表」，fuzzy 算出 0.769 也卡在 0.8 阈值下。要给人看第几段
+    应在 UI 层拼，不动落库的表名。
+    """
+    final: List[str] = []
+    for i, m in enumerate(matches):
+        if i == 0:
+            is_continuation = False
+        else:
+            gap = content[matches[i - 1].end():m.start()]
+            is_continuation = not _gap_has_title(gap)
+            if is_continuation and i < len(page_nums):
+                # 同页紧邻的两张独立表不是跨页续表
+                if _is_same_page(page_nums[i - 1], page_nums[i]):
+                    is_continuation = False
+
+        if is_continuation and final and final[-1]:
+            final.append(final[-1])
+        else:
+            final.append(base_names[i])
+    return final
