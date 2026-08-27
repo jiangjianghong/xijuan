@@ -9,6 +9,7 @@ import pytest
 
 from service.table_name_utils import (
     _contains_table_type_word,
+    _is_unknown_table_name,
     _looks_like_invalid_candidate,
     _looks_like_non_caption,
 )
@@ -95,3 +96,24 @@ def test_table_type_word_excludes_ambiguous_single_chars():
     assert _contains_table_type_word("现状供水管道一览表") is True
     assert _contains_table_type_word("本项目采用如下方式") is False
     assert _contains_table_type_word("单位工程质量验收") is False
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["未知", "unknown", "无法提取", "未找到明确标题", "![](img/a.png)", "1、货币资金", "注：本表数据截止到年底。"],
+)
+def test_is_unknown_covers_placeholder_and_both_filters(name):
+    assert _is_unknown_table_name(name) is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["表 3-4 一水厂现状构筑物、设备一览表", "投资估算表", "单位：万元"],
+)
+def test_is_unknown_keeps_real_names(name):
+    assert _is_unknown_table_name(name) is False
+
+
+def test_is_unknown_checks_image_syntax_before_bracket_stripping():
+    """"![" 的括号会被 strip 掉，必须对未剥括号的原始候选做格式判断。"""
+    assert _is_unknown_table_name("![](images/9c2.jpg)") is True

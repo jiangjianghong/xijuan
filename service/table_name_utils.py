@@ -146,7 +146,11 @@ def _extract_table_name(preceding_text: str) -> str:
 
 
 def _is_unknown_table_name(name: str) -> bool:
-    """判断模型是否返回了"无法识别/未知"类占位结果。"""
+    """判断模型是否返回了"无法识别/未知"类占位结果。
+
+    除占位词表外，还叠加格式与语义两层硬过滤：公式 / 图片 / HTML 是结构性垃圾，
+    日期 / 比例尺 / 公司名 / 行首序号 / 正文句是语义垃圾，两类都触发回退。
+    """
     cleaned = _clean_text_line(name).strip("`\"'[](){}（）【】")
     if not cleaned:
         return True
@@ -159,4 +163,8 @@ def _is_unknown_table_name(name: str) -> bool:
         if hint in cleaned or hint in lowered:
             return True
 
-    return False
+    # 格式硬过滤：对未剥括号的原始候选判断，避免 "![...]" 的括号被剥后漏判
+    if _looks_like_invalid_candidate(_clean_text_line(name)):
+        return True
+    # 语义硬过滤：日期 / 比例尺 / 公司名 / 行首序号 / 正文句
+    return _looks_like_non_caption(cleaned)
