@@ -116,3 +116,49 @@ async def test_parse_tables_llm_context_uses_previous_table_end_segment(monkeypa
     assert len(prompts) == 2  # 全量调用：每个表都调用一次 LLM
     second_context = prompts[1].split("上文片段:\n", 1)[1]
     assert second_context == "单位：万元\n项目投资现金流量表"
+
+
+@pytest.mark.anyio
+async def test_parse_tables_continuation_inherits_previous_name(monkeypatch):
+    """相邻两表之间无标题时，第二张表沿用第一张的名字。
+
+    上文刻意只放一行「1、货币资金」（行首序号，会被语义过滤判废），
+    这样第二张表的规则回退取不到任何名字，唯一能让它有名字的路径就是续表继承——
+    否则本测试会因为「向上找合法行」恰好找到第一张表的标题而假绿。
+    """
+
+    async def _mock_chat_completion(prompt: str, *args, **kwargs):
+        if "表格序号: 1" in prompt:
+            return '{"table_name":"表 3-6 现状供水管道统计表", "reason":""}'
+        return '{"table_name":"未知", "reason":"无法判断"}'
+
+    monkeypatch.setattr(parse_service, "chat_completion", _mock_chat_completion)
+
+    content = (
+        "1、货币资金\n"
+        "<table><tr><td>路名</td></tr></table>\n"
+        "<table><tr><td>续</td></tr></table>\n"
+    )
+
+    tables = await parse_service.parse_tables(content, "file_cont")
+
+    assert [t["table_name"] for t in tables] == [
+        "表 3-6 现状供水管道统计表",
+        "表 3-6 现状供水管道统计表",
+    ]
+
+
+@pytest.mark.anyio
+async def test_parse_tables_keeps_dunhao_caption(monkeypatch):
+    """含顿号的标准表题不能被判废回退。"""
+
+    async def _mock_chat_completion(*args, **kwargs):
+        return '{"table_name":"表 3-4 一水厂现状构筑物、设备一览表", "reason":""}'
+
+    monkeypatch.setattr(parse_service, "chat_completion", _mock_chat_completion)
+
+    content = "表 3-4 一水厂现状构筑物、设备一览表\n<table><tr><td>A</td></tr></table>\n"
+
+    tables = await parse_service.parse_tables(content, "file_dun")
+
+    assert tables[0]["table_name"] == "表 3-4 一水厂现状构筑物、设备一览表"

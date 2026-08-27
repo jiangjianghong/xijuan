@@ -30,6 +30,7 @@ from service.table_name_utils import (
     _extract_last_line,
     _extract_table_name,
     _is_unknown_table_name,
+    _resolve_continuation_names,
 )
 
 
@@ -182,6 +183,16 @@ async def parse_tables(content: str, file_id: str, page_mapping: Optional[List] 
         ]
         tables: List[Dict] = await asyncio.gather(*tasks)
         tables.sort(key=lambda x: x["table_index"])
+
+        # 跨页续表回填：相邻两表之间无标题、且不在同一页时，沿用上一张表的名字
+        resolved = _resolve_continuation_names(
+            [t["table_name"] for t in tables],
+            content,
+            matches,
+            [t.get("page_num") or "" for t in tables],
+        )
+        for table_data, name in zip(tables, resolved):
+            table_data["table_name"] = name
     finally:
         unregister_task_limiter("task_table_validation", file_id)
 
