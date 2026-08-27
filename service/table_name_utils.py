@@ -37,6 +37,23 @@ def _clean_text_line(line: str) -> str:
     return line.strip()
 
 
+def _looks_like_invalid_candidate(name: str) -> bool:
+    """判断候选是否为结构性垃圾：图片语法 / HTML 标签 / LaTeX 公式。
+
+    刻意不拦「含 $ 或反斜杠」——那会误杀 "工程款支付表($)" 这类合法表名，
+    真正的公式靠 LaTeX 命令特征识别就够了。
+    """
+    if not name:
+        return True
+    if "![" in name:
+        return True
+    if re.search(r"</?[a-zA-Z][^>]*>", name):
+        return True
+    if re.search(r"\\begin\{|\\end\{|\\frac|\\sum|\\sqrt|\\int|\\lim|\\cdot|\\times", name):
+        return True
+    return False
+
+
 def _extract_last_line(preceding_text: str) -> str:
     """提取表格前最后一行（模型失败时唯一回退）。"""
     text = preceding_text.rstrip()
