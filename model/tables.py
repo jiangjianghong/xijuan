@@ -58,6 +58,38 @@ class Project(Base):
     )
 
 
+class TypeParam(Base):
+    """文档类型入参：调用方提交时传入的运行时上下文。
+
+    配置里用 <param>param_key</param> 引用，是继 <search_result>（文档内检索原文）、
+    <field_result>（其它字段抽取结果）之后的第三类占位符，承载文档里没有的外部
+    信息（当前时间、申报年度等）。
+
+    用 param_key 而非生成式 id 做主键的一半，换来 copy_from / import 时占位符
+    无需重映射（对比 extraction_field 的 field_id 需要 A -> A_0002 重映射）。
+
+    不设 enabled 列：字段与规则有 enabled 是因为它们要「执行」，禁用即跳过；
+    参数不执行，只是个值。留着会生出「传了被禁用的参数算不算未知 key」这种
+    没有好答案的中间态。定义了就用，不要了就删。
+    """
+
+    __tablename__ = "type_param"
+
+    type_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    param_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    param_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 调用方未传时的兜底值
+    default_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 1 = 未传且无 default_value 时直接拒绝请求
+    required: Mapped[int] = mapped_column(TINYINT, nullable=False, default=0)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
 # ── 1. files 表 ─────────────────────────────────────────────
 
 class File(Base):
@@ -67,6 +99,11 @@ class File(Base):
     type_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     file_name: Mapped[str] = mapped_column(String(512), nullable=False)
     file_size: Mapped[int] = mapped_column(BigInteger, default=0)
+    # 提交解析时传入的入参快照（默认值 <- 传入值覆盖后的完整结果）。
+    # 存合并后的完整快照而非仅传入部分：retry 天然沿用当时的值，事后也能查到
+    # 那一次跑用的到底是什么。代价是改了参数默认值后 retry 不会用新默认值——
+    # 可复现性在这里优先于时效性。
+    input_params: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     create_time: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     start_parsing_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     end_parsing_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
