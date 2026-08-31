@@ -156,3 +156,82 @@ def test_render_rule_params_no_refs_yields_empty_params_used():
     assert rendered.system_prompt == ""
     assert rendered.web_search is None
     assert rendered.params_used == {}
+
+
+# ── 入参归一与校验 ──────────────────────────────────────────
+
+import pytest  # noqa: E402
+
+from service.type_param_store import (  # noqa: E402
+    ParamValidationError,
+    TypeParamDef,
+    normalize_raw_params,
+    resolve_input_params,
+)
+
+_DEFS = (
+    TypeParamDef(param_key="current_date", default_value="", required=1),
+    TypeParamDef(param_key="year", default_value="2025", required=0),
+    TypeParamDef(param_key="note", default_value=None, required=0),
+)
+
+
+def test_normalize_raw_params_accepts_none():
+    assert normalize_raw_params(None) == {}
+
+
+def test_normalize_raw_params_parses_json_string():
+    assert normalize_raw_params('{"a": "1"}') == {"a": "1"}
+
+
+def test_normalize_raw_params_stringifies_scalars():
+    assert normalize_raw_params({"n": 2025, "b": True}) == {"n": "2025", "b": "True"}
+
+
+def test_normalize_raw_params_rejects_bad_json():
+    with pytest.raises(ParamValidationError, match="不是合法 JSON"):
+        normalize_raw_params("{not json")
+
+
+def test_normalize_raw_params_rejects_non_object():
+    with pytest.raises(ParamValidationError, match="必须是 JSON 对象"):
+        normalize_raw_params("[1, 2]")
+
+
+def test_normalize_raw_params_rejects_nested_values():
+    with pytest.raises(ParamValidationError, match="only_scalar"):
+        normalize_raw_params({"only_scalar": {"nested": 1}})
+
+
+def test_resolve_input_params_merges_defaults():
+    merged = resolve_input_params(_DEFS, {"current_date": "2026-08-31"})
+    assert merged == {"current_date": "2026-08-31", "year": "2025", "note": ""}
+
+
+def test_resolve_input_params_passed_value_overrides_default():
+    merged = resolve_input_params(_DEFS, {"current_date": "2026-08-31", "year": "2026"})
+    assert merged["year"] == "2026"
+
+
+def test_resolve_input_params_rejects_unknown_key():
+    with pytest.raises(ParamValidationError, match="未知入参"):
+        resolve_input_params(_DEFS, {"current_date": "x", "typo_key": "y"})
+
+
+def test_resolve_input_params_rejects_missing_required():
+    with pytest.raises(ParamValidationError, match="缺少必填入参"):
+        resolve_input_params(_DEFS, {})
+
+
+def test_resolve_input_params_required_satisfied_by_default():
+    defs = (TypeParamDef(param_key="d", default_value="兜底", required=1),)
+    assert resolve_input_params(defs, {}) == {"d": "兜底"}
+
+
+def test_resolve_input_params_empty_defs_rejects_any_input():
+    with pytest.raises(ParamValidationError, match="未知入参"):
+        resolve_input_params((), {"whatever": "1"})
+
+
+def test_resolve_input_params_empty_defs_and_empty_input():
+    assert resolve_input_params((), {}) == {}
