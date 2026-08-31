@@ -241,7 +241,10 @@ def validate_prompt_has_placeholder(prompt: str) -> bool:
 # source_refs 中非 ref 列表的保留键（元数据），遍历命中 / 判定成败时都要跳过
 # （_model_pages 是模型自报页码的 int 数组，非 ref 列表，不可当 ref 排序）
 _NON_REF_KEYS = frozenset(
-    {"_texts", "_vl", "_web_search", "_model_pages", "_resolved_refs", "_page_link", "_empty_refs"}
+    {
+        "_texts", "_vl", "_web_search", "_model_pages",
+        "_resolved_refs", "_page_link", "_empty_refs", "_params",
+    }
 )
 
 
@@ -2495,12 +2498,21 @@ async def _extract_field_result(
         (value, reason, source_refs, model_pages)。model_pages 是模型自报页码，
         vl 类与 use_llm=0 恒为 []。
     """
+    # 参数渲染恒先于字段引用渲染：两次独立 re.sub 意味着第二趟会扫到第一趟替换
+    # 出来的文本。字段抽取值来自模型输出与文档原文、完全不可控，若含 <param>
+    # 字面量会被误当占位符；参数值来自配置方与上游系统，可控得多。让不可信的
+    # 一方后进场且不再被扫描。
+    from service.type_params import render_field_params
+
+    run_field, param_provenance = render_field_params(field, snapshot.params)
+
     if getattr(field, "is_advanced", 0):
         run_field, provenance = resolve_advanced_field(
-            field, field_values, field_source_pages, pages_from
+            run_field, field_values, field_source_pages, pages_from
         )
     else:
-        run_field, provenance = field, {}
+        provenance = {}
+    provenance = {**param_provenance, **provenance}
 
     if run_field.source_type == "table":
         value, reason, source_refs, model_pages = await extract_table_field(file_id, run_field, snapshot)
@@ -2618,6 +2630,7 @@ async def build_temporary_extraction_plan(
         session,
         type_id,
         need_vectors=needs_vector_index(ordered_fields),
+        params=(file_row.input_params or {}),
     )
     return TemporaryExtractionPlan(
         file_id=file_id,
@@ -2973,6 +2986,7 @@ async def run_extraction(
     # 读取文件归属类型
     file_row = (await session.execute(select(File).where(File.file_id == file_id))).scalar_one_or_none()
     type_id = (file_row.type_id if file_row else None) or "default"
+    input_params = (file_row.input_params if file_row else None) or {}
 
     # 获取全部启用字段（两层），按 priority 排序；普通字段先于进阶字段执行
     stmt = (
@@ -2989,7 +3003,9 @@ async def run_extraction(
     # 并发开始前一次性取出全部只读数据：AsyncSession 非并发安全。
     # 字段列表必须先查——快照要据此决定是否拉子块向量。
     snapshot = await load_extraction_snapshot(
-        file_id, session, type_id, need_vectors=needs_vector_index(all_fields)
+        file_id, session, type_id,
+        need_vectors=needs_vector_index(all_fields),
+        params=input_params,
     )
 
     total = len(ordered_fields)
@@ -3053,6 +3069,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     # 读取文件归属类型
     file_row = (await session.execute(select(File).where(File.file_id == file_id))).scalar_one_or_none()
     type_id = (file_row.type_id if file_row else None) or "default"
+    input_params = (file_row.input_params if file_row else None) or {}
 
     # 获取全部启用字段（两层），按 priority 排序；普通字段先于进阶字段执行
     stmt = (
@@ -3069,7 +3086,9 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     # 并发开始前一次性取出全部只读数据：AsyncSession 非并发安全。
     # 字段列表必须先查——快照要据此决定是否拉子块向量。
     snapshot = await load_extraction_snapshot(
-        file_id, session, type_id, need_vectors=needs_vector_index(all_fields)
+        file_id, session, type_id,
+        need_vectors=needs_vector_index(all_fields),
+        params=input_params,
     )
 
     app_cfg = get_config()

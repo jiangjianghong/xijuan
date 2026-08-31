@@ -7,8 +7,8 @@ AsyncSession 非并发安全，而字段提取要并发跑，所以并发开始�
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from dataclasses import dataclass, field as dataclass_field
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,6 +59,9 @@ class FileExtractionSnapshot:
     page_contents: Dict[Any, str]
     tables: Tuple[TableRow, ...]
     chunks: Tuple[ChunkRow, ...]
+    # 该文件提交时的入参快照（files.input_params）。并发段只读，随快照透传，
+    # 避免为了几个字符串在整条并发链路上加参数。
+    params: Dict[str, str] = dataclass_field(default_factory=dict)
     # 单文件全部子块向量。仅当该类型确实有 vector_db 字段时加载
     # （拉取可达上百 MB，无谓加载代价太大）；未加载或加载失败为 None。
     vector_index: FileVectorIndex | None = None
@@ -73,6 +76,7 @@ async def load_extraction_snapshot(
     type_id: str = "default",
     *,
     need_vectors: bool = False,
+    params: Optional[Mapping[str, str]] = None,
 ) -> FileExtractionSnapshot:
     """一次性读出字段提取所需的全部只读数据（3 次查询）。
 
@@ -85,6 +89,8 @@ async def load_extraction_snapshot(
         need_vectors: True 时额外拉取该文件的全部子块向量（供 vector_db
             检索的单文件全量打分）。调用方应按「该类型是否存在 vector_db
             字段」决定，避免无谓的上百 MB 传输。
+        params: 该文件的入参快照（files.input_params），用于渲染配置里的
+            <param> 占位符。
 
     Returns:
         冻结的 FileExtractionSnapshot。文件未解析时 content 为空串。
@@ -156,6 +162,7 @@ async def load_extraction_snapshot(
             for t in table_rows
         ),
         chunks=chunks,
+        params=dict(params or {}),
         vector_index=vector_index,
         page_projection=page_projection,
     )

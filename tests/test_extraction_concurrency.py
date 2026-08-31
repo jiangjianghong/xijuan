@@ -279,7 +279,7 @@ async def test_items_carry_config_index_and_persist(monkeypatch):
     assert len(session.added) == 3
 
 
-async def _fake_load_snapshot(file_id, session, type_id="default", *, need_vectors=False):
+async def _fake_load_snapshot(file_id, session, type_id="default", **kwargs):
     return None
 
 
