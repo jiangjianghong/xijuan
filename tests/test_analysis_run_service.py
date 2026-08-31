@@ -92,6 +92,22 @@ class _Result:
         return self._rows[0] if self._rows else None
 
 
+async def _no_type_params(type_ids, session):
+    """入参清单加载的空实现：配合 _load_rules_by_type 一起 patch，让不带真实
+    session 的并发测试完全不碰数据库。"""
+    return {}
+
+
+def _selects_table(statement, table_name: str) -> bool:
+    """判断 select 语句的目标实体表名，供 stub 按查询类型分派结果。"""
+    descriptions = getattr(statement, "column_descriptions", None) or []
+    for desc in descriptions:
+        entity = desc.get("entity")
+        if entity is not None and getattr(entity, "__tablename__", None) == table_name:
+            return True
+    return False
+
+
 class ReadOnlySession:
     def __init__(self, rows):
         self.rows = rows
@@ -99,6 +115,10 @@ class ReadOnlySession:
 
     async def execute(self, statement):
         self.execute_count += 1
+        # 这个 stub 模拟「只有规则、没有入参定义」的库：入参清单查询返回空，
+        # 否则 load_type_param_defs_by_types 会拿到规则行
+        if _selects_table(statement, "type_param"):
+            return _Result([])
         return _Result(self.rows)
 
     def add(self, value):
@@ -176,7 +196,7 @@ async def test_run_analysis_batch_loads_once_and_keeps_item_order(monkeypatch):
     session = ReadOnlySession([_orm_rule("amount_check", ["amount"], priority=1)])
     events = []
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         return {
             **_success(rule),
             "result": field_values["amount"],
@@ -196,7 +216,8 @@ async def test_run_analysis_batch_loads_once_and_keeps_item_order(monkeypatch):
         on_rule_done=record,
     )
 
-    assert session.execute_count == 1
+    # 2 次 = 规则清单 + 入参清单，各一次 IN 查询；与 item 数无关（避免 N+1）
+    assert session.execute_count == 2
     assert [item["biz_id"] for item in data["items"]] == ["b0", "b1"]
     assert {event["item_index"] for event in events} == {0, 1}
     assert all(event["index"] == 1 and event["total"] == 1 for event in events)
@@ -211,7 +232,7 @@ async def test_run_analysis_batch_orders_and_skips_uncovered(monkeypatch):
     ]
     called = []
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         called.append(rule.rule_id)
         return _success(rule)
 
@@ -404,7 +425,7 @@ async def test_run_analysis_batch_honours_item_rule_ids(monkeypatch):
     ]
     called = []
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         called.append(rule.rule_id)
         return _success(rule)
 
@@ -446,7 +467,7 @@ async def test_run_analysis_batch_named_disabled_rule_executes(monkeypatch):
     """点名 enabled=0 的规则应实际执行，而不是被当成 unknown 丢弃。"""
     called = []
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         called.append(rule.rule_id)
         return _success(rule)
 
@@ -475,7 +496,7 @@ async def test_run_analysis_batch_implicit_run_skips_disabled(monkeypatch):
     """不传 rule_ids 跑全部时，enabled=0 的规则不执行。"""
     called = []
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         called.append(rule.rule_id)
         return _success(rule)
 
@@ -608,6 +629,9 @@ class FileModeSession:
     file 模式下查询顺序是 files -> extraction_results -> rules
     （load_file_snapshots 先跑，_load_rules_by_type 后跑），
     persist 阶段的「查已有结果」是第 4 次及以后。
+
+    入参清单查询（rules 之后、persist 之前）单独按表名分派返回空，这样批次下标
+    不受它影响，测试仍按上面这个顺序准备数据。
     """
 
     def __init__(self, rules, files, extractions):
@@ -618,6 +642,8 @@ class FileModeSession:
 
     async def execute(self, statement):
         self.execute_count += 1
+        if _selects_table(statement, "type_param"):
+            return _Result([])
         rows = self._batches.pop(0) if self._batches else []
         return _Result(rows)
 
@@ -632,7 +658,7 @@ class FileModeSession:
 async def test_run_analysis_batch_file_source_uses_db_values(monkeypatch):
     captured = {}
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         captured["field_values"] = dict(field_values)
         return _success(rule)
 
@@ -658,7 +684,7 @@ async def test_run_analysis_batch_file_source_uses_db_values(monkeypatch):
 
 @pytest.mark.anyio
 async def test_run_analysis_batch_file_source_merges_field_source_refs(monkeypatch):
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         return {**_success(rule), "source_refs": {"_web_search": {"query": "q"}}}
 
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
@@ -732,7 +758,7 @@ async def test_run_analysis_batch_file_source_honours_rule_ids(monkeypatch):
     """file 模式与 rule_ids 点名可组合：只重跑指定规则。"""
     called = []
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         called.append(rule.rule_id)
         return _success(rule)
 
@@ -758,7 +784,7 @@ async def test_run_analysis_batch_file_source_honours_rule_ids(monkeypatch):
 
 @pytest.mark.anyio
 async def test_values_source_keeps_error_none_and_skips_file_queries(monkeypatch):
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         return _success(rule)
 
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
@@ -769,7 +795,7 @@ async def test_values_source_keeps_error_none_and_skips_file_queries(monkeypatch
         session,
     )
 
-    assert session.execute_count == 1  # 只查规则，不查 files/extraction
+    assert session.execute_count == 2  # 规则 + 入参清单，不查 files/extraction
     assert data["items"][0]["error"] is None
 
 
@@ -778,7 +804,7 @@ async def test_values_source_keeps_error_none_and_skips_file_queries(monkeypatch
 
 @pytest.mark.anyio
 async def test_persist_inserts_new_analysis_results(monkeypatch):
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         return {**_success(rule), "result": "true", "reason": "命中"}
 
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
@@ -807,7 +833,7 @@ async def test_persist_inserts_new_analysis_results(monkeypatch):
 
 @pytest.mark.anyio
 async def test_persist_updates_existing_analysis_result(monkeypatch):
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         return {**_success(rule), "result": "false", "reason": "新理由"}
 
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
@@ -853,7 +879,7 @@ async def test_persist_skips_errored_items():
 @pytest.mark.anyio
 async def test_file_source_bad_item_does_not_affect_siblings(monkeypatch):
     """坏 item 只污染自己：同批其它 item 照常执行，顺序仍与请求一致。"""
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         return _success(rule)
 
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
@@ -885,7 +911,7 @@ async def test_file_source_combines_with_rule_ids(monkeypatch):
     """file 模式与 rule_ids 点名可组合：只重跑指定规则。"""
     executed = []
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         executed.append(rule.rule_id)
         return _success(rule)
 
@@ -915,7 +941,7 @@ async def test_file_source_combines_with_rule_ids(monkeypatch):
 @pytest.mark.anyio
 async def test_persist_does_not_touch_files_progress(monkeypatch):
     """persist 只写 analysis_result，绝不碰 files.progress（状态机归管线管）。"""
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         return _success(rule)
 
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
@@ -944,7 +970,7 @@ async def test_persist_does_not_touch_files_progress(monkeypatch):
 @pytest.mark.anyio
 async def test_persist_ignored_when_source_is_values(monkeypatch):
     """values 模式没有 file_id，不可能落库；即便传了 persist 也不写。"""
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         return _success(rule)
 
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
@@ -987,7 +1013,7 @@ async def test_independent_item_limit_is_shared_across_concurrent_batches(monkey
     async def fake_load_rules(type_ids, session):
         return {type_id: [_rule("r1", [])] for type_id in type_ids}
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
@@ -996,6 +1022,9 @@ async def test_independent_item_limit_is_shared_across_concurrent_batches(monkey
         return _success(rule)
 
     monkeypatch.setattr(analysis_run_service, "_load_rules_by_type", fake_load_rules)
+    monkeypatch.setattr(
+        analysis_run_service, "load_type_param_defs_by_types", _no_type_params
+    )
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
     first = [
         {"type_id": "contract", "biz_id": f"a{i}", "field_values": {}}
@@ -1026,13 +1055,16 @@ async def test_independent_item_keeps_rule_and_callback_order(monkeypatch):
     async def fake_load_rules(type_ids, session):
         return {"contract": [_rule("r1", [], 1), _rule("r2", [], 2)]}
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         return _success(rule)
 
     async def on_rule_done(item):
         callbacks.append(item["rule_id"])
 
     monkeypatch.setattr(analysis_run_service, "_load_rules_by_type", fake_load_rules)
+    monkeypatch.setattr(
+        analysis_run_service, "load_type_param_defs_by_types", _no_type_params
+    )
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
     response = await analysis_run_service.run_analysis_batch(
         [{"type_id": "contract", "biz_id": "b1", "field_values": {}}],
@@ -1056,7 +1088,7 @@ async def test_independent_limit_applies_to_rules_not_items(monkeypatch):
     async def fake_load_rules(type_ids, session):
         return {"contract": [_rule(f"r{i}", [], i) for i in range(6)]}
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
@@ -1065,6 +1097,9 @@ async def test_independent_limit_applies_to_rules_not_items(monkeypatch):
         return _success(rule)
 
     monkeypatch.setattr(analysis_run_service, "_load_rules_by_type", fake_load_rules)
+    monkeypatch.setattr(
+        analysis_run_service, "load_type_param_defs_by_types", _no_type_params
+    )
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
 
     # 单个 item、6 条规则：闸门在 item 层时串行跑，peak 恒为 1
@@ -1088,7 +1123,7 @@ async def test_independent_results_stay_in_config_order_despite_completion_order
     async def fake_load_rules(type_ids, session):
         return {"contract": [_rule("slow", [], 1), _rule("fast", [], 2)]}
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         await asyncio.sleep(0.05 if rule.rule_id == "slow" else 0.0)
         return _success(rule)
 
@@ -1096,6 +1131,9 @@ async def test_independent_results_stay_in_config_order_despite_completion_order
         callbacks.append(item["rule_id"])
 
     monkeypatch.setattr(analysis_run_service, "_load_rules_by_type", fake_load_rules)
+    monkeypatch.setattr(
+        analysis_run_service, "load_type_param_defs_by_types", _no_type_params
+    )
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_execute)
 
     result = await analysis_run_service.run_analysis_batch(

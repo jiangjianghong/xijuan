@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from types import SimpleNamespace
 from typing import Any, Dict
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -190,6 +191,23 @@ async def test_analysis(
         output_schema = config.get("output_schema")
     else:
         raise HTTPException(status_code=400, detail="必须提供 rule_id 或 config")
+
+    # 参数渲染先于 <field_result> 渲染（后者在 test_rule_analysis_stream 内部做）
+    from blue_print.extraction_router import resolve_debug_params
+    from service.type_params import render_rule_params
+
+    _debug_params = await resolve_debug_params(file_id, req.params, db)
+    _rendered = render_rule_params(
+        SimpleNamespace(
+            expression=expression,
+            system_prompt=system_prompt,
+            web_search=web_search,
+        ),
+        _debug_params,
+    )
+    expression = _rendered.expression
+    system_prompt = _rendered.system_prompt
+    web_search = _rendered.web_search
 
     async for item in test_rule_analysis_stream(
         file_id,
@@ -475,6 +493,23 @@ async def test_analysis_stream(
         output_schema = config.get("output_schema")
     else:
         raise HTTPException(status_code=400, detail="必须提供 rule_id 或 config")
+
+    # 参数渲染先于 <field_result> 渲染（后者在 test_rule_analysis_stream 内部做）
+    from blue_print.extraction_router import resolve_debug_params
+    from service.type_params import render_rule_params
+
+    _debug_params = await resolve_debug_params(file_id, req.params, db)
+    _rendered = render_rule_params(
+        SimpleNamespace(
+            expression=expression,
+            system_prompt=system_prompt,
+            web_search=web_search,
+        ),
+        _debug_params,
+    )
+    expression = _rendered.expression
+    system_prompt = _rendered.system_prompt
+    web_search = _rendered.web_search
 
     async def event_generator():
         async for item in test_rule_analysis_stream(

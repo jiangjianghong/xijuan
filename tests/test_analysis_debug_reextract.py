@@ -341,6 +341,18 @@ async def test_rule_debug_reextract_stops_when_direct_field_invalid(
     assert all(event["event"] != "resolved_expression" for event in events)
 
 
+def _debug_session():
+    """调试路由用的 session：先查文件行（取 type_id），再查该类型的入参清单。
+
+    路由在调用 test_rule_analysis_stream 之前会解析入参（<param> 渲染 + required
+    校验），这两次查询是它带来的；此处给一个无入参定义的文件。
+    """
+    return _QueuedSession([
+        _ScalarResult(one=SimpleNamespace(file_id="f1", type_id="type-a")),
+        _ScalarResult(rows=[]),
+    ])
+
+
 def _debug_request(*, re_extract=True):
     return AnalysisTestRequest(
         file_id="f1",
@@ -363,7 +375,7 @@ async def test_analysis_stream_router_passes_reextract_flag(monkeypatch):
     monkeypatch.setattr(analysis_router, "test_rule_analysis_stream", fake_stream)
 
     response = await analysis_router.test_analysis_stream(
-        _debug_request(), _QueuedSession([])
+        _debug_request(), _debug_session()
     )
     body = b""
     async for chunk in response.body_iterator:
@@ -394,7 +406,7 @@ async def test_analysis_nonstream_router_collects_shared_stream(monkeypatch):
 
     monkeypatch.setattr(analysis_router, "test_rule_analysis_stream", fake_stream)
 
-    response = await analysis_router.test_analysis(_debug_request(), _QueuedSession([]))
+    response = await analysis_router.test_analysis(_debug_request(), _debug_session())
 
     assert captured["re_extract"] is True
     assert response.data["input_values"] == {"a": "7"}
@@ -409,7 +421,7 @@ async def test_analysis_nonstream_router_turns_stream_error_into_422(monkeypatch
     monkeypatch.setattr(analysis_router, "test_rule_analysis_stream", fake_stream)
 
     with pytest.raises(Exception) as exc_info:
-        await analysis_router.test_analysis(_debug_request(), _QueuedSession([]))
+        await analysis_router.test_analysis(_debug_request(), _debug_session())
 
     assert getattr(exc_info.value, "status_code", None) == 422
     assert "字段 a 抽取失败" in str(getattr(exc_info.value, "detail", ""))

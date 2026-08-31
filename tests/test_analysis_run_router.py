@@ -16,8 +16,8 @@ REQUEST_ITEM = {
     "field_values": {"amount": "1200000"},
 }
 
-# 请求体经 model_dump() 后必然补齐 rule_ids / file_id 默认值，服务层收到的是这一份
-DUMPED_ITEM = {**REQUEST_ITEM, "rule_ids": None, "file_id": None}
+# 请求体经 model_dump() 后必然补齐 rule_ids / file_id / params 默认值，服务层收到的是这一份
+DUMPED_ITEM = {**REQUEST_ITEM, "rule_ids": None, "file_id": None, "params": {}}
 
 
 @pytest.mark.anyio

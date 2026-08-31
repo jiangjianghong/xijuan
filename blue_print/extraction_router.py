@@ -19,7 +19,7 @@ from model.schemas import (
     ExtractionTestResponse,
     ResponseWrapper,
 )
-from model.tables import ExtractionField, ExtractionResult, FileContent, FileTable
+from model.tables import ExtractionField, ExtractionResult, File as FileModel, FileContent, FileTable
 from service.extraction_service import (
     collect_depend_fields,
     derive_source_pages,
@@ -339,6 +339,34 @@ def _build_temp_field(config: Dict[str, Any]) -> ExtractionField:
     )
 
 
+async def resolve_debug_params(
+    file_id: str, raw_params: Any, db: AsyncSession
+) -> Dict[str, str]:
+    """调试接口的入参解析：按该文件所属类型校验并合并默认值。
+
+    与正式路径同样做 required 校验——「调试能过、正式跑不了」比「调试被拦」更糟；
+    前端调试面板预填 default_value 可抵消大部分摩擦。
+    """
+    from service.type_param_store import (
+        ParamValidationError,
+        load_type_param_defs,
+        normalize_raw_params,
+        resolve_input_params,
+    )
+
+    file_row = (await db.execute(
+        select(FileModel).where(FileModel.file_id == file_id)
+    )).scalar_one_or_none()
+    if not file_row:
+        raise HTTPException(status_code=404, detail=f"文件不存在: {file_id}")
+
+    try:
+        defs = await load_type_param_defs(file_row.type_id or "default", db)
+        return resolve_input_params(defs, normalize_raw_params(raw_params))
+    except ParamValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.post("/test", response_model=ResponseWrapper)
 async def test_extraction(
     req: ExtractionTestRequest, db: AsyncSession = Depends(get_db)
@@ -370,6 +398,12 @@ async def test_extraction(
         field = _build_temp_field(config)
     else:
         raise HTTPException(status_code=400, detail="必须提供 field_id 或 config")
+
+    # 参数渲染先于字段引用渲染，与 _extract_field_result 的顺序一致
+    from service.type_params import render_field_params
+
+    debug_params = await resolve_debug_params(file_id, req.params, db)
+    field, _ = render_field_params(field, debug_params)
 
     # 进阶字段：用该文件已落库的普通字段结果解析引用 / 页码联动后再调试
     resolved_refs_info: Dict[str, Any] = {}
@@ -489,6 +523,12 @@ async def test_extraction_stream(
         field = _build_temp_field(config)
     else:
         raise HTTPException(status_code=400, detail="必须提供 field_id 或 config")
+
+    # 参数渲染先于字段引用渲染（进阶字段的引用解析在 stream 生成器内部做）
+    from service.type_params import render_field_params
+
+    debug_params = await resolve_debug_params(file_id, req.params, db)
+    field, _ = render_field_params(field, debug_params)
 
     async def event_generator():
         async for item in test_field_extraction_stream(file_id, field, db):

@@ -252,3 +252,61 @@ async def test_parse_stores_merged_snapshot(client: AsyncClient, monkeypatch):
             assert row.input_params == {"d": "2026-08-31", "year": "2025"}
     finally:
         await client.delete(f"/doctype/{tid}?force=true")
+
+
+# ── /analysis/run 入参校验 ──────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_analysis_run_unknown_param_is_item_error(client: AsyncClient):
+    """未知 key 要查库才知道，故落 item 级 error + HTTP 200，不拖垮整批。"""
+    tid = "tp_run_unknown"
+    await client.post("/doctype", json={"type_id": tid, "type_name": tid})
+    try:
+        await client.post(f"/doctype/{tid}/params", json={
+            "param_key": "d", "param_name": "日期",
+        })
+        resp = await client.post("/analysis/run", json={
+            "mode": "sync",
+            "items": [
+                {"biz_id": "bad", "type_id": tid, "field_values": {},
+                 "params": {"typo_key": "x"}},
+                {"biz_id": "good", "type_id": tid, "field_values": {},
+                 "params": {"d": "2026-08-31"}},
+            ],
+        })
+        assert resp.status_code == 200, resp.text
+        items = resp.json()["data"]["items"]
+        assert "未知入参" in items[0]["error"]
+        assert items[1]["error"] is None
+    finally:
+        await client.delete(f"/doctype/{tid}?force=true")
+
+
+@pytest.mark.anyio
+async def test_analysis_run_missing_required_is_item_error(client: AsyncClient):
+    tid = "tp_run_required"
+    await client.post("/doctype", json={"type_id": tid, "type_name": tid})
+    try:
+        await client.post(f"/doctype/{tid}/params", json={
+            "param_key": "d", "param_name": "日期", "required": 1,
+        })
+        resp = await client.post("/analysis/run", json={
+            "mode": "sync",
+            "items": [{"biz_id": "b1", "type_id": tid, "field_values": {}}],
+        })
+        assert resp.status_code == 200, resp.text
+        assert "缺少必填入参" in resp.json()["data"]["items"][0]["error"]
+    finally:
+        await client.delete(f"/doctype/{tid}?force=true")
+
+
+@pytest.mark.anyio
+async def test_analysis_run_rejects_nested_param_value(client: AsyncClient):
+    """值不是标量能从请求体直接判断 → 422（Pydantic 层）。"""
+    resp = await client.post("/analysis/run", json={
+        "mode": "sync",
+        "items": [{"biz_id": "b1", "type_id": "default", "field_values": {},
+                   "params": {"k": {"nested": 1}}}],
+    })
+    assert resp.status_code == 422, resp.text

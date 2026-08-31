@@ -624,6 +624,19 @@ class AnalysisRunItem(BaseModel):
     field_values: Dict[str, str] = Field(default_factory=dict)
     rule_ids: Optional[List[str]] = None
     file_id: Optional[str] = Field(None, min_length=1, max_length=64)
+    # 该 item 的入参实参。不设顶层 params：参数是 type 级配置而 type_id 是 item
+    # 级的（异构批次合法），顶层广播必然要面对「这个 key 对 A 有效、对 B 未知」，
+    # 无论静默忽略还是报错都要多一条特例规则。
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("params")
+    @classmethod
+    def validate_params_are_scalar(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        """值必须是标量——这条能从请求体直接判断，故走 422 而非 item 级 error。"""
+        for key, item in value.items():
+            if isinstance(item, (dict, list)):
+                raise ValueError(f"params.{key} 必须是标量，不支持对象或数组")
+        return value
 
     @field_validator("biz_id")
     @classmethod
@@ -733,6 +746,9 @@ class ExtractionTestRequest(BaseModel):
     file_id: str
     field_id: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
+    # 调试用入参；未传的走该类型的 default_value，缺必填一律报错（与正式路径
+    # 一致，避免「调试能过、正式跑不了」）
+    params: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ExtractionTestResponse(BaseModel):
@@ -755,6 +771,8 @@ class AnalysisTestRequest(BaseModel):
     rule_id: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
     re_extract: bool = False
+    # 调试用入参；语义同 ExtractionTestRequest.params
+    params: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AnalysisTestResponse(BaseModel):

@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +47,35 @@ async def load_type_param_defs(
         )
         for row in rows
     )
+
+
+async def load_type_param_defs_by_types(
+    type_ids: Iterable[str], session: AsyncSession
+) -> Dict[str, Tuple[TypeParamDef, ...]]:
+    """一次查询读出多个类型的参数定义，按 type_id 分组。
+
+    批量接口（/analysis/run）用：按 type_id 逐个查会变成 N 次往返，与
+    _load_rules_by_type 的单查询分组保持一致。未定义参数的类型不出现在返回值里，
+    调用方按 .get(type_id, ()) 取。
+    """
+    ordered = sorted(set(type_ids))
+    if not ordered:
+        return {}
+
+    rows = (await session.execute(
+        select(TypeParam)
+        .where(TypeParam.type_id.in_(ordered))
+        .order_by(TypeParam.priority, TypeParam.param_key)
+    )).scalars().all()
+
+    grouped: Dict[str, List[TypeParamDef]] = defaultdict(list)
+    for row in rows:
+        grouped[row.type_id].append(TypeParamDef(
+            param_key=row.param_key,
+            default_value=row.default_value,
+            required=int(row.required or 0),
+        ))
+    return {type_id: tuple(items) for type_id, items in grouped.items()}
 
 
 def normalize_raw_params(raw: Any) -> Dict[str, str]:

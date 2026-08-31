@@ -19,6 +19,13 @@ from service.analysis_service import (
     resolve_expression,
     validate_field_values,
 )
+from service.type_param_store import (
+    ParamValidationError,
+    load_type_param_defs_by_types,
+    normalize_raw_params,
+    resolve_input_params,
+)
+from service.type_params import render_rule_params
 from utils.config import get_config
 from utils.concurrency import (
     get_limiter,
@@ -177,8 +184,6 @@ async def execute_rule(
 
     try:
         # 参数渲染先于 <field_result> 渲染，理由同 extraction 侧
-        from service.type_params import render_rule_params
-
         rendered = render_rule_params(rule, params or {})
         if rendered.params_used:
             source_refs["_params"] = rendered.params_used
@@ -308,6 +313,8 @@ class FileFieldSnapshot:
     type_id: str
     field_values: dict[str, str]
     field_source_refs: dict[str, dict]
+    # 该文件提交时的入参快照；source=file 的 item 默认继承它
+    input_params: dict[str, str]
 
 
 async def load_file_snapshots(
@@ -345,6 +352,7 @@ async def load_file_snapshots(
             type_id=row.type_id or "default",
             field_values=dict(values.get(row.file_id, {})),
             field_source_refs=dict(refs.get(row.file_id, {})),
+            input_params=dict(getattr(row, "input_params", None) or {}),
         )
         for row in file_rows
     }
@@ -420,6 +428,11 @@ async def run_analysis_batch(
         type_ids = {str(item["type_id"]) for item in items}
 
     rules_by_type = await _load_rules_by_type(type_ids, session)
+
+    # 参数定义与规则一样，全部在并发启动前读完（AsyncSession 非并发安全）。
+    # 单次 IN 查询而非按 type 循环，理由同 _load_rules_by_type：避免 N+1。
+    param_defs_by_type = await load_type_param_defs_by_types(type_ids, session)
+
     concurrency_cfg = get_config().concurrency
     stage_limiter = get_limiter("global_analysis", concurrency_cfg.global_analysis)
     # 闸门在规则层：所有独立分析请求合计同时执行的规则数，与 task_file_analysis
@@ -481,6 +494,19 @@ async def run_analysis_batch(
             type_id = str(requested_type)
             field_values = dict(item["field_values"])
 
+        # 未知 key / 缺必填要查该类型的参数清单才知道，属于 item 级错误：一个坏
+        # item 不该拖垮整批（能从请求体直接判断的值类型问题已在 422 层拦掉）
+        try:
+            raw_params = normalize_raw_params(item.get("params"))
+            if from_file:
+                # source=file：文件快照打底，item 传的逐键覆盖
+                raw_params = {**snapshot.input_params, **raw_params}
+            params = resolve_input_params(
+                param_defs_by_type.get(type_id, ()), raw_params
+            )
+        except ParamValidationError as exc:
+            return _empty_item(item_index, biz_id, type_id, str(exc))
+
         plan = plan_rules(
             rules_by_type.get(type_id, []),
             field_values,
@@ -503,6 +529,7 @@ async def run_analysis_batch(
                             rule,
                             field_values,
                             require_coverage=plan.require_coverage,
+                            params=params,
                         )
             if from_file:
                 result = {
