@@ -109,6 +109,30 @@ class ExportRuleItem(BaseModel):
     priority: int = 0
 
 
+class TypeParamItem(BaseModel):
+    """文档类型入参的读取形态。"""
+    param_key: str
+    param_name: str
+    description: Optional[str] = None
+    default_value: Optional[str] = None
+    required: int = 0
+    priority: int = 0
+
+
+class TypeParamUpsert(BaseModel):
+    """按 param_key upsert 一条入参定义。
+
+    param_key 限制为 [A-Za-z0-9_]：它要出现在 <param>key</param> 里，允许尖括号
+    或空白会让占位符正则的行为变得难以预料。
+    """
+    param_key: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_]+$")
+    param_name: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = None
+    default_value: Optional[str] = None
+    required: int = Field(0, ge=0, le=1)
+    priority: int = 0
+
+
 class ExportPayload(BaseModel):
     """导出/导入的整体载荷。"""
     type_id: str

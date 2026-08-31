@@ -33,6 +33,8 @@ from model.schemas import (
     ProjectCreate,
     ProjectResponse,
     ResponseWrapper,
+    TypeParamItem,
+    TypeParamUpsert,
 )
 from model.tables import (
     AnalysisResult,
@@ -45,8 +47,10 @@ from model.tables import (
     FileContent,
     FileTable,
     Project,
+    TypeParam,
 )
 from service.extraction_service import collect_depend_fields
+from service.type_params import collect_field_param_refs, collect_rule_param_refs
 from utils.milvus_client import MilvusClient
 
 router = APIRouter(prefix="/doctype", tags=["doctype"])
@@ -314,6 +318,131 @@ async def update_doctype(
     )
 
 
+async def _param_references(
+    type_id: str, param_key: str, db: AsyncSession
+) -> List[str]:
+    """反查引用了该参数的字段名与规则名。
+
+    现算而非落 depend_params 列：派生列要在保存 / 复制 / 导入三处同步维护，
+    depend_fields 已经是这样一份负担，而参数没有「决定执行顺序」那种刚需。
+    """
+    referencing: List[str] = []
+
+    fields = (await db.execute(
+        select(ExtractionField).where(ExtractionField.type_id == type_id)
+    )).scalars().all()
+    for field in fields:
+        if param_key in collect_field_param_refs(field):
+            referencing.append(f"字段「{field.field_name}」")
+
+    rules = (await db.execute(
+        select(AnalysisRule).where(AnalysisRule.type_id == type_id)
+    )).scalars().all()
+    for rule in rules:
+        if param_key in collect_rule_param_refs(rule):
+            referencing.append(f"规则「{rule.rule_name}」")
+
+    return referencing
+
+
+@router.get("/{type_id}/params", response_model=ResponseWrapper)
+async def list_type_params(type_id: str, db: AsyncSession = Depends(get_db)):
+    """列出该类型的入参定义。"""
+    rows = (await db.execute(
+        select(TypeParam)
+        .where(TypeParam.type_id == type_id)
+        .order_by(TypeParam.priority, TypeParam.param_key)
+    )).scalars().all()
+    return ResponseWrapper(data=[
+        TypeParamItem(
+            param_key=r.param_key,
+            param_name=r.param_name,
+            description=r.description,
+            default_value=r.default_value,
+            required=r.required or 0,
+            priority=r.priority or 0,
+        ).model_dump()
+        for r in rows
+    ])
+
+
+@router.post("/{type_id}/params", response_model=ResponseWrapper)
+async def upsert_type_param(
+    type_id: str, payload: TypeParamUpsert, db: AsyncSession = Depends(get_db)
+):
+    """按 param_key 新增或更新一条入参定义。"""
+    exists = (await db.execute(
+        select(DocType.type_id).where(DocType.type_id == type_id)
+    )).scalar_one_or_none()
+    if not exists:
+        raise HTTPException(status_code=404, detail="类型不存在")
+
+    existing = (await db.execute(
+        select(TypeParam).where(
+            TypeParam.type_id == type_id,
+            TypeParam.param_key == payload.param_key,
+        )
+    )).scalar_one_or_none()
+
+    if existing:
+        existing.param_name = payload.param_name
+        existing.description = payload.description
+        existing.default_value = payload.default_value
+        existing.required = payload.required
+        existing.priority = payload.priority
+    else:
+        db.add(TypeParam(
+            type_id=type_id,
+            param_key=payload.param_key,
+            param_name=payload.param_name,
+            description=payload.description,
+            default_value=payload.default_value,
+            required=payload.required,
+            priority=payload.priority,
+        ))
+    await db.commit()
+    return ResponseWrapper(
+        message="入参已保存",
+        data={"type_id": type_id, "param_key": payload.param_key},
+    )
+
+
+@router.delete("/{type_id}/params/{param_key}", response_model=ResponseWrapper)
+async def delete_type_param(
+    type_id: str,
+    param_key: str,
+    force: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """删除一条入参定义；仍被字段或规则引用时 409（force=true 强删）。"""
+    existing = (await db.execute(
+        select(TypeParam).where(
+            TypeParam.type_id == type_id,
+            TypeParam.param_key == param_key,
+        )
+    )).scalar_one_or_none()
+    if not existing:
+        raise HTTPException(status_code=404, detail="入参不存在")
+
+    if not force:
+        referencing = await _param_references(type_id, param_key, db)
+        if referencing:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"入参 {param_key} 仍被引用："
+                    f"{'、'.join(referencing)}。传 force=true 强制删除"
+                ),
+            )
+
+    await db.delete(existing)
+    await db.commit()
+    return ResponseWrapper(
+        message="入参已删除",
+        data={"type_id": type_id, "param_key": param_key},
+    )
+
+
 async def _delete_one_type(type_id: str, force: bool, db: AsyncSession) -> dict:
     """删除单个类型（不 commit，由调用方统一提交）。
 
@@ -407,6 +536,9 @@ async def _delete_one_type(type_id: str, force: bool, db: AsyncSession) -> dict:
 
         await db.execute(delete(ExtractionField).where(ExtractionField.type_id == type_id))
         await db.execute(delete(AnalysisRule).where(AnalysisRule.type_id == type_id))
+
+    # 入参不计入 force 判定（只有入参定义的类型应当可以直删），但一定跟着类型走
+    await db.execute(delete(TypeParam).where(TypeParam.type_id == type_id))
 
     await db.delete(existing)
     return {
