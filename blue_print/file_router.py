@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
 from loguru import logger
 from sqlalchemy import case, delete, func, select, text
@@ -536,11 +536,16 @@ async def parse_file(
     mode: str = "async",
     type_id: str = "default",
     callback_url: Optional[str] = None,
+    params: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
     """提交文件解析（支持 sync/async/stream）。
 
     - type_id：归属的文档类型（默认 'default'，通过 query 参数传入）
+    - params：该类型的入参实参，JSON 对象字符串，通过 **multipart form** 传入
+      （非 query：参数值可能是一段中文说明而不只是个日期，query 串有网关长度
+      上限，中文值还要 URL 编码）。未知 key / 缺必填 / 非法 JSON / 值不是标量
+      一律 400，且文件不建档。
     - 当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：
       {"file_id": "...", "status": "parsing/tableing/chunking/embedding/extracting/analyzing/complete"}
     """
@@ -571,6 +576,21 @@ async def parse_file(
     if not type_exists:
         raise HTTPException(status_code=400, detail=f"文档类型不存在: {type_id}")
 
+    # 入参校验必须早于建档：传参错误是调用方的 bug，放过去的代价是跑完 MinerU
+    # 与几十次 LLM 调用之后，几个字段悄悄用空串抽出了错的结果。
+    from service.type_param_store import (
+        ParamValidationError,
+        load_type_param_defs,
+        normalize_raw_params,
+        resolve_input_params,
+    )
+
+    try:
+        param_defs = await load_type_param_defs(type_id, db)
+        input_params = resolve_input_params(param_defs, normalize_raw_params(params))
+    except ParamValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
     file_id = generate_file_id(type_id, file_name)
 
     # 持久化原始 PDF 字节，VL 抽取依赖（写盘失败不阻断主流程）
@@ -589,6 +609,7 @@ async def parse_file(
         type_id=type_id,
         file_name=file_name,
         file_size=len(file_content_bytes),
+        input_params=input_params,
         # 初始即排队态：拿到 global_pipeline 令牌后由 parse_service 改写为 parsing，
         # 排队时长因此不计入解析耗时
         progress="queued",

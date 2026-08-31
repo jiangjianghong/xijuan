@@ -145,3 +145,110 @@ async def test_execute_rule_without_params_has_no_params_key(monkeypatch):
     )
     result = await execute_rule(rule, {})
     assert result["source_refs"] is None
+
+
+# ── /file/parse 入参校验 ────────────────────────────────────
+
+_PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<< >>\nendobj\ntrailer\n<< >>\n%%EOF\n"
+
+
+@pytest.mark.anyio
+async def test_parse_rejects_unknown_param(client: AsyncClient):
+    tid = "tp_parse_unknown"
+    await client.post("/doctype", json={"type_id": tid, "type_name": tid})
+    try:
+        await client.post(f"/doctype/{tid}/params", json={
+            "param_key": "d", "param_name": "日期",
+        })
+        resp = await client.post(
+            f"/file/parse?type_id={tid}&mode=async",
+            files={"file": ("t.pdf", _PDF_BYTES, "application/pdf")},
+            data={"params": '{"typo_key": "x"}'},
+        )
+        assert resp.status_code == 400, resp.text
+        assert "未知入参" in resp.json()["detail"]
+    finally:
+        await client.delete(f"/doctype/{tid}?force=true")
+
+
+@pytest.mark.anyio
+async def test_parse_rejects_missing_required_param(client: AsyncClient):
+    tid = "tp_parse_required"
+    await client.post("/doctype", json={"type_id": tid, "type_name": tid})
+    try:
+        await client.post(f"/doctype/{tid}/params", json={
+            "param_key": "d", "param_name": "日期", "required": 1,
+        })
+        resp = await client.post(
+            f"/file/parse?type_id={tid}&mode=async",
+            files={"file": ("t.pdf", _PDF_BYTES, "application/pdf")},
+        )
+        assert resp.status_code == 400, resp.text
+        assert "缺少必填入参" in resp.json()["detail"]
+    finally:
+        await client.delete(f"/doctype/{tid}?force=true")
+
+
+@pytest.mark.anyio
+async def test_parse_rejects_malformed_json(client: AsyncClient):
+    tid = "tp_parse_badjson"
+    await client.post("/doctype", json={"type_id": tid, "type_name": tid})
+    try:
+        resp = await client.post(
+            f"/file/parse?type_id={tid}&mode=async",
+            files={"file": ("t.pdf", _PDF_BYTES, "application/pdf")},
+            data={"params": "{not json"},
+        )
+        assert resp.status_code == 400, resp.text
+        assert "不是合法 JSON" in resp.json()["detail"]
+    finally:
+        await client.delete(f"/doctype/{tid}?force=true")
+
+
+@pytest.mark.anyio
+async def test_parse_stores_merged_snapshot(client: AsyncClient, monkeypatch):
+    """落库的是合并后的完整快照，不只是传入部分。
+
+    这是本文件里唯一会走通建档的上传测试，故必须把后台管线换掉——否则会真的
+    去调 MinerU，测试挂死在外部服务上。
+    """
+    import importlib
+
+    from model.database import get_session_factory
+    from model.tables import File
+    from sqlalchemy import select
+
+    # blue_print/__init__.py 把 file_router 这个名字绑给了 APIRouter 对象，
+    # `from blue_print import file_router` 拿到的不是模块，故走 import_module
+    file_router = importlib.import_module("blue_print.file_router")
+
+    async def noop_pipeline(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(file_router, "_run_pipeline_background", noop_pipeline)
+
+    tid = "tp_parse_merge"
+    await client.post("/doctype", json={"type_id": tid, "type_name": tid})
+    try:
+        await client.post(f"/doctype/{tid}/params", json={
+            "param_key": "d", "param_name": "日期",
+        })
+        await client.post(f"/doctype/{tid}/params", json={
+            "param_key": "year", "param_name": "年度", "default_value": "2025",
+        })
+        resp = await client.post(
+            f"/file/parse?type_id={tid}&mode=async",
+            files={"file": ("t.pdf", _PDF_BYTES, "application/pdf")},
+            data={"params": '{"d": "2026-08-31"}'},
+        )
+        assert resp.status_code == 200, resp.text
+        file_id = resp.json()["data"]["file_id"]
+
+        factory = get_session_factory()
+        async with factory() as session:
+            row = (await session.execute(
+                select(File).where(File.file_id == file_id)
+            )).scalar_one()
+            assert row.input_params == {"d": "2026-08-31", "year": "2025"}
+    finally:
+        await client.delete(f"/doctype/{tid}?force=true")
