@@ -194,7 +194,7 @@ async def test_run_analysis_persists_and_callbacks_in_rule_order(monkeypatch):
     compute_active = 0
 
     async def fake_load(file_id, session):
-        return rules, {}, {}
+        return rules, {}, {}, {}
 
     async def fake_compute(rule, *args, **kwargs):
         nonlocal compute_active
@@ -243,7 +243,7 @@ async def test_run_analysis_stream_yields_in_rule_order(monkeypatch):
     persisted = []
 
     async def fake_load(file_id, session):
-        return rules, {}, {}
+        return rules, {}, {}, {}
 
     async def fake_compute(rule, *args, **kwargs):
         await asyncio.sleep({"r1": .03, "r2": .02, "r3": .01}[rule.rule_id])

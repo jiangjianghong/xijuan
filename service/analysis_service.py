@@ -7,7 +7,7 @@ import copy
 import json
 import re
 from dataclasses import dataclass, replace
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Mapping, Optional, Tuple
 
 import numexpr
 from loguru import logger
@@ -80,6 +80,7 @@ async def _compute_file_rule(
     field_values: dict[str, str],
     field_source_refs: dict[str, dict],
     calc_precision: int,
+    params: Optional[Mapping[str, str]] = None,
 ) -> FileRuleComputation:
     input_values = {
         field_id: field_values.get(field_id, "")
@@ -104,6 +105,14 @@ async def _compute_file_rule(
         )
 
     try:
+        # 参数渲染先于 <field_result> 渲染：两次独立 re.sub 意味着第二趟会扫到
+        # 第一趟替换出的文本，而字段抽取值不可控。理由同 _extract_field_result。
+        from service.type_params import render_rule_params
+
+        rendered = render_rule_params(rule, params or {})
+        if rendered.params_used:
+            source_refs["_params"] = rendered.params_used
+
         valid, validation_reason = validate_field_values(
             rule.rule_type,
             list(rule.depend_fields),
@@ -112,11 +121,11 @@ async def _compute_file_rule(
         if not valid:
             return finish("", validation_reason, False)
 
-        resolved_expression = resolve_expression(rule.expression, field_values)
+        resolved_expression = resolve_expression(rendered.expression, field_values)
         if rule.rule_type in {"judge", "custom"}:
             resolved_expression, web_ref = await apply_web_search(
                 resolved_expression,
-                rule.web_search,
+                rendered.web_search,
                 field_values,
             )
             if web_ref:
@@ -125,7 +134,7 @@ async def _compute_file_rule(
         if rule.rule_type == "judge":
             result, reason = await execute_judge(
                 resolved_expression,
-                system_prompt=rule.system_prompt,
+                system_prompt=rendered.system_prompt,
             )
         elif rule.rule_type == "calc":
             result, reason = await execute_calc(resolved_expression, calc_precision)
@@ -134,7 +143,7 @@ async def _compute_file_rule(
                 resolved_expression,
                 is_formatted=rule.is_formatted,
                 output_schema=rule.output_schema,
-                system_prompt=rule.system_prompt,
+                system_prompt=rendered.system_prompt,
             )
         else:
             return finish("", f"未知规则类型: {rule.rule_type}", False)
@@ -152,6 +161,7 @@ async def _compute_file_rules(
     field_values: dict[str, str],
     field_source_refs: dict[str, dict],
     calc_precision: int,
+    params: Optional[Mapping[str, str]] = None,
 ) -> list[FileRuleComputation]:
     limits = get_config().concurrency
     file_limiter = register_task_limiter(
@@ -176,6 +186,7 @@ async def _compute_file_rules(
                         field_values,
                         field_source_refs,
                         calc_precision,
+                        params,
                     )
 
     tasks = [asyncio.create_task(guarded(rule)) for rule in rules]
@@ -553,11 +564,13 @@ async def execute_custom(
 async def _load_file_analysis_context(
     file_id: str,
     session: AsyncSession,
-) -> tuple[list[FileRuleSnapshot], dict[str, str], dict[str, dict]]:
+) -> tuple[list[FileRuleSnapshot], dict[str, str], dict[str, dict], dict[str, str]]:
     file_row = (
         await session.execute(select(File).where(File.file_id == file_id))
     ).scalar_one_or_none()
     type_id = (file_row.type_id if file_row else None) or "default"
+    # 提交时传入的入参快照，用于渲染规则里的 <param> 占位符
+    input_params = dict(getattr(file_row, "input_params", None) or {})
 
     result = await session.execute(
         select(AnalysisRule)
@@ -579,7 +592,7 @@ async def _load_file_analysis_context(
         for row in extraction_rows
         if row.source_refs
     }
-    return rules, field_values, field_source_refs
+    return rules, field_values, field_source_refs, input_params
 
 
 async def _persist_file_computation(
@@ -690,7 +703,7 @@ async def run_analysis(
 ) -> None:
     """并发计算文件规则，并按配置顺序落库和发送回调。"""
     logger.info("开始逻辑分析: {}", file_id)
-    rules, field_values, field_source_refs = await _load_file_analysis_context(
+    rules, field_values, field_source_refs, input_params = await _load_file_analysis_context(
         file_id,
         session,
     )
@@ -700,6 +713,7 @@ async def run_analysis(
         field_values,
         field_source_refs,
         get_config().analysis.calc_precision,
+        input_params,
     )
     total = len(computed)
     aggregated: list[dict[str, Any]] = []
@@ -742,7 +756,7 @@ async def run_analysis(
 async def run_analysis_stream(file_id: str, session: AsyncSession):
     """并发计算文件规则，并按配置顺序落库和流式输出。"""
     logger.info("开始流式逻辑分析: {}", file_id)
-    rules, field_values, field_source_refs = await _load_file_analysis_context(
+    rules, field_values, field_source_refs, input_params = await _load_file_analysis_context(
         file_id,
         session,
     )
@@ -752,6 +766,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
         field_values,
         field_source_refs,
         get_config().analysis.calc_precision,
+        input_params,
     )
     total = len(computed)
     for index, computation in enumerate(computed, start=1):

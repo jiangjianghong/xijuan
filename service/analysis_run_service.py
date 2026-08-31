@@ -164,6 +164,7 @@ async def execute_rule(
     field_values: Mapping[str, str],
     *,
     require_coverage: bool = False,
+    params: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     """执行一条规则；规则级异常转换为失败结果，不中断同组后续规则。"""
 
@@ -175,6 +176,13 @@ async def execute_rule(
     source_refs: Dict[str, Any] = {}
 
     try:
+        # 参数渲染先于 <field_result> 渲染，理由同 extraction 侧
+        from service.type_params import render_rule_params
+
+        rendered = render_rule_params(rule, params or {})
+        if rendered.params_used:
+            source_refs["_params"] = rendered.params_used
+
         if require_coverage:
             missing = [
                 field_id
@@ -206,18 +214,18 @@ async def execute_rule(
                 False,
             )
 
-        resolved = resolve_expression(rule.expression, values)
+        resolved = resolve_expression(rendered.expression, values)
         if rule.rule_type == "judge":
             resolved, web_ref = await apply_web_search(
                 resolved,
-                rule.web_search,
+                rendered.web_search,
                 values,
             )
             if web_ref:
                 source_refs["_web_search"] = web_ref
             value, reason = await execute_judge(
                 resolved,
-                system_prompt=rule.system_prompt,
+                system_prompt=rendered.system_prompt,
             )
         elif rule.rule_type == "calc":
             value, reason = await execute_calc(
@@ -227,7 +235,7 @@ async def execute_rule(
         elif rule.rule_type == "custom":
             resolved, web_ref = await apply_web_search(
                 resolved,
-                rule.web_search,
+                rendered.web_search,
                 values,
             )
             if web_ref:
@@ -236,7 +244,7 @@ async def execute_rule(
                 resolved,
                 is_formatted=bool(rule.is_formatted),
                 output_schema=rule.output_schema,
-                system_prompt=rule.system_prompt,
+                system_prompt=rendered.system_prompt,
             )
         else:
             raise ValueError(f"未知规则类型: {rule.rule_type}")
