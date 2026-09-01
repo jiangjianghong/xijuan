@@ -158,3 +158,69 @@ async def test_delete_type_cascades_params(client: AsyncClient):
             select(TypeParam).where(TypeParam.type_id == tid)
         )).scalars().all()
         assert rows == []
+
+
+# ── 复制 / 导出 / 导入 ──────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_copy_from_carries_params_without_remap(client: AsyncClient):
+    """param_key 不变，故被复制的字段里的 <param> 占位符天然继续有效。"""
+    src, dst = "tp_cp_src", "tp_cp_dst"
+    for tid in (src, dst):
+        await client.post("/doctype", json={"type_id": tid, "type_name": tid})
+    try:
+        await client.post(f"/doctype/{src}/params", json={
+            "param_key": "d", "param_name": "日期", "default_value": "2026-01-01",
+            "required": 1,
+        })
+        await client.post("/extraction/fields", json={
+            "field_id": "tp_cp_f", "type_id": src, "field_name": "有效期",
+            "source_type": "text", "search_type": "context",
+            "search_config": {"keywords": ["有效期"]},
+            "text_extract_prompt": "今天是<param>d</param>，从<search_result>有效期</search_result>提取",
+        })
+
+        resp = await client.post(f"/doctype/{dst}/copy_from", json={
+            "source_type_id": src,
+        })
+        assert resp.status_code == 200, resp.text
+
+        params = (await client.get(f"/doctype/{dst}/params")).json()["data"]
+        assert len(params) == 1
+        assert params[0]["param_key"] == "d"
+        assert params[0]["default_value"] == "2026-01-01"
+        assert params[0]["required"] == 1
+
+        fields = (await client.get(f"/extraction/fields?type_id={dst}")).json()["data"]
+        assert "<param>d</param>" in fields[0]["text_extract_prompt"]
+    finally:
+        for tid in (src, dst):
+            await client.delete(f"/doctype/{tid}?force=true")
+
+
+@pytest.mark.anyio
+async def test_export_import_roundtrip_params(client: AsyncClient):
+    src, dst = "tp_ei_src", "tp_ei_dst"
+    await client.post("/doctype", json={"type_id": src, "type_name": src})
+    try:
+        await client.post(f"/doctype/{src}/params", json={
+            "param_key": "year", "param_name": "申报年度",
+            "description": "四位数字", "default_value": "2025", "required": 0,
+        })
+
+        payload = (await client.get(f"/doctype/{src}/export")).json()["data"]
+        assert payload["params"][0]["param_key"] == "year"
+        assert payload["params"][0]["description"] == "四位数字"
+
+        resp = await client.post("/doctype/import", json={
+            "target_type_id": dst, "payload": payload,
+        })
+        assert resp.status_code == 200, resp.text
+
+        params = (await client.get(f"/doctype/{dst}/params")).json()["data"]
+        assert params[0]["param_key"] == "year"
+        assert params[0]["default_value"] == "2025"
+    finally:
+        for tid in (src, dst):
+            await client.delete(f"/doctype/{tid}?force=true")

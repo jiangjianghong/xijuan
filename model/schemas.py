@@ -64,6 +64,8 @@ class CopyConfigsResponse(BaseModel):
     skipped_fields: int = 0
     copied_rules: int = 0
     skipped_rules: int = 0
+    # 入参按 param_key 整表复制（同名覆盖），没有 skipped 一说
+    copied_params: int = 0
     missing_dependencies: List[str] = []
 
 
@@ -141,6 +143,7 @@ class ExportPayload(BaseModel):
     max_parse_pages: Optional[int] = Field(None, ge=1)
     enable_embedding: int = Field(1, ge=0, le=1)
     version: int = 1
+    params: List[TypeParamItem] = []
     fields: List[ExportFieldItem] = []
     rules: List[ExportRuleItem] = []
 

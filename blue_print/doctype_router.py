@@ -853,6 +853,36 @@ async def copy_configs(
         target_rule_ids.add(new_rule.rule_id)
         resp.copied_rules += 1
 
+    # 入参整表复制：param_key 不变，故被复制字段/规则里的 <param> 占位符天然继续
+    # 有效，无需像 field_id 那样重映射
+    src_params = (await db.execute(
+        select(TypeParam).where(TypeParam.type_id == req.source_type_id)
+    )).scalars().all()
+    for src_param in src_params:
+        existing_param = (await db.execute(
+            select(TypeParam).where(
+                TypeParam.type_id == type_id,
+                TypeParam.param_key == src_param.param_key,
+            )
+        )).scalar_one_or_none()
+        if existing_param:
+            existing_param.param_name = src_param.param_name
+            existing_param.description = src_param.description
+            existing_param.default_value = src_param.default_value
+            existing_param.required = src_param.required
+            existing_param.priority = src_param.priority
+        else:
+            db.add(TypeParam(
+                type_id=type_id,
+                param_key=src_param.param_key,
+                param_name=src_param.param_name,
+                description=src_param.description,
+                default_value=src_param.default_value,
+                required=src_param.required,
+                priority=src_param.priority,
+            ))
+        resp.copied_params += 1
+
     resp.missing_dependencies = missing_deps
 
     # 记录血缘：目标由源复制而来（默认类型不 reparent）
@@ -908,6 +938,21 @@ async def export_configs(type_id: str, db: AsyncSession = Depends(get_db)):
         max_parse_pages=target.max_parse_pages,
         enable_embedding=target.enable_embedding if target.enable_embedding is not None else 1,
         version=1,
+        params=[
+            TypeParamItem(
+                param_key=p.param_key,
+                param_name=p.param_name,
+                description=p.description,
+                default_value=p.default_value,
+                required=p.required or 0,
+                priority=p.priority or 0,
+            )
+            for p in (await db.execute(
+                select(TypeParam)
+                .where(TypeParam.type_id == type_id)
+                .order_by(TypeParam.priority, TypeParam.param_key)
+            )).scalars().all()
+        ],
         fields=[
             ExportFieldItem(
                 field_id=f.field_id,
@@ -1229,6 +1274,33 @@ async def import_configs(req: ImportConfigsRequest, db: AsyncSession = Depends(g
         db.add(new_rule)
         target_rule_names.add(new_name)
         resp.copied_rules += 1
+
+    # 入参按 param_key upsert：param_key 是稳定标识，无需像 field_id 那样重映射，
+    # 故字段与规则里的 <param> 占位符导入后天然继续有效。也不参与 on_conflict 的
+    # rename —— 改名会让所有 <param> 占位符失效，同名一律覆盖。
+    for param in payload.params:
+        existing_param = (await db.execute(
+            select(TypeParam).where(
+                TypeParam.type_id == target_type_id,
+                TypeParam.param_key == param.param_key,
+            )
+        )).scalar_one_or_none()
+        if existing_param:
+            existing_param.param_name = param.param_name
+            existing_param.description = param.description
+            existing_param.default_value = param.default_value
+            existing_param.required = param.required
+            existing_param.priority = param.priority
+        else:
+            db.add(TypeParam(
+                type_id=target_type_id,
+                param_key=param.param_key,
+                param_name=param.param_name,
+                description=param.description,
+                default_value=param.default_value,
+                required=param.required,
+                priority=param.priority,
+            ))
 
     resp.missing_dependencies = missing_deps
     await db.commit()
