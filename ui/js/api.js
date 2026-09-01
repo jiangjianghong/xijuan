@@ -14,6 +14,9 @@ const API = {
 
     setCurrentTypeId(typeId) {
         localStorage.setItem('currentTypeId', typeId || 'default');
+        // 入参清单按类型隔离，切类型后缓存必须作废，否则 P 按钮和调试输入框
+        // 会继续显示上一个类型的参数
+        if (typeof TypeParams !== 'undefined') TypeParams.invalidate();
     },
 
     /**
@@ -379,6 +382,38 @@ const API = {
         const params = tid ? `?type_id=${encodeURIComponent(tid)}` : '';
         const result = await this.request(`/extraction/fields${params}`);
         return result.data;
+    },
+
+    /**
+     * 文档类型入参：列出该类型的入参定义
+     */
+    async listTypeParams(typeId) {
+        const tid = typeId !== undefined ? typeId : this.getCurrentTypeId();
+        const result = await this.request(`/doctype/${encodeURIComponent(tid)}/params`);
+        return result.data;
+    },
+
+    /**
+     * 文档类型入参：按 param_key 新增或更新
+     */
+    async upsertTypeParam(payload, typeId) {
+        const tid = typeId !== undefined ? typeId : this.getCurrentTypeId();
+        return this.request(`/doctype/${encodeURIComponent(tid)}/params`, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+    },
+
+    /**
+     * 文档类型入参：删除；仍被字段/规则引用时后端返回 409
+     */
+    async deleteTypeParam(paramKey, force, typeId) {
+        const tid = typeId !== undefined ? typeId : this.getCurrentTypeId();
+        const qs = force ? '?force=true' : '';
+        return this.request(
+            `/doctype/${encodeURIComponent(tid)}/params/${encodeURIComponent(paramKey)}${qs}`,
+            { method: 'DELETE' },
+        );
     },
 
     /**

@@ -126,6 +126,7 @@ const RuleConfig = {
             sectionFields: document.getElementById('section-fields'),
             sectionAdvancedFields: document.getElementById('section-advanced-fields'),
             sectionRules: document.getElementById('section-rules'),
+            sectionParams: document.getElementById('section-params'),
             debugBtn: document.getElementById('debug-field-btn'),
         };
     },
@@ -145,11 +146,17 @@ const RuleConfig = {
         this.els.sectionFields.classList.toggle('active', tab === 'fields');
         this.els.sectionAdvancedFields.classList.toggle('active', tab === 'fields');
         this.els.sectionRules.classList.toggle('active', tab === 'rules');
+        if (this.els.sectionParams) {
+            this.els.sectionParams.classList.toggle('active', tab === 'params');
+        }
 
         if (tab === 'fields' && !this.state.loaded.fields) {
             this.loadFields();
         } else if (tab === 'rules' && !this.state.loaded.rules) {
             this.loadRules();
+        } else if (tab === 'params') {
+            // 每次进入都重拉：入参改动会影响字段/规则表单里的 P 按钮，不做缓存
+            TypeParams.renderManageList('type-param-manage');
         }
     },
 
@@ -159,6 +166,9 @@ const RuleConfig = {
 
     async loadFields() {
         try {
+            // 入参清单要先于字段列表就绪：表单渲染时按「该类型有没有入参」决定
+            // 是否显示 P 按钮，晚一步会让首次打开的表单少一个按钮
+            await TypeParams.load(undefined, { force: true });
             this.state.fields = await API.getExtractionFields();
             this.state.loaded.fields = true;
             this.renderFieldList();
@@ -172,6 +182,8 @@ const RuleConfig = {
 
     async loadRules() {
         try {
+            // 规则表达式同样可引用入参，P 按钮依赖清单先就绪
+            await TypeParams.load();
             this.state.rules = await API.getAnalysisRules();
             this.state.loaded.rules = true;
             this.renderRuleList();
@@ -460,17 +472,35 @@ const RuleConfig = {
         });
     },
 
+    /**
+     * chip 是否承载占位符（字段引用或入参引用）——决定是否显示中文名而非原文。
+     */
+    isRefValue(v) {
+        return typeof v === 'string'
+            && (v.indexOf('<field_result>') !== -1 || v.indexOf('<param>') !== -1);
+    },
+
+    /** 占位符 → 中文名，用于 chip 展示；提交时仍取 data-value 里的原文。 */
+    displayRefs(text) {
+        let out = this.displayFieldRefs(text);
+        if (typeof TypeParams !== 'undefined') out = TypeParams.display(out);
+        return out;
+    },
+
     buildKeywordTagsHtml(id, label, values, placeholder, allowRef) {
         values = values || [];
         let tagsHtml = '';
         for (const v of values) {
-            const isRef = typeof v === 'string' && v.indexOf('<field_result>') !== -1;
-            const shown = isRef ? this.displayFieldRefs(v) : v;
+            const isRef = this.isRefValue(v);
+            const shown = isRef ? this.displayRefs(v) : v;
             tagsHtml += `<span class="keyword-tag${isRef ? ' field-ref-tag' : ''}" data-value="${Utils.escapeHtml(v)}">${Utils.escapeHtml(shown)}<button type="button" class="keyword-tag-remove" onclick="RuleConfig.removeKeywordTag(this)">&times;</button></span>`;
         }
-        // 进阶字段：关键词可引用普通字段的提取结果
-        const labelHtml = allowRef
-            ? `<div class="form-label-row"><label class="form-label">${Utils.escapeHtml(label)}</label>${this.fieldRefBtnHtml('tag', id)}</div>`
+        // 关键词可引用普通字段的提取结果（进阶字段）与该类型的入参。
+        // 不看 allowRef：K 的「仅进阶字段」门禁在 fieldRefBtnHtml 里，而入参对
+        // 普通字段同样可用（它来自外部传入，不依赖别的字段先跑完）。
+        const btns = this.refBtnsHtml('tag', id);
+        const labelHtml = btns
+            ? `<div class="form-label-row"><label class="form-label">${Utils.escapeHtml(label)}</label>${btns}</div>`
             : `<label class="form-label">${Utils.escapeHtml(label)}</label>`;
         return `
             <div class="form-group">
@@ -495,12 +525,12 @@ const RuleConfig = {
         // Avoid duplicates
         const existing = this.getKeywordTags(containerId);
         if (existing.includes(value)) return;
-        const isRef = value.indexOf('<field_result>') !== -1;
+        const isRef = this.isRefValue(value);
         const span = document.createElement('span');
         span.className = isRef ? 'keyword-tag field-ref-tag' : 'keyword-tag';
-        // 原始值放 data-value，界面只显示字段中文名，提交时按 data-value 取
+        // 原始值放 data-value，界面只显示中文名，提交时按 data-value 取
         span.dataset.value = value;
-        const shown = isRef ? this.displayFieldRefs(value) : value;
+        const shown = isRef ? this.displayRefs(value) : value;
         span.innerHTML = `${Utils.escapeHtml(shown)}<button type="button" class="keyword-tag-remove" onclick="RuleConfig.removeKeywordTag(this)">&times;</button>`;
         list.appendChild(span);
     },
@@ -854,6 +884,15 @@ const RuleConfig = {
         return `<div class="insert-tag-wrap"><button type="button" class="insert-tag-btn" onclick="RuleConfig.showFieldRefDropdown(this,'${mode}','${targetId}')" title="引用普通字段的提取结果">K</button></div>`;
     },
 
+    /**
+     * 占位符按钮组：字段引用（K，仅进阶字段）+ 入参引用（P，该类型定义了入参时）。
+     * 入参对普通字段同样可用——它来自外部传入，不依赖其它字段先跑完。
+     */
+    refBtnsHtml(mode, targetId) {
+        return this.fieldRefBtnHtml(mode, targetId)
+            + (typeof TypeParams !== 'undefined' ? TypeParams.btnHtml(mode, targetId) : '');
+    },
+
     buildFieldForm(field) {
         const isEdit = !!field.field_id;
         const sourceType = field.source_type || 'table';
@@ -954,7 +993,7 @@ const RuleConfig = {
                         <div class="insert-tag-wrap">
                             <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-table-extract-prompt','search_result',this)" title="插入占位符">{x}</button>
                         </div>
-                        ${this.fieldRefBtnHtml('text', 'fm-table-extract-prompt')}
+                        ${this.refBtnsHtml('text', 'fm-table-extract-prompt')}
                     </div>
                     <textarea class="form-textarea" id="fm-table-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.table_extract_prompt || (isEdit ? '' : this.EXTRACT_DEFAULTS.USER_PROMPT))}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
@@ -992,7 +1031,7 @@ const RuleConfig = {
                         <div class="insert-tag-wrap">
                             <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-text-extract-prompt','search_result',this)" title="插入占位符">{x}</button>
                         </div>
-                        ${this.fieldRefBtnHtml('text', 'fm-text-extract-prompt')}
+                        ${this.refBtnsHtml('text', 'fm-text-extract-prompt')}
                     </div>
                     <textarea class="form-textarea" id="fm-text-extract-prompt" rows="4" placeholder="须包含 <search_result>...</search_result> 占位符">${Utils.escapeHtml(field.text_extract_prompt || (isEdit ? '' : this.EXTRACT_DEFAULTS.USER_PROMPT))}</textarea>
                     <div class="form-hint">作为 user message 发送给 LLM，用 &lt;search_result&gt;...&lt;/search_result&gt; 引用检索结果</div>
@@ -1018,14 +1057,14 @@ const RuleConfig = {
                 <div class="form-group">
                     <div class="form-label-row">
                         <label class="form-label">系统提示词（可选）</label>
-                        ${this.fieldRefBtnHtml('text', 'fm-vl-system-prompt')}
+                        ${this.refBtnsHtml('text', 'fm-vl-system-prompt')}
                     </div>
                     <textarea class="form-textarea" id="fm-vl-system-prompt" rows="3" placeholder="可选，VL 调用的系统提示">${Utils.escapeHtml(field.vl_system_prompt || '')}</textarea>
                 </div>
                 <div class="form-group">
                     <div class="form-label-row">
                         <label class="form-label">最终提取提示词</label>
-                        ${this.fieldRefBtnHtml('text', 'fm-vl-extract-prompt')}
+                        ${this.refBtnsHtml('text', 'fm-vl-extract-prompt')}
                     </div>
                     <textarea class="form-textarea" id="fm-vl-extract-prompt" rows="6" placeholder='必须含 value/reason 关键字，要求 VL 直接输出 {"value":..., "reason":...} JSON'>${Utils.escapeHtml(field.vl_extract_prompt || this.VL_DEFAULTS.EXTRACT_PROMPT)}</textarea>
                     <div class="form-hint">VL 直接产出 JSON，不再走第二次文本 LLM。提示词中需明确要求 value/reason 两个键。</div>
@@ -1080,7 +1119,7 @@ const RuleConfig = {
                     <div class="form-group">
                         <div class="form-label-row">
                             <label class="form-label">章节模式</label>
-                            ${this.fieldRefBtnHtml('text', 'fm-sc-section-pattern')}
+                            ${this.refBtnsHtml('text', 'fm-sc-section-pattern')}
                         </div>
                         <input class="form-input" id="fm-sc-section-pattern" value="${Utils.escapeHtml(config.section_pattern || '')}" placeholder="章节标题或关键词">
                     </div>
@@ -1210,7 +1249,7 @@ const RuleConfig = {
                     <div class="form-group">
                         <div class="form-label-row">
                             <label class="form-label">查询文本</label>
-                            ${this.fieldRefBtnHtml('text', 'fm-sc-query-text')}
+                            ${this.refBtnsHtml('text', 'fm-sc-query-text')}
                         </div>
                         <textarea class="form-input" id="fm-sc-query-text" rows="3"
                             placeholder="每行一个查询词，多行=多路检索。例：&#10;项目名称&#10;工程名称&#10;本项目名称为">${Utils.escapeHtml(
@@ -1689,7 +1728,7 @@ const RuleConfig = {
                         <label class="form-label">用户提示词</label>
                         <div class="insert-tag-wrap">
                             <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-expression','field_result',this)" title="插入占位符">{x}</button>
-                        </div>
+                        </div>${TypeParams.btnHtml('text','fm-expression')}
                     </div>
                     <textarea class="form-textarea" id="fm-expression" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(ruleType === 'judge' ? (rule.expression || '') : '')}</textarea>
                     <div class="form-hint">用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，LLM 返回 true/false 及原因</div>
@@ -1705,7 +1744,7 @@ const RuleConfig = {
                         <label class="form-label">计算表达式</label>
                         <div class="insert-tag-wrap">
                             <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-expression-calc','field_result',this)" title="插入占位符">{x}</button>
-                        </div>
+                        </div>${TypeParams.btnHtml('text','fm-expression-calc')}
                     </div>
                     <textarea class="form-textarea" id="fm-expression-calc" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(ruleType === 'calc' ? (rule.expression || '') : '')}</textarea>
                     <div class="form-hint">用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，系统执行数值计算并返回结果</div>
@@ -1725,7 +1764,7 @@ const RuleConfig = {
                         <label class="form-label">用户提示词</label>
                         <div class="insert-tag-wrap">
                             <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-custom-expression','field_result',this)" title="插入占位符">{x}</button>
-                        </div>
+                        </div>${TypeParams.btnHtml('text','fm-custom-expression')}
                     </div>
                     <textarea class="form-textarea" id="fm-custom-expression" rows="5" placeholder="须包含 <field_result>...</field_result> 占位符">${Utils.escapeHtml(ruleType === 'custom' ? (rule.expression || '') : '')}</textarea>
                     <div class="form-hint">用 &lt;field_result&gt;字段ID&lt;/field_result&gt; 引用字段值，让模型自由生成结果</div>
@@ -1768,7 +1807,7 @@ const RuleConfig = {
                             <label class="form-label">搜索词</label>
                             <div class="insert-tag-wrap">
                                 <button type="button" class="insert-tag-btn" onclick="RuleConfig.showInsertTagDropdown('fm-ws-query','field_result',this)" title="插入占位符">{x}</button>
-                            </div>
+                            </div>${TypeParams.btnHtml('text','fm-ws-query')}
                         </div>
                         <textarea class="form-textarea" id="fm-ws-query" rows="2" placeholder="可用 <field_result>字段ID</field_result> 拼接依赖字段的提取值">${Utils.escapeHtml(ws.query || '')}</textarea>
                     </div>
@@ -2348,6 +2387,10 @@ const RuleConfig = {
 
         // 加载已完成文件列表
         this.loadDebugFileList();
+
+        // 入参输入区：该类型定义了入参时渲染，预填 default_value。
+        // 后端对调试接口同样做 required 校验，不给输入框就没法调通。
+        TypeParams.renderDebugInputs('debug-params');
     },
 
     exitDebugMode() {
@@ -2482,6 +2525,9 @@ const RuleConfig = {
                     <button class="debug-test-btn" id="debug-test-btn" onclick="RuleConfig.runFieldTest()" disabled>测试</button>
                 </div>
 
+                <!-- 入参输入区：该类型定义了入参时才渲染内容 -->
+                <div id="debug-params"></div>
+
                 <div class="debug-section" id="debug-sec-config" style="display:none;">
                     <div class="debug-section-header">检索配置</div>
                     <div class="debug-section-body">
@@ -2589,6 +2635,7 @@ const RuleConfig = {
         const payload = {
             file_id: fileId,
             config: formData,
+            params: TypeParams.collectDebugValues(),
         };
 
         try {
@@ -2942,6 +2989,9 @@ const RuleConfig = {
                     <button class="debug-test-btn" id="debug-test-btn" onclick="RuleConfig.runRuleTest()" disabled>测试</button>
                 </div>
 
+                <!-- 入参输入区：该类型定义了入参时才渲染内容 -->
+                <div id="debug-params"></div>
+
                 <label class="debug-reextract-option">
                     <span>重新抽取依赖字段</span>
                     <span class="toggle-switch">
@@ -3037,6 +3087,7 @@ const RuleConfig = {
             file_id: fileId,
             config: formData,
             re_extract: !!reExtractToggle?.checked,
+            params: TypeParams.collectDebugValues(),
         };
 
         try {

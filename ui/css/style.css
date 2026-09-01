@@ -5352,3 +5352,112 @@ body.runtime-modal-open { overflow:hidden; }
 .runtime-constraint-meter i { border-radius:inherit; }
 .runtime-detail-task-icon { border-radius:8px; }
 .runtime-connection-dot::before,.runtime-connection-dot span { border-radius:50%; }
+
+/* ── 文档类型入参（type_param） ───────────────────────────── */
+
+.type-param-list {
+    margin-bottom: 16px;
+}
+
+.type-param-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+    border-radius: 8px;
+    margin-bottom: 8px;
+    position: relative;
+}
+
+.type-param-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.type-param-name {
+    font-weight: 600;
+}
+
+.type-param-key {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(127, 127, 127, 0.16);
+}
+
+.type-param-required {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(220, 80, 80, 0.18);
+    color: #e06060;
+}
+
+.type-param-meta {
+    font-size: 12px;
+    opacity: 0.75;
+}
+
+.type-param-muted {
+    opacity: 0.55;
+}
+
+.type-param-actions {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    display: flex;
+    gap: 6px;
+}
+
+.type-param-empty {
+    padding: 20px;
+    text-align: center;
+    opacity: 0.6;
+    font-size: 13px;
+}
+
+.type-param-form {
+    margin-top: 14px;
+    padding: 14px;
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+    border-radius: 8px;
+}
+
+/* 调试面板的入参输入区 */
+.debug-param-block {
+    margin: 10px 0 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+    border-radius: 8px;
+}
+
+.debug-param-title {
+    font-size: 12px;
+    opacity: 0.7;
+    margin-bottom: 8px;
+}
+
+.debug-param-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+}
+
+.debug-param-label {
+    display: block;
+    font-size: 12px;
+    margin-bottom: 3px;
+}
+
+.debug-param-required {
+    color: #e06060;
+    margin-left: 2px;
+}
+
+.debug-param-input {
+    width: 100%;
+}

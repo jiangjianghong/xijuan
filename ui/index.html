@@ -190,6 +190,7 @@
         <div class="sub-tabs">
             <button class="sub-tab-btn active" data-rtab="fields" onclick="RuleConfig.switchTab('fields')">字段提取配置</button>
             <button class="sub-tab-btn" data-rtab="rules" onclick="RuleConfig.switchTab('rules')">逻辑分析配置</button>
+            <button class="sub-tab-btn" data-rtab="params" onclick="RuleConfig.switchTab('params')">入参配置</button>
         </div>
 
         <!-- Fields Section -->
@@ -273,6 +274,22 @@
                 </table>
             </div>
             <div id="rule-empty" class="rule-empty" style="display:none;">暂无逻辑分析配置</div>
+        </section>
+
+        <!-- Type Params Section：按当前类型隔离，与字段/规则同级 -->
+        <section id="section-params" class="rule-section glass-card" style="padding: 20px;">
+            <div class="rule-section-header">
+                <h2 class="section-title">入参配置</h2>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn btn-secondary" onclick="RuleConfig.switchTab('params')">刷新</button>
+                </div>
+            </div>
+            <div class="form-hint" style="margin-bottom:12px;">
+                入参由调用方在提交解析时传入（<code>POST /file/parse</code> 的 <code>params</code> 表单字段），
+                在字段与规则配置里用 <code>&lt;param&gt;参数标识&lt;/param&gt;</code> 引用。
+                适合放文档里没有、只有外部系统知道的信息，例如当前日期、申报年度。
+            </div>
+            <div id="type-param-manage"></div>
         </section>
     </div>
     </div><!-- /page-rule-config -->
@@ -1176,6 +1193,7 @@
     <script src="js/settings.js"></script>
     <script src="js/doctype.js"></script>
     <script src="js/schemaBuilder.js"></script>
+    <script src="js/typeParams.js"></script>
     <script src="js/ruleConfig.js"></script>
     <script src="js/pdfViewer.js"></script>
     <script src="js/app.js"></script>
