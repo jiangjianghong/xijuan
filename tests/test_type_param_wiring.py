@@ -147,6 +147,33 @@ async def test_execute_rule_without_params_has_no_params_key(monkeypatch):
     assert result["source_refs"] is None
 
 
+@pytest.mark.anyio
+async def test_execute_rule_keeps_params_when_rule_fails(monkeypatch):
+    """规则挂掉时仍保留 _params：排查失败时最想看的就是当时喂进去的参数。
+
+    与管线侧 _compute_file_rule 的 finish() 行为对齐——那边异常分支同样带着
+    已收集的 source_refs 返回。
+    """
+    from service import analysis_run_service
+    from service.analysis_run_service import AnalysisRuleSnapshot, execute_rule
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("模型不可达")
+
+    monkeypatch.setattr(analysis_run_service, "execute_judge", boom)
+
+    rule = AnalysisRuleSnapshot(
+        rule_id="r1", type_id="t1", rule_name="规则", rule_type="judge",
+        expression="截至<param>d</param>是否有效",
+        system_prompt="", depend_fields=[], web_search=None, priority=0,
+    )
+    result = await execute_rule(rule, {}, params={"d": "2026-08-31"})
+
+    assert result["success"] is False
+    assert "模型不可达" in result["reason"]
+    assert result["source_refs"]["_params"] == {"d": "2026-08-31"}
+
+
 # ── /file/parse 入参校验 ────────────────────────────────────
 
 _PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<< >>\nendobj\ntrailer\n<< >>\n%%EOF\n"

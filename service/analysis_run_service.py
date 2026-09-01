@@ -269,7 +269,10 @@ async def execute_rule(
             "",
             error,
             input_values,
-            None,
+            # 失败时保留已收集的溯源（_params / _web_search）：规则挂了的时候，
+            # 「当时喂进去的参数是什么」正是最该看的东西。与管线侧
+            # _compute_file_rule 的 finish() 行为对齐。
+            source_refs or None,
             False,
         )
 
