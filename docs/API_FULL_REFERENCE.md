@@ -616,12 +616,18 @@ curl -X DELETE http://localhost:5019/file/batch \
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|:--:|---|
 | `file` | file | 是 | PDF 文件；大小受 `mineru.max_file_size` 限制 |
+| `params` | string | 否 | 文档类型入参的 JSON 对象字符串；值仅支持字符串、数字、布尔值或 `null` |
+
+`params` 中的 key 必须已通过 `GET /doctype/{type_id}/params` 定义。服务端按“默认值 <- 本次传入值覆盖”合并参数，并把完整快照写入 `files.input_params`；字段和规则配置中的 `<param>参数标识</param>` 会使用该快照渲染。`null` 会归一为空字符串，未传 `params` 等价于空对象。
+
+参数校验发生在生成 `file_id`、建档和写入原始 PDF 之前。非法 JSON、顶层不是对象、值为对象/数组、含未知 key，或缺少无默认值的必填参数，都会直接返回 HTTP `400`，且不会产生文件记录或落盘文件。
 
 异步请求示例：
 
 ```bash
-curl -X POST "http://localhost:5019/file/parse?type_id=default&mode=async" \
-  -F "file=@report.pdf"
+curl -X POST "http://localhost:5019/file/parse?type_id=contract&mode=async" \
+  -F "file=@report.pdf" \
+  -F 'params={"current_date":"2026-09-01","year":2025,"include_tax":true}'
 ```
 
 同步请求示例：
@@ -663,12 +669,15 @@ curl -N -X POST "http://localhost:5019/file/parse?type_id=default&mode=stream" \
 | 状态 | 条件 | 说明 |
 |---|---|---|
 | HTTP `200` + `code=400` | 文件超过大小限制 | 响应 `message` 包含限制大小 |
+| HTTP `400` | `type_id` 不存在 | 不建档、不写盘 |
+| HTTP `400` | `params` 非法、含未知 key 或缺少必填参数 | `detail` 返回具体校验原因；不建档、不写盘 |
 | `500` | 同步模式管线异常 | 异常向上传播为接口失败 |
 | 后台日志错误 | 异步模式管线异常 | 接口已返回；失败写入文件状态和日志 |
 
 关键细节：
 
 - 每次上传都会生成新 `file_id`，不会因为文件名相同而复用旧记录。
+- `params` 落库的是合并默认值后的完整快照；后续 retry 沿用上传时的值，不受类型默认值之后修改的影响。
 - 上传时会尝试把原始 PDF 写到 `uploads/{file_id}.pdf`，VL 字段和 PDF 预览依赖该文件；写盘失败只记 warning，不阻断管线。
 - `callback_url` 每次回调超时默认 2.5 秒（`callback.timeout` 可配），失败不影响主流程。
 - `mode=stream` 的响应是 SSE，不再返回 JSON 信封。

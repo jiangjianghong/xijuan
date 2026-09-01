@@ -840,6 +840,9 @@ class FileDetailResponse(BaseModel):
     file_size: int
     progress: str
     type_id: str = "default"
+    # 提交解析时传入的入参快照（默认值 ← 传入值合并后的完整结果）。
+    # 老文件建档时没有这一列，为 None。
+    input_params: Optional[Dict[str, str]] = None
     error: Optional[str] = None
     create_time: Optional[datetime] = None
     updated_at: Optional[datetime] = None

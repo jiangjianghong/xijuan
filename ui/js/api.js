@@ -117,10 +117,14 @@ const API = {
     /**
      * 上传文件 (流式)
      */
-    uploadFileStream(file, onEvent, typeId) {
+    uploadFileStream(file, onEvent, typeId, params) {
         return new Promise((resolve, reject) => {
             const formData = new FormData();
             formData.append('file', file);
+            // 入参走 form 而非 query：值可能是长中文说明，且不必 URL 编码
+            if (params && Object.keys(params).length > 0) {
+                formData.append('params', JSON.stringify(params));
+            }
 
             const tid = encodeURIComponent(typeId || this.getCurrentTypeId());
             fetch(`${this.baseUrl}/file/parse?mode=stream&type_id=${tid}`, {
@@ -174,10 +178,14 @@ const API = {
     /**
      * 上传文件 (异步)
      */
-    uploadFileAsync(file, typeId, onProgress) {
+    uploadFileAsync(file, typeId, onProgress, params) {
         return new Promise((resolve, reject) => {
             const formData = new FormData();
             formData.append('file', file);
+            // 入参走 form 而非 query：值可能是长中文说明，且不必 URL 编码
+            if (params && Object.keys(params).length > 0) {
+                formData.append('params', JSON.stringify(params));
+            }
 
             const tid = encodeURIComponent(typeId || this.getCurrentTypeId());
             const xhr = new XMLHttpRequest();

@@ -536,7 +536,13 @@ async def parse_file(
     mode: str = "async",
     type_id: str = "default",
     callback_url: Optional[str] = None,
-    params: Optional[str] = Form(None),
+    params: Optional[str] = Form(
+        None,
+        description=(
+            "文档类型入参的 JSON 对象字符串；值仅支持标量。未传项按类型定义补默认值，"
+            "未知 key、缺少必填项或 JSON 非法时返回 HTTP 400。"
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """提交文件解析（支持 sync/async/stream）。
@@ -1074,6 +1080,7 @@ async def get_file_detail(file_id: str, db: AsyncSession = Depends(get_db)):
             file_size=file_record.file_size,
             progress=file_record.progress,
             type_id=file_record.type_id or "default",
+            input_params=file_record.input_params or None,
             error=file_record.error,
             create_time=file_record.create_time,
             updated_at=file_record.updated_at,

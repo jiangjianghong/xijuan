@@ -854,6 +854,7 @@
                 <!-- Data tabs -->
                 <div class="data-tabs-section">
                     <div class="tabs-header">
+                        <button class="tab-btn" data-tab="params">传入参数</button>
                         <button class="tab-btn active" data-tab="outline">大纲</button>
                         <button class="tab-btn" data-tab="tables">表格</button>
                         <button class="tab-btn" data-tab="extraction">提取结果</button>
@@ -1026,6 +1027,25 @@
             <div class="rule-modal-footer">
                 <button class="btn btn-ghost" onclick="DocTypeManager.closeCopyDialog()">取消</button>
                 <button class="btn btn-primary" onclick="DocTypeManager.executeCopy()">开始复制</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Params Modal：上传前收集该类型的入参 -->
+    <div id="upload-params-modal-overlay" class="rule-modal-overlay">
+        <div class="rule-modal" style="max-width:560px;">
+            <div class="rule-modal-header">
+                <h3>填写本次上传的入参</h3>
+                <button class="rule-modal-close" onclick="TypeParams.cancelUploadDialog()">&times;</button>
+            </div>
+            <div class="rule-modal-body">
+                <div id="upload-params-hint" class="form-hint" style="margin-bottom:12px;"></div>
+                <div id="upload-params-fields"></div>
+                <div id="upload-params-error" class="form-hint" style="color:#c0392b; margin-top:8px;"></div>
+            </div>
+            <div class="rule-modal-footer">
+                <button class="btn btn-ghost" onclick="TypeParams.cancelUploadDialog()">取消</button>
+                <button class="btn btn-primary" onclick="TypeParams.confirmUploadDialog()">开始上传</button>
             </div>
         </div>
     </div>

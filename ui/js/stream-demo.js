@@ -174,8 +174,14 @@ const StreamDemo = {
     },
 
     // ── Processing ──
-    startProcessing() {
+    async startProcessing() {
         if (!this.selectedFile) return;
+
+        // 与文件页一致：该类型定义了入参就先弹窗收集，否则后端会 400
+        const _params = (typeof TypeParams !== 'undefined')
+            ? await TypeParams.promptForUpload()
+            : {};
+        if (_params === null) return;   // 用户取消
 
         this.isProcessing = true;
 
@@ -208,6 +214,9 @@ const StreamDemo = {
         // Upload with streaming
         const formData = new FormData();
         formData.append('file', this.selectedFile);
+        if (_params && Object.keys(_params).length > 0) {
+            formData.append('params', JSON.stringify(_params));
+        }
 
         const tid = encodeURIComponent(_currentType);
         fetch(`/file/parse?mode=stream&type_id=${tid}`, {

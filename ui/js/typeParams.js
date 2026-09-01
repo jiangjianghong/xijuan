@@ -297,4 +297,95 @@ const TypeParams = {
         });
         return values;
     },
+
+    // ── 上传前的入参弹窗 ────────────────────────────────────
+
+    _uploadResolve: null,
+
+    /**
+     * 上传前收集入参。返回 Promise：
+     * - 该类型没定义入参 → 直接 resolve({})，**不弹窗**（不打扰无参数的类型）
+     * - 弹窗确认 → resolve({param_key: value})
+     * - 取消 → resolve(null)，调用方据此中止上传
+     *
+     * 必填项在这里先拦一道；后端 /file/parse 仍会校验（两道都留，前端拦是为了
+     * 不让用户白等一次上传，后端拦是因为 API 不止 UI 一个消费者）。
+     */
+    async promptForUpload(typeId) {
+        await this.load(typeId, { force: true });
+        if (!this.has()) return {};
+
+        const overlay = document.getElementById('upload-params-modal-overlay');
+        if (!overlay) return {};   // 弹窗未渲染时不阻断上传，交给后端校验
+
+        const hint = document.getElementById('upload-params-hint');
+        if (hint) {
+            hint.textContent = `文档类型「${this.state.typeId}」定义了 ${this.state.params.length} 个入参，`
+                + '它们会随本次上传一并提交，供抽取与分析的提示词引用。';
+        }
+        const err = document.getElementById('upload-params-error');
+        if (err) err.textContent = '';
+
+        const wrap = document.getElementById('upload-params-fields');
+        if (wrap) {
+            wrap.innerHTML = this.state.params.map(p => `
+                <div class="form-group">
+                    <label class="form-label">
+                        ${Utils.escapeHtml(p.param_name)}
+                        ${p.required ? '<span class="debug-param-required">*</span>' : ''}
+                        <code class="type-param-key">${Utils.escapeHtml(p.param_key)}</code>
+                    </label>
+                    <input type="text" class="form-input upload-param-input"
+                           data-param-key="${Utils.escapeHtml(p.param_key)}"
+                           value="${Utils.escapeHtml(p.default_value || '')}"
+                           placeholder="${Utils.escapeHtml(p.description || p.param_key)}">
+                    ${p.description ? `<div class="form-hint">${Utils.escapeHtml(p.description)}</div>` : ''}
+                </div>
+            `).join('');
+        }
+
+        overlay.classList.add('active');
+        const first = overlay.querySelector('.upload-param-input');
+        if (first) first.focus();
+
+        return new Promise(resolve => { this._uploadResolve = resolve; });
+    },
+
+    confirmUploadDialog() {
+        const values = {};
+        const missing = [];
+        (this.state.params || []).forEach(p => {
+            const input = document.querySelector(
+                `.upload-param-input[data-param-key="${p.param_key}"]`
+            );
+            const value = input ? input.value.trim() : '';
+            if (p.required && !value) missing.push(p.param_name);
+            values[p.param_key] = value;
+        });
+
+        if (missing.length) {
+            const err = document.getElementById('upload-params-error');
+            if (err) err.textContent = `以下必填入参未填写：${missing.join('、')}`;
+            return;
+        }
+
+        this._closeUploadDialog();
+        if (this._uploadResolve) {
+            this._uploadResolve(values);
+            this._uploadResolve = null;
+        }
+    },
+
+    cancelUploadDialog() {
+        this._closeUploadDialog();
+        if (this._uploadResolve) {
+            this._uploadResolve(null);
+            this._uploadResolve = null;
+        }
+    },
+
+    _closeUploadDialog() {
+        const overlay = document.getElementById('upload-params-modal-overlay');
+        if (overlay) overlay.classList.remove('active');
+    },
 };

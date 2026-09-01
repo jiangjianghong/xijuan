@@ -171,21 +171,34 @@ const App = {
     // 上传处理（异步接口 + 轮询）
     // ─────────────────────────────────────────────────────────
 
-    handleFiles(files) {
+    async handleFiles(files) {
         const pdfFiles = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
         if (pdfFiles.length === 0) {
             Toast.error('请选择 PDF 文件');
             return;
         }
-        pdfFiles.forEach(file => this.uploadFile(file));
+
+        // 该类型若定义了入参，先弹窗收集：一批文件共用同一份（它们都归当前类型），
+        // 只弹一次。没定义入参时 promptForUpload 直接返回 {} 不打扰。
+        const typeId = API.getCurrentTypeId();
+        const params = await TypeParams.promptForUpload(typeId);
+        if (params === null) {
+            Toast.error('已取消上传');
+            return;
+        }
+
+        pdfFiles.forEach(file => this.uploadFile(file, null, typeId, params));
     },
 
-    async uploadFile(file, retryId = null, uploadTypeId = null) {
+    async uploadFile(file, retryId = null, uploadTypeId = null, params = null) {
         const tempId = retryId || Utils.generateId();
         const typeId = uploadTypeId || API.getCurrentTypeId();
         this.addToQueue(tempId, file.name, 'uploading', 0, {
             file,
             typeId,
+            // 入队时把参数存下来，重试上传直接复用，不再弹窗——与后端
+            // files.input_params 快照「retry 沿用当时的值」的语义一致
+            params: params || {},
             uploadProgress: 0,
             error: null,
         });
@@ -193,7 +206,7 @@ const App = {
         try {
             const result = await API.uploadFileAsync(file, typeId, percent => {
                 this.updateUploadProgress(tempId, percent);
-            });
+            }, params || {});
             const fileId = result.data && result.data.file_id;
 
             if (fileId) {
@@ -261,7 +274,8 @@ const App = {
     async retryUpload(id) {
         const item = this.state.queue.get(id);
         if (!item || !item.file || item.stage !== 'upload_failed') return;
-        await this.uploadFile(item.file, id, item.typeId);
+        // 复用入队时存下的入参，不再弹窗——重试的是同一次上传意图
+        await this.uploadFile(item.file, id, item.typeId, item.params || {});
     },
 
     updateQueueItem(id, stage, progress) {
@@ -667,6 +681,8 @@ const App = {
             const detail = await API.getFileDetail(fileId);
             this.els.drawerFilename.textContent = detail.file_name;
             this.els.drawerFilesize.textContent = Utils.formatFileSize(detail.file_size);
+            // 入参标签页复用这份详情，避免切标签时重复请求
+            this.state.currentFileDetail = detail;
             this.renderTimeline(detail);
             this.renderErrorSection(detail);
             this.switchTab('outline');
@@ -827,6 +843,41 @@ const App = {
             let html = '';
 
             switch (tab) {
+                case 'params': {
+                    // 该文件提交时的入参快照（files.input_params）。取自 detail 接口，
+                    // 是**落库的那一份**而非该类型当前的参数定义——参数定义之后改了、
+                    // 或参数被删了，这里显示的仍是这次跑用的值。
+                    const detail = (this.state.currentFileDetail
+                        && this.state.currentFileDetail.file_id === fileId)
+                        ? this.state.currentFileDetail
+                        : await API.getFileDetail(fileId);
+                    const params = (detail && detail.input_params) || {};
+                    const keys = Object.keys(params);
+                    if (keys.length === 0) {
+                        html = '<div class="tab-content-empty">本次上传未传入参数</div>';
+                    } else {
+                        const rows = keys.map(k => `
+                            <tr>
+                                <td><code>${this.escapeHtml(k)}</code></td>
+                                <td>${params[k] ? this.escapeHtml(params[k]) : '<span class="type-param-muted">（空）</span>'}</td>
+                            </tr>
+                        `).join('');
+                        html = `
+                            <div class="data-card">
+                                <div class="data-card-title">提交时传入的参数（共 ${keys.length} 项）</div>
+                                <table class="rule-table" style="margin-top:8px;">
+                                    <thead><tr><th style="width:36%;">参数标识</th><th>值</th></tr></thead>
+                                    <tbody>${rows}</tbody>
+                                </table>
+                                <div class="form-hint" style="margin-top:8px;">
+                                    这是落库的快照，重试该文件会沿用这份值；之后改了参数默认值也不影响它。
+                                </div>
+                            </div>
+                        `;
+                    }
+                    break;
+                }
+
                 case 'outline':
                     data = await API.getFileOutline(fileId);
                     if (data.length === 0) {

@@ -325,7 +325,7 @@
           "file"
         ],
         "summary": "提交文件解析",
-        "description": "上传文件并启动 6 阶段处理管线（parsing → tableing → chunking → embedding → extracting → analyzing → complete）。`Content-Type` 必须为 `multipart/form-data`。\n\n**`mode` 行为差异**\n- `async`（默认）：后台任务，立即返回 `data={file_id}`，`message=\"文件已提交处理（异步）\"`\n- `sync`：阻塞直到全部完成或失败，再返回 `data={file_id}`\n- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `docs/api/sse.md`）\n- 其它任意值按 `sync` 处理（代码 fallback 分支）\n\n**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 `field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时默认 2.5s（`callback.timeout` 可配），失败仅 warning，不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— 每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`，**不要**重新上传（会产生新记录）。\n\n原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n**文件大小限制**：受 `mineru.max_file_size` 控制（默认 100MB / 104857600 字节），超限返回 `ResponseWrapper{code:400, message:\"文件大小超过限制 (100MB)\"}`（不抛 HTTP 错误）。\n\n**`type_id` 校验**：类型必须已存在于 `doc_type`，否则返回 **HTTP 400** `{detail:\"文档类型不存在: xxx\"}`（区别于文件大小超限的 body 内 `code`——这里抛真正的 HTTP 错误，且不建档、不写盘）。只校验存在性，**不校验 `enabled`**——禁用类型仍可上传。`default` 由启动流程保证存在。",
+        "description": "上传文件并启动 6 阶段处理管线（parsing → tableing → chunking → embedding → extracting → analyzing → complete）。`Content-Type` 必须为 `multipart/form-data`。\n\n**`mode` 行为差异**\n- `async`（默认）：后台任务，立即返回 `data={file_id}`，`message=\"文件已提交处理（异步）\"`\n- `sync`：阻塞直到全部完成或失败，再返回 `data={file_id}`\n- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `docs/api/sse.md`）\n- 其它任意值按 `sync` 处理（代码 fallback 分支）\n\n**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 `field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时默认 2.5s（`callback.timeout` 可配），失败仅 warning，不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n**`params` 文档类型入参**：可选的 multipart form 字段，内容必须是 JSON 对象字符串。对象值仅支持字符串、数字、布尔值或 `null`（统一转成字符串，`null` 转为空字符串）；字段与规则配置中的 `<param>参数标识</param>` 会使用合并后的值渲染。\n\n服务端按 `type_id` 的参数定义执行 `默认值 <- 传入值覆盖`，并把完整快照写入 `files.input_params`，因此后续 retry 沿用上传时的值。非法 JSON、顶层非对象、对象/数组值、未知 key，或缺少无默认值的必填参数，均返回 **HTTP 400**；校验发生在建档和写 PDF 之前。\n\n**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— 每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`，**不要**重新上传（会产生新记录）。\n\n原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n**文件大小限制**：受 `mineru.max_file_size` 控制（默认 100MB / 104857600 字节），超限返回 `ResponseWrapper{code:400, message:\"文件大小超过限制 (100MB)\"}`（不抛 HTTP 错误）。\n\n**`type_id` 校验**：类型必须已存在于 `doc_type`，否则返回 **HTTP 400** `{detail:\"文档类型不存在: xxx\"}`（区别于文件大小超限的 body 内 `code`——这里抛真正的 HTTP 错误，且不建档、不写盘）。只校验存在性，**不校验 `enabled`**——禁用类型仍可上传。`default` 由启动流程保证存在。",
         "operationId": "parse_file_file_parse_post",
         "parameters": [
           {
@@ -4464,7 +4464,8 @@
                 "type": "null"
               }
             ],
-            "title": "Params"
+            "title": "Params",
+            "description": "文档类型入参的 JSON 对象字符串；值仅支持标量。未传项按类型定义补默认值，未知 key、缺少必填项或 JSON 非法时返回 HTTP 400。"
           }
         },
         "type": "object",
