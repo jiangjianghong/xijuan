@@ -332,6 +332,7 @@ _data 为数组，每个元素：_
 | file_size | integer | 否 | 文件字节数 |
 | progress | string | 否 | 处理进度 |
 | type_id | string | 是 | 归属文档类型 |
+| input_params | object | 是 |  |
 | error | string | 是 | 错误信息（可空） |
 | create_time | string | 是 | 创建时间 |
 | updated_at | string | 是 | 最近更新时间 |

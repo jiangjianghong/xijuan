@@ -7033,6 +7033,21 @@
             "type": "string",
             "description": "归属文档类型"
           },
+          "input_params": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Input Params"
+          },
           "error": {
             "anyOf": [
               {
