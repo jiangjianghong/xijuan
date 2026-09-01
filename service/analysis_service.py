@@ -937,9 +937,15 @@ async def test_rule_analysis_stream(
         try:
             user_prompt = f"""{resolved}
 
-请根据以上内容进行判断，以 JSON 格式返回结果：
-{{"result": "true 或 false", "reason": "判断理由/依据"}}
-重点关注：只输出 JSON 结果不要带有```等标识；result 与 reason 的值中不得含有英文双引号，需要引用文字请一律使用中文引号“”，否则会破坏 JSON 结构。"""
+请根据以上内容进行判断，严格按照以下要求以 JSON 格式返回结果。
+
+【输出格式严格要求】：
+1. 必须且只能输出合法的 JSON 对象，直接输出大括号 {{}} 及其内容，不要带有 ```json 或 ``` 等任何 Markdown 标识符。
+2. JSON 结构的键和值，其最外层必须使用标准的英文双引号包裹。
+3. 在 reason 字段的文本内容中，如果需要引用文字，请一律使用中文双引号“”，绝对不能在内容中嵌套使用英文双引号，以免破坏 JSON 结构。
+
+【通用输出示例】（请注意观察：外层使用英文引号，内层引用使用中文引号）：
+{{"result": "true", "reason": "用户输入的“A”与文件抽取出的“B”指代同一主体，核心名称一致。"}}"""
 
             sys_prompt = (system_prompt or "").strip()
             yield {
