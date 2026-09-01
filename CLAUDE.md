@@ -141,6 +141,15 @@ Multi-type configuration support: each file is bound to one `type_id` (default `
 - 顶部导航**两级**:项目下拉(未分组 + 各项目) → **文档类型下拉只显示当前项目的 type**;切项目会把当前 type 重置为该项目首个(未分组回退 `default`)并联动刷新文件列表 + 字段/规则配置。管理弹窗(全屏单栏)每行「选用」=设为当前类型(同步当前项目);含**项目列 + 项目筛选下拉 + 批量「归入项目」+「管理项目」子弹窗**(建/改名/删项目);「+ 新建类型」统一三条造类型路径(空白/从类型派生/导入 JSON),新建默认落在当前项目(表单内「所属项目」下拉可改选,仅新建可见);行内 ⋯ 菜单含查看配置/复制为新类型/改名/模板标记/导出/删除。「只读查看配置」复用 `GET /doctype/{id}/export`。
 - 存量副本若无 `parent_type_id`,初期需手工标模板;此后经 `copy_from`/派生新建的类型自动记录来源。
 
+### Type Input Params (`service/type_params.py` / `service/type_param_store.py`)
+每个 `type_id` 可配一张入参清单（`type_param` 表，复合主键 `(type_id, param_key)`），调用方提交时传实参，配置里用 `<param>key</param>` 引用 —— 这是继 `<search_result>`（文档内检索原文）、`<field_result>`（其它字段抽取结果）之后的**第三类占位符**，承载文档里没有的外部上下文（当前时间、申报年度等）。**用 `param_key` 而非生成式 id 做主键**：`copy_from` / `import` 时 key 不变，占位符**无需重映射**（对比 `field_id` 的 `A -> A_0002`）。**不设 `enabled` 列** —— 参数不「执行」，留着会生出「传了被禁用的参数算不算未知 key」这种没有好答案的中间态。
+**替换顺序：参数恒先于字段引用。** 两次独立 `re.sub`，第二趟会扫到第一趟替换出的文本；字段抽取值来自模型输出与文档原文、不可控，含 `<param>` 字面量会被误解析，故让不可信的一方后进场。
+**传参入口**：`POST /file/parse` 的 multipart form 字段 `params`（JSON 串，非 query —— 值可能是长中文说明）；`POST /analysis/run` 的 **item 级** `params`（不设顶层，`type_id` 本就是 item 级的，顶层广播会撞上「key 对 A 有效对 B 未知」）；调试接口同样接收并做 required 校验（避免「调试能过、正式跑不了」）。
+**校验分层**：`/file/parse` 未知 key / 缺必填 / 非法 JSON / 值非标量一律 **400 且不建档**（放过去的代价是跑完 MinerU 与几十次 LLM 才发现）；`/analysis/run` 值非标量 → 422（请求体可判），未知 key / 缺必填 → **item 级 `error` + HTTP 200**（要查库）。参数定义在并发前用 `load_type_param_defs_by_types` **单次 IN 查询**读完（按 type 循环会 N+1）。
+`files.input_params` 存**合并后完整快照**（默认值 ← 传入值），故 retry 沿用当时的值；代价是改了默认值后 retry 不跟。抽取侧经 `FileExtractionSnapshot.params` 透传、在 `_extract_field_result` 渲染；分析侧两条路径（管线 `_compute_file_rule`、独立 `execute_rule`）各调一次 `render_rule_params`（它只返回渲染后的 expression / system_prompt / web_search，不克隆规则对象 —— 分析侧有三种规则载体，克隆要按类型分支）。溯源落 `source_refs._params`，**必须在 `_NON_REF_KEYS` 里**，否则 `_has_real_source_refs` 会把它当命中，让「什么都没抽到」误判成功（`_resolved_refs` 踩过的同一个坑）。
+**规则仍须引用至少一个字段**：`expression` 的 `<field_result>` 必填校验未放宽，只引用参数、不读文档的规则会被 schema 层 422 拒绝。
+前端参数管理在配置页第三个 tab「入参配置」（`ui/js/typeParams.js`，`ruleConfig.js` 已 3300 行不再扩），字段/规则表单用 **P 按钮**插占位符（与进阶字段的 K 按钮同构，chip 显示中文名、`data-value` 存原文）；`API.setCurrentTypeId` 会 `TypeParams.invalidate()`，否则切类型后 P 按钮仍显示旧类型的参数。
+
 ### Extraction System (`service/extraction_service.py`)
 Three source types:
 - **table** - Matches tables by name (exact/fuzzy/contains/llm), extracts via LLM with `<search_result>label</search_result>` placeholder system in prompts.

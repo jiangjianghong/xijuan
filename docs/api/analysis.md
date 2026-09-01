@@ -193,6 +193,7 @@ _data 为数组，每个元素：_
 | rule_id | string | 否 | — | 已保存规则 ID；与 `config` 二选一。 |
 | config | object | 否 | — | 临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`；custom 另含 `is_formatted` / `output_schema`）；与 `rule_id` 二选一。 |
 | re_extract | boolean | 否 | False |  |
+| params | object | 否 | — |  |
 <!-- /AUTOGEN:request-body -->
 
 ```jsonc
@@ -236,6 +237,7 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 | rule_id | string | 否 | — | 已保存规则 ID；与 `config` 二选一。 |
 | config | object | 否 | — | 临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`；custom 另含 `is_formatted` / `output_schema`）；与 `rule_id` 二选一。 |
 | re_extract | boolean | 否 | False |  |
+| params | object | 否 | — |  |
 <!-- /AUTOGEN:request-body -->
 
 响应为 `text/event-stream`，事件清单见 [sse.md](sse.md)。
@@ -302,6 +304,24 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 | field_values | object | 视 `source` | `{}` | `{field_id: value}` 映射；`source=values` 必填，`source=file` 禁传 |
 | rule_ids | array[string] \| null | 否 | `null` | 规则白名单，语义见下表 |
 | file_id | string \| null | 视 `source` | `null` | `source=file` 必填、`source=values` 禁传；取该文件已落库的 `extraction_result` 作字段值 |
+| params | object | 否 | `{}` | 该 item 的入参实参 `{param_key: value}`；规则配置里的 `<param>` 占位符按此渲染。值必须是标量 |
+
+**入参（`params`）**
+
+规则的 `expression` / `system_prompt` / `web_search.query` 里可以写 `<param>参数标识</param>`，由该 item 的 `params` 渲染成实参。参数清单按 `type_id` 定义，见 [doctype.md](doctype.md) 的「列出入参定义」。
+
+- `source=values`：只用 item 传的 `params` + 该类型的 `default_value`
+- `source=file`：默认继承该文件的 `files.input_params` 快照，item 传的 `params` **逐键覆盖**
+
+**不设顶层 `params`。** 参数是 type 级配置，而 `type_id` 本身就是 item 级的（异构批次合法），顶层广播必然要面对「这个 key 对 item A 有效、对 item B 未知」，无论选静默忽略还是报错都要多一条特例规则。共享上下文由调用方在生成 items 时逐个填入。
+
+入参错误的处理遵循本接口既有的校验分层：
+
+| 问题 | 判定时机 | 响应 |
+|---|---|---|
+| `params` 某个值是对象或数组 | 请求体即可判断 | **422**（Pydantic 层） |
+| 含该类型未定义的 key | 需查参数清单 | 该 item 的 `error` + **HTTP 200** |
+| 缺 `required` 且无 `default_value` | 需查参数清单 | 该 item 的 `error` + **HTTP 200** |
 
 **取值来源**
 
@@ -371,7 +391,7 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 | failed | integer | `results[]` 中 `success=false` 的数量；`succeeded + failed = total` |
 | results | array[AnalysisRunRuleResult] | 当前业务对象的逐规则结果；一条规则也仍是数组，无规则执行时为 `[]` |
 | unknown_rule_ids | array[string] | 点名了但该类型下不存在的 rule_id；不点名时恒为空。显式点名的禁用规则仍会执行 |
-| error | string \| null | `source=file` 的 item 级错误（文件不存在 / `type_id` 与文件不一致 / 该文件无提取结果）；正常为 `null`。此时 `total` 为 0、`results` 为空，同批其它 item 不受影响 |
+| error | string \| null | item 级错误：`source=file` 的文件不存在 / `type_id` 与文件不一致 / 该文件无提取结果，以及入参未知 key / 缺必填。正常为 `null`。此时 `total` 为 0、`results` 为空，同批其它 item 不受影响 |
 
 `results[]`（`AnalysisRunRuleResult`）：
 

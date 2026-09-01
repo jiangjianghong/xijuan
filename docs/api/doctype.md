@@ -266,6 +266,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 | skipped_fields | integer | 是 | 跳过字段数 |
 | copied_rules | integer | 是 | 复制规则数 |
 | skipped_rules | integer | 是 | 跳过规则数 |
+| copied_params | integer | 是 |  |
 | missing_dependencies | array[string] | 是 | 丢失的依赖（格式 规则名::源field_id） |
 <!-- /AUTOGEN:response -->
 
@@ -303,6 +304,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 | max_parse_pages | integer | 是 |  |
 | enable_embedding | integer | 是 |  |
 | version | integer | 是 | 载荷版本号，当前为 1。 |
+| params | array[TypeParamItem] | 是 |  |
 | fields | array[ExportFieldItem] | 是 | 字段项列表（`ExportFieldItem`）。 |
 | rules | array[ExportRuleItem] | 是 | 规则项列表（`ExportRuleItem`）。 |
 <!-- /AUTOGEN:response -->
@@ -464,6 +466,117 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 | 200 | 成功 | ResponseWrapper |
 | 400 | 默认类型不可操作 | ResponseWrapper |
 | 404 | 类型不存在 | ResponseWrapper |
+
+## 列出入参定义
+
+列出该类型的入参清单。入参由调用方在提交解析时传入，在字段与规则配置里用 `<param>参数标识</param>` 引用 —— 这是继 `<search_result>`（文档内检索原文）、`<field_result>`（其它字段抽取结果）之后的第三类占位符，承载文档里没有、只有外部系统知道的信息（当前日期、申报年度等）。
+
+- 方法路径：`GET /doctype/{type_id}/params`
+- 认证：无（内网部署）
+
+**路径参数**
+
+<!-- AUTOGEN:path-params GET /doctype/{type_id}/params -->
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| type_id | string | 是 | 文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。 |
+<!-- /AUTOGEN:path-params -->
+
+**响应体**
+
+<!-- AUTOGEN:response GET /doctype/{type_id}/params status=200 -->
+无结构化字段（见示例 / 权威页）
+<!-- /AUTOGEN:response -->
+
+**状态码 / 错误**
+
+| 状态码 | 触发条件 | 响应体 |
+|---|---|---|
+| 200 | 成功（类型无入参定义时返回空数组） | ResponseWrapper |
+
+## 新增/更新入参定义（upsert）
+
+按 `param_key` upsert。`param_key` 是稳定标识：`copy_from` / `import` 时不变，因此字段与规则里的 `<param>` 占位符无需重映射（对比 `field_id` 的 `A -> A_0002`）。
+
+没有 `enabled` 开关 —— 参数不「执行」，定义了就用、不要了就删，不设中间态。
+
+- 方法路径：`POST /doctype/{type_id}/params`
+- 认证：无（内网部署）
+
+**路径参数**
+
+<!-- AUTOGEN:path-params POST /doctype/{type_id}/params -->
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| type_id | string | 是 | 文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。 |
+<!-- /AUTOGEN:path-params -->
+
+**请求体**
+
+<!-- AUTOGEN:request-body POST /doctype/{type_id}/params -->
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| param_key | string | 是 | — |  |
+| param_name | string | 是 | — |  |
+| description | string | 否 | — |  |
+| default_value | string | 否 | — |  |
+| required | integer | 否 | 0 |  |
+| priority | integer | 否 | 0 |  |
+<!-- /AUTOGEN:request-body -->
+
+**响应体**
+
+<!-- AUTOGEN:response POST /doctype/{type_id}/params status=200 -->
+无结构化字段（见示例 / 权威页）
+<!-- /AUTOGEN:response -->
+
+**状态码 / 错误**
+
+| 状态码 | 触发条件 | 响应体 |
+|---|---|---|
+| 200 | 成功（新增或更新） | ResponseWrapper |
+| 404 | 类型不存在 | ResponseWrapper |
+| 422 | `param_key` 不匹配 `^[A-Za-z0-9_]+$`，或必填字段缺失 | ResponseWrapper |
+
+## 删除入参定义
+
+删除一条入参定义。仍被同类型的字段或规则引用时返回 **409** 并列出引用方；传 `force=true` 强制删除。
+
+引用关系是**现算**的（扫该类型全部字段与规则的占位符），没有落 `depend_params` 派生列 —— 派生列要在保存 / 复制 / 导入三处同步维护，而参数没有「决定执行顺序」那种刚需。
+
+- 方法路径：`DELETE /doctype/{type_id}/params/{param_key}`
+- 认证：无（内网部署）
+
+**路径参数**
+
+<!-- AUTOGEN:path-params DELETE /doctype/{type_id}/params/{param_key} -->
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| type_id | string | 是 | 文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。 |
+| param_key | string | 是 |  |
+<!-- /AUTOGEN:path-params -->
+
+**查询参数**
+
+<!-- AUTOGEN:query-params DELETE /doctype/{type_id}/params/{param_key} -->
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| force | boolean | 否 | False |  |
+<!-- /AUTOGEN:query-params -->
+
+**响应体**
+
+<!-- AUTOGEN:response DELETE /doctype/{type_id}/params/{param_key} status=200 -->
+无结构化字段（见示例 / 权威页）
+<!-- /AUTOGEN:response -->
+
+**状态码 / 错误**
+
+| 状态码 | 触发条件 | 响应体 |
+|---|---|---|
+| 200 | 删除成功 | ResponseWrapper |
+| 404 | 入参不存在 | ResponseWrapper |
+| 409 | 仍被字段或规则引用且未传 `force=true`；`detail` 列出引用方 | ResponseWrapper |
 
 ## 列出项目
 

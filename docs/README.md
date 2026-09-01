@@ -69,6 +69,9 @@
 | POST | `/doctype/{type_id}/copy_from` | 文档类型 | 同实例跨类型复制配置 | [api/doctype.md](api/doctype.md) |
 | POST | `/doctype/{type_id}/demote` | 文档类型 | 取消模板标记 | [api/doctype.md](api/doctype.md) |
 | GET | `/doctype/{type_id}/export` | 文档类型 | 导出配置为 JSON 载荷 | [api/doctype.md](api/doctype.md) |
+| GET | `/doctype/{type_id}/params` | 文档类型 | List Type Params | [api/doctype.md](api/doctype.md) |
+| POST | `/doctype/{type_id}/params` | 文档类型 | Upsert Type Param | [api/doctype.md](api/doctype.md) |
+| DELETE | `/doctype/{type_id}/params/{param_key}` | 文档类型 | Delete Type Param | [api/doctype.md](api/doctype.md) |
 | POST | `/doctype/{type_id}/promote` | 文档类型 | 标记为模板 | [api/doctype.md](api/doctype.md) |
 | GET | `/extraction/fields` | 字段提取 | 列出字段配置 | [api/extraction.md](api/extraction.md) |
 | POST | `/extraction/fields` | 字段提取 | 新增/更新字段配置（upsert） | [api/extraction.md](api/extraction.md) |

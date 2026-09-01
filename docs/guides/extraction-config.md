@@ -529,6 +529,26 @@ text / table 抽取时，可在 prompt 里要求 LLM 除 `value` / `reason` 外�
 
 ---
 
+### 7.5 `<param>参数标识</param>`（类型入参）
+
+第三类占位符。前两类都源于文档自身 —— `<search_result>` 是文档内检索到的原文，`<field_result>` 是同类型其它字段的抽取结果；`<param>` 承载**文档里没有、只有外部系统知道**的信息，例如当前日期、申报年度、送审批次号。
+
+参数清单按 `type_id` 配置（`GET/POST/DELETE /doctype/{type_id}/params`），实参由调用方在 `POST /file/parse` 的 `params` form 字段传入。**普通字段与进阶字段都能用** —— 参数来自外部，不依赖别的字段先跑完。
+
+生效位置与 `<field_result>` 完全一致：四类提示词、`table_name_pattern`、`table_match_keywords`、`table_match_prompt`、`search_config` 里的全部字符串与列表项（关键词、`query_text`、`section_pattern` 等）、`vl_config` 的 `field_hints` 与两个模板。
+
+```jsonc
+// 配置
+{ "text_extract_prompt": "今天是 <param>current_date</param>，请从 <search_result>有效期</search_result> 判断是否过期" }
+
+// 上传时
+// curl -F 'params={"current_date":"2026-08-31"}' ...
+```
+
+**渲染顺序：参数恒先于字段引用。** 两次独立的正则替换意味着第二趟会扫到第一趟替换出来的文本；字段抽取值来自模型输出与文档原文、完全不可控，若含 `<param>` 字面量会被误当占位符，而参数值来自配置方与上游系统、可控得多，所以让不可信的一方后进场且不再被扫描。
+
+未定义 / 未传且无默认值的参数替换为空串并打 warning；列表类配置里「本来含参数引用、替换后变空」的项会被剔除（留着会让关键词退化成全文命中）。实际填入的值记在 `source_refs._params`，与 `_resolved_refs` 同为元数据键，不计入「是否有真实命中」的判定。
+
 ## 8. 端到端范例（财报场景 · 提取部分）
 
 一次配好一组字段，供后续逻辑分析引用（分析规则的配法见 [analysis-config](analysis-config.md)）：

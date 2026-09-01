@@ -2507,6 +2507,165 @@
         }
       }
     },
+    "/doctype/{type_id}/params": {
+      "get": {
+        "tags": [
+          "doctype"
+        ],
+        "summary": "List Type Params",
+        "description": "列出该类型的入参定义。",
+        "operationId": "list_type_params_doctype__type_id__params_get",
+        "parameters": [
+          {
+            "name": "type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Type Id"
+            },
+            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "doctype"
+        ],
+        "summary": "Upsert Type Param",
+        "description": "按 param_key 新增或更新一条入参定义。",
+        "operationId": "upsert_type_param_doctype__type_id__params_post",
+        "parameters": [
+          {
+            "name": "type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Type Id"
+            },
+            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TypeParamUpsert"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/doctype/{type_id}/params/{param_key}": {
+      "delete": {
+        "tags": [
+          "doctype"
+        ],
+        "summary": "Delete Type Param",
+        "description": "删除一条入参定义；仍被字段或规则引用时 409（force=true 强删）。",
+        "operationId": "delete_type_param_doctype__type_id__params__param_key__delete",
+        "parameters": [
+          {
+            "name": "type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Type Id"
+            },
+            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+          },
+          {
+            "name": "param_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Param Key"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Force"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/doctype/batch_delete": {
       "post": {
         "tags": [
@@ -4057,6 +4216,11 @@
             ],
             "title": "File Id",
             "description": "`source=file` 时必传，取该文件已落库的 extraction_result 作字段值"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
           }
         },
         "type": "object",
@@ -4200,6 +4364,11 @@
             "type": "boolean",
             "title": "Re Extract",
             "default": false
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
           }
         },
         "type": "object",
@@ -4285,6 +4454,17 @@
             "type": "string",
             "format": "binary",
             "title": "File"
+          },
+          "params": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Params"
           }
         },
         "type": "object",
@@ -4767,6 +4947,14 @@
             "type": "integer",
             "description": "载荷版本号，当前为 1。"
           },
+          "params": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TypeParamItem"
+            },
+            "title": "Params",
+            "type": "array"
+          },
           "fields": {
             "default": [],
             "items": {
@@ -5231,6 +5419,11 @@
             ],
             "title": "Config",
             "description": "临时字段配置 dict（结构同 `ExtractionFieldCreate`）；与 `field_id` 二选一。"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
           }
         },
         "type": "object",
@@ -5600,6 +5793,115 @@
         "title": "TableMatchTypeEnum",
         "description": "表名匹配方式：`exact` 精确 / `fuzzy` 模糊（相似度）/ `contains` 包含 / `llm` 由 LLM 判定。"
       },
+      "TypeParamItem": {
+        "properties": {
+          "param_key": {
+            "type": "string",
+            "title": "Param Key"
+          },
+          "param_name": {
+            "type": "string",
+            "title": "Param Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "default_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Value"
+          },
+          "required": {
+            "type": "integer",
+            "title": "Required",
+            "default": 0
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "param_key",
+          "param_name"
+        ],
+        "title": "TypeParamItem",
+        "description": "文档类型入参的读取形态。"
+      },
+      "TypeParamUpsert": {
+        "properties": {
+          "param_key": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_]+$",
+            "title": "Param Key"
+          },
+          "param_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Param Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "default_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Value"
+          },
+          "required": {
+            "type": "integer",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Required",
+            "default": 0
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "param_key",
+          "param_name"
+        ],
+        "title": "TypeParamUpsert",
+        "description": "按 param_key upsert 一条入参定义。\n\nparam_key 限制为 [A-Za-z0-9_]：它要出现在 <param>key</param> 里，允许尖括号\n或空白会让占位符正则的行为变得难以预料。"
+      },
       "VLMethodEnum": {
         "type": "string",
         "enum": [
@@ -5806,6 +6108,11 @@
             "title": "Skipped Rules",
             "type": "integer",
             "description": "跳过规则数"
+          },
+          "copied_params": {
+            "default": 0,
+            "title": "Copied Params",
+            "type": "integer"
           },
           "missing_dependencies": {
             "default": [],

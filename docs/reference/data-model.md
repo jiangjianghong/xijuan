@@ -71,6 +71,7 @@
 | 7 | `analysis_rule` | 逻辑分析规则配置（按 type_id 隔离） | `rule_id` |
 | 8 | `extraction_result` | 字段提取结果 | `file_id` + `field_id` |
 | 9 | `analysis_result` | 逻辑分析结果 | `file_id` + `rule_id` |
+| 10 | `type_param` | 文档类型入参定义（`<param>` 占位符的取值来源） | `type_id` + `param_key` |
 
 > **权威来源**：所有表结构以 `model/tables.py` ORM 定义为准，启动时 `service/init_service.py:run_init` 自动建库建表并对旧库做增量 ALTER 迁移。本文档为同步说明。
 
@@ -117,6 +118,7 @@
 | `type_id` | VARCHAR(64) | NOT NULL | 'default' | 所属文档类型（决定字段/规则配置作用域） |
 | `file_name` | VARCHAR(512) | NOT NULL | - | 原始文件名 |
 | `file_size` | BIGINT | - | 0 | 文件大小（字节） |
+| `input_params` | JSON | NULLABLE | NULL | 提交解析时传入的入参快照，**存合并后完整结果**（默认值 ← 传入值覆盖）。`retry` 沿用当时的值；代价是之后改了参数默认值 retry 不跟 |
 | `create_time` | DATETIME | - | CURRENT_TIMESTAMP | 文件上传时间 |
 | `start_parsing_time` | DATETIME | NULLABLE | NULL | 开始解析时间 |
 | `end_parsing_time` | DATETIME | NULLABLE | NULL | 解析完成时间 |
@@ -731,6 +733,35 @@ custom 类规则 `is_formatted=1` 时的输出字段树（`utils/output_schema.p
 
 ---
 
+### 3.3 type_param - 文档类型入参表
+
+按 `type_id` 定义可传入的运行时参数。字段与规则配置里用 `<param>参数标识</param>` 引用，是继 `<search_result>`（文档内检索原文）、`<field_result>`（其它字段抽取结果）之后的**第三类占位符**，承载文档里没有、只有外部系统知道的信息（当前日期、申报年度等）。
+
+#### 表结构
+
+| 字段名 | 类型 | 约束 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| `type_id` | VARCHAR(64) | PK, NOT NULL | - | 所属文档类型 |
+| `param_key` | VARCHAR(64) | PK, NOT NULL | - | 参数标识，占位符里写的就是它；限 `^[A-Za-z0-9_]+$` |
+| `param_name` | VARCHAR(200) | NOT NULL | - | 中文名，仅用于 UI 展示 |
+| `description` | TEXT | NULLABLE | NULL | 说明，告诉上游该传什么 |
+| `default_value` | TEXT | NULLABLE | NULL | 调用方未传时的兜底值 |
+| `required` | TINYINT | NOT NULL | 0 | 1 = 未传且无 `default_value` 时直接拒绝请求 |
+| `priority` | INT | - | 0 | UI 排序 |
+| `created_at` / `updated_at` | DATETIME | - | CURRENT_TIMESTAMP | 时间戳 |
+
+#### 设计要点
+
+**用 `param_key` 而非生成式 id 做主键的一半**：`copy_from` / `import` 时 `param_key` 不变，字段与规则里的 `<param>` 占位符**无需重映射** —— 对比 `extraction_field.field_id` 需要 `A -> A_0002 -> A_0003` 的重映射链路。
+
+**没有 `enabled` 列**：字段与规则有 `enabled` 是因为它们要「执行」，禁用即跳过；参数不执行，只是个值。留着会生出「传了一个被禁用的参数算不算未知 key」这种没有好答案的中间态 —— 算，则禁用参数会瞬间打断上游调用方；不算，则该列什么也没约束。定义了就用，不要了就删。
+
+**实参来源**：`POST /file/parse` 的 `params` form 字段（落 `files.input_params`）；`POST /analysis/run` 的 item 级 `params`；调试接口的 `params`。三处都做未知 key 与必填校验。
+
+**引用关系不落列**：哪些字段/规则引用了某个参数是**现算**的（删除时扫该类型全部配置），没有 `depend_params` 派生列 —— 派生列要在保存 / 复制 / 导入三处同步维护，而参数没有「决定执行顺序」那种刚需。
+
+---
+
 ## 4. 结果相关表
 
 ### 4.1 extraction_result - 提取结果表
@@ -978,6 +1009,7 @@ CREATE TABLE IF NOT EXISTS files (
   type_id VARCHAR(64) NOT NULL DEFAULT 'default',
   file_name VARCHAR(512) NOT NULL,
   file_size BIGINT DEFAULT 0,
+  input_params JSON NULL,
   create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
   start_parsing_time DATETIME NULL,
   end_parsing_time DATETIME NULL,
@@ -1085,7 +1117,21 @@ CREATE TABLE IF NOT EXISTS analysis_rule (
   INDEX ix_analysis_rule_type_id (type_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 7. extraction_result 表
+-- 7. type_param 表（文档类型入参）
+CREATE TABLE IF NOT EXISTS type_param (
+  type_id VARCHAR(64) NOT NULL,
+  param_key VARCHAR(64) NOT NULL,
+  param_name VARCHAR(200) NOT NULL,
+  description TEXT NULL,
+  default_value TEXT NULL,
+  required TINYINT NOT NULL DEFAULT 0,
+  priority INT DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (type_id, param_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 8. extraction_result 表
 CREATE TABLE IF NOT EXISTS extraction_result (
   file_id VARCHAR(64) NOT NULL,
   field_id VARCHAR(100) NOT NULL,
@@ -1097,7 +1143,7 @@ CREATE TABLE IF NOT EXISTS extraction_result (
   INDEX ix_extraction_result_file_id (file_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 8. analysis_result 表
+-- 9. analysis_result 表
 CREATE TABLE IF NOT EXISTS analysis_result (
   file_id VARCHAR(64) NOT NULL,
   rule_id VARCHAR(100) NOT NULL,

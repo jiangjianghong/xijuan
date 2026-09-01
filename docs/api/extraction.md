@@ -248,6 +248,7 @@ curl -X POST http://localhost:5019/extraction/fields \
 | file_id | string | 是 | — | 目标文件 ID（须已完成 parsing，文本类需 `file_content`，VL 类需 `uploads/{file_id}.pdf`）。 |
 | field_id | string | 否 | — | 已保存字段配置 ID；与 `config` 二选一。 |
 | config | object | 否 | — | 临时字段配置 dict（结构同 `ExtractionFieldCreate`）；与 `field_id` 二选一。 |
+| params | object | 否 | — |  |
 <!-- /AUTOGEN:request-body -->
 
 ```jsonc
@@ -296,6 +297,7 @@ SSE 分步推送：检索结果 → prompt → LLM/VL 响应 → 最终结果。
 | file_id | string | 是 | — | 目标文件 ID（须已完成 parsing，文本类需 `file_content`，VL 类需 `uploads/{file_id}.pdf`）。 |
 | field_id | string | 否 | — | 已保存字段配置 ID；与 `config` 二选一。 |
 | config | object | 否 | — | 临时字段配置 dict（结构同 `ExtractionFieldCreate`）；与 `field_id` 二选一。 |
+| params | object | 否 | — |  |
 <!-- /AUTOGEN:request-body -->
 
 响应为 `text/event-stream`，事件清单见 [sse.md](sse.md)。VL 进度事件（`pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`）**仅** SSE 推送。

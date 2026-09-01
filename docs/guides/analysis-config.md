@@ -60,22 +60,49 @@ analysis_rule     →  analysis_result     （判断/计算结论，本手册的
 - 命中且提取值非空 → 替换为该字段的提取值；
 - 未命中或提取值为空 → 替换为提示文本 `（未找到字段 '字段ID' 的提取结果）`。
 
-> 替换用的是**该文件全部提取结果**的映射，不限于 `depend_fields`。也就是说占位符「能不能取到值」只看提取结果里有没有这个 `field_id`，与是否写进 `depend_fields` 无关。但仍强烈建议把表达式里引用到的每个字段都列进 `depend_fields`（原因见 2.2）。
+> 替换用的是**该文件全部提取结果**的映射，不限于 `depend_fields`。也就是说占位符「能不能取到值」只看提取结果里有没有这个 `field_id`，与是否写进 `depend_fields` 无关。但仍强烈建议把表达式里引用到的每个字段都列进 `depend_fields`（原因见 2.3）。
 
 **校验**：`expression` **必须包含至少一个** `<field_result>…</field_result>`（judge / calc / custom 都要求），否则保存时返回 **422**。
 
-### 2.2 `depend_fields` 的作用
+### 2.2 `<param>` 类型入参占位符
+
+**格式**：`<param>参数标识</param>`。取值不来自文档，而是调用方在提交时传入的运行时上下文 —— 当前日期、申报年度、送审批次号这类文档里不会写、只有外部系统知道的信息。
+
+参数清单按 `type_id` 配置（`GET/POST/DELETE /doctype/{type_id}/params`），实参来源有两条：
+
+- 随管线执行：`POST /file/parse` 的 `params` form 字段，落 `files.input_params`，`retry` 沿用
+- 独立分析：`POST /analysis/run` 的 **item 级** `params`（`source=file` 时以文件快照打底、逐键覆盖）
+
+**生效位置**：`expression`、`system_prompt`、`web_search.query` 三处。
+
+```jsonc
+{
+  "rule_type": "judge",
+  "expression": "截至 <param>current_date</param>，营业执照有效期 <field_result>license_expiry</field_result> 是否已过期？",
+  "depend_fields": ["license_expiry"]
+}
+```
+
+**渲染顺序：参数恒先于 `<field_result>`。** 两次独立的正则替换意味着第二趟会扫到第一趟替换出的文本；字段抽取值来自模型输出与文档原文、不可控，含 `<param>` 字面量会被误当占位符，而参数值可控得多，所以让不可信的一方后进场。
+
+**注意 calc 规则**：`expression` 交给 numexpr 数学求值，参数替换成非数字会让表达式报错。系统照常替换（与 `<field_result>` 现有行为一致），失败即该规则 `success=false` 并在 `reason` 里说明，不做额外拦截。
+
+**`expression` 仍必须含至少一个 `<field_result>`** —— 只引用参数、不引用任何字段的规则不读文档，schema 层会 422 拒绝。参数是给规则补充外部上下文的，不能取代字段。
+
+实际填入的值记在结果 `source_refs._params`。
+
+### 2.3 `depend_fields` 的作用
 
 `depend_fields` 是一个字段 ID 列表，声明本规则依赖哪些提取字段。它不参与占位符替换，但决定四件事：
 
 1. **取值与留痕**：结果里的 `input_values` 只记录 `depend_fields` 列出的字段值，便于回溯规则「吃进了什么」。
-2. **依赖校验**（见 2.3）：只对 `depend_fields` 里的字段做「是否为空 / 是否为数字」检查。
+2. **依赖校验**（见 2.4）：只对 `depend_fields` 里的字段做「是否为空 / 是否为数字」检查。
 3. **溯源收集**：把这些字段的 `source_refs`（命中页码、bbox 等）挂进分析结果，供前端定位。
 4. **独立分析的门控**：`/analysis/run` 独立执行时，未点名 `rule_ids` 的情况下，只有 `depend_fields` 被外部输入的键**完整覆盖**的规则才会跑（见 [7.2](#72-独立分析analysisrun)）。
 
 **结论**：把 `expression`（以及 `web_search.query`）中引用到的每一个 `<field_result>` 字段都写进 `depend_fields`，否则校验、留痕、溯源、独立执行会漏掉它。
 
-### 2.3 依赖值校验：规则何时被「跳过」
+### 2.4 依赖值校验：规则何时被「跳过」
 
 保存规则不校验依赖值，但**执行时**会对 `depend_fields` 逐个检查，决定是否跳过：
 
@@ -115,7 +142,7 @@ analysis_rule     →  analysis_result     （判断/计算结论，本手册的
 | `rule_type` | 是 | 固定 `"judge"` |
 | `expression` | 是 | 判断提示词，**须含至少一个 `<field_result>`** |
 | `system_prompt` | 否 | 作为 system message 调控 LLM 口径（judge / custom 用）；calc 忽略 |
-| `depend_fields` | 否 | 依赖字段 ID 列表（见 2.2） |
+| `depend_fields` | 否 | 依赖字段 ID 列表（见 2.3） |
 | `web_search` | 否 | 联网检索（judge / custom 可用，见 [第 6 节](#6-web_search-网络搜索judge-与-custom)） |
 | `enabled` | 否 | 1 启用 / 0 停用，默认 1 |
 | `priority` | 否 | 升序执行，默认 0 |
@@ -264,7 +291,7 @@ analysis_rule     →  analysis_result     （判断/计算结论，本手册的
 | `is_formatted` | 否 | `0`（默认）返回纯文本 `value`；`1` 按 `output_schema` 返回结构化 JSON |
 | `output_schema` | `is_formatted=1` 时必填 | 输出字段树（见下） |
 | `web_search` | 否 | 联网检索，**custom 同样支持**（见 [第 6 节](#6-web_search-网络搜索judge-与-custom)） |
-| `depend_fields` | 否 | 依赖字段 ID 列表（见 2.2） |
+| `depend_fields` | 否 | 依赖字段 ID 列表（见 2.3） |
 
 ### 工作原理
 
@@ -396,7 +423,7 @@ judge / custom 规则可在执行前先联网检索（博查 Bocha AI），把�
 |---|---|---|
 | 字段值来源 | 该文件的 `extraction_result`（库里已提取的） | `source=values`（默认）用请求里的 `field_values`；`source=file` 也读该文件的 `extraction_result` |
 | 规则筛选 | `type_id` 匹配 + `enabled=1` | 同左，再按 item 级 `rule_ids` 收窄（不传=全部） |
-| 规则是否执行 | 依赖校验（≥1 非空即跑，见 2.3） | 未点名时**先按 `depend_fields` 的键做覆盖门控**，再走同一套依赖校验；点名的规则跳过门控 |
+| 规则是否执行 | 依赖校验（≥1 非空即跑，见 2.4） | 未点名时**先按 `depend_fields` 的键做覆盖门控**，再走同一套依赖校验；点名的规则跳过门控 |
 | 写库 | upsert `analysis_result` | 默认**不写库**；`persist=true`（仅 `source=file`）才 upsert |
 | 读提取结果 | 是 | `source=values` 否 / `source=file` 是 |
 | `files.progress` | 走状态机（跑完置 `complete`） | **从不修改**，即便 `persist=true` |

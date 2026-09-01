@@ -28,6 +28,23 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|:--:|---|
 | file | file | 是 | PDF 文件（受 `mineru.max_file_size` 限制，默认 100MB） |
+| params | string | 否 | 该类型的入参实参，**JSON 对象字符串**。见下方「入参」小节。 |
+
+**入参（`params`）**
+
+若该 `type_id` 定义了入参（`GET /doctype/{type_id}/params`），可在此传入实参；字段与规则配置里的 `<param>参数标识</param>` 占位符会被替换成对应值。
+
+放在 form 而非 query：参数值可能是一段中文说明而不只是个日期，query 串有网关长度上限，中文值还要 URL 编码。
+
+落库的是**合并后的完整快照**（`默认值 ← 传入值覆盖`）而非仅传入部分，写入 `files.input_params`。因此 `POST /file/{file_id}/retry/{stage}` 会沿用当时的值，无需重传；代价是之后改了参数默认值，retry 不会用新默认值 —— 可复现性优先于时效性。
+
+四类入参错误一律 **HTTP 400 且不建档、不写盘**（校验在 `generate_file_id` 之前）：传参错误是调用方的 bug，放过去的代价是跑完 MinerU 与几十次 LLM 调用之后，几个字段悄悄用空串抽出了错的结果。
+
+```bash
+curl -X POST "http://localhost:5019/file/parse?type_id=contract&mode=async" \
+  -F "file=@report.pdf" \
+  -F 'params={"current_date":"2026-08-31","year":"2025"}'
+```
 
 **请求示例（curl）**
 
@@ -51,6 +68,11 @@ curl -X POST "http://localhost:5019/file/parse?type_id=default&mode=async" \
 | 200 | 已受理（async）/ 完成（sync） | ResponseWrapper |
 | 400 | 文件大小超限 | ResponseWrapper（`code:400`） |
 | 400 | `type_id` 在 `doc_type` 中不存在 | `{detail:"文档类型不存在: xxx"}`（真正的 HTTP 400） |
+| 400 | `params` 不是合法 JSON | `{detail:"params 不是合法 JSON: ..."}` |
+| 400 | `params` 顶层不是对象 | `{detail:"params 必须是 JSON 对象"}` |
+| 400 | `params` 某个值是对象或数组（占位符只能替换成文本） | `{detail:"params.xxx 必须是标量..."}` |
+| 400 | `params` 含该类型未定义的 key | `{detail:"未知入参: xxx；该类型已定义的入参为: ..."}` |
+| 400 | 缺少 `required=1` 且无 `default_value` 的入参 | `{detail:"缺少必填入参: xxx"}` |
 
 > `type_id` 只校验存在性，不校验 `enabled`——被禁用的类型仍可上传。校验在建档与写盘之前，拒绝时不产生 `files` 记录与 `uploads/*.pdf`。
 
