@@ -32,6 +32,8 @@ const sandbox = {
     }
   },
   SchemaBuilder: { mount: () => {} },
+  // 调试请求会带上该类型的入参（ui/js/typeParams.js），此处给个空实现
+  TypeParams: { collectDebugValues: () => ({}), btnHtml: () => '', display: (t) => t },
 };
 sandbox.sandbox = sandbox;
 vm.createContext(sandbox);
