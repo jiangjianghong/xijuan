@@ -320,7 +320,7 @@ async def test_file_and_independent_rules_share_global_analysis(monkeypatch):
     async def fake_load_rules(type_ids, session):
         return {"contract": [independent_rule]}
 
-    async def fake_independent_execute(rule, field_values, *, require_coverage=False):
+    async def fake_independent_execute(rule, field_values, *, require_coverage=False, **kwargs):
         await probe()
         return {
             "rule_id": rule.rule_id,
@@ -335,6 +335,14 @@ async def test_file_and_independent_rules_share_global_analysis(monkeypatch):
 
     monkeypatch.setattr(analysis_service, "_compute_file_rule", fake_file_compute)
     monkeypatch.setattr(analysis_run_service, "_load_rules_by_type", fake_load_rules)
+
+    async def _no_type_params(type_ids, session):
+        """入参清单加载的空实现：本用例传的是哑 session，不该真去查库。"""
+        return {}
+
+    monkeypatch.setattr(
+        analysis_run_service, "load_type_param_defs_by_types", _no_type_params
+    )
     monkeypatch.setattr(analysis_run_service, "execute_rule", fake_independent_execute)
     await asyncio.gather(
         analysis_service._compute_file_rules(

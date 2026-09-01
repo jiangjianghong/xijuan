@@ -61,7 +61,7 @@ async def test_analysis_global_limit_spans_batch_items(monkeypatch, stage_config
     active = 0
     peak = 0
 
-    async def fake_execute(rule, field_values, *, require_coverage=False):
+    async def fake_execute(rule, field_values, *, require_coverage=False, **kwargs):
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
@@ -99,6 +99,14 @@ async def test_analysis_global_limit_spans_batch_items(monkeypatch, stage_config
         return _resolved_rules(type_ids, rules)
 
     monkeypatch.setattr(analysis_run_service, "_load_rules_by_type", fake_load_rules)
+
+    async def _no_type_params(type_ids, session):
+        """入参清单加载的空实现：本用例传的是哑 session，不该真去查库。"""
+        return {}
+
+    monkeypatch.setattr(
+        analysis_run_service, "load_type_param_defs_by_types", _no_type_params
+    )
 
     items = [
         {"type_id": "default", "biz_id": f"b{i}", "field_values": {}}
