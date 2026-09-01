@@ -1828,6 +1828,7 @@ h1, h2, h3, h4, h5, h6,
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     overflow: hidden;
+    scroll-margin-top: 64px;
 }
 
 .debug-section-header {
@@ -1852,12 +1853,65 @@ h1, h2, h3, h4, h5, h6,
     display: flex;
     gap: 8px;
     align-items: center;
-    margin-bottom: 16px;
+    position: sticky;
+    top: -20px;
+    z-index: 4;
+    margin: -20px -24px 4px;
+    padding: 20px 24px 12px;
+    background: #F8F6F1;
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 8px 16px -16px rgba(44, 76, 59, 0.45);
 }
 
 .debug-controls select {
     flex: 1;
+    min-width: 0;
     font-size: 13px;
+}
+
+.debug-nav-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: white;
+    color: var(--bio-med);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.debug-nav-btn:hover:not(:disabled) {
+    border-color: var(--bio-light);
+    background: var(--bio-pale);
+    color: var(--bio-dark);
+}
+
+.debug-nav-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.debug-nav-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+.debug-nav-btn.has-unread-result::after {
+    content: '';
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 7px;
+    height: 7px;
+    border: 2px solid white;
+    border-radius: 50%;
+    background: var(--error);
 }
 
 .debug-reextract-option {

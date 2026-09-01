@@ -14,6 +14,8 @@ const RuleConfig = {
         debugMode: false,
         debugTestRunning: false,
         ruleExtractionResults: [],
+        debugUserScrolled: false,
+        debugResultTargetId: null,
         // 当前字段表单是否为「进阶字段」（可引用普通字段的提取结果）
         formIsAdvanced: false,
     },
@@ -2365,7 +2367,7 @@ const RuleConfig = {
         this.els.modalBody.innerHTML = `
             <div class="debug-split">
                 <div class="debug-left">${formHtml}</div>
-                <div class="debug-right">${this.state.modalType === 'rule' ? this.buildRuleDebugPanel() : this.buildDebugPanel()}</div>
+                <div class="debug-right" id="debug-scroll-container">${this.state.modalType === 'rule' ? this.buildRuleDebugPanel() : this.buildDebugPanel()}</div>
             </div>
         `;
 
@@ -2391,12 +2393,18 @@ const RuleConfig = {
         // 入参输入区：该类型定义了入参时渲染，预填 default_value。
         // 后端对调试接口同样做 required 校验，不给输入框就没法调通。
         TypeParams.renderDebugInputs('debug-params');
+        this.setupDebugNavigation();
+        if (typeof lucide !== 'undefined') {
+            lucide.createIcons({ root: document.getElementById('debug-scroll-container') });
+        }
     },
 
     exitDebugMode() {
         this.state.debugMode = false;
         this.state.debugTestRunning = false;
         this.state.ruleExtractionResults = [];
+        this.state.debugUserScrolled = false;
+        this.state.debugResultTargetId = null;
 
         // 保存关键词 tags 值
         const savedKeywords = this._saveKeywordTagsState();
@@ -2523,6 +2531,12 @@ const RuleConfig = {
                         <option value="">-- 选择测试文件 --</option>
                     </select>
                     <button class="debug-test-btn" id="debug-test-btn" onclick="RuleConfig.runFieldTest()" disabled>测试</button>
+                    <button type="button" class="debug-nav-btn" id="debug-jump-result" onclick="RuleConfig.jumpToDebugResult()" title="定位提取结果" aria-label="定位提取结果" disabled>
+                        <i data-lucide="arrow-down-to-line"></i>
+                    </button>
+                    <button type="button" class="debug-nav-btn" id="debug-jump-top" onclick="RuleConfig.jumpToDebugTop()" title="返回调试区顶部" aria-label="返回调试区顶部" style="display:none;">
+                        <i data-lucide="arrow-up-to-line"></i>
+                    </button>
                 </div>
 
                 <!-- 入参输入区：该类型定义了入参时才渲染内容 -->
@@ -2571,6 +2585,84 @@ const RuleConfig = {
                 <div id="debug-loading-area"></div>
             </div>
         `;
+    },
+
+    setupDebugNavigation() {
+        const scroller = document.getElementById('debug-scroll-container');
+        this.resetDebugNavigation();
+        if (!scroller) return;
+
+        const markIntent = () => this.markDebugScrollIntent();
+        scroller.addEventListener('wheel', markIntent, { passive: true });
+        scroller.addEventListener('touchmove', markIntent, { passive: true });
+        scroller.addEventListener('keydown', (event) => {
+            if (['PageUp', 'PageDown', 'Home', 'End', ' ', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+                markIntent();
+            }
+        });
+        scroller.addEventListener('pointerdown', (event) => {
+            const rect = scroller.getBoundingClientRect();
+            if (event.clientX >= rect.right - 16) markIntent();
+        });
+        scroller.addEventListener('scroll', () => this.updateDebugNavigation(), { passive: true });
+    },
+
+    resetDebugNavigation() {
+        this.state.debugUserScrolled = false;
+        this.state.debugResultTargetId = null;
+
+        const resultBtn = document.getElementById('debug-jump-result');
+        if (resultBtn) {
+            resultBtn.disabled = true;
+            resultBtn.classList.remove('has-unread-result');
+        }
+
+        const scroller = document.getElementById('debug-scroll-container');
+        if (scroller) scroller.scrollTop = 0;
+        this.updateDebugNavigation();
+    },
+
+    markDebugScrollIntent() {
+        if (!this.state.debugResultTargetId) {
+            this.state.debugUserScrolled = true;
+        }
+    },
+
+    revealDebugResult(targetId = 'debug-sec-result') {
+        this.state.debugResultTargetId = targetId;
+        const resultBtn = document.getElementById('debug-jump-result');
+        if (resultBtn) resultBtn.disabled = false;
+
+        if (this.state.debugUserScrolled) {
+            if (resultBtn) resultBtn.classList.add('has-unread-result');
+            return;
+        }
+        this.jumpToDebugResult();
+    },
+
+    jumpToDebugResult() {
+        const targetId = this.state.debugResultTargetId || 'debug-sec-result';
+        const target = document.getElementById(targetId);
+        if (!target || typeof target.scrollIntoView !== 'function') return;
+
+        const reduceMotion = typeof window !== 'undefined'
+            && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+        document.getElementById('debug-jump-result')?.classList.remove('has-unread-result');
+    },
+
+    jumpToDebugTop() {
+        const scroller = document.getElementById('debug-scroll-container');
+        if (!scroller || typeof scroller.scrollTo !== 'function') return;
+        const reduceMotion = typeof window !== 'undefined'
+            && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        scroller.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+    },
+
+    updateDebugNavigation() {
+        const scroller = document.getElementById('debug-scroll-container');
+        const topBtn = document.getElementById('debug-jump-top');
+        if (topBtn) topBtn.style.display = scroller && scroller.scrollTop > 24 ? '' : 'none';
     },
 
     async loadDebugFileList() {
@@ -2716,6 +2808,7 @@ const RuleConfig = {
             case 'result':
                 this._hideDebugLoading();
                 this.renderDebugResult(data);
+                this.revealDebugResult();
                 break;
             case 'error':
                 this._hideDebugLoading();
@@ -2954,6 +3047,7 @@ const RuleConfig = {
     },
 
     resetDebugResults() {
+        this.resetDebugNavigation();
         // 隐藏所有结果区块
         ['debug-sec-resolved-refs', 'debug-sec-match-llm', 'debug-sec-search', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
             const el = document.getElementById(id);
@@ -2987,6 +3081,12 @@ const RuleConfig = {
                         <option value="">-- 选择测试文件 --</option>
                     </select>
                     <button class="debug-test-btn" id="debug-test-btn" onclick="RuleConfig.runRuleTest()" disabled>测试</button>
+                    <button type="button" class="debug-nav-btn" id="debug-jump-result" onclick="RuleConfig.jumpToDebugResult()" title="定位分析结果" aria-label="定位分析结果" disabled>
+                        <i data-lucide="arrow-down-to-line"></i>
+                    </button>
+                    <button type="button" class="debug-nav-btn" id="debug-jump-top" onclick="RuleConfig.jumpToDebugTop()" title="返回调试区顶部" aria-label="返回调试区顶部" style="display:none;">
+                        <i data-lucide="arrow-up-to-line"></i>
+                    </button>
                 </div>
 
                 <!-- 入参输入区：该类型定义了入参时才渲染内容 -->
@@ -3166,6 +3266,7 @@ const RuleConfig = {
             case 'result':
                 this._hideDebugLoading();
                 this.renderRuleDebugResult(data);
+                this.revealDebugResult();
                 break;
             case 'error':
                 this._hideDebugLoading();
@@ -3330,6 +3431,7 @@ const RuleConfig = {
 
     resetRuleDebugResults() {
         this.state.ruleExtractionResults = [];
+        this.resetDebugNavigation();
         ['debug-sec-extraction-results', 'debug-sec-input-values', 'debug-sec-resolved', 'debug-sec-web-search', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';

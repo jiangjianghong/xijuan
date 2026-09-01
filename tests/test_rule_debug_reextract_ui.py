@@ -158,3 +158,126 @@ console.log(JSON.stringify({
     assert "2, 3" in html
     assert "成功" in html
     assert "规则依赖" in html
+
+
+def test_field_and_rule_debug_panels_include_result_navigation():
+    result = _run_rule_config(
+        r"""
+const fieldHtml = sandbox.__RuleConfig.buildDebugPanel();
+const ruleHtml = sandbox.__RuleConfig.buildRuleDebugPanel();
+console.log(JSON.stringify({
+  fieldHasResultJump: fieldHtml.includes('id="debug-jump-result"'),
+  fieldHasTopJump: fieldHtml.includes('id="debug-jump-top"'),
+  fieldLabel: fieldHtml.includes('定位提取结果'),
+  ruleHasResultJump: ruleHtml.includes('id="debug-jump-result"'),
+  ruleHasTopJump: ruleHtml.includes('id="debug-jump-top"'),
+  ruleLabel: ruleHtml.includes('定位分析结果'),
+}));
+"""
+    )
+
+    assert result == {
+        "fieldHasResultJump": True,
+        "fieldHasTopJump": True,
+        "fieldLabel": True,
+        "ruleHasResultJump": True,
+        "ruleHasTopJump": True,
+        "ruleLabel": True,
+    }
+
+
+def test_field_debug_auto_scrolls_when_result_arrives_without_user_scroll():
+    result = _run_rule_config(
+        r"""
+let scrollCalls = 0;
+const classes = new Set();
+const elements = {
+  'debug-sec-result': {
+    style: { display: 'none' },
+    scrollIntoView: () => { scrollCalls += 1; },
+  },
+  'debug-result-content': { innerHTML: '' },
+  'debug-jump-result': {
+    disabled: true,
+    classList: {
+      add: value => classes.add(value),
+      remove: value => classes.delete(value),
+    },
+  },
+};
+sandbox.document.getElementById = id => elements[id] || null;
+const ruleConfig = sandbox.__RuleConfig;
+ruleConfig.resetDebugNavigation();
+ruleConfig.handleDebugEvent({
+  event: 'result',
+  data: { value: '命中值', reason: '依据', source_pages: [2] },
+});
+console.log(JSON.stringify({
+  scrollCalls,
+  resultButtonDisabled: elements['debug-jump-result'].disabled,
+  hasUnread: classes.has('has-unread-result'),
+}));
+"""
+    )
+
+    assert result == {
+        "scrollCalls": 1,
+        "resultButtonDisabled": False,
+        "hasUnread": False,
+    }
+
+
+def test_rule_debug_preserves_user_scroll_until_result_button_is_clicked():
+    result = _run_rule_config(
+        r"""
+let scrollCalls = 0;
+const classes = new Set();
+const elements = {
+  'debug-sec-result': {
+    style: { display: 'none' },
+    scrollIntoView: () => { scrollCalls += 1; },
+  },
+  'debug-result-content': { innerHTML: '' },
+  'debug-jump-result': {
+    disabled: true,
+    classList: {
+      add: value => classes.add(value),
+      remove: value => classes.delete(value),
+    },
+  },
+};
+sandbox.document.getElementById = id => elements[id] || null;
+const ruleConfig = sandbox.__RuleConfig;
+ruleConfig.resetDebugNavigation();
+ruleConfig.markDebugScrollIntent();
+ruleConfig.handleRuleDebugEvent({
+  event: 'result',
+  data: { result_value: '通过', reason: '依据' },
+});
+const beforeClick = {
+  scrollCalls,
+  resultButtonDisabled: elements['debug-jump-result'].disabled,
+  hasUnread: classes.has('has-unread-result'),
+};
+ruleConfig.jumpToDebugResult();
+console.log(JSON.stringify({
+  beforeClick,
+  afterClick: {
+    scrollCalls,
+    hasUnread: classes.has('has-unread-result'),
+  },
+}));
+"""
+    )
+
+    assert result == {
+        "beforeClick": {
+            "scrollCalls": 0,
+            "resultButtonDisabled": False,
+            "hasUnread": True,
+        },
+        "afterClick": {
+            "scrollCalls": 1,
+            "hasUnread": False,
+        },
+    }
