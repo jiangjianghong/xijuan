@@ -41,6 +41,20 @@ async def test_execute_custom_plain(monkeypatch):
     assert "200" in captured["prompt"]
 
 
+async def test_execute_custom_plain_prompt_uses_value_key(monkeypatch):
+    captured = {}
+
+    async def fake_chat(prompt, messages=None, **kwargs):
+        captured["prompt"] = prompt
+        return '{"value": "结果文本", "reason": "依据"}'
+
+    monkeypatch.setattr(analysis_service, "chat_completion", fake_chat)
+    await execute_custom("生成摘要", is_formatted=False)
+
+    assert '"value"' in captured["prompt"]
+    assert '"result"' not in captured["prompt"]
+
+
 async def test_execute_custom_formatted_injects_schema(monkeypatch):
     captured = {}
 
