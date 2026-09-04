@@ -3,7 +3,7 @@
   "info": {
     "title": "析卷 AI",
     "version": "0.3.0",
-    "description": "析卷 AI 的 HTTP API —— 基于 **FastAPI + MinerU + LLM**，把 PDF 经过\n六阶段管线沉淀为结构化的「字段提取结果」与「逻辑分析结论」。\n\n## 处理管线\n\n```\nparsing → tableing → chunking → embedding → extracting → analyzing → complete\n```\n\n| 阶段 | 动作 | 产物表 |\n|---|---|---|\n| `parsing` | MinerU 解析 PDF 为 Markdown + middle_json + 页码映射 | `file_content` |\n| `tableing` | LLM 从表前文识别每张表的名称（截断 30 字） | `file_table` |\n| `chunking` | 递归文本切分（表格作为独立块不拆分） | `file_chunk` |\n| `embedding` | 向量化写入 Milvus（向量数据不随回调下发） | Milvus |\n| `extracting` | 按字段配置用 LLM/VL 抽取 `{value, reason}` | `extraction_result` |\n| `analyzing` | judge（LLM 真假判断）/ calc（numexpr 计算） | `analysis_result` |\n\n每个阶段失败会把 `files.progress` 置为 `<stage>_failed` 并写入 `error`；进程崩溃后\n启动时 `init_service` 会把残留的 `*ing` 态归一为 `*_failed` 并清理孤儿数据。\n\n## 关键概念\n\n- **文档类型 (`type_id`)** —— 隔离不同格式文件的字段/规则配置。每个文件归属唯一\n  `type_id`（默认 `default`，不可删除）。抽取字段 `extraction_field`、逻辑规则\n  `analysis_rule` 均按 `type_id` 隔离，**不跨类型共享**；共享靠显式复制 / 导入。\n- **类型的血缘维度**：`is_template`（模板标记，`promote` / `demote` 切换）+ `parent_type_id`\n  （复制来源，`copy_from` / `import` 自动记录）。\n- **类型的项目维度**：`project_id`（可空=未分组）对「模板 + 其血缘下游」分类，一个类型属 ≤1 个\n  项目；`batch_assign_project` 归类会**级联血缘后代**，`copy_from`/派生的新类型继承源项目，\n  `default` 恒未分组。\n- **`file_id`** —— 由 `(type_id, file_name, time.time_ns(), secrets.token_hex(8))`\n  取 `SHA256[:32]` 生成；**每次上传都是新 ID，不做去重**。\n- **`field_id` / `rule_id`** —— **全局唯一**（不只是类型内唯一）。upsert 时若 ID 已被\n  其它 `type_id` 占用，返回 **409**。\n- **重试** —— 失败后用 `POST /file/{file_id}/retry/{stage}`（会清理该阶段及下游数据后\n  重跑），**不要**重新上传（上传必产生新 `file_id` 与新记录）。\n- **回调 (`callback_url`)** —— `POST /file/parse` / `retry`（`async` / `sync` 模式）携带时，\n  管线在「每阶段开始」「每条 `field_done` / `rule_done`」「每阶段 `stage_done`」都会向该\n  地址 POST 通知（超时默认 **2.5s**，可用 `callback.timeout` 配置；失败仅 warning，绝不阻断主流程）。完整 payload 形态见\n  `docs/api/callbacks.md`。\n- **SSE 流** —— `mode=stream` 与 `/extraction/test/stream` / `/analysis/test/stream`\n  返回 `text/event-stream`，逐阶段/逐步推送事件。\n- **VL 抽取** —— `source_type=vl` 字段绕过 MinerU Markdown，直接读 `uploads/{file_id}.pdf`，\n  由视觉模型一次产出 `{value, reason}` JSON，**不再走文本 LLM 二次抽取**。\n\n## 占位符体系\n\n- 抽取 prompt：`<search_result>标签</search_result>` —— 渲染时替换为对应检索片段。\n- 分析表达式：`<field_result>字段ID</field_result>` —— 渲染时替换为该字段的提取值。\n\n## 响应约定\n\n除 SSE 与 `multipart` 上传外，所有接口统一返回\n`ResponseWrapper{code:int=200, message:str, data:any}`。**业务负载在 `data` 里**；因为\n`data` 是动态类型，其具体形态写在每个接口的描述中，而非组件 schema。\n\n`/doctype/list` 的分页是唯一的形态切换：**传齐 `page` + `page_size` 返回\n`{items, total}`，否则原样返回数组**（向后兼容旧调用方）。"
+    "description": "析卷 AI 的 HTTP API —— 基于 **FastAPI + MinerU + LLM**，把 PDF 经过\n六阶段管线沉淀为结构化的「字段提取结果」与「逻辑分析结论」。\n\n## 处理管线\n\n```\nparsing → tableing → chunking → embedding → extracting → analyzing → complete\n```\n\n| 阶段 | 动作 | 产物表 |\n|---|---|---|\n| `parsing` | MinerU 解析 PDF 为 Markdown + middle_json + 页码映射 | `file_content` |\n| `tableing` | LLM 从表前文识别每张表的名称（截断 30 字） | `file_table` |\n| `chunking` | 递归文本切分（表格作为独立块不拆分） | `file_chunk` |\n| `embedding` | 向量化写入 Milvus（向量数据不随回调下发） | Milvus |\n| `extracting` | 按字段配置用 LLM/VL 抽取 `{reason, value}` | `extraction_result` |\n| `analyzing` | judge（LLM 真假判断）/ calc（numexpr 计算） | `analysis_result` |\n\n每个阶段失败会把 `files.progress` 置为 `<stage>_failed` 并写入 `error`；进程崩溃后\n启动时 `init_service` 会把残留的 `*ing` 态归一为 `*_failed` 并清理孤儿数据。\n\n## 关键概念\n\n- **文档类型 (`type_id`)** —— 隔离不同格式文件的字段/规则配置。每个文件归属唯一\n  `type_id`（默认 `default`，不可删除）。抽取字段 `extraction_field`、逻辑规则\n  `analysis_rule` 均按 `type_id` 隔离，**不跨类型共享**；共享靠显式复制 / 导入。\n- **类型的血缘维度**：`is_template`（模板标记，`promote` / `demote` 切换）+ `parent_type_id`\n  （复制来源，`copy_from` / `import` 自动记录）。\n- **类型的项目维度**：`project_id`（可空=未分组）对「模板 + 其血缘下游」分类，一个类型属 ≤1 个\n  项目；`batch_assign_project` 归类会**级联血缘后代**，`copy_from`/派生的新类型继承源项目，\n  `default` 恒未分组。\n- **`file_id`** —— 由 `(type_id, file_name, time.time_ns(), secrets.token_hex(8))`\n  取 `SHA256[:32]` 生成；**每次上传都是新 ID，不做去重**。\n- **`field_id` / `rule_id`** —— **全局唯一**（不只是类型内唯一）。upsert 时若 ID 已被\n  其它 `type_id` 占用，返回 **409**。\n- **重试** —— 失败后用 `POST /file/{file_id}/retry/{stage}`（会清理该阶段及下游数据后\n  重跑），**不要**重新上传（上传必产生新 `file_id` 与新记录）。\n- **回调 (`callback_url`)** —— `POST /file/parse` / `retry`（`async` / `sync` 模式）携带时，\n  管线在「每阶段开始」「每条 `field_done` / `rule_done`」「每阶段 `stage_done`」都会向该\n  地址 POST 通知（超时默认 **2.5s**，可用 `callback.timeout` 配置；失败仅 warning，绝不阻断主流程）。完整 payload 形态见\n  `docs/api/callbacks.md`。\n- **SSE 流** —— `mode=stream` 与 `/extraction/test/stream` / `/analysis/test/stream`\n  返回 `text/event-stream`，逐阶段/逐步推送事件。\n- **VL 抽取** —— `source_type=vl` 字段绕过 MinerU Markdown，直接读 `uploads/{file_id}.pdf`，\n  由视觉模型先输出 reason 再输出 value，产出 `{reason, value}` JSON，**不再走文本 LLM 二次抽取**。\n\n## 占位符体系\n\n- 抽取 prompt：`<search_result>标签</search_result>` —— 渲染时替换为对应检索片段。\n- 分析表达式：`<field_result>字段ID</field_result>` —— 渲染时替换为该字段的提取值。\n\n## 响应约定\n\n除 SSE 与 `multipart` 上传外，所有接口统一返回\n`ResponseWrapper{code:int=200, message:str, data:any}`。**业务负载在 `data` 里**；因为\n`data` 是动态类型，其具体形态写在每个接口的描述中，而非组件 schema。\n\n`/doctype/list` 的分页是唯一的形态切换：**传齐 `page` + `page_size` 返回\n`{items, total}`，否则原样返回数组**（向后兼容旧调用方）。"
   },
   "paths": {
     "/file/list": {
@@ -1419,7 +1419,7 @@
           "extraction"
         ],
         "summary": "新增/更新字段配置（upsert）",
-        "description": "按 `field_id` **全局唯一** upsert。\n\n**冲突处理**：若 `field_id` 已存在但归属其它 `type_id`，返回 **409**，提示换 ID 或先删除原记录。\n\n**Prompt / 配置校验（Pydantic 层，违反返回 422）**\n- `source_type=text` 时 `text_extract_prompt` 必须含至少一个 `<search_result>标签</search_result>`\n- `source_type=table` 时 `table_extract_prompt` 同上\n- `source_type=vl` 时 `vl_method` 与 `vl_extract_prompt` 必填，且 prompt 必须含 `value` 和 `reason` 关键字（大小写不敏感，因为最终要求 VL 输出 `{value, reason}` JSON）\n- `vl_progressive` 的自定义 `batch_prompt_template` 必含 `{field_hints}` `{page_label}` `{total_pages}` `{history}`\n- `vl_locate` 的自定义 `locate_prompt_template` 必含 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`\n- `table_match_type=llm` 时非空的 `table_match_prompt` 必含 `{table_list}`；`section_match_type=llm` 时非空的 `search_config.section_match_prompt` 必含 `{section_list}`（缺了模型看不到候选列表）\n- 模板里的字面 `{` `}` 需写成 `{{` `}}` 转义（`str.format()` 渲染）\n\n返回 `data={field_id}`，`message` 区分「已创建 / 已更新」。",
+        "description": "按 `field_id` **全局唯一** upsert。\n\n**冲突处理**：若 `field_id` 已存在但归属其它 `type_id`，返回 **409**，提示换 ID 或先删除原记录。\n\n**Prompt / 配置校验（Pydantic 层，违反返回 422）**\n- `source_type=text` 时 `text_extract_prompt` 必须含至少一个 `<search_result>标签</search_result>`\n- `source_type=table` 时 `table_extract_prompt` 同上\n- `source_type=vl` 时 `vl_method` 与 `vl_extract_prompt` 必填，且 prompt 必须含 `reason` 和 `value` 关键字（大小写不敏感；最终要求 VL 先输出 reason，再输出 value，并返回 `{reason, value}` JSON）\n- `vl_progressive` 的自定义 `batch_prompt_template` 必含 `{field_hints}` `{page_label}` `{total_pages}` `{history}`\n- `vl_locate` 的自定义 `locate_prompt_template` 必含 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`\n- `table_match_type=llm` 时非空的 `table_match_prompt` 必含 `{table_list}`；`section_match_type=llm` 时非空的 `search_config.section_match_prompt` 必含 `{section_list}`（缺了模型看不到候选列表）\n- 模板里的字面 `{` `}` 需写成 `{{` `}}` 转义（`str.format()` 渲染）\n\n返回 `data={field_id}`，`message` 区分「已创建 / 已更新」。",
         "operationId": "upsert_field_extraction_fields_post",
         "requestBody": {
           "required": true,
@@ -1595,7 +1595,7 @@
           "extraction"
         ],
         "summary": "字段提取调试（同步）",
-        "description": "两种模式（二选一）：传 `field_id` 加载已保存配置，或传 `config`（完整字段配置 dict）用临时配置。\n\n**`search_results` 形态因 `source_type` / `search_type` 不同而异**\n- `source_type=table`：`[{table_name, table_content(截断 500 字)}, ...]`\n- `source_type=text` + `search_type=context`：关键词命中前后上下文片段列表\n- `search_type=section`：章节切片列表\n- `search_type=rule`：关键词起点 + 停止词边界片段列表\n- `search_type=chunk_db`：MySQL 分块命中列表\n- `search_type=vector_db`：Milvus 语义命中列表（含 `score`）\n- `search_type=page`：按 `page_range` 切出的整页 Markdown\n- `source_type=vl`：**单元素**数组 `[{type:\"vl_meta\", method, key_pages, vl_total_tokens, batches_with_info}]`\n\n**`llm_input` / `llm_output`**\n- 普通字段：`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，`extracted_value` / `reason` 是 JSON 解析后的结果\n- VL 字段：`llm_input` 是 `vl_extract_prompt`，`llm_output` = `extracted_value`（VL 直出 JSON，不再二次抽取）\n\ntext / table 字段的 prompt 末尾会追加 JSON 输出说明，要求模型额外返回 `pages`（模型自报的参考页码整数数组），解析后落库到 `source_refs._model_pages`（去重升序；模型未返回则为空、不挂键）。\n\n返回 `data=ExtractionTestResponse{search_results, llm_input, llm_output, extracted_value, reason}`。\n\n**状态码**：200 / 400（既未传 `field_id` 也未传 `config`）/ 404（字段或文件内容不存在）/ 500（提取异常）。",
+        "description": "两种模式（二选一）：传 `field_id` 加载已保存配置，或传 `config`（完整字段配置 dict）用临时配置。\n\n**`search_results` 形态因 `source_type` / `search_type` 不同而异**\n- `source_type=table`：`[{table_name, table_content(截断 500 字)}, ...]`\n- `source_type=text` + `search_type=context`：关键词命中前后上下文片段列表\n- `search_type=section`：章节切片列表\n- `search_type=rule`：关键词起点 + 停止词边界片段列表\n- `search_type=chunk_db`：MySQL 分块命中列表\n- `search_type=vector_db`：Milvus 语义命中列表（含 `score`）\n- `search_type=page`：按 `page_range` 切出的整页 Markdown\n- `source_type=vl`：**单元素**数组 `[{type:\"vl_meta\", method, key_pages, vl_total_tokens, batches_with_info}]`\n\n**`llm_input` / `llm_output`**\n- 普通字段：`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，`extracted_value` / `reason` 是 JSON 解析后的结果\n- VL 字段：`llm_input` 是追加固定 reason-first 约束后的 `vl_extract_prompt`，`llm_output` = `extracted_value`（VL 直出 JSON，不再二次抽取）\n\ntext / table 字段的 prompt 末尾会追加 JSON 输出说明，要求模型额外返回 `pages`（模型自报的参考页码整数数组），解析后落库到 `source_refs._model_pages`（去重升序；模型未返回则为空、不挂键）。\n\n返回 `data=ExtractionTestResponse{search_results, llm_input, llm_output, extracted_value, reason}`。\n\n**状态码**：200 / 400（既未传 `field_id` 也未传 `config`）/ 404（字段或文件内容不存在）/ 500（提取异常）。",
         "operationId": "test_extraction_extraction_test_post",
         "requestBody": {
           "content": {
@@ -1747,7 +1747,7 @@
           "analysis"
         ],
         "summary": "新增/更新分析规则（upsert）",
-        "description": "按 `rule_id` **全局唯一** upsert。`rule_id` 已被其它 `type_id` 占用时返回 **409**。\n\n**校验（Pydantic 层，违反返回 422）**\n- `expression` 必须包含至少一个 `<field_result>字段ID</field_result>` 占位符\n- `web_search.enabled=true` 时：仅 `judge` / `custom` 类型可启用、`web_search.query` 不能为空、`expression` 必须包含 `<web_search_result/>` 占位符\n- `custom` 类型 `is_formatted=1` 时：`output_schema` 不能为空且结构须合法（每个节点含非空 `key`，`object` / `array` 须有非空 `children`）\n\n`system_prompt` 对 `judge` / `custom` 生效；`calc` 类型直接用 `numexpr` 计算，结果按 `analysis.calc_precision`（默认 2 位）保留小数。`custom` 类型走 LLM 自由生成，返回 `{value, reason}`（`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串）。返回 `data={rule_id}`。",
+        "description": "按 `rule_id` **全局唯一** upsert。`rule_id` 已被其它 `type_id` 占用时返回 **409**。\n\n**校验（Pydantic 层，违反返回 422）**\n- `expression` 必须包含至少一个 `<field_result>字段ID</field_result>` 占位符\n- `web_search.enabled=true` 时：仅 `judge` / `custom` 类型可启用、`web_search.query` 不能为空、`expression` 必须包含 `<web_search_result/>` 占位符\n- `custom` 类型 `is_formatted=1` 时：`output_schema` 不能为空且结构须合法（每个节点含非空 `key`，`object` / `array` 须有非空 `children`）\n\n`system_prompt` 对 `judge` / `custom` 生效；`calc` 类型直接用 `numexpr` 计算，结果按 `analysis.calc_precision`（默认 2 位）保留小数。`custom` 类型走 LLM 自由生成，要求先输出 reason 再输出 value，返回 `{reason, value}`（`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串）。返回 `data={rule_id}`。",
         "operationId": "upsert_rule_analysis_rules_post",
         "requestBody": {
           "required": true,
@@ -4013,7 +4013,7 @@
           },
           "rule_type": {
             "$ref": "#/components/schemas/RuleTypeEnum",
-            "description": "规则类型：`judge`（LLM 判断）/ `calc`（numexpr 计算）/ `custom`（LLM 自由生成，返回 `{value, reason}`）。"
+            "description": "规则类型：`judge`（LLM 判断，先输出 reason 再输出 result）/ `calc`（numexpr 计算）/ `custom`（LLM 自由生成，先输出 reason 再输出 value，返回 `{reason, value}`）。"
           },
           "expression": {
             "type": "string",
@@ -4884,7 +4884,7 @@
               }
             ],
             "title": "Vl Extract Prompt",
-            "description": "[vl] 抽取 prompt，须含 `value` 与 `reason` 关键字。"
+            "description": "[vl] 抽取 prompt，须含 `reason` 与 `value` 关键字；实际发送时固定要求先 reason 后 value。"
           }
         },
         "type": "object",
@@ -5308,7 +5308,7 @@
               }
             ],
             "title": "Vl Extract Prompt",
-            "description": "[vl] 抽取 prompt；`source_type=vl` 时必填，且须含 `value` 与 `reason` 关键字（大小写不敏感）。"
+            "description": "[vl] 抽取 prompt；`source_type=vl` 时必填，且须含 `reason` 与 `value` 关键字（大小写不敏感；实际发送时固定要求先 reason 后 value）。"
           },
           "is_advanced": {
             "type": "integer",
@@ -5358,7 +5358,7 @@
               "context_after": 200,
               "max_results": 3
             },
-            "text_extract_prompt": "从以下内容提取公司名称：\n<search_result>命中片段</search_result>\n以 JSON 输出 {value, reason}。"
+            "text_extract_prompt": "从以下内容提取公司名称：\n<search_result>命中片段</search_result>\n请先输出 reason，再输出 value；以 JSON 输出 {\"reason\": \"依据\", \"value\": \"结果\"}。"
           },
           {
             "field_id": "total_assets",
@@ -5369,7 +5369,7 @@
             "priority": 1,
             "table_name_pattern": "资产负债表",
             "table_match_type": "contains",
-            "table_extract_prompt": "从下表提取资产总计：\n<search_result>表格</search_result>\n输出 {value, reason}。"
+            "table_extract_prompt": "从下表提取资产总计：\n<search_result>表格</search_result>\n请先输出 reason，再输出 value；输出 {\"reason\": \"依据\", \"value\": \"结果\"}。"
           },
           {
             "field_id": "seal_present",
@@ -5385,7 +5385,7 @@
               "grid_cols": 3,
               "max_concurrent": 20
             },
-            "vl_extract_prompt": "判断文档是否盖章，输出 JSON {value, reason}。"
+            "vl_extract_prompt": "判断文档是否盖章，请先输出 reason，再输出 value；输出 JSON {\"reason\": \"判断依据\", \"value\": \"结果\"}。"
           }
         ]
       },
@@ -5628,7 +5628,7 @@
           "custom"
         ],
         "title": "RuleTypeEnum",
-        "description": "规则类型：`judge`（LLM 真假判断，用 `system_prompt` 调控）/ `calc`（numexpr 数学计算）/ `custom`（LLM 自由生成，返回 `{value, reason}`；`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON）。"
+        "description": "规则类型：`judge`（LLM 真假判断，用 `system_prompt` 调控，先输出 reason 再输出 result）/ `calc`（numexpr 数学计算）/ `custom`（LLM 自由生成，先输出 reason 再输出 value，返回 `{reason, value}`；`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON）。"
       },
       "SearchRequest": {
         "properties": {

@@ -93,7 +93,7 @@ PDF 上传
 | 分块产物 | `file_id + chunk_id` | chunking 阶段 | MySQL 文本检索、embedding | 普通文本按规则切分，表格通常作为独立块 |
 | 向量数据 | `file_id + chunk_id` | embedding 阶段 | `/search`、`vector_db` 字段抽取 | 存在 Milvus 中，不随回调下发 |
 | 字段配置 | `field_id` | `/extraction/fields` | extracting 阶段、调试接口 | 当前实现全局唯一，按 `type_id` 隔离执行 |
-| 字段结果 | `file_id + field_id` | extracting 阶段 | `/file/{id}/extraction`、analysis 规则 | 包含 value、reason、pages、source_pages、source_refs |
+| 字段结果 | `file_id + field_id` | extracting 阶段 | `/file/{id}/extraction`、analysis 规则 | 包含 reason、value、pages、source_pages、source_refs |
 | 分析规则 | `rule_id` | `/analysis/rules` | analyzing 阶段、独立分析 | 当前实现全局唯一，按 `type_id` 隔离执行 |
 | 分析结果 | `file_id + rule_id` | analyzing 阶段或 `/analysis/run` 持久化 | `/file/{id}/analysis` | 包含结论、理由、依赖字段值和溯源 |
 
@@ -1257,7 +1257,7 @@ curl "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340/detail"
 
 ## 4. 字段提取接口 `/extraction`
 
-字段配置决定 extracting 阶段从哪里找资料、是否调用 LLM/VL、如何把模型输出解析为 `{value, reason, pages}`。字段配置按 `type_id` 隔离，但 `field_id` 在当前实现里是全局唯一。
+字段配置决定 extracting 阶段从哪里找资料、是否调用 LLM/VL、如何把模型输出解析为 `{reason, value, pages}`。字段配置按 `type_id` 隔离，但 `field_id` 在当前实现里是全局唯一。
 
 字段来源类型：
 
@@ -1431,7 +1431,7 @@ VL 字段参数：
 | `vl_method` | string | 条件必填 | `null` | `vl_model` / `vl_progressive` / `vl_locate`；`source_type=vl` 必填 |
 | `vl_config` | object | 否 | `{}` | VL 方法配置 |
 | `vl_system_prompt` | string | 否 | `null` | VL system prompt |
-| `vl_extract_prompt` | string | 条件必填 | `null` | `source_type=vl` 必填，并必须包含 `value` 与 `reason` 关键字 |
+| `vl_extract_prompt` | string | 条件必填 | `null` | `source_type=vl` 必填，并必须包含 `reason` 与 `value` 关键字；实际发送时固定要求先 reason 后 value |
 
 常参见本文内 `vl_config`：
 
@@ -1455,7 +1455,7 @@ text 字段请求示例：
   "use_llm": 1,
   "search_type": "context",
   "search_config": {"keywords": ["公司名称"], "context_before": 50, "context_after": 200, "max_results": 3},
-  "text_extract_prompt": "从以下内容提取公司名称，输出 JSON：\n<search_result>命中片段</search_result>\n必须包含 value 和 reason。"
+  "text_extract_prompt": "从以下内容提取公司名称，输出 JSON：\n<search_result>命中片段</search_result>\n请先输出 reason，再输出 value；必须包含 reason 和 value。"
 }
 ```
 
@@ -1470,7 +1470,7 @@ table 字段请求示例：
   "table_match_type": "contains",
   "table_match_keywords": ["资产负债表"],
   "table_match_max_results": 2,
-  "table_extract_prompt": "从表格中提取资产总额，输出 JSON：\n<search_result>资产负债表</search_result>\n必须包含 value 和 reason。"
+  "table_extract_prompt": "从表格中提取资产总额，输出 JSON：\n<search_result>资产负债表</search_result>\n请先输出 reason，再输出 value；必须包含 reason 和 value。"
 }
 ```
 
@@ -1484,7 +1484,7 @@ VL 字段请求示例：
   "source_type": "vl",
   "vl_method": "vl_locate",
   "vl_config": {"page_range": "all", "field_hints": "寻找签署页、盖章页或日期", "grid_pages": 6, "key_pages_limit": 3},
-  "vl_extract_prompt": "请从关键页面提取签署日期，返回 JSON，必须包含 value 和 reason。"
+  "vl_extract_prompt": "请从关键页面提取签署日期，先输出 reason，再输出 value；返回 JSON，必须包含 reason 和 value。"
 }
 ```
 
@@ -1508,7 +1508,7 @@ curl -X POST http://localhost:5019/extraction/fields \
 |---|---|---|
 | `400` | 进阶字段引用不存在字段、引用其它进阶字段、被引用普通字段试图改为进阶字段 | 业务校验失败 |
 | `409` | `field_id` 已被其它 `type_id` 占用 | 当前实现要求全局唯一 |
-| `422` | ID 正则不合法、提示词缺占位符、VL 缺 `value/reason` 等 | Pydantic 校验失败 |
+| `422` | ID 正则不合法、提示词缺 `reason/value` 等 | Pydantic 校验失败 |
 
 进阶字段说明：
 
@@ -1613,7 +1613,7 @@ curl "http://localhost:5019/extraction/fields/company_name/check"
     "source_type": "text",
     "search_type": "context",
     "search_config": {"keywords": ["注册资本"], "context_after": 100},
-    "text_extract_prompt": "提取注册资本：\n<search_result>命中片段</search_result>\n输出 JSON，包含 value/reason。"
+    "text_extract_prompt": "提取注册资本：\n<search_result>命中片段</search_result>\n请先输出 reason，再输出 value；输出 JSON，包含 reason/value。"
   }
 }
 ```
@@ -3291,7 +3291,7 @@ VL 示例：
 |---|---|---|---|
 | `judge` | LLM 判断 | `"true"` / `"false"` 字符串 + 理由 | 是否达标、是否盈利、是否存在风险等条件判断 |
 | `calc` | `numexpr` 数学计算 | 数值字符串（默认保留 2 位小数）+ 计算式 | 利润率、负债率、净资产等比率/差值 |
-| `custom` | LLM 自由生成 | `{value, reason}`；格式化时 `value` 为结构化 JSON 字符串 | 摘要、要素归纳、结构化抽取等开放式产出 |
+| `custom` | LLM 自由生成 | 先输出 `reason` 再输出 `value`，返回 `{reason, value}`；格式化时 `value` 为结构化 JSON 字符串 | 摘要、要素归纳、结构化抽取等开放式产出 |
 
 数据流：
 
@@ -3381,7 +3381,7 @@ analysis_rule     →  analysis_result     （判断/计算结论，本手册的
 你只需在 `expression` 里用**自然语言**把「已知条件 + 要判断什么」写清楚。系统会在发给 LLM 前**自动追加**一段固定的 JSON 输出指令，要求模型返回：
 
 ```json
-{"result": "true 或 false", "reason": "判断理由/依据"}
+{"reason": "判断理由/依据", "result": "true 或 false"}
 ```
 
 因此：
@@ -3494,7 +3494,7 @@ analysis_rule     →  analysis_result     （判断/计算结论，本手册的
 
 #### 5. custom 自定义规则
 
-用 LLM 按 `expression` 提示词**自由生成**结果，返回 `{value, reason}`。适合判断 / 计算之外的开放式产出：摘要、要素归纳、把多个字段整合成一段结构化 JSON 等。
+用 LLM 按 `expression` 提示词**自由生成**结果，要求先输出 `reason` 再输出 `value`，返回 `{reason, value}`。适合判断 / 计算之外的开放式产出：摘要、要素归纳、把多个字段整合成一段结构化 JSON 等。
 
 ##### 基础结构（非格式化）
 
@@ -3524,7 +3524,7 @@ analysis_rule     →  analysis_result     （判断/计算结论，本手册的
 
 ##### 工作原理
 
-与 judge 一样，系统会在 `expression` 后**自动追加**一段 JSON 输出指令，要求模型返回 `{"value": …, "reason": …}`——你**不用**自己在提示词里写格式要求。`value` 是主结果，`reason` 是模型给出的依据。
+与 judge 一样，系统会在 `expression` 后**自动追加**一段 JSON 输出指令，要求模型先完成分析并返回 `{"reason": …, "value": …}`——你**不用**自己在提示词里写格式要求。`value` 是主结果，`reason` 是模型给出的依据。
 
 ##### 格式化输出（`is_formatted=1` + `output_schema`）
 
@@ -4249,7 +4249,7 @@ JSON 示例和排错清单为主。
 
 #### 4. VL 类（vl）
 
-直接读 `uploads/{file_id}.pdf` 渲染成图给视觉模型，**不**依赖 MinerU 的 Markdown、**不**走文本 LLM 二次抽取，由 VL 直接输出 `{value, reason}` JSON。适合扫描图、复杂版式、跨页信息。
+直接读 `uploads/{file_id}.pdf` 渲染成图给视觉模型，**不**依赖 MinerU 的 Markdown、**不**走文本 LLM 二次抽取，由 VL 先输出 reason 再输出 value，直接产出 `{reason, value}` JSON。适合扫描图、复杂版式、跨页信息。
 
 **前置条件：**
 - `configs/config.yaml` 的 `vl_model:` 节配好 `base_url` / `api_key` / `model`（默认 dashscope qwen-vl-max），见第 12.3 节。
@@ -4263,7 +4263,7 @@ JSON 示例和排错清单为主。
 | `vl_progressive` | 逐批 + 伪历史累积，模型自判相关性 | 页数/`batch_size` + 1 聚合 | 串行 | 长文档、相关页分散 |
 | `vl_locate` | 两轮：缩略图网格并行定位 → 关键页高清提取 | 页数/`grid_pages` + 1 提取 | 第一轮并行 | 长文档、要快速定位关键页 |
 
-**三法共通：** `vl_extract_prompt` 是最终提取 prompt，**必须含 `value` 与 `reason` 关键字**（大小写不敏感，因为要 VL 直接吐 JSON）；`vl_system_prompt` 可空。后端 `service/vl_service/_defaults.py` 与前端 UI 都预填了默认 prompt，保持默认即可跑通。全局并发上限 `vl_model.global_max_concurrency`（默认 8）。
+**三法共通：** `vl_extract_prompt` 是最终提取 prompt，**必须含 `reason` 与 `value` 关键字**（大小写不敏感；实际发送时固定要求先输出 reason，再输出 value）；`vl_system_prompt` 可空。后端 `service/vl_service/_defaults.py` 与前端 UI 都预填了默认 prompt，保持默认即可跑通。全局并发上限 `vl_model.global_max_concurrency`（默认 8）。
 
 **三种方法共用的页码配置**（都写在 `vl_config` 里）：
 
@@ -4286,7 +4286,7 @@ JSON 示例和排错清单为主。
   "source_type": "vl",
   "vl_method": "vl_model",
   "vl_config": { "page_range": "1-1", "max_pixels": 4000000 },
-  "vl_extract_prompt": "请基于以上图片提取企业全称。\n只返回 JSON：{\"value\": \"企业全称\", \"reason\": \"在哪一页/位置看到\"}\n未找到返回：{\"value\": \"\", \"reason\": \"未找到\"}"
+  "vl_extract_prompt": "请基于以上图片提取企业全称。\n请务必先输出 reason，再输出 value；只返回 JSON：{\"reason\": \"在哪一页/位置看到\", \"value\": \"企业全称\"}\n未找到返回：{\"reason\": \"未找到\", \"value\": \"\"}"
 }
 ```
 
@@ -4301,7 +4301,7 @@ JSON 示例和排错清单为主。
   "source_type": "vl",
   "vl_method": "vl_progressive",
   "vl_config": { "field_hints": "签署日期、签约方、合同金额、有效期", "batch_size": 2 },
-  "vl_extract_prompt": "基于以上累积摘要，综合整理合同关键信息。\n只返回 JSON：{\"value\": \"日期/签约方/金额/有效期，多项用分号分隔\", \"reason\": \"分别在哪些页看到\"}"
+  "vl_extract_prompt": "基于以上累积摘要，综合整理合同关键信息。\n请务必先输出 reason，再输出 value；只返回 JSON：{\"reason\": \"分别在哪些页看到\", \"value\": \"日期/签约方/金额/有效期，多项用分号分隔\"}"
 }
 ```
 
@@ -4318,7 +4318,7 @@ JSON 示例和排错清单为主。
   "source_type": "vl",
   "vl_method": "vl_locate",
   "vl_config": { "field_hints": "资产总额、负债总额、净利润", "grid_pages": 6, "grid_cols": 3, "key_pages_limit": 6 },
-  "vl_extract_prompt": "请从以上高清财报页提取「资产总额」金额。\n只返回 JSON：{\"value\": \"金额（含单位）\", \"reason\": \"看到的页码与位置\"}\n未找到返回：{\"value\": \"\", \"reason\": \"未找到\"}"
+  "vl_extract_prompt": "请从以上高清财报页提取「资产总额」金额。\n请务必先输出 reason，再输出 value；只返回 JSON：{\"reason\": \"看到的页码与位置\", \"value\": \"金额（含单位）\"}\n未找到返回：{\"reason\": \"未找到\", \"value\": \"\"}"
 }
 ```
 
@@ -4422,7 +4422,7 @@ JSON 示例和排错清单为主。
     "max_pages": 3,
     "field_hints": "公章、骑缝章"
   },
-  "vl_extract_prompt": "判断这几页是否盖章，输出 JSON {value, reason}"
+  "vl_extract_prompt": "判断这几页是否盖章，请先输出 reason，再输出 value；输出 JSON {\"reason\", \"value\"}"
 }
 ```
 
@@ -4481,7 +4481,7 @@ JSON 示例和排错清单为主。
 |---|---|
 | `text_extract_prompt` | 含 ≥1 个 `<search_result>标签</search_result>`（`use_llm=0` 放宽） |
 | `table_extract_prompt` | 含 ≥1 个 `<search_result>标签</search_result>`（`use_llm=0` 放宽） |
-| `vl_extract_prompt` | 含 `value` 与 `reason` 关键字（大小写不敏感）；`source_type=vl` 时必填，`use_llm` **不**放宽 |
+| `vl_extract_prompt` | 含 `reason` 与 `value` 关键字（大小写不敏感；实际发送时固定要求先 reason 后 value）；`source_type=vl` 时必填，`use_llm` **不**放宽 |
 | `vl_method` | `source_type=vl` 时必填 |
 | `batch_prompt_template`（vl_progressive 自定义时） | 含 `{history}` `{field_hints}` `{page_label}` `{total_pages}` |
 | `locate_prompt_template`（vl_locate 自定义时） | 含 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}` |
@@ -4490,7 +4490,7 @@ JSON 示例和排错清单为主。
 
 ##### 7.3 让模型自报参考页码（可选）
 
-text / table 抽取时，可在 prompt 里要求 LLM 除 `value` / `reason` 外再返回 `pages`（参考到的页码整数数组）。后端归一化后作为**顶层 `pages` 字段**下发（不再放进 `source_refs`），并落库到 `extraction_result.model_pages` 列。
+text / table 抽取时，可在 prompt 里要求 LLM 除 `reason` / `value` 外再返回 `pages`（参考到的页码整数数组）。后端归一化后作为**顶层 `pages` 字段**下发（不再放进 `source_refs`），并落库到 `extraction_result.model_pages` 列。
 
 即使不要求 `pages`，接口也恒有一个顶层 `source_pages` 字段 —— 模型自报页优先、程序命中页兜底，前端 PDF 定位（📍）跳的就是它。要求 `pages` 的价值在于**更聚焦**：检索常命中多页，模型自报的通常只有真正引用的那一两页，进阶字段页码联动据此派生的区间也更窄。细节见第 12.5 节第 7 小节。
 
@@ -4601,7 +4601,7 @@ text / table 抽取时，可在 prompt 里要求 LLM 除 `value` / `reason` 外�
 
 对照 §7.2。最常见：
 - text/table 的提取 prompt 忘了写 `<search_result>标签</search_result>`，或标签与检索配置对不上（如 vector_db 标签没用 `query_text` 的值）。
-- vl 的 `vl_extract_prompt` 里没有 `value` / `reason` 字样。
+- vl 的 `vl_extract_prompt` 里没有 `reason` / `value` 字样。
 - 自定义 VL 模板缺占位符，或字面花括号没转义成 `{{ }}`（§4.3）。
 
 ##### 9.2 提取结果为空
@@ -4843,7 +4843,7 @@ if pages is None:
 | `vl_locate` | 缩略图定位命中的关键页（去重排序，受 `key_pages_limit` 截断；定位不到回退前 `fallback_pages` 页） | 真正高清提取的页 |
 | `vl_progressive` | **`null`** | 逐批扫全篇，不定位具体页；需页码请用 `total_pages` 兜底 |
 
-> ⚠️ vl 类**没有** `page_num` 字段，也**没有** `bboxes`；`source_refs["_vl"]["page_num"]` 会 KeyError。vl 类同样**不产生** `_model_pages`（VL 不走 `{value,reason,pages}` 文本解析）。
+> ⚠️ vl 类**没有** `page_num` 字段，也**没有** `bboxes`；`source_refs["_vl"]["page_num"]` 会 KeyError。vl 类同样**不产生** `_model_pages`（VL 不走 `{reason,value,pages}` 文本解析）。
 
 ---
 
@@ -4864,7 +4864,7 @@ if pages is None:
 
 | 字段 | 含义 | 何时为空 |
 |---|---|---|
-| `pages` | **模型自报**：LLM 输出 `{value, reason, pages}` 里的 `pages`，即「我得出该值实际参考了哪几页」 | 模型未返回 / 解析失败 / `use_llm=0` / VL 类 |
+| `pages` | **模型自报**：LLM 输出 `{reason, value, pages}` 里的 `pages`，即「我得出该值实际参考了哪几页」 | 模型未返回 / 解析失败 / `use_llm=0` / VL 类 |
 | `source_pages` | **可用页码**：`pages` 非空时等于它，否则回落到程序从 `source_refs` 算出的命中页 | 两者皆无（失败字段 / 检索无命中 / `vl_progressive`） |
 
 **关键约定：**
@@ -5491,7 +5491,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 | `vl_method` | ENUM | NULLABLE | NULL | 【VL 类】VL 抽取方法 |
 | `vl_config` | JSON | NULLABLE | NULL | 【VL 类】VL 方法参数（按 vl_method 不同） |
 | `vl_system_prompt` | TEXT | NULLABLE | NULL | 【VL 类】VL 系统提示词（可选） |
-| `vl_extract_prompt` | TEXT | NULLABLE | NULL | 【VL 类】VL 最终提取提示词（vl 类必填，含 `value`/`reason` 关键字） |
+| `vl_extract_prompt` | TEXT | NULLABLE | NULL | 【VL 类】VL 最终提取提示词（vl 类必填，含 `reason`/`value` 关键字；实际发送时固定要求先 reason 后 value） |
 
 ###### 索引
 
@@ -5509,7 +5509,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 |----|------|
 | `table` | 从 file_table 表中匹配表格后送 LLM 抽取 |
 | `text` | 从 file_content / file_chunk / Milvus 检索后送 LLM 抽取 |
-| `vl` | 直接读 `uploads/{file_id}.pdf`，由 VL 视觉模型直出 `{value, reason}` JSON，**不**走文本 LLM 二次抽取 |
+| `vl` | 直接读 `uploads/{file_id}.pdf`，由 VL 视觉模型先输出 reason 再输出 value，直出 `{reason, value}` JSON，**不**走文本 LLM 二次抽取 |
 
 **table_match_type（表格匹配方式）**
 
@@ -5727,7 +5727,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
     "max_pixels": 4000000
   },
   "vl_system_prompt": null,
-  "vl_extract_prompt": "请基于以上图片提取「资产总额」。\n请只返回 JSON：{\"value\": \"数值（含单位）\", \"reason\": \"看到的页码与位置\"}\n未找到返回：{\"value\": \"\", \"reason\": \"未找到\"}"
+  "vl_extract_prompt": "请基于以上图片提取「资产总额」。\n请务必先输出 reason，再输出 value；请只返回 JSON：{\"reason\": \"看到的页码与位置\", \"value\": \"数值（含单位）\"}\n未找到返回：{\"reason\": \"未找到\", \"value\": \"\"}"
 }
 ```
 
@@ -5770,7 +5770,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 |----|------|-----------------|
 | `judge` | 判断类 | 发送给 LLM 进行判断的完整提示词 |
 | `calc` | 计算类 | 数学表达式（支持 +、-、*、/、()） |
-| `custom` | 自定义类 | 发送给 LLM 自由生成的完整提示词（返回 `{value, reason}`；`is_formatted=1` 时按 `output_schema` 产出结构化 JSON） |
+| `custom` | 自定义类 | 发送给 LLM 自由生成的完整提示词（先输出 reason 再输出 value，返回 `{reason, value}`；`is_formatted=1` 时按 `output_schema` 产出结构化 JSON） |
 
 ###### depend_fields JSON 结构
 
@@ -6335,7 +6335,7 @@ CREATE TABLE IF NOT EXISTS analysis_result (
 |----|------|
 | `judge` | LLM 判断，返回 `true`/`false`（也可能是 LLM 自由文本判断结果） |
 | `calc` | `numexpr` 计算表达式，按 `analysis.calc_precision`（默认 2 位）保留小数 |
-| `custom` | LLM 自由生成，返回 `{value, reason}`；`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串 |
+| `custom` | LLM 自由生成，先输出 reason 再输出 value，返回 `{reason, value}`；`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串 |
 
 ---
 

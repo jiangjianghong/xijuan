@@ -47,7 +47,7 @@ parsing → tableing → chunking → embedding → extracting → analyzing →
 | `tableing` | LLM 从表前文识别每张表的名称（截断 30 字） | `file_table` |
 | `chunking` | 递归文本切分（表格作为独立块不拆分） | `file_chunk` |
 | `embedding` | 向量化写入 Milvus（向量数据不随回调下发） | Milvus |
-| `extracting` | 按字段配置用 LLM/VL 抽取 `{value, reason}` | `extraction_result` |
+| `extracting` | 按字段配置用 LLM/VL 抽取 `{reason, value}` | `extraction_result` |
 | `analyzing` | judge（LLM 真假判断）/ calc（numexpr 计算） | `analysis_result` |
 
 每个阶段失败会把 `files.progress` 置为 `<stage>_failed` 并写入 `error`；进程崩溃后
@@ -76,7 +76,7 @@ parsing → tableing → chunking → embedding → extracting → analyzing →
 - **SSE 流** —— `mode=stream` 与 `/extraction/test/stream` / `/analysis/test/stream`
   返回 `text/event-stream`，逐阶段/逐步推送事件。
 - **VL 抽取** —— `source_type=vl` 字段绕过 MinerU Markdown，直接读 `uploads/{file_id}.pdf`，
-  由视觉模型一次产出 `{value, reason}` JSON，**不再走文本 LLM 二次抽取**。
+  由视觉模型先输出 reason 再输出 value，产出 `{reason, value}` JSON，**不再走文本 LLM 二次抽取**。
 
 ## 占位符体系
 
@@ -578,7 +578,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "- `source_type=text` 时 `text_extract_prompt` 必须含至少一个 `<search_result>标签</search_result>`\n"
                 "- `source_type=table` 时 `table_extract_prompt` 同上\n"
                 "- `source_type=vl` 时 `vl_method` 与 `vl_extract_prompt` 必填，且 prompt 必须含 "
-                "`value` 和 `reason` 关键字（大小写不敏感，因为最终要求 VL 输出 `{value, reason}` JSON）\n"
+                "`reason` 和 `value` 关键字（大小写不敏感；最终要求 VL 先输出 reason，再输出 value，并返回 `{reason, value}` JSON）\n"
                 "- `vl_progressive` 的自定义 `batch_prompt_template` 必含 "
                 "`{field_hints}` `{page_label}` `{total_pages}` `{history}`\n"
                 "- `vl_locate` 的自定义 `locate_prompt_template` 必含 "
@@ -629,7 +629,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "**`llm_input` / `llm_output`**\n"
                 "- 普通字段：`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，"
                 "`extracted_value` / `reason` 是 JSON 解析后的结果\n"
-                "- VL 字段：`llm_input` 是 `vl_extract_prompt`，`llm_output` = `extracted_value`"
+                "- VL 字段：`llm_input` 是追加固定 reason-first 约束后的 `vl_extract_prompt`，`llm_output` = `extracted_value`"
                 "（VL 直出 JSON，不再二次抽取）\n\n"
                 "text / table 字段的 prompt 末尾会追加 JSON 输出说明，要求模型额外返回 `pages`"
                 "（模型自报的参考页码整数数组），解析后落库到 `source_refs._model_pages`（去重升序；"
@@ -673,8 +673,8 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "- `custom` 类型 `is_formatted=1` 时：`output_schema` 不能为空且结构须合法"
                 "（每个节点含非空 `key`，`object` / `array` 须有非空 `children`）\n\n"
                 "`system_prompt` 对 `judge` / `custom` 生效；`calc` 类型直接用 `numexpr` 计算，结果按 "
-                "`analysis.calc_precision`（默认 2 位）保留小数。`custom` 类型走 LLM 自由生成，返回 "
-                "`{value, reason}`（`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串）。"
+                "`analysis.calc_precision`（默认 2 位）保留小数。`custom` 类型走 LLM 自由生成，要求先输出 reason 再输出 value，返回 "
+                "`{reason, value}`（`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串）。"
                 "返回 `data={rule_id}`。"
             ),
         }
@@ -1077,7 +1077,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         "description": "VL 抽取方法：`vl_model` 指定页一次出 JSON / `vl_progressive` 分批扫描+伪历史累积 / `vl_locate` 缩略图网格定位+关键页高清提取。",
     },
     "RuleTypeEnum": {
-        "description": "规则类型：`judge`（LLM 真假判断，用 `system_prompt` 调控）/ `calc`（numexpr 数学计算）/ `custom`（LLM 自由生成，返回 `{value, reason}`；`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON）。",
+        "description": "规则类型：`judge`（LLM 真假判断，用 `system_prompt` 调控，先输出 reason 再输出 result）/ `calc`（numexpr 数学计算）/ `custom`（LLM 自由生成，先输出 reason 再输出 value，返回 `{reason, value}`；`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON）。",
     },
     # ── 文档类型 ──
     "DocTypeCreate": {
@@ -1148,7 +1148,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "vl_method": "[vl] 方法：`vl_model` / `vl_progressive` / `vl_locate`。",
             "vl_config": _VL_CONFIG_DOC,
             "vl_system_prompt": "[vl] LLM system prompt。",
-            "vl_extract_prompt": "[vl] 抽取 prompt，须含 `value` 与 `reason` 关键字。",
+            "vl_extract_prompt": "[vl] 抽取 prompt，须含 `reason` 与 `value` 关键字；实际发送时固定要求先 reason 后 value。",
         },
     },
     "ExportRuleItem": {
@@ -1230,7 +1230,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "vl_method": "[vl] 方法：`vl_model` / `vl_progressive` / `vl_locate`；`source_type=vl` 时必填。",
             "vl_config": "[vl] " + _VL_CONFIG_DOC,
             "vl_system_prompt": "[vl] LLM system prompt（可空）。",
-            "vl_extract_prompt": "[vl] 抽取 prompt；`source_type=vl` 时必填，且须含 `value` 与 `reason` 关键字（大小写不敏感）。",
+            "vl_extract_prompt": "[vl] 抽取 prompt；`source_type=vl` 时必填，且须含 `reason` 与 `value` 关键字（大小写不敏感；实际发送时固定要求先 reason 后 value）。",
         },
         "examples": [
             {
@@ -1242,7 +1242,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
                 "priority": 0,
                 "search_type": "context",
                 "search_config": {"keywords": ["公司名称", "企业名称"], "context_before": 50, "context_after": 200, "max_results": 3},
-                "text_extract_prompt": "从以下内容提取公司名称：\n<search_result>命中片段</search_result>\n以 JSON 输出 {value, reason}。",
+                "text_extract_prompt": "从以下内容提取公司名称：\n<search_result>命中片段</search_result>\n请先输出 reason，再输出 value；以 JSON 输出 {\"reason\": \"依据\", \"value\": \"结果\"}。",
             },
             {
                 "field_id": "total_assets",
@@ -1253,7 +1253,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
                 "priority": 1,
                 "table_name_pattern": "资产负债表",
                 "table_match_type": "contains",
-                "table_extract_prompt": "从下表提取资产总计：\n<search_result>表格</search_result>\n输出 {value, reason}。",
+                "table_extract_prompt": "从下表提取资产总计：\n<search_result>表格</search_result>\n请先输出 reason，再输出 value；输出 {\"reason\": \"依据\", \"value\": \"结果\"}。",
             },
             {
                 "field_id": "seal_present",
@@ -1264,7 +1264,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
                 "priority": 0,
                 "vl_method": "vl_locate",
                 "vl_config": {"field_hints": "公章/合同章", "grid_pages": 6, "grid_cols": 3, "max_concurrent": 20},
-                "vl_extract_prompt": "判断文档是否盖章，输出 JSON {value, reason}。",
+                "vl_extract_prompt": "判断文档是否盖章，请先输出 reason，再输出 value；输出 JSON {\"reason\": \"判断依据\", \"value\": \"结果\"}。",
             },
         ],
     },
@@ -1284,7 +1284,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "rule_id": "规则 ID，匹配 `^[a-zA-Z0-9_]+$`（最长 100），**全局唯一**。",
             "type_id": "归属文档类型，默认 `default`。",
             "rule_name": "规则显示名（最长 200）。",
-            "rule_type": "规则类型：`judge`（LLM 判断）/ `calc`（numexpr 计算）/ `custom`（LLM 自由生成，返回 `{value, reason}`）。",
+            "rule_type": "规则类型：`judge`（LLM 判断，先输出 reason 再输出 result）/ `calc`（numexpr 计算）/ `custom`（LLM 自由生成，先输出 reason 再输出 value，返回 `{reason, value}`）。",
             "expression": "表达式 / 提示词，须含至少一个 `<field_result>字段ID</field_result>` 占位符（渲染时替换为字段提取值）。",
             "system_prompt": "[judge/custom] 调控 LLM 的 system prompt；`calc` 类型忽略。",
             "depend_fields": "依赖的字段 ID 列表（用于取值并填充占位符）。",

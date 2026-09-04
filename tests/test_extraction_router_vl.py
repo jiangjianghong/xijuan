@@ -23,7 +23,10 @@ async def test_extraction_test_vl_mode_with_temp_config(client, fake_uploads, mo
     pdf_bytes = doc.tobytes()
     (fake_uploads / f"{file_id}.pdf").write_bytes(pdf_bytes)
 
+    captured = {}
+
     async def fake_vl_chat(messages, **kw):
+        captured["messages"] = messages
         return {
             "choices": [
                 {"message": {"content": '{"value": "5000", "reason": "见首页"}'}}
@@ -61,6 +64,13 @@ async def test_extraction_test_vl_mode_with_temp_config(client, fake_uploads, mo
         body = resp.json()["data"]
         assert body["extracted_value"] == "5000"
         assert body["reason"] == "见首页"
+        assert "请务必先输出 reason" in body["llm_input"]
+        assert body["llm_input"].index('"reason"') < body["llm_input"].index('"value"')
+        sent_prompt = captured["messages"][0]["content"]
+        if isinstance(sent_prompt, list):
+            sent_prompt = next(item["text"] for item in sent_prompt if item.get("type") == "text")
+        assert "请务必先输出 reason" in sent_prompt
+        assert sent_prompt.index('"reason"') < sent_prompt.index('"value"')
         assert body["search_results"][0]["type"] == "vl_meta"
         assert body["search_results"][0]["method"] == "vl_model"
     finally:

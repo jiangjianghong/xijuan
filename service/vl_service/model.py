@@ -6,7 +6,11 @@ from typing import Any
 
 import fitz
 
-from service.vl_service._common import build_image_messages, parse_vl_json_response
+from service.vl_service._common import (
+    append_reason_first_output_instruction,
+    build_image_messages,
+    parse_vl_json_response,
+)
 from utils.vl_client import render_pages_to_b64, resolve_target_pages, vl_chat
 
 
@@ -19,11 +23,11 @@ async def vl_model_extract(
     max_pages: int | None = None,
     max_pixels: int = 4_000_000,
 ) -> tuple[str, str, dict[str, Any]]:
-    """VL 全量抽取：渲染 page_range 页 → 一次调 VL → 直接产 {value, reason}。
+    """VL 全量抽取：渲染 page_range 页 → 一次调 VL → 先产出 reason 再产出 value。
 
     Args:
         file_bytes: PDF 二进制。
-        vl_extract_prompt: 用户配置的最终提示词，必须要求 VL 输出 {value, reason}。
+        vl_extract_prompt: 用户配置的最终提示词，实际发送时固定要求 VL 输出 {reason, value}。
         vl_system_prompt: 可选系统提示。
         page_range: "all" / "1-3,5" 等。
         max_pages: 候选页上限；None/0 表示不限。
@@ -54,7 +58,7 @@ async def vl_model_extract(
     b64_images = render_pages_to_b64(file_bytes, pages_0idx, scale=2.0, max_pixels=max_pixels)
 
     messages = build_image_messages(
-        prompt=vl_extract_prompt,
+        prompt=append_reason_first_output_instruction(vl_extract_prompt),
         b64_images=b64_images,
         system_prompt=vl_system_prompt,
     )

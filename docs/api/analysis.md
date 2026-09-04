@@ -64,7 +64,7 @@ _data 为数组，每个元素：_
 | rule_id | string | 是 | — | 规则 ID，匹配 `^[a-zA-Z0-9_]+$`（最长 100），**全局唯一**。 |
 | type_id | string | 否 | default | 归属文档类型，默认 `default`。 |
 | rule_name | string | 是 | — | 规则显示名（最长 200）。 |
-| rule_type | RuleTypeEnum | 是 | — | 规则类型：`judge`（LLM 判断）/ `calc`（numexpr 计算）/ `custom`（LLM 自由生成，返回 `{value, reason}`）。 |
+| rule_type | RuleTypeEnum | 是 | — | 规则类型：`judge`（LLM 判断，先输出 reason 再输出 result）/ `calc`（numexpr 计算）/ `custom`（LLM 自由生成，先输出 reason 再输出 value，返回 `{reason, value}`）。 |
 | expression | string | 是 | — | 表达式 / 提示词，须含至少一个 `<field_result>字段ID</field_result>` 占位符（渲染时替换为字段提取值）。 |
 | system_prompt | string | 否 | — | [judge/custom] 调控 LLM 的 system prompt；`calc` 类型忽略。 |
 | depend_fields | array[string] | 否 | — | 依赖的字段 ID 列表（用于取值并填充占位符）。 |
@@ -123,7 +123,7 @@ _data 为数组，每个元素：_
 | 409 | `rule_id` 已被其它 `type_id` 占用 | ResponseWrapper |
 | 422 | `expression` 缺 `<field_result>` 占位符 / 启用 `web_search` 时的校验失败 | Pydantic 错误体 |
 
-> `system_prompt` 对 `judge` / `custom` 生效；`calc` 用 `numexpr` 计算，结果按 `analysis.calc_precision`（默认 2 位）保留小数。`custom` 走 LLM 自由生成 `{value, reason}`，`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串；开启格式化但 `output_schema` 为空 / 结构非法 → **422**。
+> `system_prompt` 对 `judge` / `custom` 生效；`calc` 用 `numexpr` 计算，结果按 `analysis.calc_precision`（默认 2 位）保留小数。`custom` 走 LLM 自由生成，要求先输出 reason 再输出 value（返回 `{reason, value}`），`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串；开启格式化但 `output_schema` 为空 / 结构非法 → **422**。
 
 ## 删除分析规则
 

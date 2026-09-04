@@ -35,7 +35,7 @@
 |---|---|---|---|
 | `judge` | LLM 判断 | `"true"` / `"false"` 字符串 + 理由 | 是否达标、是否盈利、是否存在风险等条件判断 |
 | `calc` | `numexpr` 数学计算 | 数值字符串（默认保留 2 位小数）+ 计算式 | 利润率、负债率、净资产等比率/差值 |
-| `custom` | LLM 自由生成 | `{value, reason}`；格式化时 `value` 为结构化 JSON 字符串 | 摘要、要素归纳、结构化抽取等开放式产出 |
+| `custom` | LLM 自由生成 | 先输出 `reason` 再输出 `value`，返回 `{reason, value}`；格式化时 `value` 为结构化 JSON 字符串 | 摘要、要素归纳、结构化抽取等开放式产出 |
 
 数据流：
 
@@ -152,7 +152,7 @@ analysis_rule     →  analysis_result     （判断/计算结论，本手册的
 你只需在 `expression` 里用**自然语言**把「已知条件 + 要判断什么」写清楚。系统会在发给 LLM 前**自动追加**一段固定的 JSON 输出指令，要求模型返回：
 
 ```json
-{"result": "true 或 false", "reason": "判断理由/依据"}
+{"reason": "判断理由/依据", "result": "true 或 false"}
 ```
 
 因此：
@@ -265,7 +265,7 @@ analysis_rule     →  analysis_result     （判断/计算结论，本手册的
 
 ## 5. custom 自定义规则
 
-用 LLM 按 `expression` 提示词**自由生成**结果，返回 `{value, reason}`。适合判断 / 计算之外的开放式产出：摘要、要素归纳、把多个字段整合成一段结构化 JSON 等。
+用 LLM 按 `expression` 提示词**自由生成**结果，要求先输出 `reason` 再输出 `value`，返回 `{reason, value}`。适合判断 / 计算之外的开放式产出：摘要、要素归纳、把多个字段整合成一段结构化 JSON 等。
 
 ### 基础结构（非格式化）
 
@@ -295,7 +295,7 @@ analysis_rule     →  analysis_result     （判断/计算结论，本手册的
 
 ### 工作原理
 
-与 judge 一样，系统会在 `expression` 后**自动追加**一段 JSON 输出指令，要求模型返回 `{"value": …, "reason": …}`——你**不用**自己在提示词里写格式要求。`value` 是主结果，`reason` 是模型给出的依据。
+与 judge 一样，系统会在 `expression` 后**自动追加**一段 JSON 输出指令，要求模型返回 `{"reason": …, "value": …}` 且先输出 reason——你**不用**自己在提示词里写格式要求。`value` 是主结果，`reason` 是模型给出的依据。
 
 ### 格式化输出（`is_formatted=1` + `output_schema`）
 

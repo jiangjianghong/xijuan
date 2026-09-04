@@ -375,7 +375,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 | `vl_method` | ENUM | NULLABLE | NULL | 【VL 类】VL 抽取方法 |
 | `vl_config` | JSON | NULLABLE | NULL | 【VL 类】VL 方法参数（按 vl_method 不同） |
 | `vl_system_prompt` | TEXT | NULLABLE | NULL | 【VL 类】VL 系统提示词（可选） |
-| `vl_extract_prompt` | TEXT | NULLABLE | NULL | 【VL 类】VL 最终提取提示词（vl 类必填，含 `value`/`reason` 关键字） |
+| `vl_extract_prompt` | TEXT | NULLABLE | NULL | 【VL 类】VL 最终提取提示词（vl 类必填，含 `reason`/`value` 关键字；实际发送时固定要求先 reason 后 value） |
 
 #### 索引
 
@@ -393,7 +393,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 |----|------|
 | `table` | 从 file_table 表中匹配表格后送 LLM 抽取 |
 | `text` | 从 file_content / file_chunk / Milvus 检索后送 LLM 抽取 |
-| `vl` | 直接读 `uploads/{file_id}.pdf`，由 VL 视觉模型直出 `{value, reason}` JSON，**不**走文本 LLM 二次抽取 |
+| `vl` | 直接读 `uploads/{file_id}.pdf`，由 VL 视觉模型先输出 reason 再输出 value，直出 `{reason, value}` JSON，**不**走文本 LLM 二次抽取 |
 
 **table_match_type（表格匹配方式）**
 
@@ -612,7 +612,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
     "max_pixels": 4000000
   },
   "vl_system_prompt": null,
-  "vl_extract_prompt": "请基于以上图片提取「资产总额」。\n请只返回 JSON：{\"value\": \"数值（含单位）\", \"reason\": \"看到的页码与位置\"}\n未找到返回：{\"value\": \"\", \"reason\": \"未找到\"}"
+  "vl_extract_prompt": "请基于以上图片提取「资产总额」。\n请务必先输出 reason，再输出 value；请只返回 JSON：{\"reason\": \"看到的页码与位置\", \"value\": \"数值（含单位）\"}\n未找到返回：{\"reason\": \"未找到\", \"value\": \"\"}"
 }
 ```
 
@@ -655,7 +655,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 |----|------|-----------------|
 | `judge` | 判断类 | 发送给 LLM 进行判断的完整提示词 |
 | `calc` | 计算类 | 数学表达式（支持 +、-、*、/、()） |
-| `custom` | 自定义类 | 发送给 LLM 自由生成的完整提示词（返回 `{value, reason}`；`is_formatted=1` 时按 `output_schema` 产出结构化 JSON） |
+| `custom` | 自定义类 | 发送给 LLM 自由生成的完整提示词（先输出 reason 再输出 value，返回 `{reason, value}`；`is_formatted=1` 时按 `output_schema` 产出结构化 JSON） |
 
 #### depend_fields JSON 结构
 

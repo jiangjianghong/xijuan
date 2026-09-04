@@ -81,7 +81,7 @@
 |----|------|
 | `judge` | LLM 判断，返回 `true`/`false`（也可能是 LLM 自由文本判断结果） |
 | `calc` | `numexpr` 计算表达式，按 `analysis.calc_precision`（默认 2 位）保留小数 |
-| `custom` | LLM 自由生成，返回 `{value, reason}`；`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串 |
+| `custom` | LLM 自由生成，先输出 reason 再输出 value，返回 `{reason, value}`；`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串 |
 
 ---
 

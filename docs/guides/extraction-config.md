@@ -232,7 +232,7 @@ JSON 示例和排错清单为主。
 
 ## 4. VL 类（vl）
 
-直接读 `uploads/{file_id}.pdf` 渲染成图给视觉模型，**不**依赖 MinerU 的 Markdown、**不**走文本 LLM 二次抽取，由 VL 直接输出 `{value, reason}` JSON。适合扫描图、复杂版式、跨页信息。
+直接读 `uploads/{file_id}.pdf` 渲染成图给视觉模型，**不**依赖 MinerU 的 Markdown、**不**走文本 LLM 二次抽取，由 VL 先输出 reason 再输出 value，直接产出 `{reason, value}` JSON。适合扫描图、复杂版式、跨页信息。
 
 **前置条件：**
 - `configs/config.yaml` 的 `vl_model:` 节配好 `base_url` / `api_key` / `model`（默认 dashscope qwen-vl-max），见 [configuration](configuration.md)。
@@ -246,7 +246,7 @@ JSON 示例和排错清单为主。
 | `vl_progressive` | 逐批 + 伪历史累积，模型自判相关性 | 页数/`batch_size` + 1 聚合 | 串行 | 长文档、相关页分散 |
 | `vl_locate` | 两轮：缩略图网格并行定位 → 关键页高清提取 | 页数/`grid_pages` + 1 提取 | 第一轮并行 | 长文档、要快速定位关键页 |
 
-**三法共通：** `vl_extract_prompt` 是最终提取 prompt，**必须含 `value` 与 `reason` 关键字**（大小写不敏感，因为要 VL 直接吐 JSON）；`vl_system_prompt` 可空。后端 `service/vl_service/_defaults.py` 与前端 UI 都预填了默认 prompt，保持默认即可跑通。全局 VL 并发上限由 `concurrency.global_vl`（默认 8）控制；字段抽取阶段还受 `concurrency.global_extraction` 与 `concurrency.task_extraction` 限制。
+**三法共通：** `vl_extract_prompt` 是最终提取 prompt，**必须含 `reason` 与 `value` 关键字**（大小写不敏感；实际发送时固定要求先输出 reason，再输出 value）；`vl_system_prompt` 可空。后端 `service/vl_service/_defaults.py` 与前端 UI 都预填了默认 prompt，保持默认即可跑通。全局 VL 并发上限由 `concurrency.global_vl`（默认 8）控制；字段抽取阶段还受 `concurrency.global_extraction` 与 `concurrency.task_extraction` 限制。
 
 **三种方法共用的页码配置**（都写在 `vl_config` 里）：
 
@@ -269,7 +269,7 @@ JSON 示例和排错清单为主。
   "source_type": "vl",
   "vl_method": "vl_model",
   "vl_config": { "page_range": "1-1", "max_pixels": 4000000 },
-  "vl_extract_prompt": "请基于以上图片提取企业全称。\n只返回 JSON：{\"value\": \"企业全称\", \"reason\": \"在哪一页/位置看到\"}\n未找到返回：{\"value\": \"\", \"reason\": \"未找到\"}"
+  "vl_extract_prompt": "请基于以上图片提取企业全称。\n请务必先输出 reason，再输出 value；只返回 JSON：{\"reason\": \"在哪一页/位置看到\", \"value\": \"企业全称\"}\n未找到返回：{\"reason\": \"未找到\", \"value\": \"\"}"
 }
 ```
 
@@ -284,7 +284,7 @@ JSON 示例和排错清单为主。
   "source_type": "vl",
   "vl_method": "vl_progressive",
   "vl_config": { "field_hints": "签署日期、签约方、合同金额、有效期", "batch_size": 2 },
-  "vl_extract_prompt": "基于以上累积摘要，综合整理合同关键信息。\n只返回 JSON：{\"value\": \"日期/签约方/金额/有效期，多项用分号分隔\", \"reason\": \"分别在哪些页看到\"}"
+  "vl_extract_prompt": "基于以上累积摘要，综合整理合同关键信息。\n请务必先输出 reason，再输出 value；只返回 JSON：{\"reason\": \"分别在哪些页看到\", \"value\": \"日期/签约方/金额/有效期，多项用分号分隔\"}"
 }
 ```
 
@@ -301,7 +301,7 @@ JSON 示例和排错清单为主。
   "source_type": "vl",
   "vl_method": "vl_locate",
   "vl_config": { "field_hints": "资产总额、负债总额、净利润", "grid_pages": 6, "grid_cols": 3, "key_pages_limit": 6 },
-  "vl_extract_prompt": "请从以上高清财报页提取「资产总额」金额。\n只返回 JSON：{\"value\": \"金额（含单位）\", \"reason\": \"看到的页码与位置\"}\n未找到返回：{\"value\": \"\", \"reason\": \"未找到\"}"
+  "vl_extract_prompt": "请从以上高清财报页提取「资产总额」金额。\n请务必先输出 reason，再输出 value；只返回 JSON：{\"reason\": \"看到的页码与位置\", \"value\": \"金额（含单位）\"}\n未找到返回：{\"reason\": \"未找到\", \"value\": \"\"}"
 }
 ```
 
@@ -405,7 +405,7 @@ JSON 示例和排错清单为主。
     "max_pages": 3,
     "field_hints": "公章、骑缝章"
   },
-  "vl_extract_prompt": "判断这几页是否盖章，输出 JSON {value, reason}"
+  "vl_extract_prompt": "判断这几页是否盖章，请先输出 reason，再输出 value；输出 JSON {\"reason\": \"判断依据\", \"value\": \"结果\"}"
 }
 ```
 
@@ -464,7 +464,7 @@ JSON 示例和排错清单为主。
 |---|---|
 | `text_extract_prompt` | 含 ≥1 个 `<search_result>标签</search_result>`（`use_llm=0` 放宽） |
 | `table_extract_prompt` | 含 ≥1 个 `<search_result>标签</search_result>`（`use_llm=0` 放宽） |
-| `vl_extract_prompt` | 含 `value` 与 `reason` 关键字（大小写不敏感）；`source_type=vl` 时必填，`use_llm` **不**放宽 |
+| `vl_extract_prompt` | 含 `reason` 与 `value` 关键字（大小写不敏感；实际发送时固定要求先 reason 后 value）；`source_type=vl` 时必填，`use_llm` **不**放宽 |
 | `vl_method` | `source_type=vl` 时必填 |
 | `batch_prompt_template`（vl_progressive 自定义时） | 含 `{history}` `{field_hints}` `{page_label}` `{total_pages}` |
 | `locate_prompt_template`（vl_locate 自定义时） | 含 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}` |

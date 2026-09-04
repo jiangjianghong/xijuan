@@ -31,7 +31,7 @@ const RuleConfig = {
 
     // VL 默认提示词（与后端 service/vl_service/_defaults.py 严格保持一致）。
     VL_DEFAULTS: {
-        EXTRACT_PROMPT: '请基于以上图片提取相关信息。\n请只返回 JSON 格式：{"value": "提取到的内容（多个用逗号分隔）", "reason": "简要说明依据，例如在哪一页或哪个位置看到"}\n如果未找到，返回：{"value": "", "reason": "未找到"}',
+        EXTRACT_PROMPT: '请基于以上图片提取相关信息。\n请务必先输出 reason（分步、可核验的分析和判定依据），再输出 value（最终要求输出的结果）。请将 reason 写成一步步的分析和判定过程；必须先完成分析，再给出结论；不得在分析尚未完成时提前猜测最终结果。\n请只返回 JSON 格式：{"reason": "简要说明依据，例如在哪一页或哪个位置看到", "value": "提取到的内容（多个用逗号分隔）"}\n如果未找到，返回：{"reason": "未找到", "value": ""}',
     },
 
     // 提示词默认模板缓存，来源为后端 GET /extraction/match-prompt-defaults。
@@ -1068,8 +1068,8 @@ const RuleConfig = {
                         <label class="form-label">最终提取提示词</label>
                         ${this.refBtnsHtml('text', 'fm-vl-extract-prompt')}
                     </div>
-                    <textarea class="form-textarea" id="fm-vl-extract-prompt" rows="6" placeholder='必须含 value/reason 关键字，要求 VL 直接输出 {"value":..., "reason":...} JSON'>${Utils.escapeHtml(field.vl_extract_prompt || this.VL_DEFAULTS.EXTRACT_PROMPT)}</textarea>
-                    <div class="form-hint">VL 直接产出 JSON，不再走第二次文本 LLM。提示词中需明确要求 value/reason 两个键。</div>
+                    <textarea class="form-textarea" id="fm-vl-extract-prompt" rows="6" placeholder='必须含 reason/value 关键字，要求 VL 先输出 reason 再输出 value：{"reason":..., "value":...}'>${Utils.escapeHtml(field.vl_extract_prompt || this.VL_DEFAULTS.EXTRACT_PROMPT)}</textarea>
+                    <div class="form-hint">VL 直接产出 JSON，不再走第二次文本 LLM。实际发送时系统会固定要求先输出 reason，再输出 value。</div>
                 </div>
             </div>
         `;

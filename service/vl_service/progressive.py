@@ -6,7 +6,11 @@ from typing import Any, Awaitable, Callable
 
 import fitz
 
-from service.vl_service._common import build_image_messages, parse_vl_json_response
+from service.vl_service._common import (
+    append_reason_first_output_instruction,
+    build_image_messages,
+    parse_vl_json_response,
+)
 from service.vl_service._defaults import DEFAULT_BATCH_PROMPT
 from utils.vl_client import render_pages_to_b64, resolve_target_pages, vl_chat
 
@@ -40,13 +44,15 @@ async def vl_progressive_extract(
     max_pixels: int = 4_000_000,
     batch_prompt_template: str | None = None,
     progress_cb: Callable[[dict], Awaitable[None]] | None = None,
+    capture_final_prompt: bool = False,
 ) -> tuple[str, str, dict[str, Any]]:
     """VL 逐批扫描 + 最后一次文本聚合。
 
     每批：渲染 batch_size 页，VL 自判相关性，输出摘要或"无相关信息"。
-    最后：用纯文本（无图）调一次 VL，把累积摘要 + vl_extract_prompt 合并产出 {value, reason}。
+    最后：用纯文本（无图）调一次 VL，把累积摘要 + vl_extract_prompt 合并，先产出 reason 再产出 value。
 
     page_range / max_pages 限定扫描范围；不传则扫全文（行为与限页前一致）。
+    capture_final_prompt 仅供调试使用：将真实聚合 prompt 放入 refs；无相关摘要时为空串。
     """
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     total_pages = len(doc)
@@ -65,6 +71,8 @@ async def vl_progressive_extract(
     }
 
     if total_pages == 0 or not target_pages:
+        if capture_final_prompt:
+            refs["final_prompt"] = ""
         return "", "", refs
 
     template = batch_prompt_template or DEFAULT_BATCH_PROMPT
@@ -129,12 +137,18 @@ async def vl_progressive_extract(
 
     # 最终聚合（文本无图）
     if not accumulated:
+        if capture_final_prompt:
+            refs["final_prompt"] = ""
         return "", "文档全程无相关信息", refs
 
     accumulated_text = "\n".join(accumulated)
     final_prompt = (
-        f"以下是逐页扫描得到的累积信息：\n{accumulated_text}\n\n{vl_extract_prompt}"
+        f"以下是逐页扫描得到的累积信息：\n{accumulated_text}\n\n"
+        f"{append_reason_first_output_instruction(vl_extract_prompt)}"
     )
+    if capture_final_prompt:
+        # 仅供调试展示；生产抽取默认不把包含文档内容的 prompt 放入 refs。
+        refs["final_prompt"] = final_prompt
     final_messages = build_image_messages(
         prompt=final_prompt, b64_images=[], system_prompt=vl_system_prompt
     )

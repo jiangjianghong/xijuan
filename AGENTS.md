@@ -128,7 +128,7 @@ Three source types:
   - `vl_model`：指定页全部塞 VL 一次出 JSON。配置 `page_range`。
   - `vl_progressive`：分批扫描 + 伪历史累积 + 最后文本聚合。配置 `field_hints`、`batch_size`，可自定义 `batch_prompt_template`。
   - `vl_locate`：缩略图网格并行定位 + 关键页高清提取。配置 `field_hints`、`grid_pages`、`max_concurrent`，可自定义 `locate_prompt_template`。
-  - VL 直接产出 `{value, reason}` JSON，**不**走文本 LLM 二次抽取；`source_refs` 存为 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, ...}}`。
+  - VL 直接产出 `{reason, value}` JSON，**不**走文本 LLM 二次抽取；`source_refs` 存为 `{"_vl": {method, total_pages, key_pages, vl_total_tokens, ...}}`。
   - 全局并发 `vl_model.global_max_concurrency`（默认 8）通过 `utils/vl_client.py` 的 asyncio.Semaphore 治理。
 - **页码顶层化（`pages` / `source_pages`）**：页码是与 `value`/`reason` 平级的**顶层字段**，不在 `source_refs` 里。`pages` = 模型自报（text/table 的 LLM 输出可带 `pages`，经 `parse_llm_json_response` 归一化），落库到 `extraction_result.model_pages` 列；VL / `use_llm=0` / 未返回时为 `[]`。`source_pages` = 可用页码（`pages` 优先、程序命中页兜底），由 `derive_source_pages()` 输出时现算、**不落库**，**键恒存在但可能为 `[]`**。两者都是**已展开的 int 数组**，不会出现 `"12-15"`（单区间展开上限 5 页）。三个 `extract_*_field` 返回四元组 `(value, reason, source_refs, model_pages)`。存量老数据的值在 `source_refs._model_pages`，读取走 `read_model_pages()` 兼容、输出经 `strip_legacy_model_pages()` 剔除。
   - PDF 字节由 `blue_print/file_router.py` 在上传时持久化到 `uploads/{file_id}.pdf`，由 DELETE / 批量删除 / 文档类型级联删除联动清理；启动时 `cleanup_orphan_pdfs` 兜底；另有 `storage` 保留策略按总量/时长滚动清理（见 Configuration 节）。

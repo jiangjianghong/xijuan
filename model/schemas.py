@@ -425,7 +425,7 @@ class ExtractionFieldCreate(BaseModel):
             if "value" not in lower or "reason" not in lower:
                 raise ValueError(
                     "vl_extract_prompt 必须包含 'value' 与 'reason' 关键字（大小写不敏感），"
-                    "因为最终要求 VL 输出 {value, reason} JSON"
+                    "因为最终要求 VL 先输出 reason 再输出 value，返回 {reason, value} JSON"
                 )
         return v
 

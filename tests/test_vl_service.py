@@ -340,6 +340,113 @@ async def test_vl_progressive_extract_progress_callback(monkeypatch):
     assert progress_events[0]["has_info"] is True
 
 
+async def test_vl_progressive_extract_can_capture_actual_final_prompt(monkeypatch):
+    """调试场景可拿到包含累积扫描摘要的最终聚合 prompt。"""
+    from service.vl_service import progressive as vl_progressive_module
+
+    async def fake_vl_chat(messages, **kw):
+        content = messages[-1]["content"]
+        if isinstance(content, list):
+            return {
+                "choices": [{"message": {"content": "第1页：金额 100"}}],
+                "usage": {"total_tokens": 5},
+            }
+        return {
+            "choices": [{"message": {"content": '{"reason":"依据摘要","value":"100"}'}}],
+            "usage": {"total_tokens": 5},
+        }
+
+    monkeypatch.setattr("service.vl_service.progressive.vl_chat", fake_vl_chat)
+
+    pdf = _make_pdf_bytes(1)
+    _, _, refs = await vl_progressive_module.vl_progressive_extract(
+        pdf,
+        vl_extract_prompt="根据摘要提取金额",
+        vl_system_prompt=None,
+        field_hints="金额",
+        batch_size=1,
+        capture_final_prompt=True,
+    )
+
+    assert "第1页：金额 100" in refs["final_prompt"]
+    assert "根据摘要提取金额" in refs["final_prompt"]
+    assert refs["final_prompt"].index('"reason"') < refs["final_prompt"].index('"value"')
+
+
+async def test_vl_progressive_capture_marks_missing_final_prompt(monkeypatch):
+    """没有任何相关批次时，不应伪造一个未发送的最终聚合 prompt。"""
+    from service.vl_service import progressive as vl_progressive_module
+
+    calls = []
+
+    async def fake_vl_chat(messages, **kw):
+        calls.append(messages)
+        return {
+            "choices": [{"message": {"content": "无相关信息"}}],
+            "usage": {"total_tokens": 5},
+        }
+
+    monkeypatch.setattr("service.vl_service.progressive.vl_chat", fake_vl_chat)
+
+    _, reason, refs = await vl_progressive_module.vl_progressive_extract(
+        _make_pdf_bytes(1),
+        vl_extract_prompt="根据摘要提取金额",
+        vl_system_prompt=None,
+        field_hints="金额",
+        batch_size=1,
+        capture_final_prompt=True,
+    )
+
+    assert reason == "文档全程无相关信息"
+    assert len(calls) == 1
+    assert "final_prompt" in refs
+    assert refs["final_prompt"] == ""
+
+
+async def test_vl_debug_stream_does_not_repeat_captured_prompt_in_result(
+    tmp_path, monkeypatch
+):
+    """SSE 的 prompt 事件展示聚合文本，result 事件不重复携带全文。"""
+    from types import SimpleNamespace
+
+    from service import extraction_service
+
+    file_id = "debug_progressive_prompt"
+    pdf_path = tmp_path / f"{file_id}.pdf"
+    pdf_path.write_bytes(_make_pdf_bytes(1))
+    monkeypatch.setattr(extraction_service.vl_client, "pdf_path", lambda _: pdf_path)
+
+    async def fake_progressive(*args, **kwargs):
+        assert kwargs["capture_final_prompt"] is True
+        return "100", "依据", {
+            "method": "vl_progressive",
+            "key_pages": None,
+            "final_prompt": "摘要\n\n固定 reason-first 约束",
+        }
+
+    monkeypatch.setattr(
+        extraction_service.vl_service,
+        "vl_progressive_extract",
+        fake_progressive,
+    )
+
+    field = SimpleNamespace(
+        vl_method="vl_progressive",
+        vl_config={},
+        vl_extract_prompt="提取金额",
+        vl_system_prompt=None,
+    )
+    events = [
+        event
+        async for event in extraction_service._vl_field_extraction_stream(file_id, field)
+    ]
+
+    prompt_event = next(event for event in events if event["event"] == "prompt")
+    result_event = next(event for event in events if event["event"] == "result")
+    assert prompt_event["data"]["user_prompt"] == "摘要\n\n固定 reason-first 约束"
+    assert "final_prompt" not in result_event["data"]["source_refs"]["_vl"]
+
+
 async def test_vl_progressive_extract_custom_batch_template(monkeypatch):
     """自定义模板替代默认。"""
     from service.vl_service import progressive as vl_progressive_module

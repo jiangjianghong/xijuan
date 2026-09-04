@@ -11,7 +11,7 @@
 - **智能分块**：递归字符分割，表格保持完整性
 - **向量检索**：Milvus 存储，支持 5 种文本检索 + 4 种表格匹配
 - **字段提取（文本 / 表格类）**：LLM 驱动，可配置 9 种检索/匹配规则后送 LLM 抽取
-- **字段提取（VL 类）**：基于 PDF 视觉模型端到端抽取，3 种方法——`vl_model`（全量）/ `vl_progressive`（逐批扫描）/ `vl_locate`（缩略图定位+高清提取），由 VL 直出 `{value, reason}` JSON，不经文本 LLM 二次抽取
+- **字段提取（VL 类）**：基于 PDF 视觉模型端到端抽取，3 种方法——`vl_model`（全量）/ `vl_progressive`（逐批扫描）/ `vl_locate`（缩略图定位+高清提取），由 VL 先输出 reason 再输出 value，直出 `{reason, value}` JSON，不经文本 LLM 二次抽取
 - **逻辑分析**：支持判断类（LLM）和计算类（numexpr）规则
 - **三种执行模式**：async（异步）、sync（同步）、stream（SSE 流式）
 - **细粒度流式事件**：支持逐字段、逐规则实时推送提取和分析进度
@@ -38,7 +38,7 @@
 | 提取 | 向量/文本检索结果（text/table）或 `uploads/{file_id}.pdf`（vl） | 字段值 | LLM + 5 种检索方式 / VL 视觉模型 |
 | 分析 | 提取字段值 | 判断/计算结果 | LLM / numexpr |
 
-> 字段提取支持 `table` / `text` / `vl` 三类。前两类经检索后送文本 LLM；`vl` 类直接读上传时持久化的 `uploads/{file_id}.pdf`，由 VL 模型一步输出 JSON。
+> 字段提取支持 `table` / `text` / `vl` 三类。前两类经检索后送文本 LLM；`vl` 类直接读上传时持久化的 `uploads/{file_id}.pdf`，由 VL 模型先输出 reason 再输出 value。
 
 ## 快速开始
 

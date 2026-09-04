@@ -21,11 +21,13 @@ from model.schemas import (
 )
 from model.tables import ExtractionField, ExtractionResult, File as FileModel, FileContent, FileTable
 from service.extraction_service import (
+    JSON_OUTPUT_INSTRUCTION,
     collect_depend_fields,
     derive_source_pages,
     extract_table_field,
     extract_text_field,
     extract_vl_field,
+    replace_search_result_placeholders,
     resolve_advanced_field_from_db,
     search_chunk_db,
     search_context,
@@ -41,8 +43,31 @@ from service.match_prompts import (
     MATCH_INDEX_OUTPUT_INSTRUCTION,
 )
 from service.vl_service._defaults import DEFAULT_BATCH_PROMPT, DEFAULT_LOCATE_PROMPT
+from service.vl_service._common import append_reason_first_output_instruction
 
 router = APIRouter(prefix="/extraction", tags=["extraction"])
+
+
+def _render_debug_llm_input(field: ExtractionField, refs: Dict[str, Any] | None) -> str:
+    """还原同步调试接口实际发送给模型的最终 prompt。"""
+    if field.source_type == "vl":
+        vl_refs = (refs or {}).get("_vl") or {}
+        if "final_prompt" in vl_refs:
+            return vl_refs["final_prompt"] or ""
+        return append_reason_first_output_instruction(field.vl_extract_prompt or "")
+
+    prompt = (
+        field.table_extract_prompt
+        if field.source_type == "table"
+        else field.text_extract_prompt
+    ) or ""
+    if getattr(field, "use_llm", 1) == 0:
+        return prompt
+
+    results_by_label = (refs or {}).get("_texts") or {}
+    if results_by_label:
+        prompt = replace_search_result_placeholders(prompt, results_by_label)
+    return prompt + JSON_OUTPUT_INSTRUCTION
 
 
 @router.get("/match-prompt-defaults", response_model=ResponseWrapper)
@@ -429,12 +454,14 @@ async def test_extraction(
             ]
 
             extracted_value, reason, refs, model_pages = await extract_table_field(file_id, field, snapshot)
-            llm_input = field.table_extract_prompt or ""
+            llm_input = _render_debug_llm_input(field, refs)
             llm_output = extracted_value
 
         elif field.source_type == "vl":
             # VL 类提取：直接调用 extract_vl_field，附带元信息
-            extracted_value, reason, refs, model_pages = await extract_vl_field(file_id, field)
+            extracted_value, reason, refs, model_pages = await extract_vl_field(
+                file_id, field, capture_final_prompt=True
+            )
             search_results = (
                 [
                     {
@@ -448,7 +475,7 @@ async def test_extraction(
                 if refs
                 else []
             )
-            llm_input = field.vl_extract_prompt or ""
+            llm_input = _render_debug_llm_input(field, refs)
             llm_output = extracted_value
 
         else:
@@ -478,7 +505,7 @@ async def test_extraction(
 
             # 执行提取
             extracted_value, reason, refs, model_pages = await extract_text_field(file_id, field, snapshot)
-            llm_input = field.text_extract_prompt or ""
+            llm_input = _render_debug_llm_input(field, refs)
             llm_output = extracted_value
 
     except Exception as e:

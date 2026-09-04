@@ -29,8 +29,9 @@ from utils.concurrency import (
     work_item,
 )
 from utils.llm_client import chat_completion
-from utils.text_utils import normalize_cjk_quotes, salvage_reason, salvage_value_reason
 from utils.output_schema import render_schema_prompt
+from utils.prompt_contract import REASON_FIRST_RESULT_CONSTRAINT, REASON_FIRST_VALUE_CONSTRAINT
+from utils.text_utils import normalize_cjk_quotes, salvage_reason, salvage_value_reason
 from utils.web_search import bocha_web_search
 
 
@@ -334,6 +335,63 @@ def validate_field_values(
     return True, ""
 
 
+JUDGE_JSON_INSTRUCTION = f"""
+
+请根据以上内容进行判断，严格按照以下要求以 JSON 格式返回结果。
+
+【输出格式严格要求】：
+1. 必须且只能输出合法的 JSON 对象，直接输出大括号 {{}} 及其内容，不要带有 ```json 或 ``` 等任何 Markdown 标识符。
+2. JSON 结构的键和值，其最外层必须使用标准的英文双引号包裹。
+3. 在 reason 字段的文本内容中，如果需要引用文字，请一律使用中文双引号“”，绝对不能在内容中嵌套使用英文双引号，以免破坏 JSON 结构。
+4. {REASON_FIRST_RESULT_CONSTRAINT}
+
+【通用输出示例】（请注意观察：外层使用英文引号，内层引用使用中文引号）：
+{{"reason": "分步、可核验的判断依据", "result": "true"}}"""
+
+
+def build_judge_prompt(resolved_expression: str, system_prompt: str = "") -> str:
+    """构造 judge 的统一用户提示词；system_prompt 参数保留以兼容调用方。"""
+    del system_prompt
+    return f"{resolved_expression}\n{JUDGE_JSON_INSTRUCTION}"
+
+
+def _normalize_judge_result(raw_result: str) -> str:
+    """将 judge 的原始 result 归一化为 true/false 或原值。"""
+    result_raw = str(raw_result or "").lower().strip()
+    if "true" in result_raw or "是" in result_raw:
+        return "true"
+    if "false" in result_raw or "否" in result_raw:
+        return "false"
+    return result_raw
+
+
+def _salvage_judge_result(response: str) -> tuple[str, str]:
+    """从非法 JSON 中按字段名抢救 judge 的 result/reason，兼容字段顺序。"""
+    reason = salvage_reason(response)
+    result_matches = list(re.finditer(
+        r'"result"\s*:\s*(?:"([^"]*)"|([^,}\s]+))', response, re.DOTALL
+    ))
+    reason_matches = list(re.finditer(r'"reason"\s*:\s*"', response, re.DOTALL))
+    if result_matches:
+        # reason 文本可能引用类似 ``"result": "true"``，按实际字段顺序
+        # 选择末尾/开头的 result，避免把引用内容误当成最终判定。
+        if reason_matches:
+            reason_first = reason_matches[0].start() < result_matches[0].start()
+            match = result_matches[-1] if reason_first else result_matches[0]
+        else:
+            match = result_matches[0]
+        raw_result = match.group(1) if match.group(1) is not None else match.group(2)
+        return _normalize_judge_result(raw_result), reason
+
+    # 无 result 键时保留原有宽松兜底，兼容纯文本 true/false 响应。
+    response_lower = response.lower()
+    if "true" in response_lower or "是" in response_lower:
+        return "true", reason
+    if "false" in response_lower or "否" in response_lower:
+        return "false", reason
+    return response_lower, reason
+
+
 async def execute_judge(resolved_expression: str, *, system_prompt: str = "") -> Tuple[str, str]:
     """执行判断类规则：将表达式发送给 LLM，返回 true/false 及理由。
 
@@ -344,17 +402,7 @@ async def execute_judge(resolved_expression: str, *, system_prompt: str = "") ->
     Returns:
         (result, reason) 元组，result 为 true/false 字符串。
     """
-    prompt = f"""{resolved_expression}
-
-请根据以上内容进行判断，严格按照以下要求以 JSON 格式返回结果。
-
-【输出格式严格要求】：
-1. 必须且只能输出合法的 JSON 对象，直接输出大括号 {{}} 及其内容，不要带有 ```json 或 ``` 等任何 Markdown 标识符。
-2. JSON 结构的键和值，其最外层必须使用标准的英文双引号包裹。
-3. 在 reason 字段的文本内容中，如果需要引用文字，请一律使用中文双引号“”，绝对不能在内容中嵌套使用英文双引号，以免破坏 JSON 结构。
-
-【通用输出示例】（请注意观察：外层使用英文引号，内层引用使用中文引号）：
-{{"result": "true", "reason": "用户输入的“A”与文件抽取出的“B”指代同一主体，核心名称一致。"}}"""
+    prompt = build_judge_prompt(resolved_expression)
 
     try:
         sys_prompt = (system_prompt or "").strip()
@@ -407,19 +455,10 @@ async def execute_judge(resolved_expression: str, *, system_prompt: str = "") ->
                 pass
 
         # JSON 解析失败，尝试从文本中提取结果；reason 用 salvage 抢救（模型吐裸英文双引号时常见）
-        salvaged_reason = salvage_reason(response)
-        response_lower = response.lower()
-        if "true" in response_lower:
-            return "true", salvaged_reason
-        elif "false" in response_lower:
-            return "false", salvaged_reason
-        elif "是" in response_lower:
-            return "true", salvaged_reason
-        elif "否" in response_lower:
-            return "false", salvaged_reason
-        else:
+        result_value, salvaged_reason = _salvage_judge_result(response)
+        if result_value not in {"true", "false"}:
             logger.warning("LLM 判断返回非标准值: {}", response)
-            return response_lower, salvaged_reason
+        return result_value, salvaged_reason
 
     except Exception as e:
         logger.error("LLM 判断执行失败: {}", e)
@@ -474,10 +513,11 @@ async def execute_calc(resolved_expression: str, precision: int = 2) -> Tuple[st
 
 # ── custom 自定义规则 ────────────────────────────────────────
 
-CUSTOM_JSON_INSTRUCTION_PLAIN = """
+CUSTOM_JSON_INSTRUCTION_PLAIN = f"""
 
-请根据以上内容生成结果，以 JSON 格式返回，包含 value（结果内容）和 reason（生成依据）两个字段：
-{"value": "生成的结果内容", "reason": "说明依据"}
+请根据以上内容生成结果，以 JSON 格式返回，包含 reason（生成依据）和 value（结果内容）两个字段。
+{REASON_FIRST_VALUE_CONSTRAINT}
+{{"reason": "分步、可核验的生成依据", "value": "生成的结果内容"}}
 重点关注：只输出 JSON 结果不要带有```等标识；value 与 reason 的值中不得含有英文双引号，需引用文字请一律使用中文引号“”，否则会破坏 JSON 结构。"""
 
 
@@ -493,7 +533,7 @@ def _extract_custom_value_reason(data: Dict[str, Any]) -> Tuple[str, str]:
 
 
 def parse_custom_json_response(response: str) -> Tuple[str, str]:
-    """解析 custom LLM 返回的 {value, reason}。
+    """解析 custom LLM 返回的 {reason, value}（兼容旧顺序）。
 
     value 为对象/数组时 json.dumps 成字符串（即格式化输出的 JSON 字符串）；
     标量转字符串并归一化中文标点。解析失败时用 salvage 兜底。
@@ -535,7 +575,8 @@ def _build_custom_prompt(
         schema_block = render_schema_prompt(output_schema)
         return (
             f"{resolved_expression}\n\n{schema_block}\n\n"
-            '以 JSON 格式返回：{"value": <上面结构的 JSON>, "reason": "生成依据"}\n'
+            f"{REASON_FIRST_VALUE_CONSTRAINT}\n"
+            '以 JSON 格式返回：{"reason": "分步、可核验的生成依据", "value": <上面结构的 JSON>}\n'
             "重点关注：只输出 JSON 结果不要带有```等标识。"
         )
     return f"{resolved_expression}{CUSTOM_JSON_INSTRUCTION_PLAIN}"
@@ -929,17 +970,7 @@ async def test_rule_analysis_stream(
 
         # Step 3: 组装 prompt
         try:
-            user_prompt = f"""{resolved}
-
-请根据以上内容进行判断，严格按照以下要求以 JSON 格式返回结果。
-
-【输出格式严格要求】：
-1. 必须且只能输出合法的 JSON 对象，直接输出大括号 {{}} 及其内容，不要带有 ```json 或 ``` 等任何 Markdown 标识符。
-2. JSON 结构的键和值，其最外层必须使用标准的英文双引号包裹。
-3. 在 reason 字段的文本内容中，如果需要引用文字，请一律使用中文双引号“”，绝对不能在内容中嵌套使用英文双引号，以免破坏 JSON 结构。
-
-【通用输出示例】（请注意观察：外层使用英文引号，内层引用使用中文引号）：
-{{"result": "true", "reason": "用户输入的“A”与文件抽取出的“B”指代同一主体，核心名称一致。"}}"""
+            user_prompt = build_judge_prompt(resolved)
 
             sys_prompt = (system_prompt or "").strip()
             yield {
@@ -1025,18 +1056,7 @@ async def test_rule_analysis_stream(
                         pass
 
             if not parsed:
-                reason = salvage_reason(raw_response)
-                response_lower = raw_response.lower()
-                if "true" in response_lower:
-                    result_value = "true"
-                elif "false" in response_lower:
-                    result_value = "false"
-                elif "是" in response_lower:
-                    result_value = "true"
-                elif "否" in response_lower:
-                    result_value = "false"
-                else:
-                    result_value = response_lower
+                result_value, reason = _salvage_judge_result(raw_response)
 
             yield {
                 "event": "result",

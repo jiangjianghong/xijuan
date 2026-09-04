@@ -51,7 +51,7 @@
 {
   "file_id": "a1b2...", "status": "extracting", "event": "field_done",
   "data": { "field_id": "company_name", "field_name": "公司名称",
-    "value": "示例公司", "reason": "...", "pages": [3], "source_pages": [3],
+    "reason": "...", "value": "示例公司", "pages": [3], "source_pages": [3],
     "source_refs": {}, "success": true, "index": 5, "total": 12 }
 }
 ```

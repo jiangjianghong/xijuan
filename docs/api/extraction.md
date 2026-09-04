@@ -105,7 +105,7 @@ _data 为数组，每个元素：_
 - `vl_progressive`：`field_hints`("") / `batch_size`(2) / 可选 `batch_prompt_template`（占位符 `{history}` `{field_hints}` `{page_label}` `{total_pages}` `{scan_scope}`）
 - `vl_locate`：`field_hints`("") / `grid_pages`(6) / `grid_cols`(3) / `max_concurrent`(20) / `key_pages_limit`(6，定位**后**看几页高清，区别于定位**前**的 `max_pages`) / `fallback_pages`(3，定位全空时取候选页前 N 个) / 可选 `locate_prompt_template`（占位符 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`）（结构详见 [vl_config](../reference/data-model.md#extraction_field)） |
 | vl_system_prompt | string | 否 | — | [vl] LLM system prompt（可空）。 |
-| vl_extract_prompt | string | 否 | — | [vl] 抽取 prompt；`source_type=vl` 时必填，且须含 `value` 与 `reason` 关键字（大小写不敏感）。 |
+| vl_extract_prompt | string | 否 | — | [vl] 抽取 prompt；`source_type=vl` 时必填，且须含 `reason` 与 `value` 关键字（大小写不敏感；实际发送时固定要求先 reason 后 value）。 |
 | is_advanced | integer | 否 | 0 | 是否进阶字段（1/0，默认 0）。置 1 时该字段在**全部普通字段抽完后**执行，配置内可用 `<field_result>字段ID</field_result>` 引用普通字段的提取值；**只能引用同类型的普通字段**，否则 400。 |
 | depend_fields | array[string] | 否 | — | 进阶字段引用的普通字段 ID 列表。**由服务端扫描配置算出并覆盖**，请求传入无效；`GET /extraction/fields` 回传。 |
 <!-- /AUTOGEN:request-body -->
@@ -118,7 +118,7 @@ _data 为数组，每个元素：_
   "source_type": "text",
   "search_type": "context",
   "search_config": { "keywords": ["公司名称"], "context_after": 200, "max_results": 3 },
-  "text_extract_prompt": "从内容提取公司名称：\n<search_result>命中片段</search_result>\n输出 {value, reason}。"
+  "text_extract_prompt": "从内容提取公司名称：\n<search_result>命中片段</search_result>\n请先输出 reason，再输出 value；输出 {\"reason\": \"依据\", \"value\": \"结果\"}。"
 }
 ```
 

@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from utils.text_utils import normalize_cjk_quotes, salvage_value_reason
+from utils.prompt_contract import build_reason_first_value_suffix
 
 
 _THINK_PATTERN = re.compile(r"<think>[\s\S]*?</think>", re.DOTALL)
@@ -15,6 +16,18 @@ _THINK_PATTERN = re.compile(r"<think>[\s\S]*?</think>", re.DOTALL)
 def strip_think_tags(text: str) -> str:
     """去掉 Qwen 思考类模型输出的 <think>...</think> 块。"""
     return _THINK_PATTERN.sub("", text).strip()
+
+
+def append_reason_first_output_instruction(
+    prompt: str, *, include_pages: bool = False
+) -> str:
+    """在 VL 用户提示词末尾追加固定的 reason-first JSON 输出约束。"""
+    base = prompt or ""
+    suffix = build_reason_first_value_suffix(include_pages=include_pages)
+    # 只有完整后缀位于末尾时才视为已追加，避免正文中间出现同样文本时绕过约束。
+    if base.rstrip().endswith(suffix):
+        return base
+    return f"{base}\n\n{suffix}" if base else suffix
 
 
 def parse_vl_json_response(response: str) -> tuple[str, str]:

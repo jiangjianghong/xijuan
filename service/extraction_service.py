@@ -27,6 +27,7 @@ from service.extraction_snapshot import (
 )
 from service.file_vector_index import FileVectorIndex, select_parent_hits
 from service.match_prompts import build_section_match_prompt, build_table_match_prompt
+from service.vl_service._common import append_reason_first_output_instruction
 from service.search_ranking import compute_keyword_weights, rank_and_truncate
 from utils import vl_client
 from utils.callback import notify_callback
@@ -49,6 +50,7 @@ from utils.page_mapping import (
     to_int_page,
 )
 from utils.text_utils import normalize_cjk_quotes, salvage_value_reason
+from utils.prompt_contract import REASON_FIRST_VALUE_CONSTRAINT
 
 
 # ── JSON 解析辅助 ────────────────────────────────────────────
@@ -1752,11 +1754,12 @@ async def _search_vector_db_ann(
 # ── 提取主流程 ──────────────────────────────────────────────
 
 # JSON 输出格式说明（附加到 prompt 末尾）
-JSON_OUTPUT_INSTRUCTION = """
+JSON_OUTPUT_INSTRUCTION = f"""
 
-请以 JSON 格式返回结果，包含 value（提取的值）、reason（提取理由/依据）和 pages（参考页码）三个字段：
-{"value": "提取的值", "reason": "说明从哪里提取、为什么这样提取", "pages": [3, 5]}
-只返回**一个** JSON 对象，**禁止**返回对象数组（不要用 [ ] 把多个 {value,...} 括起来）。若文中存在多个符合条件的内容，请按 system_prompt 的要求归并为单个 value（如无特别要求则用顿号/换行拼成一个字符串），不要拆成多条记录。
+{REASON_FIRST_VALUE_CONSTRAINT}
+请以 JSON 格式返回结果，字段顺序必须严格保持为 reason、value、pages：
+{{"reason": "分步、可核验的分析和判定依据", "value": "提取的值", "pages": [3, 5]}}
+只返回**一个** JSON 对象，**禁止**返回对象数组（不要用 [ ] 把多个 {{reason, value, ...}} 括起来）。若文中存在多个符合条件的内容，请按 system_prompt 的要求归并为单个 value（如无特别要求则用顿号/换行拼成一个字符串），不要拆成多条记录。
 注意：value 本身的格式请严格遵循 system_prompt 中的要求（如有），可以是字符串、JSON数组或JSON对象——但最外层始终是上面那**一个**对象。
 pages 为你得出该值时实际参考的页码列表（整数数组）。检索文本中每处【第X页】标记表示其后内容所在的页码，同一段落跨页时会出现多个标记；请以你引用内容之前**最近**的那个标记为准，不要跨标记推断。若无法确定则返回空数组 []。
 重点关注：只要输出json结果不要带有```等标识,value和reason的值中不得含有英文标点符号。
@@ -2270,13 +2273,16 @@ async def extract_text_field(
 
 
 async def extract_vl_field(
-    file_id: str, field: ExtractionField
+    file_id: str,
+    field: ExtractionField,
+    *,
+    capture_final_prompt: bool = False,
 ) -> Tuple[str, str, Optional[Dict], List[int]]:
-    """VL 类字段提取：基于 PDF 视觉模型直接产出 {value, reason}。
+    """VL 类字段提取：基于 PDF 视觉模型直接产出 {reason, value}。
 
     Returns:
         (extracted_value, reason, source_refs, model_pages) 元组。source_refs 形如
-        {"_vl": {...}}；VL 不走文本 LLM 的 {value,reason,pages} 解析，故 model_pages
+        {"_vl": {...}}；VL 不走文本 LLM 的 {reason,value,pages} 解析，故 model_pages
         **恒为 []**——VL 的页码信息在 _vl.key_pages 里。
     """
     pdf_file = vl_client.pdf_path(file_id)
@@ -2289,6 +2295,7 @@ async def extract_vl_field(
         return "", f"PDF 文件读取失败: {e}", None, []
 
     cfg = field.vl_config or {}
+    fixed_vl_prompt = append_reason_first_output_instruction(field.vl_extract_prompt or "")
     method = field.vl_method
     default_max_pixels = get_config().vl_model.default_max_pixels
 
@@ -2298,7 +2305,7 @@ async def extract_vl_field(
         if method == "vl_model":
             value, reason, refs = await vl_service.vl_model_extract(
                 file_bytes,
-                field.vl_extract_prompt or "",
+                fixed_vl_prompt,
                 field.vl_system_prompt,
                 page_range=page_range,
                 max_pages=max_pages,
@@ -2307,7 +2314,7 @@ async def extract_vl_field(
         elif method == "vl_progressive":
             value, reason, refs = await vl_service.vl_progressive_extract(
                 file_bytes,
-                field.vl_extract_prompt or "",
+                fixed_vl_prompt,
                 field.vl_system_prompt,
                 field_hints=cfg.get("field_hints", ""),
                 page_range=page_range,
@@ -2315,11 +2322,12 @@ async def extract_vl_field(
                 batch_size=cfg.get("batch_size", 2),
                 max_pixels=cfg.get("max_pixels", default_max_pixels),
                 batch_prompt_template=cfg.get("batch_prompt_template"),
+                capture_final_prompt=capture_final_prompt,
             )
         elif method == "vl_locate":
             value, reason, refs = await vl_service.vl_locate_extract(
                 file_bytes,
-                field.vl_extract_prompt or "",
+                fixed_vl_prompt,
                 field.vl_system_prompt,
                 field_hints=cfg.get("field_hints", ""),
                 page_range=page_range,
@@ -2372,6 +2380,7 @@ async def _vl_field_extraction_stream(
     doc.close()
 
     cfg = field.vl_config or {}
+    fixed_vl_prompt = append_reason_first_output_instruction(field.vl_extract_prompt or "")
     default_max_pixels = get_config().vl_model.default_max_pixels
     method = field.vl_method
     page_range = cfg.get("page_range", "all")
@@ -2404,7 +2413,7 @@ async def _vl_field_extraction_stream(
             if method == "vl_model":
                 return await vl_service.vl_model_extract(
                     file_bytes,
-                    field.vl_extract_prompt or "",
+                    fixed_vl_prompt,
                     field.vl_system_prompt,
                     page_range=page_range,
                     max_pages=max_pages,
@@ -2413,7 +2422,7 @@ async def _vl_field_extraction_stream(
             elif method == "vl_progressive":
                 return await vl_service.vl_progressive_extract(
                     file_bytes,
-                    field.vl_extract_prompt or "",
+                    fixed_vl_prompt,
                     field.vl_system_prompt,
                     field_hints=cfg.get("field_hints", ""),
                     page_range=page_range,
@@ -2422,11 +2431,12 @@ async def _vl_field_extraction_stream(
                     max_pixels=cfg.get("max_pixels", default_max_pixels),
                     batch_prompt_template=cfg.get("batch_prompt_template"),
                     progress_cb=progress_cb,
+                    capture_final_prompt=True,
                 )
             elif method == "vl_locate":
                 return await vl_service.vl_locate_extract(
                     file_bytes,
-                    field.vl_extract_prompt or "",
+                    fixed_vl_prompt,
                     field.vl_system_prompt,
                     field_hints=cfg.get("field_hints", ""),
                     page_range=page_range,
@@ -2460,11 +2470,20 @@ async def _vl_field_extraction_stream(
         yield {"event": "error", "data": {"step": "vl_extract", "message": str(e)}}
         return
 
+    debug_user_prompt = fixed_vl_prompt
+    if method == "vl_progressive":
+        debug_user_prompt = (
+            refs["final_prompt"] if "final_prompt" in refs else fixed_vl_prompt
+        )
+
+    debug_refs = dict(refs)
+    debug_refs.pop("final_prompt", None)
+
     yield {
         "event": "prompt",
         "data": {
             "system_prompt": field.vl_system_prompt or "",
-            "user_prompt": field.vl_extract_prompt or "",
+            "user_prompt": debug_user_prompt,
         },
     }
     yield {
@@ -2472,7 +2491,7 @@ async def _vl_field_extraction_stream(
         "data": {
             "extracted_value": value,
             "reason": reason,
-            "source_refs": {"_vl": refs},
+            "source_refs": {"_vl": debug_refs},
         },
     }
     yield {"event": "done", "data": {}}

@@ -10,6 +10,7 @@ import fitz
 from loguru import logger
 
 from service.vl_service._common import (
+    append_reason_first_output_instruction,
     build_image_messages,
     parse_vl_json_response,
     strip_think_tags,
@@ -159,7 +160,9 @@ async def vl_locate_extract(
     doc.close()
 
     extract_messages = build_image_messages(
-        prompt=vl_extract_prompt, b64_images=b64_hires, system_prompt=vl_system_prompt
+        prompt=append_reason_first_output_instruction(vl_extract_prompt),
+        b64_images=b64_hires,
+        system_prompt=vl_system_prompt,
     )
     resp = await vl_chat(extract_messages)
     raw = (resp.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()

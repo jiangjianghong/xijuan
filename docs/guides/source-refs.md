@@ -217,7 +217,7 @@ if pages is None:
 | `vl_locate` | 缩略图定位命中的关键页（去重排序，受 `key_pages_limit` 截断；定位不到回退前 `fallback_pages` 页） | 真正高清提取的页 |
 | `vl_progressive` | **`null`** | 逐批扫全篇，不定位具体页；需页码请用 `total_pages` 兜底 |
 
-> ⚠️ vl 类**没有** `page_num` 字段，也**没有** `bboxes`；`source_refs["_vl"]["page_num"]` 会 KeyError。vl 类同样**不产生** `_model_pages`（VL 不走 `{value,reason,pages}` 文本解析）。
+> ⚠️ vl 类**没有** `page_num` 字段，也**没有** `bboxes`；`source_refs["_vl"]["page_num"]` 会 KeyError。vl 类同样**不产生** `_model_pages`（VL 不走 `{reason,value,pages}` 文本解析）。
 
 ---
 
@@ -238,7 +238,7 @@ if pages is None:
 
 | 字段 | 含义 | 何时为空 |
 |---|---|---|
-| `pages` | **模型自报**：LLM 输出 `{value, reason, pages}` 里的 `pages`，即「我得出该值实际参考了哪几页」 | 模型未返回 / 解析失败 / `use_llm=0` / VL 类 |
+| `pages` | **模型自报**：LLM 输出 `{reason, value, pages}` 里的 `pages`，即「我得出该值实际参考了哪几页」 | 模型未返回 / 解析失败 / `use_llm=0` / VL 类 |
 | `source_pages` | **可用页码**：`pages` 非空时等于它，否则回落到程序从 `source_refs` 算出的命中页 | 两者皆无（失败字段 / 检索无命中 / `vl_progressive`） |
 
 **关键约定：**
