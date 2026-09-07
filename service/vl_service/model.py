@@ -22,6 +22,7 @@ async def vl_model_extract(
     page_range: str = "all",
     max_pages: int | None = None,
     max_pixels: int = 4_000_000,
+    capture_final_prompt: bool = False,
 ) -> tuple[str, str, dict[str, Any]]:
     """VL 全量抽取：渲染 page_range 页 → 一次调 VL → 先产出 reason 再产出 value。
 
@@ -53,12 +54,18 @@ async def vl_model_extract(
     }
 
     if not pages_0idx:
+        # 调试调用需要明确知道没有发生最终模型调用，避免路由伪造 prompt。
+        if capture_final_prompt:
+            refs["final_prompt"] = ""
         return "", "", refs
 
     b64_images = render_pages_to_b64(file_bytes, pages_0idx, scale=2.0, max_pixels=max_pixels)
 
+    final_prompt = append_reason_first_output_instruction(vl_extract_prompt)
+    if capture_final_prompt:
+        refs["final_prompt"] = final_prompt
     messages = build_image_messages(
-        prompt=append_reason_first_output_instruction(vl_extract_prompt),
+        prompt=final_prompt,
         b64_images=b64_images,
         system_prompt=vl_system_prompt,
     )

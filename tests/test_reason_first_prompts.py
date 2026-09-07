@@ -79,8 +79,6 @@ def test_fixed_prompts_require_reason_before_final_value():
     assert JSON_OUTPUT_INSTRUCTION.index('"reason"') < JSON_OUTPUT_INSTRUCTION.index('"value"')
     assert "请务必先输出 reason" in JSON_OUTPUT_INSTRUCTION
     assert "reason（分步、可核验的分析和判定依据），再输出 value（最终要求输出的结果）" in JSON_OUTPUT_INSTRUCTION
-    assert "一步步的分析和判定过程" in JSON_OUTPUT_INSTRUCTION
-    assert "一步步的分析和判定过程" in JSON_OUTPUT_INSTRUCTION
     assert "不得在分析尚未完成时提前猜测最终结果" in JSON_OUTPUT_INSTRUCTION
 
     assert CUSTOM_JSON_INSTRUCTION_PLAIN.index('"reason"') < CUSTOM_JSON_INSTRUCTION_PLAIN.index('"value"')
@@ -93,7 +91,6 @@ def test_fixed_prompts_require_reason_before_final_value():
     assert judge.index('"reason"') < judge.index('"result"')
     assert "请务必先输出 reason" in judge
     assert "reason（分步、可核验的分析和判定依据），再输出 result" in judge
-    assert "一步步的分析和判定过程" in judge
     assert "不得在分析尚未完成时提前猜测最终结果" in judge
 
 
@@ -104,7 +101,6 @@ def test_ui_vl_default_is_reason_first():
     example = source[start:end]
     assert example.index('"reason"') < example.index('"value"')
     assert "请务必先输出 reason" in example
-    assert "一步步的分析和判定过程" in example
 
 
 def test_vl_output_suffix_is_reason_first_and_idempotent():
@@ -112,7 +108,6 @@ def test_vl_output_suffix_is_reason_first_and_idempotent():
     assert prompt.startswith("用户自定义提取要求")
     assert "请务必先输出 reason" in prompt
     assert "reason（分步、可核验的分析和判定依据），再输出 value（最终要求输出的结果）" in prompt
-    assert "一步步的分析和判定过程" in prompt
     assert prompt.index('"reason"') < prompt.index('"value"')
     assert append_reason_first_output_instruction(prompt) == prompt
 
@@ -151,9 +146,9 @@ def test_sync_debug_prompt_includes_fixed_contract():
         table_extract_prompt="",
         vl_extract_prompt="用户自定义 VL 提取要求",
     )
-    vl_prompt = _render_debug_llm_input(vl_field, None)
-    assert "请务必先输出 reason" in vl_prompt
-    assert vl_prompt.index('"reason"') < vl_prompt.index('"value"')
+    # refs=None means no model call (for example, a missing PDF), so there is
+    # no actual prompt to report.
+    assert _render_debug_llm_input(vl_field, None) == ""
     assert _render_debug_llm_input(vl_field, {"_vl": {"final_prompt": ""}}) == ""
 
 

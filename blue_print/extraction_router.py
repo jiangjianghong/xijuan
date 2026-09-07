@@ -51,10 +51,17 @@ router = APIRouter(prefix="/extraction", tags=["extraction"])
 def _render_debug_llm_input(field: ExtractionField, refs: Dict[str, Any] | None) -> str:
     """还原同步调试接口实际发送给模型的最终 prompt。"""
     if field.source_type == "vl":
+        # refs 为空表示 PDF 缺失或方法失败，没有可展示的实际模型 prompt。
+        if refs is None:
+            return ""
         vl_refs = (refs or {}).get("_vl") or {}
         if "final_prompt" in vl_refs:
             return vl_refs["final_prompt"] or ""
         return append_reason_first_output_instruction(field.vl_extract_prompt or "")
+
+    # 无检索命中时不会调用文本模型，也就不存在实际发送的 prompt。
+    if refs is None:
+        return ""
 
     prompt = (
         field.table_extract_prompt

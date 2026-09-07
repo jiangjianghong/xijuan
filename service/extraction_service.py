@@ -2310,6 +2310,7 @@ async def extract_vl_field(
                 page_range=page_range,
                 max_pages=max_pages,
                 max_pixels=cfg.get("max_pixels", default_max_pixels),
+                capture_final_prompt=capture_final_prompt,
             )
         elif method == "vl_progressive":
             value, reason, refs = await vl_service.vl_progressive_extract(
@@ -2340,6 +2341,7 @@ async def extract_vl_field(
                 fallback_pages=cfg.get("fallback_pages", 3),
                 max_pixels=cfg.get("max_pixels", default_max_pixels),
                 locate_prompt_template=cfg.get("locate_prompt_template"),
+                capture_final_prompt=capture_final_prompt,
             )
         else:
             return "", f"未知 vl_method={method}", None, []
@@ -2418,6 +2420,7 @@ async def _vl_field_extraction_stream(
                     page_range=page_range,
                     max_pages=max_pages,
                     max_pixels=cfg.get("max_pixels", default_max_pixels),
+                    capture_final_prompt=True,
                 )
             elif method == "vl_progressive":
                 return await vl_service.vl_progressive_extract(
@@ -2450,6 +2453,7 @@ async def _vl_field_extraction_stream(
                     max_pixels=cfg.get("max_pixels", default_max_pixels),
                     locate_prompt_template=cfg.get("locate_prompt_template"),
                     progress_cb=progress_cb,
+                    capture_final_prompt=True,
                 )
             else:
                 raise ValueError(f"未知 vl_method={method}")
@@ -2471,10 +2475,11 @@ async def _vl_field_extraction_stream(
         return
 
     debug_user_prompt = fixed_vl_prompt
-    if method == "vl_progressive":
-        debug_user_prompt = (
-            refs["final_prompt"] if "final_prompt" in refs else fixed_vl_prompt
-        )
+    if "final_prompt" in refs:
+        debug_user_prompt = refs["final_prompt"] or ""
+    elif method in {"vl_model", "vl_locate"} and not target_pages_0idx:
+        # 这些方法在空 page_range 时直接返回，不会发最终提取请求。
+        debug_user_prompt = ""
 
     debug_refs = dict(refs)
     debug_refs.pop("final_prompt", None)

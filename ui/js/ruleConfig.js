@@ -31,7 +31,7 @@ const RuleConfig = {
 
     // VL 默认提示词（与后端 service/vl_service/_defaults.py 严格保持一致）。
     VL_DEFAULTS: {
-        EXTRACT_PROMPT: '请基于以上图片提取相关信息。\n请务必先输出 reason（分步、可核验的分析和判定依据），再输出 value（最终要求输出的结果）。请将 reason 写成一步步的分析和判定过程；必须先完成分析，再给出结论；不得在分析尚未完成时提前猜测最终结果。\n请只返回 JSON 格式：{"reason": "简要说明依据，例如在哪一页或哪个位置看到", "value": "提取到的内容（多个用逗号分隔）"}\n如果未找到，返回：{"reason": "未找到", "value": ""}',
+        EXTRACT_PROMPT: '请基于以上图片提取相关信息。\n请务必先输出 reason（分步、可核验的分析和判定依据），再输出 value（最终要求输出的结果）。必须先完成分析，再给出结论；不得在分析尚未完成时提前猜测最终结果。\n请只返回 JSON 格式：{"reason": "简要说明依据，例如在哪一页或哪个位置看到", "value": "提取到的内容（多个用逗号分隔）"}\n如果未找到，返回：{"reason": "未找到", "value": ""}',
     },
 
     // 提示词默认模板缓存，来源为后端 GET /extraction/match-prompt-defaults。

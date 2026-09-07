@@ -42,6 +42,7 @@ async def vl_locate_extract(
     max_pixels: int = 4_000_000,
     locate_prompt_template: str | None = None,
     progress_cb: Callable[[dict], Awaitable[None]] | None = None,
+    capture_final_prompt: bool = False,
 ) -> tuple[str, str, dict[str, Any]]:
     """两轮 VL 抽取：缩略图网格并行定位 → 关键页高清提取。
 
@@ -64,6 +65,9 @@ async def vl_locate_extract(
 
     if total_pages == 0 or not target_pages:
         doc.close()
+        # 调试调用需要明确知道没有发生最终模型调用，避免路由伪造 prompt。
+        if capture_final_prompt:
+            refs["final_prompt"] = ""
         return "", "", refs
 
     template = locate_prompt_template or DEFAULT_LOCATE_PROMPT
@@ -159,8 +163,11 @@ async def vl_locate_extract(
     b64_hires = [render_hires(doc, idx, scale=2.0, max_pixels=max_pixels) for idx in key_pages_0idx]
     doc.close()
 
+    final_prompt = append_reason_first_output_instruction(vl_extract_prompt)
+    if capture_final_prompt:
+        refs["final_prompt"] = final_prompt
     extract_messages = build_image_messages(
-        prompt=append_reason_first_output_instruction(vl_extract_prompt),
+        prompt=final_prompt,
         b64_images=b64_hires,
         system_prompt=vl_system_prompt,
     )

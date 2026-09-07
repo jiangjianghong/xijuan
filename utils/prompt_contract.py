@@ -5,14 +5,14 @@ from __future__ import annotations
 
 REASON_FIRST_VALUE_CONSTRAINT = (
     "请务必先输出 reason（分步、可核验的分析和判定依据），"
-    "再输出 value（最终要求输出的结果）。请将 reason 写成一步步的分析和判定过程；"
+    "再输出 value（最终要求输出的结果）。"
     "必须先完成分析，再给出结论；"
     "不得在分析尚未完成时提前猜测最终结果。"
 )
 
 REASON_FIRST_RESULT_CONSTRAINT = (
     "请务必先输出 reason（分步、可核验的分析和判定依据），"
-    "再输出 result（最终要求输出的 true/false 判定结果）。请将 reason 写成一步步的分析和判定过程；"
+    "再输出 result（最终要求输出的结果）。"
     "必须先完成分析，再给出结论；"
     "不得在分析尚未完成时提前猜测最终结果。"
 )

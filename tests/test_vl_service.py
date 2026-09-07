@@ -153,6 +153,7 @@ async def test_vl_model_extract_success(monkeypatch):
         vl_system_prompt=None,
         page_range="1-2",
         max_pixels=200_000,
+        capture_final_prompt=True,
     )
 
     assert value == "abc"
@@ -167,6 +168,9 @@ async def test_vl_model_extract_success(monkeypatch):
     text_blocks = [c for c in user_msg["content"] if c["type"] == "text"]
     assert len(image_blocks) == 2
     assert len(text_blocks) == 1
+    assert refs["final_prompt"] == text_blocks[0]["text"]
+    assert '"reason"' in refs["final_prompt"]
+    assert refs["final_prompt"].index('"reason"') < refs["final_prompt"].index('"value"')
 
 
 async def test_vl_model_extract_empty_pages(monkeypatch):
@@ -188,11 +192,13 @@ async def test_vl_model_extract_empty_pages(monkeypatch):
         vl_extract_prompt="x",
         vl_system_prompt=None,
         page_range="",  # 解析为空
+        capture_final_prompt=True,
     )
     assert value == ""
     assert reason == ""
     assert refs["method"] == "vl_model"
     assert refs["key_pages"] == []
+    assert refs["final_prompt"] == ""
     assert called is False
 
 
@@ -663,8 +669,10 @@ async def test_vl_locate_extract_filters_hallucinated_pages(monkeypatch):
     from service.vl_service import locate as vl_locate_module
 
     pdf = _make_pdf_bytes(6)
+    captured_messages = []
 
     async def fake_vl_chat(messages, *, max_tokens=None, extra_body=None, max_retries=3):
+        captured_messages.append(messages)
         if _is_locate_call(messages):
             # 故意返回一个超界页码 99
             return {
@@ -684,6 +692,7 @@ async def test_vl_locate_extract_filters_hallucinated_pages(monkeypatch):
         vl_system_prompt=None,
         field_hints="关键信息",
         grid_pages=6,
+        capture_final_prompt=True,
     )
 
     assert value == "FOUND"
@@ -691,6 +700,12 @@ async def test_vl_locate_extract_filters_hallucinated_pages(monkeypatch):
     assert refs["total_pages"] == 6
     # 99 被过滤，只剩 2
     assert refs["key_pages"] == [2]
+    extract_message = captured_messages[-1]
+    extract_text = next(
+        c["text"] for c in extract_message[-1]["content"] if c.get("type") == "text"
+    )
+    assert refs["final_prompt"] == extract_text
+    assert extract_text.index('"reason"') < extract_text.index('"value"')
 
 
 async def test_vl_locate_extract_fallback_when_no_hits(monkeypatch):
