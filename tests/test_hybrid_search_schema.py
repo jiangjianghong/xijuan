@@ -59,3 +59,14 @@ def test_legacy_field_still_accepts_vector_config():
         text_extract_prompt="<search_result>总投资</search_result>",
     )
     assert field.search_type.value == "vector_db"
+
+
+def test_hybrid_llm_requires_fixed_placeholder():
+    payload = _field({
+        "strategy": "union",
+        "items": [{"id": "a", "source_type": "text", "method": "context", "config": {}}],
+    })
+    payload["use_llm"] = 1
+    payload["text_extract_prompt"] = "<search_result>其他标签</search_result>"
+    with pytest.raises(ValidationError):
+        ExtractionFieldCreate(**payload)

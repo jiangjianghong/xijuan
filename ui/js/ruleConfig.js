@@ -1016,6 +1016,7 @@ const RuleConfig = {
                         <option value="chunk_db" ${searchType === 'chunk_db' ? 'selected' : ''}>分块数据库</option>
                         <option value="vector_db" ${searchType === 'vector_db' ? 'selected' : ''}>向量数据库</option>
                         <option value="page" ${searchType === 'page' ? 'selected' : ''}>按页码取文</option>
+                        <option value="hybrid" ${searchType === 'hybrid' ? 'selected' : ''}>组合检索</option>
                     </select>
                 </div>
                 <div id="fm-search-config-area">
@@ -1080,6 +1081,27 @@ const RuleConfig = {
         let html = '';
 
         switch (searchType) {
+            case 'hybrid': {
+                const items = Array.isArray(config.items) && config.items.length ? config.items : [
+                    { id: 'search_1', source_type: 'text', method: 'context', config: {} },
+                ];
+                const strategy = config.strategy || 'union';
+                html = `
+                    <div class="form-group">
+                        <label class="form-label">组合策略</label>
+                        <select class="form-select" id="fm-hybrid-strategy" onchange="RuleConfig.onHybridStrategyChange(this.value)">
+                            <option value="union" ${strategy === 'union' ? 'selected' : ''}>全部合并（文本/表格）</option>
+                            <option value="fallback" ${strategy === 'fallback' ? 'selected' : ''}>为空回退（可含 VL）</option>
+                        </select>
+                        <div class="form-hint">列表顺序决定回退优先级、合并顺序和去重优先级；VL 仅允许在回退模式。</div>
+                    </div>
+                    <div class="form-group">
+                        <div class="form-label-row"><label class="form-label">检索配置</label><button type="button" class="btn btn-secondary" onclick="RuleConfig.addHybridItem()">＋ 添加配置</button></div>
+                        <div id="fm-hybrid-items">${this.renderHybridItems(items, strategy)}</div>
+                    </div>
+                    <div class="form-hint">提示词请统一引用：<code>&lt;search_result&gt;混合检索结果&lt;/search_result&gt;</code></div>`;
+                break;
+            }
             case 'context':
                 html = `
                     ${this.buildKeywordTagsHtml('fm-sc-keywords', '关键词', config.keywords || [], '输入关键词后按回车或点击添加', this.state.formIsAdvanced)}
@@ -1571,6 +1593,77 @@ const RuleConfig = {
         return config;
     },
 
+    renderHybridItems(items, strategy) {
+        return items.map((item, index) => {
+            const source = item.source_type || 'text';
+            const method = item.method || (source === 'vl' ? 'vl_locate' : source === 'table' ? 'table_match' : 'context');
+            const cfg = JSON.stringify(item.config || {}, null, 2);
+            const vlDisabled = strategy === 'union' ? 'disabled' : '';
+            return `<div class="hybrid-item" draggable="true" data-index="${index}" data-id="${Utils.escapeHtml(item.id || `search_${index + 1}`)}" ondragstart="RuleConfig.onHybridDragStart(event)" ondragover="RuleConfig.onHybridDragOver(event)" ondrop="RuleConfig.onHybridDrop(event)">
+                <div class="form-label-row"><span class="hybrid-drag-handle" title="拖动排序">☷ 配置 ${index + 1}</span><span>
+                    <button type="button" class="btn btn-secondary" onclick="RuleConfig.moveHybridItem(${index},-1)">↑</button>
+                    <button type="button" class="btn btn-secondary" onclick="RuleConfig.moveHybridItem(${index},1)">↓</button>
+                    <button type="button" class="btn btn-secondary" onclick="RuleConfig.copyHybridItem(${index})">复制</button>
+                    <button type="button" class="btn btn-secondary" onclick="RuleConfig.removeHybridItem(${index})">删除</button>
+                </span></div>
+                <div class="form-row"><div class="form-group"><label class="form-label">来源</label><select class="form-select hybrid-source" onchange="RuleConfig.onHybridSourceChange(this)"><option value="text" ${source === 'text' ? 'selected' : ''}>文本</option><option value="table" ${source === 'table' ? 'selected' : ''}>表格</option><option value="vl" ${source === 'vl' ? 'selected' : ''} ${vlDisabled}>VL</option></select></div>
+                <div class="form-group"><label class="form-label">方法</label><input class="form-input hybrid-method" value="${Utils.escapeHtml(method)}" placeholder="context / table_match / vl_locate"></div></div>
+                <div class="form-group"><label class="form-label">方法配置 JSON</label><textarea class="form-textarea hybrid-config" rows="3">${Utils.escapeHtml(cfg)}</textarea></div>
+            </div>`;
+        }).join('');
+    },
+
+    getHybridItemsFromDom() {
+        return Array.from(document.querySelectorAll('#fm-hybrid-items .hybrid-item')).map((row, i) => {
+            let config = {};
+            try { config = JSON.parse(row.querySelector('.hybrid-config').value || '{}'); } catch (_) { config = {}; }
+            return { id: row.dataset.id || `search_${i + 1}`, source_type: row.querySelector('.hybrid-source').value, method: row.querySelector('.hybrid-method').value.trim(), config };
+        });
+    },
+
+    refreshHybridItems(items) {
+        const area = document.getElementById('fm-hybrid-items');
+        const strategy = (document.getElementById('fm-hybrid-strategy') || {}).value || 'union';
+        if (area) area.innerHTML = this.renderHybridItems(items, strategy);
+    },
+
+    addHybridItem() {
+        const items = this.getHybridItemsFromDom();
+        items.push({ id: `search_${Date.now()}`, source_type: 'text', method: 'context', config: {} });
+        this.refreshHybridItems(items);
+    },
+    copyHybridItem(index) {
+        const items = this.getHybridItemsFromDom();
+        if (items[index]) items.splice(index + 1, 0, { ...items[index], id: `search_${Date.now()}`, config: { ...items[index].config } });
+        this.refreshHybridItems(items);
+    },
+    removeHybridItem(index) {
+        const items = this.getHybridItemsFromDom();
+        if (items.length <= 1) return;
+        items.splice(index, 1); this.refreshHybridItems(items);
+    },
+    moveHybridItem(index, delta) {
+        const items = this.getHybridItemsFromDom(); const target = index + delta;
+        if (target < 0 || target >= items.length) return;
+        [items[index], items[target]] = [items[target], items[index]]; this.refreshHybridItems(items);
+    },
+    onHybridStrategyChange(strategy) {
+        const items = this.getHybridItemsFromDom();
+        if (strategy === 'union') items.forEach(i => { if (i.source_type === 'vl') i.source_type = 'text'; });
+        this.refreshHybridItems(items);
+    },
+    onHybridSourceChange(select) {
+        const strategy = (document.getElementById('fm-hybrid-strategy') || {}).value;
+        if (strategy === 'union' && select.value === 'vl') select.value = 'text';
+    },
+    onHybridDragStart(event) { event.dataTransfer.setData('text/plain', event.currentTarget.dataset.index); },
+    onHybridDragOver(event) { event.preventDefault(); },
+    onHybridDrop(event) {
+        event.preventDefault(); const from = Number(event.dataTransfer.getData('text/plain')); const to = Number(event.currentTarget.dataset.index);
+        if (!Number.isInteger(from) || !Number.isInteger(to) || from === to) return;
+        const items = this.getHybridItemsFromDom(); const moved = items.splice(from, 1)[0]; items.splice(to, 0, moved); this.refreshHybridItems(items);
+    },
+
     onSourceTypeChange(type) {
         const tableSection = document.getElementById('fm-table-section');
         const textSection = document.getElementById('fm-text-section');
@@ -1945,6 +2038,10 @@ const RuleConfig = {
         };
 
         switch (searchType) {
+            case 'hybrid':
+                config.strategy = (document.getElementById('fm-hybrid-strategy') || {}).value || 'union';
+                config.items = this.getHybridItemsFromDom();
+                break;
             case 'context':
                 config.keywords = this.getKeywordTags('fm-sc-keywords');
                 config.context_before = getInt('fm-sc-context-before', 200);
@@ -2115,6 +2212,31 @@ const RuleConfig = {
         if (!data.source_type) {
             Toast.error('来源类型不能为空');
             return false;
+        }
+
+        if (data.source_type === 'text' && data.search_type === 'hybrid') {
+            const hc = data.search_config || {};
+            if (!['union', 'fallback'].includes(hc.strategy)) {
+                Toast.error('组合策略必须是全部合并或为空回退');
+                return false;
+            }
+            if (!Array.isArray(hc.items) || !hc.items.length) {
+                Toast.error('至少保留一条组合检索配置');
+                return false;
+            }
+            const vlCount = hc.items.filter(i => i.source_type === 'vl').length;
+            if (hc.strategy === 'union' && vlCount) {
+                Toast.error('全部合并模式不支持 VL，请切换为空回退');
+                return false;
+            }
+            if (hc.strategy === 'fallback' && vlCount > 1) {
+                Toast.error('为空回退模式最多配置一个 VL');
+                return false;
+            }
+            if (data.use_llm !== 0 && !String(data.text_extract_prompt || '').includes('<search_result>混合检索结果</search_result>')) {
+                Toast.error('组合检索提示词须包含 <search_result>混合检索结果</search_result>');
+                return false;
+            }
         }
 
         if (data.source_type === 'table') {

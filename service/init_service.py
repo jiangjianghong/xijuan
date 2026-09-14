@@ -128,7 +128,7 @@ async def init_database() -> None:
                     "ENUM('context','section','rule','chunk_db','vector_db','page','hybrid') NULL"
                 )
             )
-            logger.info("已扩展 extraction_field.search_type 枚举：加入 'page'")
+            logger.info("已扩展 extraction_field.search_type 枚举：加入 'page'、'hybrid'")
 
         # rule_type enum 扩展：('judge','calc') → 加 'custom'
         result = await conn.execute(

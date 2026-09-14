@@ -412,6 +412,10 @@ class ExtractionFieldCreate(BaseModel):
             return self
         if self.search_type != SearchTypeEnum.hybrid:
             return self
+        if self.use_llm != 0:
+            prompt = self.table_extract_prompt if self.source_type == SourceTypeEnum.table else self.text_extract_prompt
+            if not isinstance(prompt, str) or "<search_result>混合检索结果</search_result>" not in prompt:
+                raise ValueError("hybrid 模式的提取提示词必须包含 <search_result>混合检索结果</search_result>")
         config = self.search_config or {}
         strategy = config.get("strategy")
         if strategy not in {"union", "fallback"}:
