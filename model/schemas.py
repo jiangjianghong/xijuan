@@ -308,6 +308,7 @@ class SearchTypeEnum(str, Enum):
     chunk_db = "chunk_db"
     vector_db = "vector_db"
     page = "page"
+    hybrid = "hybrid"
 
 
 class VLMethodEnum(str, Enum):
@@ -403,6 +404,54 @@ class ExtractionFieldCreate(BaseModel):
         if "{section_list}" not in tpl:
             raise ValueError("section_match_prompt 必须包含 {section_list} 占位符")
         return v
+
+    @model_validator(mode="after")
+    def validate_hybrid_search_config(self):
+        """校验混合检索的策略、通道类型与顺序配置。"""
+        if self.__class__.__name__ != "ExtractionFieldCreate":
+            return self
+        if self.search_type != SearchTypeEnum.hybrid:
+            return self
+        config = self.search_config or {}
+        strategy = config.get("strategy")
+        if strategy not in {"union", "fallback"}:
+            raise ValueError("hybrid search_config.strategy 必须是 union 或 fallback")
+        items = config.get("items")
+        if not isinstance(items, list) or not items:
+            raise ValueError("hybrid search_config.items 必须是非空数组")
+        seen_ids = set()
+        vl_count = 0
+        allowed_text = {e.value for e in SearchTypeEnum if e not in {SearchTypeEnum.hybrid}}
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError("hybrid items 每项必须是对象")
+            item_id = item.get("id")
+            if not isinstance(item_id, str) or not item_id.strip():
+                raise ValueError("hybrid item.id 必填")
+            if item_id in seen_ids:
+                raise ValueError(f"hybrid item.id 重复: {item_id}")
+            seen_ids.add(item_id)
+            source_type = item.get("source_type")
+            method = item.get("method")
+            if source_type not in {"text", "table", "vl"}:
+                raise ValueError("hybrid item.source_type 必须是 text、table 或 vl")
+            if not isinstance(method, str) or not method.strip():
+                raise ValueError("hybrid item.method 必填")
+            if not isinstance(item.get("config", {}), dict):
+                raise ValueError("hybrid item.config 必须是对象")
+            if source_type == "text" and method not in allowed_text:
+                raise ValueError(f"text 混合通道不支持检索方法: {method}")
+            if source_type == "table" and method not in {"table_match", "table"}:
+                raise ValueError(f"table 混合通道不支持方法: {method}")
+            if source_type == "vl":
+                vl_count += 1
+                if strategy == "union":
+                    raise ValueError("union 模式不允许 VL 通道")
+                if method not in {m.value for m in VLMethodEnum}:
+                    raise ValueError(f"VL 混合通道不支持方法: {method}")
+        if vl_count > 1:
+            raise ValueError("fallback 模式最多允许一个 VL 通道")
+        return self
 
     @field_validator("vl_method")
     @classmethod
