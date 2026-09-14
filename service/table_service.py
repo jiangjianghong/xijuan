@@ -112,7 +112,7 @@ async def _extract_table_name_with_llm(
         llm_name = _clean_text_line(str(data.get("table_name", "")))
         if not llm_name or _is_unknown_table_name(llm_name):
             return fallback_name
-        return llm_name[:30]
+        return llm_name[:200]
     except Exception as e:
         logger.warning(
             "LLM 表名抽取失败，回退最后一行: table_index={}, type={}, repr={}",

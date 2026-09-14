@@ -46,7 +46,7 @@ def _recompute(cands, precedings, content, matches, page_nums):
         if not cleaned or _is_unknown_table_name(cleaned):
             out.append(_extract_table_name(preceding))
         else:
-            out.append(cleaned[:30])
+            out.append(cleaned[:200])
     return _resolve_continuation_names(out, content, matches, page_nums)
 
 

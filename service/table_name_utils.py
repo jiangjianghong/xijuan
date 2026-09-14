@@ -156,7 +156,7 @@ def _extract_table_name(preceding_text: str) -> str:
     `table.table_name or f'表格{table.table_index}'` 兜底，空串会显示成「表格3」；
     「未知」会绕过这个兜底，还让多张无名表在 exact 模式下命中同一个名字。
     """
-    return _extract_last_line(preceding_text)[:30]
+    return _extract_last_line(preceding_text)[:200]
 
 
 def _is_unknown_table_name(name: str) -> bool:
