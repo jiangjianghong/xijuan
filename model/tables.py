@@ -213,8 +213,8 @@ class ExtractionField(Base):
     table_match_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     table_extract_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 文本类专用
-      search_type: Mapped[str | None] = mapped_column(
-          Enum("context", "section", "rule", "chunk_db", "vector_db", "page", "hybrid", name="search_type_enum"),
+    search_type: Mapped[str | None] = mapped_column(
+        Enum("context", "section", "rule", "chunk_db", "vector_db", "page", "hybrid", name="search_type_enum"),
         nullable=True,
     )
     search_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
