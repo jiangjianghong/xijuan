@@ -69,3 +69,22 @@ async def test_fallback_uses_vl_as_final_direct_result(monkeypatch):
     assert result[2]["_vl"] == {"key_pages": [2]}
     assert result[2]["_hybrid"]["selected_item"] == "vl"
     assert result[3] == [2]
+
+
+@pytest.mark.asyncio
+async def test_union_uses_fixed_placeholder_once(monkeypatch):
+    field = _field("union", [
+        {"id": "a", "source_type": "text", "method": "context", "config": {}},
+    ], use_llm=1)
+    seen = []
+    async def text(*args):
+        return "证据", "", {"_texts": {"same": [{"text": "证据"}]}}, []
+    async def chat(prompt):
+        seen.append(prompt)
+        return '{"reason":"ok","value":"值","pages":[]}'
+    monkeypatch.setattr(svc, "extract_text_field", text)
+    monkeypatch.setattr(svc, "chat_completion", chat)
+    value, _, _, _ = await svc.extract_hybrid_field("file", field, SimpleNamespace())
+    assert value == "值"
+    assert "证据" in seen[0]
+    assert "<search_result>" not in seen[0]
