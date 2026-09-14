@@ -542,8 +542,8 @@ const RuleConfig = {
         if (tag) tag.remove();
     },
 
-    getKeywordTags(containerId) {
-        const container = document.getElementById(containerId);
+    getKeywordTags(containerId, root = null) {
+        const container = this.formElement(root, containerId);
         if (!container) return [];
         const tags = container.querySelectorAll('.keyword-tag');
         const values = [];
@@ -1516,31 +1516,31 @@ const RuleConfig = {
         return Number.isFinite(parsed) ? parsed : null;
     },
 
-    parseIntOrDefault(id, def) {
-        const el = document.getElementById(id);
+    parseIntOrDefault(id, def, root = null) {
+        const el = this.formElement(root, id);
         if (!el) return def;
         const parsed = this._parseIntValue(el.value);
         return parsed === null ? def : parsed;
     },
 
-    parseFloatOrDefault(id, def) {
-        const el = document.getElementById(id);
+    parseFloatOrDefault(id, def, root = null) {
+        const el = this.formElement(root, id);
         if (!el) return def;
         const parsed = this._parseFloatValue(el.value);
         return parsed === null ? def : parsed;
     },
 
-    parseIntOrNull(id) {
-        const el = document.getElementById(id);
+    parseIntOrNull(id, root = null) {
+        const el = this.formElement(root, id);
         if (!el) return null;
         return this._parseIntValue(el.value);
     },
 
-    collectVLConfig(method) {
+    collectVLConfig(method, root = null) {
         const config = {};
-        const getVal = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
-        const getInt = (id, def) => this.parseIntOrDefault(id, def);
-        const getFloat = (id, def) => this.parseFloatOrDefault(id, def);
+        const getVal = (id) => { const el = this.formElement(root, id); return el ? el.value.trim() : ''; };
+        const getInt = (id, def) => this.parseIntOrDefault(id, def, root);
+        const getFloat = (id, def) => this.parseFloatOrDefault(id, def, root);
 
         // 三种方法共用的页码配置
         const pageSource = getVal('fm-vl-page-source');
@@ -1593,76 +1593,253 @@ const RuleConfig = {
         return config;
     },
 
+    // 普通配置与组合配置共用采集器；组合项按局部根节点查找控件。
+    formElement(root, id) {
+        return root ? root.querySelector(`[data-field="${id}"]`) : document.getElementById(id);
+    },
+
+    hybridMethods(source) {
+        return source === 'table' ? [['table_match', '表格匹配']]
+            : source === 'vl' ? [['vl_model', '全量视觉提取'], ['vl_progressive', '逐批扫描'], ['vl_locate', '定位后提取']]
+            : [['context', '上下文检索'], ['section', '章节检索'], ['rule', '规则检索'], ['chunk_db', '分块数据库'], ['vector_db', '向量数据库'], ['page', '按页码取文']];
+    },
+
+    hybridMethodOptions(source, method) {
+        return this.hybridMethods(source).map(([value, label]) => `<option value="${value}" ${value === method ? 'selected' : ''}>${label}</option>`).join('');
+    },
+
+    buildHybridPanel(item) {
+        const config = item.config || {};
+        const template = document.createElement('template');
+        let html;
+        if (item.source_type === 'text') {
+            html = this.buildSearchConfigFields(item.method, config);
+        } else {
+            // 直接复用普通表格/VL 字段表单，避免两套参数随时间产生差异。
+            template.innerHTML = this.buildFieldForm({
+                ...config, field_id: '__hybrid_item__', source_type: item.source_type,
+                search_type: 'context', vl_method: item.method,
+                vl_config: config.vl_config || config,
+                table_match_keywords: config.table_match_keywords || config.keywords || [],
+                table_match_type: config.table_match_type || config.match_type || 'contains',
+                table_match_max_results: config.table_match_max_results ?? config.max_results,
+            });
+            const section = template.content.querySelector(`#fm-${item.source_type}-section`);
+            if (item.source_type === 'table') {
+                section.querySelector('#fm-table-prompt-wrap').remove();
+            } else {
+                section.querySelector('#fm-vl-method').closest('.form-group').remove();
+            }
+            html = section.innerHTML;
+        }
+        template.innerHTML = html;
+        // 仅改写控件标识和事件参数，不替换用户输入内容中的字符串。
+        this._hybridControlSeq = (this._hybridControlSeq || 0) + 1;
+        const prefix = `hybrid-${this._hybridControlSeq}-`;
+        const ids = new Map();
+        template.content.querySelectorAll('[id]').forEach(el => {
+            ids.set(el.id, prefix + el.id);
+            el.dataset.field = el.id;
+            el.id = prefix + el.id;
+        });
+        template.content.querySelectorAll('*').forEach(el => {
+            for (const attr of [...el.attributes]) {
+                if (!attr.name.startsWith('on') && attr.name !== 'for') continue;
+                let value = attr.value;
+                for (const [oldId, newId] of ids) value = value.split(oldId).join(newId);
+                value = value.replace(/RuleConfig\.on(Section|Table)MatchTypeChange\(this.value\)/g,
+                    (_, kind) => `RuleConfig.onHybridMatchChange(this,'${kind.toLowerCase()}')`);
+                value = value.replace(/RuleConfig\.toggleMatchPromptPanel\('(section|table)'\)/g,
+                    "RuleConfig.toggleHybridMatchPanel(this,'$1')");
+                el.setAttribute(attr.name, value);
+            }
+        });
+        // 组合模式只有一个输出标签，移除普通单路表单对标签的说明。
+        template.content.querySelectorAll('.form-hint').forEach(el => {
+            if (el.textContent.includes('占位符') && (item.method === 'vector_db' || item.source_type === 'table')) {
+                if (!el.textContent.includes('{table_list}')) el.textContent = '此项结果统一进入“混合检索结果”，无需单独配置标签。';
+            }
+        });
+        return `<div class="hybrid-panel" data-config="${Utils.escapeHtml(JSON.stringify(config))}">${template.innerHTML}</div>`;
+    },
+
     renderHybridItems(items, strategy) {
         return items.map((item, index) => {
             const source = item.source_type || 'text';
-            const method = item.method || (source === 'vl' ? 'vl_locate' : source === 'table' ? 'table_match' : 'context');
-            const cfg = JSON.stringify(item.config || {}, null, 2);
-            const vlDisabled = strategy === 'union' ? 'disabled' : '';
-            return `<div class="hybrid-item" draggable="true" data-index="${index}" data-id="${Utils.escapeHtml(item.id || `search_${index + 1}`)}" ondragstart="RuleConfig.onHybridDragStart(event)" ondragover="RuleConfig.onHybridDragOver(event)" ondrop="RuleConfig.onHybridDrop(event)">
-                <div class="form-label-row"><span class="hybrid-drag-handle" title="拖动排序">☷ 配置 ${index + 1}</span><span>
-                    <button type="button" class="btn btn-secondary" onclick="RuleConfig.moveHybridItem(${index},-1)">↑</button>
-                    <button type="button" class="btn btn-secondary" onclick="RuleConfig.moveHybridItem(${index},1)">↓</button>
-                    <button type="button" class="btn btn-secondary" onclick="RuleConfig.copyHybridItem(${index})">复制</button>
-                    <button type="button" class="btn btn-secondary" onclick="RuleConfig.removeHybridItem(${index})">删除</button>
+            const method = item.method === 'table' ? 'table_match' : (item.method || this.hybridMethods(source)[0][0]);
+            return `<div class="hybrid-item" data-index="${index}" data-id="${Utils.escapeHtml(item.id)}" data-source="${source}" data-method="${method}"
+                ondragover="RuleConfig.onHybridDragOver(event)" ondrop="RuleConfig.onHybridDrop(event)">
+                <div class="form-label-row hybrid-item-header"><span><button type="button" class="hybrid-drag-handle" draggable="true" ondragstart="RuleConfig.onHybridDragStart(event)" title="拖动排序；也可使用上下移按钮" aria-label="拖动配置排序">☷</button> <strong class="hybrid-item-title">配置 ${index + 1}</strong></span><span>
+                    <button type="button" class="btn btn-secondary hybrid-up" onclick="RuleConfig.moveHybridItem(Number(this.closest('.hybrid-item').dataset.index),-1)" ${index === 0 ? 'disabled' : ''}>上移</button>
+                    <button type="button" class="btn btn-secondary hybrid-down" onclick="RuleConfig.moveHybridItem(Number(this.closest('.hybrid-item').dataset.index),1)" ${index === items.length - 1 ? 'disabled' : ''}>下移</button>
+                    <button type="button" class="btn btn-secondary hybrid-delete" onclick="RuleConfig.removeHybridItem(Number(this.closest('.hybrid-item').dataset.index))" ${items.length === 1 ? 'disabled' : ''}>删除</button>
                 </span></div>
-                <div class="form-row"><div class="form-group"><label class="form-label">来源</label><select class="form-select hybrid-source" onchange="RuleConfig.onHybridSourceChange(this)"><option value="text" ${source === 'text' ? 'selected' : ''}>文本</option><option value="table" ${source === 'table' ? 'selected' : ''}>表格</option><option value="vl" ${source === 'vl' ? 'selected' : ''} ${vlDisabled}>VL</option></select></div>
-                <div class="form-group"><label class="form-label">方法</label><input class="form-input hybrid-method" value="${Utils.escapeHtml(method)}" placeholder="context / table_match / vl_locate"></div></div>
-                <div class="form-group"><label class="form-label">方法配置 JSON</label><textarea class="form-textarea hybrid-config" rows="3">${Utils.escapeHtml(cfg)}</textarea></div>
+                <div class="form-row"><div class="form-group"><label class="form-label">来源</label><select class="form-select hybrid-source" onchange="RuleConfig.onHybridSourceChange(this)">
+                    <option value="text" ${source === 'text' ? 'selected' : ''}>文本</option><option value="table" ${source === 'table' ? 'selected' : ''}>表格</option><option value="vl" ${source === 'vl' ? 'selected' : ''} ${strategy === 'union' ? 'disabled' : ''}>VL（PDF 视觉模型）</option></select></div>
+                <div class="form-group"><label class="form-label">检索方法</label><select class="form-select hybrid-method" onchange="RuleConfig.onHybridMethodChange(this)">${this.hybridMethodOptions(source, method)}</select></div></div>
+                ${this.buildHybridPanel({ ...item, source_type: source, method })}
             </div>`;
         }).join('');
     },
 
+    collectHybridItem(row) {
+        const panel = row.querySelector('.hybrid-panel');
+        const original = JSON.parse(panel.dataset.config || '{}');
+        const source = row.dataset.source;
+        const method = row.dataset.method;
+        let config;
+        if (source === 'text') {
+            config = this.collectSearchConfig(method, panel);
+        } else if (source === 'vl') {
+            const options = this.collectVLConfig(method, panel);
+            config = original.vl_config ? { vl_config: { ...original.vl_config, ...options } } : options;
+            config.vl_system_prompt = this.formElement(panel, 'fm-vl-system-prompt').value.trim() || null;
+            config.vl_extract_prompt = this.formElement(panel, 'fm-vl-extract-prompt').value.trim();
+        } else {
+            config = {
+                table_name_pattern: this.formElement(panel, 'fm-table-name-pattern').value.trim() || null,
+                table_match_type: this.formElement(panel, 'fm-table-match-type').value,
+                table_match_keywords: this.getKeywordTags('fm-table-match-keywords', panel),
+                table_match_max_results: this.parseIntOrNull('fm-table-match-max-results', panel),
+                table_match_prompt: this.formElement(panel, 'fm-table-match-prompt').value.trim() || null,
+            };
+        }
+        // 未展示的兼容键原样保留；已展示且被清空的可选值必须删除，不能恢复旧值。
+        const optional = source === 'text'
+            ? ['top_k', 'score_threshold', 'score_ratio', 'max_total_results', 'section_match_prompt', 'page_source_field', 'max_pages']
+            : source === 'vl' ? ['max_pages', 'page_source_field', 'batch_prompt_template', 'locate_prompt_template'] : [];
+        const target = original.vl_config && source === 'vl' ? original.vl_config : original;
+        for (const key of optional) delete target[key];
+        return { id: row.dataset.id, source_type: source, method, config: { ...original, ...config } };
+    },
+
     getHybridItemsFromDom() {
-        return Array.from(document.querySelectorAll('#fm-hybrid-items .hybrid-item')).map((row, i) => {
-            let config = {};
-            try { config = JSON.parse(row.querySelector('.hybrid-config').value || '{}'); } catch (_) { config = {}; }
-            return { id: row.dataset.id || `search_${i + 1}`, source_type: row.querySelector('.hybrid-source').value, method: row.querySelector('.hybrid-method').value.trim(), config };
+        return [...document.querySelectorAll('#fm-hybrid-items > .hybrid-item')].map(row => this.collectHybridItem(row));
+    },
+
+    updateHybridOrder() {
+        const rows = [...document.querySelectorAll('#fm-hybrid-items > .hybrid-item')];
+        rows.forEach((row, i) => {
+            row.dataset.index = i;
+            row.querySelector('.hybrid-item-title').textContent = `配置 ${i + 1}`;
+            row.querySelector('.hybrid-up').disabled = i === 0;
+            row.querySelector('.hybrid-down').disabled = i === rows.length - 1;
+            row.querySelector('.hybrid-delete').disabled = rows.length === 1;
         });
     },
 
-    refreshHybridItems(items) {
+    addHybridItem() {
         const area = document.getElementById('fm-hybrid-items');
-        const strategy = (document.getElementById('fm-hybrid-strategy') || {}).value || 'union';
-        if (area) area.innerHTML = this.renderHybridItems(items, strategy);
+        const strategy = document.getElementById('fm-hybrid-strategy').value;
+        this._hybridItemSeq = (this._hybridItemSeq || 0) + 1;
+        const item = { id: `search_${Date.now()}_${this._hybridItemSeq}`, source_type: 'text', method: 'context', config: {} };
+        // 不采集、不重建其他项：尚未回车的关键词、空数值和焦点都保留在原节点。
+        area.insertAdjacentHTML('beforeend', this.renderHybridItems([item], strategy));
+        this.updateHybridOrder();
     },
 
-    addHybridItem() {
-        const items = this.getHybridItemsFromDom();
-        items.push({ id: `search_${Date.now()}`, source_type: 'text', method: 'context', config: {} });
-        this.refreshHybridItems(items);
-    },
-    copyHybridItem(index) {
-        const items = this.getHybridItemsFromDom();
-        if (items[index]) items.splice(index + 1, 0, { ...items[index], id: `search_${Date.now()}`, config: { ...items[index].config } });
-        this.refreshHybridItems(items);
-    },
     removeHybridItem(index) {
-        const items = this.getHybridItemsFromDom();
-        if (items.length <= 1) return;
-        items.splice(index, 1); this.refreshHybridItems(items);
+        const rows = document.querySelectorAll('#fm-hybrid-items > .hybrid-item');
+        if (rows.length <= 1 || !rows[index]) return;
+        rows[index].remove();
+        this.updateHybridOrder();
     },
+
     moveHybridItem(index, delta) {
-        const items = this.getHybridItemsFromDom(); const target = index + delta;
-        if (target < 0 || target >= items.length) return;
-        [items[index], items[target]] = [items[target], items[index]]; this.refreshHybridItems(items);
+        const rows = document.querySelectorAll('#fm-hybrid-items > .hybrid-item');
+        const target = index + delta;
+        if (!rows[index] || !rows[target]) return;
+        rows[index].parentElement.insertBefore(rows[index], delta > 0 ? rows[target].nextSibling : rows[target]);
+        this.updateHybridOrder();
     },
+
     onHybridStrategyChange(strategy) {
-        const items = this.getHybridItemsFromDom();
-        if (strategy === 'union') items.forEach(i => { if (i.source_type === 'vl') i.source_type = 'text'; });
-        this.refreshHybridItems(items);
+        const rows = [...document.querySelectorAll('#fm-hybrid-items > .hybrid-item')];
+        if (strategy === 'union' && rows.some(row => row.dataset.source === 'vl')) {
+            document.getElementById('fm-hybrid-strategy').value = 'fallback';
+            Toast.error('已有 VL 配置只能用于为空回退，请先删除该项再切换。');
+            return;
+        }
+        rows.forEach(row => { row.querySelector('.hybrid-source option[value="vl"]').disabled = strategy === 'union'; });
     },
+
+    switchHybridPanel(row, source, method) {
+        const oldPanel = row.querySelector('.hybrid-panel');
+        row._hybridDrafts ||= new Map();
+        row._hybridLastMethods ||= {};
+        row._hybridDrafts.set(`${row.dataset.source}/${row.dataset.method}`, oldPanel);
+        row._hybridLastMethods[row.dataset.source] = row.dataset.method;
+        let panel = row._hybridDrafts.get(`${source}/${method}`);
+        if (!panel) {
+            const template = document.createElement('template');
+            const config = {};
+            if (source === 'vl' && row.dataset.source === 'vl') {
+                config.vl_system_prompt = this.formElement(oldPanel, 'fm-vl-system-prompt').value;
+                config.vl_extract_prompt = this.formElement(oldPanel, 'fm-vl-extract-prompt').value;
+            }
+            template.innerHTML = this.buildHybridPanel({ source_type: source, method, config });
+            panel = template.content.firstElementChild;
+        }
+        oldPanel.replaceWith(panel);
+        row.dataset.source = source;
+        row.dataset.method = method;
+        row.querySelector('.hybrid-method').innerHTML = this.hybridMethodOptions(source, method);
+    },
+
     onHybridSourceChange(select) {
-        const strategy = (document.getElementById('fm-hybrid-strategy') || {}).value;
-        if (strategy === 'union' && select.value === 'vl') select.value = 'text';
+        const row = select.closest('.hybrid-item');
+        const source = select.value;
+        const rows = [...document.querySelectorAll('#fm-hybrid-items > .hybrid-item')];
+        if (source === 'vl' && (document.getElementById('fm-hybrid-strategy').value === 'union'
+            || rows.some(other => other !== row && other.dataset.source === 'vl'))) {
+            select.value = row.dataset.source;
+            Toast.error('VL 仅支持为空回退，且最多保留一个 VL 配置。');
+            return;
+        }
+        const method = row._hybridLastMethods?.[source] || (source === 'vl' ? 'vl_locate' : this.hybridMethods(source)[0][0]);
+        this.switchHybridPanel(row, source, method);
     },
-    onHybridDragStart(event) { event.dataTransfer.setData('text/plain', event.currentTarget.dataset.index); },
+
+    onHybridMethodChange(select) {
+        const row = select.closest('.hybrid-item');
+        this.switchHybridPanel(row, row.dataset.source, select.value);
+    },
+
+    onHybridMatchChange(select, kind) {
+        const panel = select.closest('.hybrid-panel');
+        const threshold = this.formElement(panel, 'fm-sc-section-threshold-group');
+        if (threshold) threshold.style.display = select.value === 'fuzzy' ? '' : 'none';
+        this.formElement(panel, `fm-${kind}-match-prompt-group`).style.display = select.value === 'llm' ? '' : 'none';
+    },
+
+    async toggleHybridMatchPanel(button, kind) {
+        const panel = button.closest('.hybrid-panel');
+        const body = this.formElement(panel, `fm-${kind}-match-prompt-body`);
+        const opening = body.style.display === 'none';
+        body.style.display = opening ? '' : 'none';
+        button.textContent = opening ? '▾ LLM 匹配高级设置' : '▸ LLM 匹配高级设置';
+        if (!opening) return;
+        const defaults = await this.loadPromptDefaults();
+        const ta = this.formElement(panel, `fm-${kind}-match-prompt`);
+        if (!ta.value.trim() && defaults[kind]) ta.value = defaults[kind];
+        this.formElement(panel, `fm-${kind}-match-prompt-suffix`).textContent = defaults.output_instruction || '';
+    },
+
+    onHybridDragStart(event) {
+        event.dataTransfer.setData('text/plain', event.currentTarget.closest('.hybrid-item').dataset.index);
+        event.dataTransfer.effectAllowed = 'move';
+    },
     onHybridDragOver(event) { event.preventDefault(); },
     onHybridDrop(event) {
-        event.preventDefault(); const from = Number(event.dataTransfer.getData('text/plain')); const to = Number(event.currentTarget.dataset.index);
-        if (!Number.isInteger(from) || !Number.isInteger(to) || from === to) return;
-        const items = this.getHybridItemsFromDom(); const moved = items.splice(from, 1)[0]; items.splice(to, 0, moved); this.refreshHybridItems(items);
+        event.preventDefault();
+        const raw = event.dataTransfer.getData('text/plain');
+        if (!/^\d+$/.test(raw)) return;
+        const from = Number(raw);
+        const to = Number(event.currentTarget.dataset.index);
+        if (!Number.isInteger(to) || from === to) return;
+        this.moveHybridItem(from, to - from);
     },
+
 
     onSourceTypeChange(type) {
         const tableSection = document.getElementById('fm-table-section');
@@ -2023,15 +2200,15 @@ const RuleConfig = {
         return data;
     },
 
-    collectSearchConfig(searchType) {
+    collectSearchConfig(searchType, root = null) {
         const config = {};
 
         const getVal = (id) => {
-            const el = document.getElementById(id);
+            const el = this.formElement(root, id);
             return el ? el.value.trim() : '';
         };
-        const getInt = (id, def) => this.parseIntOrDefault(id, def);
-        const getFloat = (id, def) => this.parseFloatOrDefault(id, def);
+        const getInt = (id, def) => this.parseIntOrDefault(id, def, root);
+        const getFloat = (id, def) => this.parseFloatOrDefault(id, def, root);
         const getList = (id) => {
             const val = getVal(id);
             return val ? val.split(/[,，]/).map(s => s.trim()).filter(Boolean) : [];
@@ -2039,11 +2216,11 @@ const RuleConfig = {
 
         switch (searchType) {
             case 'hybrid':
-                config.strategy = (document.getElementById('fm-hybrid-strategy') || {}).value || 'union';
+                config.strategy = (this.formElement(root, 'fm-hybrid-strategy') || {}).value || 'union';
                 config.items = this.getHybridItemsFromDom();
                 break;
             case 'context':
-                config.keywords = this.getKeywordTags('fm-sc-keywords');
+                config.keywords = this.getKeywordTags('fm-sc-keywords', root);
                 config.context_before = getInt('fm-sc-context-before', 200);
                 config.context_after = getInt('fm-sc-context-after', 200);
                 config.max_results = getInt('fm-sc-max-results', 5);
@@ -2058,7 +2235,7 @@ const RuleConfig = {
                 config.section_pattern = getVal('fm-sc-section-pattern');
                 config.section_match_type = getVal('fm-sc-section-match-type') || 'contains';
                 {
-                    const tpl = document.getElementById('fm-section-match-prompt');
+                    const tpl = this.formElement(root, 'fm-section-match-prompt');
                     const val = tpl ? tpl.value.trim() : '';
                     const def = (this.PROMPT_DEFAULTS && this.PROMPT_DEFAULTS.section) || '';
                     if (val && val !== def) config.section_match_prompt = val;
@@ -2070,8 +2247,8 @@ const RuleConfig = {
                 }
                 break;
             case 'rule':
-                config.keywords = this.getKeywordTags('fm-sc-keywords');
-                config.stop_words = this.getKeywordTags('fm-sc-stop-words');
+                config.keywords = this.getKeywordTags('fm-sc-keywords', root);
+                config.stop_words = this.getKeywordTags('fm-sc-stop-words', root);
                 config.direction = getVal('fm-sc-direction') || 'forward';
                 config.min_length = getInt('fm-sc-min-length', 0);
                 config.max_length = getInt('fm-sc-max-length', 1000);
@@ -2084,7 +2261,7 @@ const RuleConfig = {
                 config.sort_order = getVal('fm-sc-sort-order') || 'relevance';
                 break;
             case 'chunk_db':
-                config.keywords = this.getKeywordTags('fm-sc-keywords');
+                config.keywords = this.getKeywordTags('fm-sc-keywords', root);
                 config.max_results = getInt('fm-sc-max-results', 5);
                 {
                     const mt = getVal('fm-sc-max-total-results');
@@ -2117,7 +2294,7 @@ const RuleConfig = {
                 if (this.state.formIsAdvanced) {
                     const src = getVal('fm-sc-page-source');
                     if (src) config.page_source_field = src;
-                    const mp = this.parseIntOrNull('fm-sc-page-max-pages');
+                    const mp = this.parseIntOrNull('fm-sc-page-max-pages', root);
                     if (mp) config.max_pages = mp;
                 }
                 break;
