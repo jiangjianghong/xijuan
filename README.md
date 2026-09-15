@@ -66,6 +66,31 @@ python app.py
 # 或： uv run uvicorn app:app --host 0.0.0.0 --port 5019 --reload
 ```
 
+### Docker 部署与代码更新
+
+在服务器的项目目录执行以下命令。容器将当前项目目录只读挂载到 `/app`，Python 依赖保留在镜像的 `/opt/venv`；`configs`、`logs`、`uploads` 和 `data` 目录单独读写挂载，供配置保存、日志与 PDF 持久化使用。服务器上需要保留完整项目代码（包括 `logs/__init__.py`）。
+
+首次部署，或从旧版切换到代码挂载方式，需要构建镜像并重建容器一次：
+
+```bash
+docker compose up -d --build --force-recreate wanz-prase2
+```
+
+以后只更新 Python 代码、前端或文档时，先将最新代码同步到服务器项目目录，再重启：
+
+```bash
+docker compose restart wanz-prase2
+# 或使用部署脚本（在项目目录执行）
+./deploy.sh --restart
+
+# 查看启动日志
+docker compose logs --tail=100 wanz-prase2
+```
+
+`pyproject.toml`、`uv.lock` 或 Dockerfile 中的运行环境发生变化时，需要重新执行上面的构建命令。Compose 的挂载、环境变量等配置发生变化时，需要执行 `docker compose up -d --force-recreate wanz-prase2`，单纯 restart 不会应用容器配置变更。`./deploy.sh` 和 `./deploy.sh --no-cache` 仍保留原有构建部署行为。
+
+正式服务未开启自动热重载。重启会短暂中断服务，请在当前处理任务结束后执行。健康检查默认访问 5019 端口；若修改 `server.port`，同步调整 Compose 中的健康检查地址。自定义 PDF 存储目录也需要配置对应的可写挂载。
+
 ### 验证
 
 ```bash

@@ -3,11 +3,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: wanz-prase2-001
+    container_name: xijuan
     image: wanz-prase2-001:latest
     restart: always
     network_mode: host
     volumes:
+      # 使用宿主机最新代码；依赖保留在镜像 /opt/venv 中，更新代码后重启即可
+      - .:/app:ro
       # 挂载整个配置目录，使设置页面可通过原子替换持久化配置
       - ./configs:/app/configs
       # 挂载日志目录，持久化日志
@@ -19,7 +21,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5019/docs"]
+      test: ["CMD", "/opt/venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5019/docs', timeout=5).close()"]
       interval: 30s
       timeout: 10s
       retries: 3

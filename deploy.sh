@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 文档解析系统 Docker 部署脚本
-# 用法: ./deploy.sh [--no-cache]
+# 用法: ./deploy.sh [--no-cache | --restart]
 
 set -e
 
@@ -13,6 +13,7 @@ NC='\033[0m' # No Color
 
 # 项目配置
 PROJECT_NAME="wanz-prase2-001"
+CONTAINER_NAME="xijuan"
 COMPOSE_FILE="docker-compose.yaml"
 DOCKER_COMPOSE=""
 
@@ -72,11 +73,11 @@ check_config() {
 stop_existing_container() {
     log_info "检查现有容器..."
 
-    if docker ps -a --format '{{.Names}}' | grep -q "^${PROJECT_NAME}$"; then
-        log_warn "发现已存在的应用容器: ${PROJECT_NAME}"
+    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        log_warn "发现已存在的应用容器: ${CONTAINER_NAME}"
         log_info "正在停止应用容器..."
-        docker stop "${PROJECT_NAME}" 2>/dev/null || true
-        docker rm "${PROJECT_NAME}" 2>/dev/null || true
+        docker stop "${CONTAINER_NAME}" 2>/dev/null || true
+        docker rm "${CONTAINER_NAME}" 2>/dev/null || true
         log_info "应用容器已停止并移除"
     else
         log_info "未发现现有应用容器"
@@ -131,12 +132,12 @@ start_container() {
     sleep 5
 
     # 检查应用容器状态
-    if docker ps --format '{{.Names}}' | grep -q "^${PROJECT_NAME}$"; then
+    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         log_info "应用容器启动成功!"
         log_info "服务地址: http://localhost:5019"
         log_info "API 文档: http://localhost:5019/docs"
     else
-        log_error "应用容器启动失败，请检查日志: docker logs ${PROJECT_NAME}"
+        log_error "应用容器启动失败，请检查日志: docker logs ${CONTAINER_NAME}"
         exit 1
     fi
 }
@@ -151,10 +152,15 @@ show_status() {
 # 主函数
 main() {
     local no_cache="false"
+    local restart_only="false"
 
     # 解析参数
     while [[ $# -gt 0 ]]; do
         case $1 in
+            --restart)
+                restart_only="true"
+                shift
+                ;;
             --no-cache)
                 no_cache="true"
                 shift
@@ -163,6 +169,7 @@ main() {
                 echo "用法: $0 [选项]"
                 echo ""
                 echo "选项:"
+                echo "  --restart     仅重启现有服务，使挂载的代码生效（不构建、不删除容器）"
                 echo "  --no-cache    重新构建镜像（不使用缓存）并清理历史镜像"
                 echo "  -h, --help    显示帮助信息"
                 exit 0
@@ -175,6 +182,11 @@ main() {
         esac
     done
 
+    if [ "$restart_only" = "true" ] && [ "$no_cache" = "true" ]; then
+        log_error "--restart 与 --no-cache 不能同时使用"
+        exit 1
+    fi
+
     echo "=========================================="
     echo "  文档解析系统 Docker 部署"
     echo "=========================================="
@@ -185,6 +197,19 @@ main() {
     detect_compose_command
     check_compose_file
     check_config
+
+    if [ "$restart_only" = "true" ]; then
+        if [ -z "$($DOCKER_COMPOSE -f "$COMPOSE_FILE" ps -a -q wanz-prase2)" ]; then
+            log_error "服务容器不存在，请先运行 ./deploy.sh 完成首次部署"
+            exit 1
+        fi
+        log_info "重启应用服务，加载宿主机最新代码..."
+        $DOCKER_COMPOSE -f "$COMPOSE_FILE" restart wanz-prase2
+        show_status
+        log_info "已执行重启，可通过 docker logs ${CONTAINER_NAME} 检查启动日志"
+        return
+    fi
+
     stop_existing_container
 
     # 如果使用 --no-cache，先清理历史镜像
