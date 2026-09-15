@@ -1674,7 +1674,7 @@ const RuleConfig = {
             const method = item.method === 'table' ? 'table_match' : (item.method || this.hybridMethods(source)[0][0]);
             return `<div class="hybrid-item" data-index="${index}" data-id="${Utils.escapeHtml(item.id)}" data-source="${source}" data-method="${method}" style="display:${index === 0 ? '' : 'none'}"
                 ondragover="RuleConfig.onHybridDragOver(event)" ondrop="RuleConfig.onHybridDrop(event)">
-                <div class="form-label-row hybrid-item-header"><span><button type="button" class="hybrid-drag-handle" draggable="true" ondragstart="RuleConfig.onHybridDragStart(event)" title="长按拖动排序" aria-label="拖动配置排序">☷</button> <strong class="hybrid-item-title">配置 ${index + 1}</strong></span><span>
+                <div class="form-label-row hybrid-item-header"><span></span><span>
                     <button type="button" class="btn btn-secondary hybrid-delete" onclick="RuleConfig.removeHybridItem(Number(this.closest('.hybrid-item').dataset.index))" ${items.length === 1 ? 'disabled' : ''}>删除</button>
                 </span></div>
                 <div class="form-row"><div class="form-group"><label class="form-label">来源</label><select class="form-select hybrid-source" onchange="RuleConfig.onHybridSourceChange(this)">
@@ -1724,14 +1724,13 @@ const RuleConfig = {
         const rows = [...document.querySelectorAll('#fm-hybrid-items > .hybrid-item')];
         rows.forEach((row, i) => {
             row.dataset.index = i;
-            row.querySelector('.hybrid-item-title').textContent = `配置 ${i + 1}`;
             row.querySelector('.hybrid-delete').disabled = rows.length === 1;
         });
         const tabsEl = document.getElementById('fm-hybrid-tabs');
         if (tabsEl) {
             // 面板增删后同步生成标签，不能只更新原有按钮。
             tabsEl.innerHTML = rows.map((_, i) =>
-                `<button type="button" class="hybrid-tab" onclick="RuleConfig.showHybridItem(${i})">配置 ${i + 1}</button>`
+                `<button type="button" class="hybrid-tab" draggable="true" data-index="${i}" onclick="RuleConfig.showHybridItem(${i})" ondragstart="RuleConfig.onHybridTabDragStart(event)" ondragover="RuleConfig.onHybridDragOver(event)" ondrop="RuleConfig.onHybridTabDrop(event)">配置 ${i + 1}</button>`
             ).join('');
         }
     },
@@ -1843,6 +1842,17 @@ const RuleConfig = {
     onHybridDragStart(event) {
         event.dataTransfer.setData('text/plain', event.currentTarget.closest('.hybrid-item').dataset.index);
         event.dataTransfer.effectAllowed = 'move';
+    },
+    onHybridTabDragStart(event) {
+        event.dataTransfer.setData('text/plain', event.currentTarget.dataset.index);
+        event.dataTransfer.effectAllowed = 'move';
+    },
+    onHybridTabDrop(event) {
+        event.preventDefault();
+        const from = Number(event.dataTransfer.getData('text/plain'));
+        const to = Number(event.currentTarget.dataset.index);
+        if (Number.isInteger(from) && Number.isInteger(to) && from !== to) this.moveHybridItem(from, to - from);
+        this.showHybridItem(to);
     },
     onHybridDragOver(event) { event.preventDefault(); },
     onHybridDrop(event) {

@@ -183,4 +183,8 @@ test('从普通文本切换组合检索后可连续添加配置并显示提示�
     assert.equal(w.document.querySelectorAll('#fm-hybrid-items > .hybrid-item').length, 3);
     assert.equal(w.document.getElementById('fm-text-system-prompt').closest('#fm-text-prompt-wrap').style.display, '');
     assert.ok(w.document.getElementById('fm-text-extract-prompt'));
+    assert.equal(w.document.querySelector('.hybrid-drag-handle'), null);
+    const tabs = w.document.querySelectorAll('.hybrid-tab');
+    assert.equal(tabs.length, 3);
+    assert.equal(tabs[0].getAttribute('draggable'), 'true');
 });
