@@ -113,6 +113,7 @@ class ExtractionConfig(BaseModel):
     retry_count: int = Field(3, ge=1)
     max_context_length: int = Field(4096, ge=1)
     extra_body: Dict[str, Any] = {}
+    enable_thinking: bool | None = None
 
     @model_validator(mode="before")
     @classmethod

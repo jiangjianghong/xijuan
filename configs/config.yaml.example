@@ -71,6 +71,7 @@ extraction:
   # extra_body: {chat_template_kwargs: {enable_thinking: false}}
   # 阿里 DashScope 等托管模型关闭思考链示例：
   # extra_body: {enable_thinking: false}
+  enable_thinking: null                                  # 顶层传递 enable_thinking；null=不覆盖模型默认值
   extra_body: {}                                       # 默认不附加额外请求参数
 
 # 表格名校验配置（为空的连接字段会回退到 extraction 对应字段）

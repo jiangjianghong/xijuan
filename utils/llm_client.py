@@ -70,6 +70,8 @@ async def chat_completion(
     }
     if merged_extra:
         payload["extra_body"] = merged_extra
+    if cfg.enable_thinking is not None:
+        payload["enable_thinking"] = cfg.enable_thinking
 
     url = f"{base_url.rstrip('/')}/chat/completions"
     limiter = get_limiter("global_llm", app_cfg.concurrency.global_llm)

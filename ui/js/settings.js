@@ -51,6 +51,7 @@ const SettingsManager = {
             ['timeout', '请求超时', 'number', { min: 1, unit: '秒' }],
             ['retry_count', '重试次数', 'number', { min: 1 }],
             ['max_context_length', '最大上下文长度', 'number', { min: 1, unit: '字符' }],
+            ['enable_thinking', '启用思考模式', 'boolean'],
             ['extra_body', '额外请求参数', 'json', { rows: 4 }],
         ],
         table_name_validation: [

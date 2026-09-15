@@ -36,6 +36,22 @@ def test_classify_heading_arabic_dotted_level3():
     assert _classify_heading("7.1行政村分类") == (3, "7.1", "行政村分类", True)
 
 
+def test_classify_heading_arabic_dotted_deeper_levels():
+    """点分编号的层级随编号段数增加，不能全部压成同一层。"""
+    assert _classify_heading("1.1.1 项目建设内容") == (
+        4,
+        "1.1.1",
+        "项目建设内容",
+        True,
+    )
+    assert _classify_heading("4.2.3.1 供水管线") == (
+        5,
+        "4.2.3.1",
+        "供水管线",
+        True,
+    )
+
+
 def test_classify_heading_paren_arabic_level4():
     assert _classify_heading("(1) 农村水生态环境显著修复") == (4, "(1)", "农村水生态环境显著修复", True)
 
@@ -98,6 +114,23 @@ def test_parse_sections_tree_end_covers_children():
     tree = content[parent.start_pos:parent.tree_end_pos]
     assert "子一" in tree and "子二" in tree
     assert "下一章" not in tree
+
+
+def test_parse_sections_decimal_number_tree_covers_deeper_children():
+    """1.1 应包含 1.1.1/1.1.1.1，直到同级 1.2 才结束。"""
+    content = (
+        "# 第一章 总则\n\n"
+        "# 1.1 项目概况\n\n父节正文\n\n"
+        "# 1.1.1 项目位置\n\n子节正文\n\n"
+        "# 1.1.1.1 坐标\n\n孙节正文\n\n"
+        "# 1.2 建设条件\n\n同级正文\n"
+    )
+    secs = parse_sections(content)
+    assert [s.level for s in secs] == [1, 3, 4, 5, 3]
+    parent = secs[1]
+    tree = content[parent.start_pos : parent.tree_end_pos]
+    assert "子节正文" in tree and "孙节正文" in tree
+    assert "同级正文" not in tree
 
 
 def test_parse_sections_leaf_tree_end_equals_flat_end():

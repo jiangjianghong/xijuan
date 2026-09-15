@@ -1239,6 +1239,10 @@ def _classify_heading(raw_title: str):
         if m:
             number = m.group(0).strip()
             clean = t[m.end():].strip()
+            # 点分阿拉伯编号的段数就是其相对层级：1.1 → 3，
+            # 1.1.1 → 4，避免所有多级编号都被压成同一层而截断父节。
+            if level == 3 and re.match(r"^\d+\s*[.．]\s*\d", number):
+                level = len(re.findall(r"\d+", number)) + 1
             return level, number, clean or t, True
     return _PLAIN_LEVEL, "", t, False
 
