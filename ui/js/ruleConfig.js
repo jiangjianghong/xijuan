@@ -867,7 +867,7 @@ const RuleConfig = {
         this.showModal();
 
         // 初始化动态区域
-        const sourceType = (field && field.source_type) || 'table';
+        const sourceType = (field && field.search_type === 'hybrid') ? 'hybrid' : ((field && field.source_type) || 'table');
         this.onSourceTypeChange(sourceType);
 
         if (sourceType === 'table') {
@@ -897,7 +897,7 @@ const RuleConfig = {
 
     buildFieldForm(field) {
         const isEdit = !!field.field_id;
-        const sourceType = field.source_type || 'table';
+        const sourceType = field.search_type === 'hybrid' ? 'hybrid' : (field.source_type || 'table');
         const searchType = field.search_type || 'context';
         const skipLlmChecked = field.use_llm === 0 ? 'checked' : '';
         // 进阶字段：在普通字段全部抽完后执行，可引用普通字段结果

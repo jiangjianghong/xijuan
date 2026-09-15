@@ -135,3 +135,17 @@ test('匹配方式和关键词事件只作用于所属项，ID 全部唯一', as
     const ids = [...w.document.querySelectorAll('[id]')].map(x => x.id);
     assert.equal(new Set(ids).size, ids.length);
 });
+
+test('保存后的 hybrid 字段重新打开时来源仍显示组合检索并有配置操作', () => {
+    const { w, rc } = setup([]);
+    const html = rc.buildFieldForm({
+        field_id: 'f1', field_name: '金额', source_type: 'text', search_type: 'hybrid',
+        search_config: { strategy: 'union', items: [item('a', 'text', 'context', { keywords: ['金额'] })] },
+        text_extract_prompt: '<search_result>混合检索结果</search_result>',
+    });
+    w.document.getElementById('editor').innerHTML = html;
+    const source = w.document.getElementById('fm-source-type');
+    assert.equal(source.value, 'hybrid');
+    assert.match(w.document.getElementById('fm-hybrid-items').textContent, /配置 1/);
+    assert.match(w.document.querySelector('#fm-search-config-area').textContent, /添加配置/);
+});
