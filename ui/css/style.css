@@ -5518,17 +5518,20 @@ body.runtime-modal-open { overflow:hidden; }
 
 /* 混合检索配置：横向标签 + 单项面板，和下方提示词形成清晰边界 */
 .hybrid-config-area {
-    background: #effaf1;
-    border: 1px solid #b9dfc0;
+    background: #f7fcf8;
+    border: 1px solid #d7eadb;
     border-radius: 8px;
     padding: 14px;
     margin-top: 8px;
     margin-bottom: 16px;
 }
-.hybrid-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 12px; }
-.hybrid-tab { border: 1px solid #b9dfc0; background: #fff; color: #356b43; border-radius: 6px; padding: 6px 14px; cursor: pointer; }
-.hybrid-tab.active { background: #cfeeda; border-color: #75ba85; font-weight: 600; }
-.hybrid-item { border: 1px solid #c7e5cc; border-radius: 7px; padding: 12px; background: rgba(255,255,255,.72); }
-.hybrid-item-header { border-bottom: 1px solid #d9eee0; padding-bottom: 8px; margin-bottom: 10px; }
+.hybrid-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
+.hybrid-tab { padding: 6px 16px; border: 1px solid var(--border); border-radius: 9999px; background: var(--bio-pale); color: var(--bio-dark); font-size: 13px; font-weight: 600; cursor: grab; transition: var(--transition); user-select: none; }
+.hybrid-tab:hover { background: #dbe6d7; }
+.hybrid-tab:active { cursor: grabbing; transform: scale(0.97); }
+.hybrid-tab.active { background: var(--bio-dark); border-color: var(--bio-dark); color: #fff; }
+.hybrid-tab:focus-visible { outline: 2px solid var(--bio-med); outline-offset: 2px; }
+.hybrid-item { border: 1px solid #dcebe0; border-radius: 7px; padding: 12px; background: rgba(255,255,255,.8); }
+.hybrid-item-header { border-bottom: 1px solid #e5f0e7; padding-bottom: 8px; margin-bottom: 10px; }
 .hybrid-drag-handle { cursor: grab; user-select: none; touch-action: none; border: 0; background: transparent; font-size: 18px; padding: 2px 6px; }
 .hybrid-drag-handle:active { cursor: grabbing; }
