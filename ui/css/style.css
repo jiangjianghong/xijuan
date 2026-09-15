@@ -5535,3 +5535,16 @@ body.runtime-modal-open { overflow:hidden; }
 .hybrid-item-header { border-bottom: 1px solid #e5f0e7; padding-bottom: 8px; margin-bottom: 10px; }
 .hybrid-drag-handle { cursor: grab; user-select: none; touch-action: none; border: 0; background: transparent; font-size: 18px; padding: 2px 6px; }
 .hybrid-drag-handle:active { cursor: grabbing; }
+
+.debug-sec-hybrid .debug-section-body { display:grid; gap:8px; }
+.hybrid-debug-card { border:1px solid #dcebe0; border-radius:8px; background:#fff; overflow:hidden; }
+.hybrid-debug-card summary { display:grid; grid-template-columns:minmax(110px,1fr) auto minmax(140px,1.4fr); gap:10px; align-items:center; padding:10px 12px; cursor:pointer; list-style:none; }
+.hybrid-debug-card summary::-webkit-details-marker { display:none; }
+.hybrid-debug-name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.hybrid-debug-status { padding:2px 7px; border:1px solid #b9d8c2; border-radius:999px; font-size:11px; }
+.status-error .hybrid-debug-status { border-color:#e2a7a0; color:#a33; }.status-skipped .hybrid-debug-status,.status-empty .hybrid-debug-status { color:#777; }
+.hybrid-debug-meta { color:#66776e; font-size:11px; text-align:right; }
+.hybrid-debug-detail { padding:10px 12px; border-top:1px solid #edf3ee; color:#52645a; font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
+.hybrid-debug-detail pre { max-height:120px; margin:7px 0 0; padding:8px; overflow:auto; background:#f5f8f5; white-space:pre-wrap; }
+.hybrid-debug-error { color:#a33; }.hybrid-debug-progress { margin-top:5px; padding:4px 7px; background:#f7faf7; font-size:11px; }
+@media (max-width:560px) { .hybrid-debug-card summary { grid-template-columns:1fr auto; }.hybrid-debug-meta { grid-column:1 / -1; text-align:left; } }

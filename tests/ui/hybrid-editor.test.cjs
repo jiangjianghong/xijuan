@@ -6,7 +6,7 @@ const path = require('node:path');
 const { JSDOM } = require('jsdom');
 const source = fs.readFileSync(path.join(__dirname, '../../ui/js/ruleConfig.js'), 'utf8');
 
-function setup(items, strategy = 'fallback') {
+function setup(items, strategy = 'fallback', advanced = false) {
     const dom = new JSDOM('<div id="editor"></div>', { runScripts: 'dangerously', url: 'http://localhost/' });
     const w = dom.window;
     w.Utils = { escapeHtml: v => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;') };
@@ -17,6 +17,7 @@ function setup(items, strategy = 'fallback') {
     w.eval(source + '\nwindow.rc = window.RuleConfig = RuleConfig;');
     const rc = w.rc;
     rc.PROMPT_DEFAULTS = {};
+    rc.state.formIsAdvanced = advanced;
     w.document.getElementById('editor').innerHTML = rc.buildSearchConfigFields('hybrid', { strategy, items });
     const rows = () => [...w.document.querySelectorAll('.hybrid-item')];
     const data = () => JSON.parse(JSON.stringify(rc.collectSearchConfig('hybrid')));
@@ -187,4 +188,108 @@ test('从普通文本切换组合检索后可连续添加配置并显示提示�
     const tabs = w.document.querySelectorAll('.hybrid-tab');
     assert.equal(tabs.length, 3);
     assert.equal(tabs[0].getAttribute('draggable'), 'true');
+});
+
+test('组合检索切回文本时恢复普通方法和两边未保存草稿', () => {
+    const { w, rc } = setup([]);
+    w.document.getElementById('editor').innerHTML = rc.buildFieldForm({
+        field_id: 'f4', field_name: '字段', source_type: 'text', search_type: 'context',
+        search_config: { keywords: ['原关键词'], context_before: 100 },
+    });
+    rc.state.editingField = null;
+    control(w.document, 'fm-sc-context-before').value = '321';
+    change(w, w.document.getElementById('fm-source-type'), 'hybrid');
+    const hybridRow = w.document.querySelector('.hybrid-item');
+    control(hybridRow, 'fm-sc-context-before').value = '654';
+
+    change(w, w.document.getElementById('fm-source-type'), 'text');
+    assert.equal(w.document.getElementById('fm-search-type-group').style.display, '');
+    assert.equal(w.document.getElementById('fm-search-type').value, 'context');
+    assert.equal(control(w.document, 'fm-sc-context-before').value, '321');
+    assert.equal(rc.collectFieldFormData().search_type, 'context');
+
+    change(w, w.document.getElementById('fm-source-type'), 'hybrid');
+    assert.equal(control(w.document.querySelector('.hybrid-item'), 'fm-sc-context-before').value, '654');
+    rc.onSourceTypeChange('hybrid');
+    assert.equal(control(w.document.querySelector('.hybrid-item'), 'fm-sc-context-before').value, '654');
+});
+
+test('组合检索显示真实 LLM 开关并按开关控制提示词和保存值', () => {
+    const { w, rc } = setup([]);
+    w.document.getElementById('editor').innerHTML = rc.buildFieldForm({
+        field_id: 'f5', field_name: '字段', source_type: 'text', search_type: 'hybrid', use_llm: 0,
+        search_config: { strategy: 'fallback', items: [item('a', 'text', 'context', {})] },
+    });
+    rc.state.editingField = null;
+    rc.onSourceTypeChange('hybrid');
+    assert.equal(w.document.getElementById('fm-use-llm-group').style.display, 'block');
+    assert.equal(w.document.getElementById('fm-skip-llm').checked, true);
+    assert.equal(w.document.getElementById('fm-text-prompt-wrap').style.display, 'none');
+    assert.equal(rc.collectFieldFormData().use_llm, 0);
+
+    const skip = w.document.getElementById('fm-skip-llm');
+    skip.checked = false;
+    rc.onSkipLlmChange(false);
+    assert.equal(w.document.getElementById('fm-text-prompt-wrap').style.display, '');
+    assert.equal(rc.collectFieldFormData().use_llm, 1);
+});
+
+test('嵌套 VL 配置清空可选字段后不复制旧值并保留兼容字段', () => {
+    const { rows, data } = setup([item('v', 'vl', 'vl_locate', {
+        vl_config: { max_pages: 9, page_source_field: 'old', locate_prompt_template: '旧模板', legacy_flag: '保留' },
+        vl_extract_prompt: 'reason value',
+    })], 'fallback', true);
+    const row = rows()[0];
+    control(row, 'fm-vl-max-pages').value = '';
+    control(row, 'fm-vl-page-source').value = '';
+    control(row, 'fm-vl-locate-prompt-template').value = '';
+    const config = data().items[0].config;
+    assert.equal(config.vl_config.max_pages, undefined);
+    assert.equal(config.vl_config.page_source_field, undefined);
+    assert.equal(config.vl_config.locate_prompt_template, undefined);
+    assert.equal(config.vl_config.legacy_flag, '保留');
+});
+
+test('初次打开的组合标签立即具备拖动绑定', () => {
+    const { w } = setup([
+        item('a', 'text', 'context', {}),
+        item('b', 'text', 'vector_db', {}),
+    ]);
+    for (const tab of w.document.querySelectorAll('.hybrid-tab')) {
+        assert.equal(tab.getAttribute('draggable'), 'true');
+        assert.match(tab.getAttribute('ondragstart') || '', /onHybridTabDragStart/);
+        assert.match(tab.getAttribute('ondrop') || '', /onHybridTabDrop/);
+    }
+});
+
+test('扁平 VL 配置清空可选字段后也不恢复旧值', () => {
+    const { rows, data } = setup([item('v', 'vl', 'vl_locate', {
+        max_pages: 9, page_source_field: 'old', locate_prompt_template: '旧模板',
+        legacy_flag: '保留', vl_extract_prompt: 'reason value',
+    })], 'fallback', true);
+    const row = rows()[0];
+    control(row, 'fm-vl-max-pages').value = '';
+    control(row, 'fm-vl-page-source').value = '';
+    control(row, 'fm-vl-locate-prompt-template').value = '';
+    const config = data().items[0].config;
+    assert.equal(config.max_pages, undefined);
+    assert.equal(config.page_source_field, undefined);
+    assert.equal(config.locate_prompt_template, undefined);
+    assert.equal(config.legacy_flag, '保留');
+});
+
+test('删除当前组合标签后激活相邻项并保持一个面板可见', () => {
+    const { rc, rows, w } = setup([
+        item('a', 'text', 'context', {}),
+        item('b', 'text', 'vector_db', {}),
+        item('c', 'table', 'table_match', {}),
+    ]);
+    rc.showHybridItem(1);
+    rc.removeHybridItem(1);
+    const remaining = rows();
+    assert.equal(remaining.filter(row => row.style.display !== 'none').length, 1);
+    assert.equal(remaining[1].dataset.id, 'c');
+    assert.equal(remaining[1].style.display, '');
+    assert.equal(w.document.querySelectorAll('.hybrid-tab.active').length, 1);
+    assert.equal(w.document.querySelector('.hybrid-tab.active').dataset.index, '1');
 });

@@ -7,8 +7,10 @@ import asyncio
 import json
 import re
 from collections.abc import Sequence
+from contextlib import aclosing
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from time import perf_counter
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
@@ -246,6 +248,7 @@ _NON_REF_KEYS = frozenset(
     {
         "_texts", "_vl", "_web_search", "_model_pages",
         "_resolved_refs", "_page_link", "_empty_refs", "_params",
+        "_hybrid", "_hybrid_page_links",
     }
 )
 
@@ -535,6 +538,16 @@ def pick_model_pages(
     return picked, False
 
 
+def _hybrid_page_config(item: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]:
+    """仅返回实际支持页码联动的子项配置，忽略其他方法残留的同名键。"""
+    config = item.get("config") or {}
+    if item.get("source_type") == "text" and item.get("method") == "page":
+        return config, "range"
+    if item.get("source_type") == "vl":
+        return config.get("vl_config", config), "discrete"
+    return {}, None
+
+
 def collect_depend_fields(field: Any) -> List[str]:
     """扫描字段所有可能承载 <field_result> 占位符的位置 + page_source_field，
     汇总被引用的字段 ID（按出现顺序去重）。供保存时写 depend_fields 与校验。
@@ -572,6 +585,11 @@ def collect_depend_fields(field: Any) -> List[str]:
                     _walk(child)
         if getattr(field, "search_type", None) == "hybrid":
             _walk(sc)
+            for item in sc.get("items", []):
+                config, _ = _hybrid_page_config(item)
+                src = config.get("page_source_field")
+                if isinstance(src, str) and src.strip():
+                    seen.setdefault(src.strip(), None)
         for key, val in sc.items():
             if isinstance(val, str):
                 _add_from(val)
@@ -667,11 +685,31 @@ def resolve_advanced_field(
                 if isinstance(value, str):
                     return _res(value)
                 if isinstance(value, list):
-                    return [_resolve_nested(child) for child in value]
+                    return [_resolve_nested(child) if not isinstance(child, str) else child
+                            for child in _resolve_str_list(value, _res)]
                 if isinstance(value, dict):
                     return {key: _resolve_nested(child) for key, child in value.items()}
                 return value
             sc = _resolve_nested(sc)
+            for item in sc.get("items", []):
+                config, mode = _hybrid_page_config(item)
+                src = config.get("page_source_field")
+                if not src:
+                    continue
+                pages = (field_source_pages or {}).get(src) or []
+                if not pages:
+                    raise ValueError(f"来源字段 {src} 无可用页码，无法按页码联动混合检索")
+                link = {"source_field": src, "source_pages": pages,
+                        "pages_from": (pages_from or {}).get(src, "refs"), "mode": mode}
+                if mode == "range":
+                    start, end, capped = derive_page_range_from_model_pages(pages, config.get("max_pages"))
+                    config["page_range"] = f"{start}-{end}"
+                    link.update(derived_range=[start, end], capped=capped)
+                else:
+                    picked, capped = pick_model_pages(pages, config.get("max_pages"))
+                    config["page_range"] = ",".join(str(p) for p in picked)
+                    link.update(derived_pages=picked, capped=capped)
+                provenance.setdefault("_hybrid_page_links", {})[item["id"]] = link
         for key, val in list(sc.items()):
             if isinstance(val, str):
                 sc[key] = _res(val)
@@ -1605,7 +1643,14 @@ def needs_vector_index(fields: Iterable[Any]) -> bool:
 
     进阶字段的 search_type 同样算——它解析引用后仍走同一套检索核心。
     """
-    return any(getattr(f, "search_type", None) == "vector_db" for f in fields)
+    return any(
+        getattr(f, "search_type", None) == "vector_db"
+        or (getattr(f, "search_type", None) == "hybrid" and any(
+            item.get("source_type") == "text" and item.get("method") == "vector_db"
+            for item in (getattr(f, "search_config", None) or {}).get("items", [])
+        ))
+        for f in fields
+    )
 
 
 def normalize_query_texts(raw: Any) -> List[str]:
@@ -2483,17 +2528,22 @@ async def _vl_field_extraction_stream(
 
     vl_task = _asyncio.create_task(run_vl())
 
-    while True:
-        evt = await progress_queue.get()
-        if evt is SENTINEL:
-            break
-        yield evt
-
     try:
-        value, reason, refs = await vl_task
-    except Exception as e:
-        yield {"event": "error", "data": {"step": "vl_extract", "message": str(e)}}
-        return
+        while True:
+            evt = await progress_queue.get()
+            if evt is SENTINEL:
+                break
+            yield evt
+        try:
+            value, reason, refs = await vl_task
+        except Exception as e:
+            yield {"event": "error", "data": {"step": "vl_extract", "message": str(e)}}
+            return
+    finally:
+        # 关闭调试流时一并取消尚未完成的模型任务，避免请求在后台继续运行。
+        if not vl_task.done():
+            vl_task.cancel()
+        await _asyncio.gather(vl_task, return_exceptions=True)
 
     debug_user_prompt = fixed_vl_prompt
     if "final_prompt" in refs:
@@ -2620,12 +2670,15 @@ def _hybrid_ref_key(ref: Dict[str, Any]) -> Tuple[Any, ...]:
 
 def _hybrid_evidence(
     value: str, refs: Optional[Dict[str, Any]], seen: set[Tuple[Any, ...]],
-) -> List[str]:
+    page_mapping: List[Dict[str, Any]],
+    max_length: Optional[int] = None,
+) -> List[Tuple[str, Optional[str], Optional[Dict[str, Any]]]]:
     """按 source_refs 中的原子命中提取证据，并跨通道去重。"""
-    pieces: List[str] = []
+    pieces = []
+    has_text_refs = False
     refs = refs or {}
     for key, items in refs.items():
-        if str(key).startswith("_") or not isinstance(items, list):
+        if (str(key).startswith("_") and key != "_tables") or not isinstance(items, list):
             continue
         for ref in items:
             if not isinstance(ref, dict):
@@ -2633,18 +2686,38 @@ def _hybrid_evidence(
             text = str(ref.get("text") or "").strip()
             if not text:
                 continue
+            has_text_refs = True
             dedupe_key = _hybrid_ref_key(ref)
-            if dedupe_key in seen:
+            keys = {dedupe_key}
+            if isinstance(ref.get("start_pos"), int) and isinstance(ref.get("end_pos"), int):
+                keys.add(("span", ref["start_pos"], ref["end_pos"]))
+            if keys & seen:
                 continue
-            seen.add(dedupe_key)
-            pieces.append(text)
+            annotated = _page_annotated_text(
+                str(ref["text"]), page_mapping, ref.get("start_pos"),
+                ref.get("end_pos"), ref.get("page_num"),
+            )
+            if max_length is not None:
+                if max_length <= 0:
+                    continue
+                if len(annotated) > max_length:
+                    annotated = annotated[:max_length]
+                    # 只消费实际保留的片段；较长的后续通道仍可补充本页剩余证据。
+                    keys = {("partial", dedupe_key, annotated)}
+                if keys & seen:
+                    continue
+                max_length -= len(annotated) + len("\n---\n")
+            seen.update(keys)
+            pieces.append((annotated, key, ref))
     # 某些自定义检索器只返回 value；保留它作为回退证据。
-    if not pieces and value and str(value).strip():
+    if not has_text_refs and value and str(value).strip():
         text = str(value).strip()
+        if max_length is not None:
+            text = text[:max(0, max_length)]
         dedupe_key = ("text", hash(text))
-        if dedupe_key not in seen:
+        if text and dedupe_key not in seen:
             seen.add(dedupe_key)
-            pieces.append(text)
+            pieces.append((text, None, None))
     return pieces
 
 
@@ -2674,113 +2747,221 @@ async def _hybrid_run_search_item(
 
 
 async def extract_hybrid_field(
-    file_id: str, field: ExtractionField, snapshot: "FileExtractionSnapshot"
+    file_id: str, field: ExtractionField, snapshot: "FileExtractionSnapshot",
+    *, debug_events: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[str, str, Optional[Dict], List[int]]:
-    """执行混合检索：文本/表格合并证据，VL 仅作为 fallback 直接提取。"""
+    """正式与同步调试共用执行器；仅调试时收集中间事件。"""
+    result = None
+    async for event in _iter_hybrid_extraction(
+        file_id, field, snapshot, capture_debug=debug_events is not None,
+    ):
+        if debug_events is not None:
+            debug_events.append(event)
+        if event["event"] == "result":
+            data = event["data"]
+            result = (data["extracted_value"], data["reason"], data["source_refs"], data["pages"])
+    if result is None:
+        raise RuntimeError("混合检索未产生终态结果")
+    return result
+
+
+def _hybrid_result_event(value, reason, refs, pages) -> Dict[str, Any]:
+    return {"event": "result", "data": {
+        "extracted_value": value, "reason": reason, "source_refs": refs,
+        "pages": pages, "source_pages": derive_source_pages(pages, refs),
+    }}
+
+
+def _hybrid_search_event(refs: Dict[str, Any]) -> Dict[str, Any]:
+    """从同一份来源记录输出实际证据，保留表格和逐通道状态。"""
+    results = [ref for key, values in refs.items()
+               if (key == "_tables" or not str(key).startswith("_")) and isinstance(values, list)
+               for ref in values if isinstance(ref, dict)]
+    return {"event": "search_results", "data": {
+        "source_type": "hybrid", "search_type": "hybrid", "results": results,
+        "matched_tables": refs.get("_tables", []),
+        "results_by_label": refs.get("_texts", {}),
+        "hybrid": refs.get("_hybrid", {}),
+    }}
+
+
+async def _hybrid_extract_evidence(
+    field: ExtractionField, evidence: str, refs: Dict[str, Any],
+) -> AsyncIterator[Dict[str, Any]]:
+    """统一证据注入和模型请求，事件中的提示词就是实际请求内容。"""
+    refs["_texts"] = {"混合检索结果": evidence} if evidence else {}
+    yield _hybrid_search_event(refs)
+    if not evidence or _is_llm_disabled(field):
+        yield _hybrid_result_event(evidence, NO_LLM_REASON if evidence else "", refs, [])
+        return
+    prompt = field.text_extract_prompt or field.table_extract_prompt or ""
+    user_prompt = replace_search_result_placeholders(prompt, refs["_texts"]) + JSON_OUTPUT_INSTRUCTION
+    system_prompt = (field.text_system_prompt or field.table_system_prompt or "").strip()
+    yield {"event": "prompt", "data": {"system_prompt": system_prompt, "user_prompt": user_prompt}}
+    try:
+        if system_prompt:
+            response = await chat_completion("", messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ])
+        else:
+            response = await chat_completion(user_prompt)
+        yield {"event": "llm_response", "data": {"raw_response": response}}
+        value, reason, pages = parse_llm_json_response(response)
+    except Exception as exc:
+        logger.error("混合检索 LLM 提取失败: {}", exc)
+        # 模型请求失败必须让字段失败，不能保留真实引用后伪装成有效空结果。
+        raise
+    yield _hybrid_result_event(value, reason, refs, pages)
+
+
+async def _iter_hybrid_extraction(
+    file_id: str, field: ExtractionField, snapshot: "FileExtractionSnapshot",
+    *, capture_debug: bool = False,
+) -> AsyncIterator[Dict[str, Any]]:
+    """同源执行组合检索；调试时实时报告每个通道及其 VL 子步骤。"""
     cfg = field.search_config or {}
     strategy = cfg.get("strategy", "union")
     items = cfg.get("items") or []
     if strategy not in {"union", "fallback"}:
         raise ValueError("hybrid strategy 必须是 union 或 fallback")
-    if not isinstance(items, list) or not items:
-        return "", "", _hybrid_wrap_refs(None, _hybrid_metadata(strategy, [])), []
+    if not isinstance(items, list):
+        raise ValueError("hybrid items 必须是数组")
     if strategy == "union" and any(i.get("source_type") == "vl" for i in items):
         raise ValueError("union 模式不允许 VL 通道")
     if strategy == "fallback" and sum(i.get("source_type") == "vl" for i in items) > 1:
         raise ValueError("fallback 模式最多允许一个 VL 通道")
-    if strategy == "fallback":
-        entries: List[Dict[str, Any]] = []
-        for item in items:
-            item_id = item.get("id")
-            entry: Dict[str, Any] = {
-                "id": item_id,
-                "source_type": item.get("source_type"),
-                "method": item.get("method"),
-                "matched": False,
-            }
-            try:
-                if item.get("source_type") == "vl":
-                    run = _hybrid_item_field(field, item)
-                    value, reason, refs, pages = await extract_vl_field(file_id, run)
-                    entry["matched"] = bool(value or refs)
-                    entries.append(entry)
-                    if value or refs:
-                        return value, reason, _hybrid_wrap_refs(refs, _hybrid_metadata(strategy, entries, item_id)), pages
-                    continue
-                value, reason, refs, pages = await _hybrid_run_search_item(file_id, field, item, snapshot)
-                entry["matched"] = bool(value or refs)
-                entries.append(entry)
-                if not value and not refs:
-                    continue
-                refs = _hybrid_wrap_refs(refs, _hybrid_metadata(strategy, entries, item_id))
-                if _is_llm_disabled(field):
-                    return value, reason, refs, pages
-                prompt = field.text_extract_prompt or field.table_extract_prompt or ""
-                user_prompt = replace_search_result_placeholders(prompt, {"混合检索结果": value}) + JSON_OUTPUT_INSTRUCTION
-                try:
-                    response = await chat_completion(user_prompt)
-                    out_value, out_reason, out_pages = parse_llm_json_response(response)
-                except Exception as exc:
-                    logger.error("混合检索 fallback LLM 提取失败: {}", exc)
-                    return "", "", refs, []
-                return out_value, out_reason, refs, out_pages
-            except Exception as exc:
-                # 单个通道异常默认可恢复，继续执行后续 fallback。
-                entry["error"] = str(exc)
-                entries.append(entry)
-                logger.warning("混合检索通道 {} 执行失败，继续后续通道: {}", item_id, exc)
-        return "", "", _hybrid_wrap_refs(None, _hybrid_metadata(strategy, entries)), []
-
-    merged_text: List[str] = []
-    seen: set[Tuple[Any, ...]] = set()
-    entries = []
-    merged_refs: Dict[str, Any] = {}
-    for item in items:
-        if item.get("source_type") == "vl":
-            continue
-        entry: Dict[str, Any] = {
-            "id": item.get("id"),
-            "source_type": item.get("source_type"),
-            "method": item.get("method"),
-            "matched": False,
-        }
-        try:
-            value, reason, refs, pages = await _hybrid_run_search_item(file_id, field, item, snapshot)
-            pieces = _hybrid_evidence(value, refs, seen)
-            entry["matched"] = bool(pieces)
-            # 保留每路实际命中引用，避免组合后 source_pages 丢失；键加 item id 防止同词覆盖。
-            if isinstance(refs, dict):
-                for ref_key, ref_items in refs.items():
-                    if str(ref_key).startswith("_") or not isinstance(ref_items, list):
-                        continue
-                    merged_refs[f"{item.get('id', 'item')}:{ref_key}"] = ref_items
-            entries.append(entry)
-            merged_text.extend(pieces)
-        except Exception as exc:
-            entry["error"] = str(exc)
-            entries.append(entry)
-            logger.warning("混合检索 union 通道 {} 执行失败，继续后续通道: {}", item.get("id"), exc)
-    if not merged_text:
-        return "", "", _hybrid_wrap_refs(None, _hybrid_metadata(strategy, entries)), []
-    max_length = cfg.get("max_length", cfg.get("max_total_length", 30000))
     try:
-        max_length = max(1, int(max_length))
+        max_length = max(1, int(cfg.get("max_length", cfg.get("max_total_length", 30000))))
     except (TypeError, ValueError):
         max_length = 30000
-    evidence = "\n---\n".join(merged_text)[:max_length]
-    merged_refs["_texts"] = {"混合检索结果": evidence}
-    refs = _hybrid_wrap_refs(merged_refs, _hybrid_metadata(strategy, entries))
-    if _is_llm_disabled(field):
-        return evidence, NO_LLM_REASON, refs, []
-    prompt = field.text_extract_prompt or field.table_extract_prompt or ""
-    user_prompt = replace_search_result_placeholders(prompt, {"混合检索结果": evidence}) + JSON_OUTPUT_INSTRUCTION
-    try:
-        response = await chat_completion(user_prompt)
-        value, reason, pages = parse_llm_json_response(response)
-    except Exception as exc:
-        logger.error("混合检索 union LLM 提取失败: {}", exc)
-        return "", "", refs, []
-    return value, reason, refs, pages
+
+    entries = [{
+        "id": item["id"], "index": index, "source_type": item.get("source_type"),
+        "method": item.get("method"), "status": "pending", "matched": False,
+        "adopted": False, "hit_count": 0, "adopted_count": 0, "elapsed_ms": 0,
+        "source_pages": [], "preview": "", "message": "", "error": None,
+    } for index, item in enumerate(items, 1)]
+    if capture_debug:
+        yield {"event": "hybrid_start", "data": {
+            "strategy": strategy, "items": copy.deepcopy(entries),
+        }}
+
+    selected = None
+    selected_result = None
+    selected_prompt = None
+    merged_text = []
+    merged_refs: Dict[str, Any] = {}
+    seen: set[Tuple[Any, ...]] = set()
+    used = 0
+
+    for item, entry in zip(items, entries):
+        if selected is not None:
+            entry.update(status="skipped", message="前序通道已采用，跳过此配置")
+            if capture_debug:
+                yield {"event": "hybrid_item_done", "data": copy.deepcopy(entry)}
+            continue
+        entry["status"] = "running"
+        if capture_debug:
+            yield {"event": "hybrid_item_start", "data": copy.deepcopy(entry)}
+        started = perf_counter()
+        item_prompt = None
+        try:
+            if item.get("source_type") == "vl":
+                run = _hybrid_item_field(field, item)
+                if capture_debug:
+                    vl_result = None
+                    async with aclosing(_vl_field_extraction_stream(file_id, run)) as vl_stream:
+                        async for event in vl_stream:
+                            event_type, data = event["event"], event["data"]
+                            if event_type == "result":
+                                vl_result = (data.get("extracted_value", ""), data.get("reason", ""),
+                                             data.get("source_refs"), data.get("pages", []))
+                            elif event_type == "error":
+                                raise ValueError(data.get("message") or "VL 抽取失败")
+                            elif event_type == "prompt":
+                                item_prompt = event
+                            elif event_type != "done":
+                                yield {"event": "hybrid_item_progress", "data": {
+                                    "id": entry["id"], "event": event_type, "data": data,
+                                }}
+                    if vl_result is None:
+                        raise ValueError("VL 未返回提取结果")
+                    value, reason, refs, pages = vl_result
+                else:
+                    value, reason, refs, pages = await extract_vl_field(file_id, run)
+            else:
+                value, reason, refs, pages = await _hybrid_run_search_item(file_id, field, item, snapshot)
+
+            hits = _hybrid_search_event(refs or {})["data"]["results"]
+            source_pages = derive_source_pages(pages, refs)
+            matched = bool(value or hits or (item.get("source_type") == "vl" and refs))
+            hit_count = len(hits) or int(matched)
+            if item.get("source_type") == "vl":
+                hit_count = len(source_pages) or int(matched)
+            entry.update(
+                matched=matched, status="matched" if matched else "empty",
+                hit_count=hit_count, source_pages=source_pages,
+                preview=str(value or "")[:1000], message=reason if not matched else "",
+            )
+            if strategy == "fallback" and matched:
+                entry.update(adopted=True, adopted_count=hit_count, message="已选用此通道")
+                selected = entry["id"]
+                selected_result = (value, reason, refs, pages)
+                selected_prompt = item_prompt
+            elif strategy == "union":
+                page_limit = ((item.get("config") or {}).get("max_length", _DEFAULT_PAGE_MAX_LENGTH)
+                              if item.get("source_type") == "text" and item.get("method") == "page" else None)
+                pieces = _hybrid_evidence(value, refs, seen, getattr(snapshot, "page_mapping", []), page_limit)
+                for text, ref_key, ref in pieces:
+                    separator_length = len("\n---\n") if merged_text else 0
+                    room = max_length - used - separator_length
+                    if room <= 0:
+                        break
+                    kept = text[:room]
+                    if not kept:
+                        continue
+                    merged_text.append(kept)
+                    used += separator_length + len(kept)
+                    entry["adopted_count"] += 1
+                    if ref is not None:
+                        key = "_tables" if ref_key == "_tables" else f"{entry['id']}:{ref_key}"
+                        merged_refs.setdefault(key, []).append(ref)
+                entry["adopted"] = bool(entry["adopted_count"])
+                if matched and not entry["adopted"]:
+                    entry["message"] = "已达到组合证据字符上限" if pieces else "命中内容重复，未重复合并"
+                elif entry["adopted"]:
+                    entry["message"] = "已加入组合证据"
+        except Exception as exc:
+            entry.update(status="error", matched=False, error=str(exc), message="此通道失败，继续后续配置")
+            logger.warning("混合检索通道 {} 执行失败，继续后续通道: {}", entry["id"], exc)
+        entry["elapsed_ms"] = round((perf_counter() - started) * 1000, 2)
+        if capture_debug:
+            yield {"event": "hybrid_item_done", "data": copy.deepcopy(entry)}
+
+    metadata = _hybrid_metadata(strategy, entries, selected)
+    if capture_debug:
+        yield {"event": "hybrid_done", "data": {
+            **copy.deepcopy(metadata), "selected_item": selected,
+        }}
+    if selected_result is not None:
+        value, reason, refs, pages = selected_result
+        refs = _hybrid_wrap_refs(refs, metadata)
+        selected_entry = next(entry for entry in entries if entry["id"] == selected)
+        if selected_entry["source_type"] == "vl":
+            yield _hybrid_search_event(refs)
+            if selected_prompt is not None:
+                yield selected_prompt
+            yield _hybrid_result_event(value, reason, refs, pages)
+            return
+        evidence = value
+    else:
+        evidence = "\n---\n".join(merged_text)
+        refs = _hybrid_wrap_refs(merged_refs, metadata)
+    # 选定证据后的模型失败由字段级处理，不应再启动检索回退。
+    async with aclosing(_hybrid_extract_evidence(field, evidence, refs)) as extraction:
+        async for event in extraction:
+            yield event
 
 
 @dataclass
@@ -3401,28 +3582,11 @@ async def test_field_extraction_stream(
         if getattr(field, "search_type", None) == "hybrid":
             try:
                 debug_snapshot = await load_extraction_snapshot(
-                    file_id, session, need_vectors=any(
-                        i.get("method") == "vector_db"
-                        for i in (field.search_config or {}).get("items", [])
-                    )
+                    file_id, session, need_vectors=needs_vector_index([field]),
                 )
-                value, reason, refs, pages = await extract_hybrid_field(
-                    file_id, field, debug_snapshot
-                )
-                yield {"event": "search_results", "data": {
-                    "source_type": "hybrid",
-                    "search_type": "hybrid",
-                    "results": [], "matched_tables": [],
-                    "results_by_label": {"混合检索结果": (value or "")[:1000]},
-                }}
-                yield {"event": "prompt", "data": {
-                    "system_prompt": field.text_system_prompt or "",
-                    "user_prompt": "<search_result>混合检索结果</search_result>",
-                }}
-                yield {"event": "result", "data": {
-                    "extracted_value": value, "reason": reason,
-                    "source_refs": refs, "pages": pages,
-                }}
+                async with aclosing(_iter_hybrid_extraction(file_id, field, debug_snapshot, capture_debug=True)) as hybrid_stream:
+                    async for event in hybrid_stream:
+                        yield event
                 yield {"event": "done", "data": {}}
             except Exception as e:
                 yield {"event": "error", "data": {"message": f"混合检索失败: {e}"}}

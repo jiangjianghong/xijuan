@@ -24,9 +24,11 @@ from service.extraction_service import (
     JSON_OUTPUT_INSTRUCTION,
     collect_depend_fields,
     derive_source_pages,
+    extract_hybrid_field,
     extract_table_field,
     extract_text_field,
     extract_vl_field,
+    needs_vector_index,
     replace_search_result_placeholders,
     resolve_advanced_field_from_db,
     search_chunk_db,
@@ -414,6 +416,7 @@ async def test_extraction(
     llm_output = ""
     extracted_value = ""
     reason = ""
+    hybrid_debug_events = None
 
     # 构建临时 ExtractionField 对象
     if req.field_id:
@@ -447,9 +450,25 @@ async def test_extraction(
 
     try:
         # 调试接口每次只测一个字段，直接取一份快照复用给下面各分支
-        snapshot = await load_extraction_snapshot(file_id, db)
+        if field.search_type == "hybrid":
+            snapshot = await load_extraction_snapshot(file_id, db, need_vectors=needs_vector_index([field]))
+        else:
+            snapshot = await load_extraction_snapshot(file_id, db)
 
-        if field.source_type == "table":
+        if field.search_type == "hybrid":
+            events = []
+            hybrid_debug_events = events
+            extracted_value, reason, refs, model_pages = await extract_hybrid_field(
+                file_id, field, snapshot, debug_events=events,
+            )
+            for event in events:
+                if event["event"] == "search_results":
+                    search_results = event["data"]["results"]
+                elif event["event"] == "prompt":
+                    llm_input = event["data"]["user_prompt"]
+                elif event["event"] == "llm_response":
+                    llm_output = event["data"]["raw_response"]
+        elif field.source_type == "table":
             # 表格类提取
             stmt = select(FileTable).where(FileTable.file_id == file_id)
             result = await db.execute(stmt)
@@ -529,6 +548,8 @@ async def test_extraction(
             pages=model_pages,
             source_pages=derive_source_pages(model_pages, refs),
             resolved_refs=resolved_refs_info or None,
+            hybrid=(refs or {}).get("_hybrid"),
+            debug_events=hybrid_debug_events,
         ).model_dump()
     )
 

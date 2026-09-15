@@ -16,6 +16,7 @@ const RuleConfig = {
         ruleExtractionResults: [],
         debugUserScrolled: false,
         debugResultTargetId: null,
+        hybridDebug: { strategy: null, items: new Map(), started: false },
         // 当前字段表单是否为「进阶字段」（可引用普通字段的提取结果）
         formIsAdvanced: false,
     },
@@ -852,6 +853,8 @@ const RuleConfig = {
         this.state.modalType = 'field';
         this.state.editingField = field || null;
         this.state.formIsAdvanced = field ? !!field.is_advanced : !!forceAdvanced;
+        // 每次打开表单都建立独立草稿空间，避免上一个字段的切换状态串入当前字段。
+        this._fieldSearchDrafts = {};
         const isEdit = !!field;
 
         // 进阶表单需要普通字段列表供「引用字段」下拉使用
@@ -1101,7 +1104,7 @@ const RuleConfig = {
                     </div>
                     <div class="form-group">
                         <div class="form-label-row"><label class="form-label">检索配置</label><button type="button" class="btn btn-secondary" onclick="RuleConfig.addHybridItem()">＋ 添加配置</button></div>
-                        <div id="fm-hybrid-tabs" class="hybrid-tabs">${items.map((_, i) => `<button type="button" class="hybrid-tab ${i === 0 ? 'active' : ''}" onclick="RuleConfig.showHybridItem(${i})">配置 ${i + 1}</button>`).join('')}</div>
+                        <div id="fm-hybrid-tabs" class="hybrid-tabs">${items.map((_, i) => `<button type="button" class="hybrid-tab ${i === 0 ? 'active' : ''}" draggable="true" data-index="${i}" onclick="RuleConfig.showHybridItem(${i})" ondragstart="RuleConfig.onHybridTabDragStart(event)" ondragover="RuleConfig.onHybridDragOver(event)" ondrop="RuleConfig.onHybridTabDrop(event)">配置 ${i + 1}</button>`).join('')}</div>
                         <div id="fm-hybrid-items">${this.renderHybridItems(items, strategy)}</div>
                     </div>
                     <div class="form-hint">提示词请统一引用：<code>&lt;search_result&gt;混合检索结果&lt;/search_result&gt;</code></div>`;
@@ -1695,7 +1698,10 @@ const RuleConfig = {
             config = this.collectSearchConfig(method, panel);
         } else if (source === 'vl') {
             const options = this.collectVLConfig(method, panel);
-            config = original.vl_config ? { vl_config: { ...original.vl_config, ...options } } : options;
+            // 先从旧配置副本删除已展示的可选键，再合并当前控件值；否则清空控件后旧值会被复制回来。
+            const oldOptions = { ...(original.vl_config || original) };
+            ['max_pages', 'page_source_field', 'batch_prompt_template', 'locate_prompt_template'].forEach(key => delete oldOptions[key]);
+            config = original.vl_config ? { vl_config: { ...oldOptions, ...options } } : { ...oldOptions, ...options };
             config.vl_system_prompt = this.formElement(panel, 'fm-vl-system-prompt').value.trim() || null;
             config.vl_extract_prompt = this.formElement(panel, 'fm-vl-extract-prompt').value.trim();
         } else {
@@ -1711,8 +1717,9 @@ const RuleConfig = {
         const optional = source === 'text'
             ? ['top_k', 'score_threshold', 'score_ratio', 'max_total_results', 'section_match_prompt', 'page_source_field', 'max_pages']
             : source === 'vl' ? ['max_pages', 'page_source_field', 'batch_prompt_template', 'locate_prompt_template'] : [];
-        const target = original.vl_config && source === 'vl' ? original.vl_config : original;
-        for (const key of optional) delete target[key];
+        if (source !== 'vl' || !original.vl_config) {
+            for (const key of optional) delete original[key];
+        }
         return { id: row.dataset.id, source_type: source, method, config: { ...original, ...config } };
     },
 
@@ -1722,6 +1729,7 @@ const RuleConfig = {
 
     updateHybridOrder() {
         const rows = [...document.querySelectorAll('#fm-hybrid-items > .hybrid-item')];
+        const activeIndex = Math.max(0, rows.findIndex(row => row.style.display !== 'none'));
         rows.forEach((row, i) => {
             row.dataset.index = i;
             row.querySelector('.hybrid-delete').disabled = rows.length === 1;
@@ -1733,6 +1741,7 @@ const RuleConfig = {
                 `<button type="button" class="hybrid-tab" draggable="true" data-index="${i}" onclick="RuleConfig.showHybridItem(${i})" ondragstart="RuleConfig.onHybridTabDragStart(event)" ondragover="RuleConfig.onHybridDragOver(event)" ondrop="RuleConfig.onHybridTabDrop(event)">配置 ${i + 1}</button>`
             ).join('');
         }
+        if (rows.length) this.showHybridItem(Math.min(activeIndex, rows.length - 1));
     },
 
     showHybridItem(index) {
@@ -1757,6 +1766,7 @@ const RuleConfig = {
         if (rows.length <= 1 || !rows[index]) return;
         rows[index].remove();
         this.updateHybridOrder();
+        this.showHybridItem(Math.min(index, rows.length - 2));
     },
 
     moveHybridItem(index, delta) {
@@ -1873,6 +1883,35 @@ const RuleConfig = {
         if (!tableSection || !textSection) return;
 
         const isHybrid = type === 'hybrid';
+        const area = document.getElementById('fm-search-config-area');
+        const searchType = document.getElementById('fm-search-type');
+        const currentIsHybrid = !!(area && area.querySelector('#fm-hybrid-items'));
+        const targetUsesSearch = type === 'text' || isHybrid;
+
+        // 普通文本与组合检索分别保存真实 DOM，保留尚未回车的输入和各自配置草稿。
+        if (area && targetUsesSearch && currentIsHybrid !== isHybrid) {
+            this._fieldSearchDrafts ||= {};
+            const draftKey = currentIsHybrid ? 'hybrid' : 'text';
+            const holder = document.createElement('div');
+            while (area.firstChild) holder.appendChild(area.firstChild);
+            this._fieldSearchDrafts[draftKey] = {
+                holder,
+                type: currentIsHybrid ? 'hybrid' : (searchType && searchType.value !== 'hybrid' ? searchType.value : 'context'),
+            };
+
+            const targetKey = isHybrid ? 'hybrid' : 'text';
+            const saved = this._fieldSearchDrafts[targetKey];
+            const nextType = isHybrid ? 'hybrid' : (saved?.type || 'context');
+            if (searchType) searchType.value = nextType;
+            if (saved) {
+                while (saved.holder.firstChild) area.appendChild(saved.holder.firstChild);
+            } else {
+                const config = (this.state.editingField && this.state.editingField.search_type === nextType)
+                    ? (this.state.editingField.search_config || {}) : {};
+                area.innerHTML = this.buildSearchConfigFields(nextType, config);
+            }
+            area.className = isHybrid ? 'hybrid-config-area' : '';
+        }
         tableSection.style.display = type === 'table' ? 'block' : 'none';
         textSection.style.display = (type === 'text' || isHybrid) ? 'block' : 'none';
         if (vlSection) {
@@ -1882,20 +1921,24 @@ const RuleConfig = {
         // LLM 开关仅对表格 / 文本类有意义，VL 恒需模型
         const useLlmGroup = document.getElementById('fm-use-llm-group');
         if (useLlmGroup) {
-            useLlmGroup.style.display = (type === 'vl' || isHybrid) ? 'none' : 'block';
+            useLlmGroup.style.display = type === 'vl' ? 'none' : 'block';
         }
         // 同步「跳过 LLM」对提示词区的显隐
         const skipLlm = document.getElementById('fm-skip-llm');
-        // 组合检索仍需要文本的系统/用户提示词，只隐藏普通 LLM 开关，不隐藏提示词。
-        this.onSkipLlmChange(isHybrid ? false : (skipLlm ? skipLlm.checked : false));
+        // 组合检索同样允许直接返回原文，开关和提示词区必须反映实际保存状态。
+        this.onSkipLlmChange(skipLlm ? skipLlm.checked : false);
         if (isHybrid) {
             const st = document.getElementById('fm-search-type');
             if (st) st.value = 'hybrid';
             const group = document.getElementById('fm-search-type-group');
             if (group) group.style.display = 'none';
             // 从文本/表格切换到组合检索时，立即建立组合配置列表。
-            const area = document.getElementById('fm-search-config-area');
             if (area && !area.querySelector('#fm-hybrid-items')) this.onSearchTypeChange('hybrid');
+            if (area && area.querySelector('#fm-hybrid-items')) this.updateHybridOrder();
+        } else if (type === 'text') {
+            const group = document.getElementById('fm-search-type-group');
+            if (group) group.style.display = '';
+            if (searchType && searchType.value === 'hybrid') searchType.value = 'context';
         }
     },
 
@@ -2900,6 +2943,11 @@ const RuleConfig = {
                     <div class="debug-section-body" id="debug-search-results"></div>
                 </div>
 
+                <div class="debug-section debug-sec-hybrid" id="debug-sec-hybrid" style="display:none;">
+                    <div class="debug-section-header">逐通道调试</div>
+                    <div class="debug-section-body" id="debug-hybrid-content"></div>
+                </div>
+
                 <div class="debug-section" id="debug-sec-prompt" style="display:none;">
                     <div class="debug-section-header">LLM 提示词</div>
                     <div class="debug-section-body" id="debug-prompt-content"></div>
@@ -3110,6 +3158,10 @@ const RuleConfig = {
 
     handleDebugEvent(evt) {
         const { event, data } = evt;
+        if (['hybrid_start','hybrid_item_start','hybrid_item_done','hybrid_item_progress','hybrid_done'].includes(event)) {
+            this.handleHybridDebugEvent(event, data || {});
+            return;
+        }
         switch (event) {
             case 'resolved_refs':
                 this.renderDebugResolvedRefs(data);
@@ -3148,12 +3200,67 @@ const RuleConfig = {
                 break;
             case 'error':
                 this._hideDebugLoading();
+                if (this.state.hybridDebug?.started) {
+                    for (const item of this.state.hybridDebug.items.values()) {
+                        if (item.status === 'running') item.status = 'error';
+                        else if (item.status === 'pending') item.status = 'skipped';
+                    }
+                    this.renderHybridDebug();
+                }
                 this.showDebugError(data.message);
                 break;
             case 'done':
                 this._hideDebugLoading();
                 break;
         }
+    },
+
+    _hybridEscape(value) { return Utils.escapeHtml(String(value ?? '')); },
+
+    handleHybridDebugEvent(event, data) {
+        const section = document.getElementById('debug-sec-hybrid');
+        const container = document.getElementById('debug-hybrid-content');
+        if (!section || !container) return;
+        section.style.display = '';
+        const state = this.state.hybridDebug;
+        if (event === 'hybrid_start') {
+            state.strategy = data.strategy || '';
+            state.started = true;
+            state.items = new Map((data.items || []).map((item, index) => [String(item.id), { ...item, index: item.index || index + 1, status: item.status || 'pending', progress: [] }]));
+        } else if (event === 'hybrid_item_start') {
+            const id = String(data.id);
+            const item = state.items.get(id) || { ...data, id, progress: [] };
+            Object.assign(item, data, { status: 'running' });
+            state.items.set(id, item);
+        } else if (event === 'hybrid_item_done') {
+            const id = String(data.id);
+            const item = state.items.get(id) || { id, progress: [] };
+            Object.assign(item, data);
+            state.items.set(id, item);
+        } else if (event === 'hybrid_item_progress') {
+            const id = String(data.id);
+            const item = state.items.get(id) || { id, status: 'running', progress: [] };
+            item.progress = item.progress || [];
+            item.progress.push({ event: data.event, data: data.data || {} });
+            state.items.set(id, item);
+        } else if (event === 'hybrid_done') {
+            if (data.items) data.items.forEach(next => { const item = state.items.get(String(next.id)) || {}; Object.assign(item, next); state.items.set(String(next.id), item); });
+            state.selectedItem = data.selected_item ?? null;
+        }
+        this.renderHybridDebug();
+    },
+
+    renderHybridDebug() {
+        const container = document.getElementById('debug-hybrid-content');
+        if (!container) return;
+        const open = new Set([...container.querySelectorAll('details[open]')].map(el => el.dataset.id));
+        const items = [...(this.state.hybridDebug.items || new Map()).values()].sort((a,b) => (a.index || 0) - (b.index || 0));
+        container.innerHTML = items.map(item => {
+            const id = this._hybridEscape(item.id), status = this._hybridEscape(item.status || 'pending');
+            const progress = (item.progress || []).map(p => `<div class="hybrid-debug-progress"><b>${this._hybridEscape(p.event)}</b> ${this._hybridEscape(JSON.stringify(p.data))}</div>`).join('');
+            const pages = Array.isArray(item.source_pages) ? item.source_pages.join(', ') : (item.source_pages || '');
+            return `<details class="hybrid-debug-card status-${status}" data-id="${id}" ${open.has(String(item.id)) ? 'open' : ''}><summary><span class="hybrid-debug-name">${this._hybridEscape(item.method || item.source_type || item.id)}</span><span class="hybrid-debug-status">${status}</span><span class="hybrid-debug-meta">耗时 ${this._hybridEscape(item.elapsed_ms ?? '-')} ms · 命中 ${this._hybridEscape(item.hit_count ?? 0)} · 采用 ${this._hybridEscape(item.adopted_count ?? 0)}</span></summary><div class="hybrid-debug-detail"><div>页码：${this._hybridEscape(pages || '无')}</div><div>采用：${item.adopted ? '是' : '否'}</div>${item.message ? `<div>说明：${this._hybridEscape(item.message)}</div>` : ''}${item.error ? `<div class="hybrid-debug-error">异常：${this._hybridEscape(item.error)}</div>` : ''}${item.preview ? `<pre>${this._hybridEscape(item.preview)}</pre>` : ''}${progress}</div></details>`;
+        }).join('');
     },
 
     // 进阶字段调试：展示各引用实际填入的值与页码联动派生结果
@@ -3385,10 +3492,13 @@ const RuleConfig = {
     resetDebugResults() {
         this.resetDebugNavigation();
         // 隐藏所有结果区块
-        ['debug-sec-resolved-refs', 'debug-sec-match-llm', 'debug-sec-search', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
+        ['debug-sec-resolved-refs', 'debug-sec-match-llm', 'debug-sec-search', 'debug-sec-hybrid', 'debug-sec-prompt', 'debug-sec-llm', 'debug-sec-result'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
         });
+        this.state.hybridDebug = { strategy: null, items: new Map(), started: false };
+        const hybridContent = document.getElementById('debug-hybrid-content');
+        if (hybridContent) hybridContent.innerHTML = '';
         // 清除错误
         const errorArea = document.getElementById('debug-error-area');
         if (errorArea) errorArea.innerHTML = '';

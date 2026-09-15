@@ -819,6 +819,9 @@ class ExtractionTestResponse(BaseModel):
     source_pages: List[int] = Field(default_factory=list)
     # 进阶字段（is_advanced=1）专属：引用解析溯源 {_resolved_refs?, _page_link?}；普通字段为 None
     resolved_refs: Optional[Dict[str, Any]] = None
+    # 组合调试的逐通道摘要与真实执行事件，普通字段为 None。
+    hybrid: Optional[Dict[str, Any]] = None
+    debug_events: Optional[List[Dict[str, Any]]] = None
 
 
 class AnalysisTestRequest(BaseModel):
