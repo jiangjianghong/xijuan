@@ -171,3 +171,16 @@ test('保存后的多个 hybrid 配置重新打开不会退回单个文本配置
     assert.match(w.document.getElementById('fm-hybrid-tabs').textContent, /配置 2/);
     assert.match(w.document.getElementById('fm-hybrid-tabs').textContent, /配置 3/);
 });
+
+test('从普通文本切换组合检索后可连续添加配置并显示提示词', () => {
+    const { w, rc } = setup([]);
+    const html = rc.buildFieldForm({ field_id: 'f3', field_name: '字段', source_type: 'text', search_type: 'context', search_config: {} });
+    w.document.getElementById('editor').innerHTML = html;
+    rc.state.editingField = null;
+    rc.onSourceTypeChange('hybrid');
+    rc.addHybridItem();
+    rc.addHybridItem();
+    assert.equal(w.document.querySelectorAll('#fm-hybrid-items > .hybrid-item').length, 3);
+    assert.equal(w.document.getElementById('fm-text-system-prompt').closest('#fm-text-prompt-wrap').style.display, '');
+    assert.ok(w.document.getElementById('fm-text-extract-prompt'));
+});

@@ -1010,8 +1010,8 @@ const RuleConfig = {
             <!-- 文本配置区 -->
             <div id="fm-text-section">
                 <div class="form-section-divider"></div>
-                <div class="form-section-title">文本配置</div>
-                <div class="form-group">
+                <div class="form-section-title">${sourceType === 'hybrid' ? '组合检索配置' : '文本配置'}</div>
+                <div class="form-group" id="fm-search-type-group" style="${sourceType === 'hybrid' ? 'display:none' : ''}">
                     <label class="form-label">检索方式</label>
                     <select class="form-select" id="fm-search-type" onchange="RuleConfig.onSearchTypeChange(this.value)">
                         <option value="context" ${searchType === 'context' ? 'selected' : ''}>上下文检索</option>
@@ -1871,10 +1871,16 @@ const RuleConfig = {
         }
         // 同步「跳过 LLM」对提示词区的显隐
         const skipLlm = document.getElementById('fm-skip-llm');
-        this.onSkipLlmChange(isHybrid || (skipLlm ? skipLlm.checked : false));
+        // 组合检索仍需要文本的系统/用户提示词，只隐藏普通 LLM 开关，不隐藏提示词。
+        this.onSkipLlmChange(isHybrid ? false : (skipLlm ? skipLlm.checked : false));
         if (isHybrid) {
             const st = document.getElementById('fm-search-type');
             if (st) st.value = 'hybrid';
+            const group = document.getElementById('fm-search-type-group');
+            if (group) group.style.display = 'none';
+            // 从文本/表格切换到组合检索时，立即建立组合配置列表。
+            const area = document.getElementById('fm-search-config-area');
+            if (area && !area.querySelector('#fm-hybrid-items')) this.onSearchTypeChange('hybrid');
         }
     },
 
@@ -2206,7 +2212,7 @@ const RuleConfig = {
             data.vl_system_prompt = document.getElementById('fm-vl-system-prompt').value.trim() || null;
             data.vl_extract_prompt = document.getElementById('fm-vl-extract-prompt').value.trim() || null;
         } else {
-            const searchType = document.getElementById('fm-search-type').value;
+            const searchType = sourceType === 'hybrid' ? 'hybrid' : document.getElementById('fm-search-type').value;
             data.search_type = searchType;
             data.search_config = this.collectSearchConfig(searchType);
             data.text_system_prompt = document.getElementById('fm-text-system-prompt').value.trim() || null;
