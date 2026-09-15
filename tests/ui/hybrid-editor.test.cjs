@@ -149,3 +149,25 @@ test('保存后的 hybrid 字段重新打开时来源仍显示组合检索并有
     assert.match(w.document.getElementById('fm-hybrid-items').textContent, /配置 1/);
     assert.match(w.document.querySelector('#fm-search-config-area').textContent, /添加配置/);
 });
+
+test('保存后的多个 hybrid 配置重新打开不会退回单个文本配置', () => {
+    const { w, rc } = setup([]);
+    const field = {
+        field_id: 'f2', field_name: '金额', source_type: 'text', search_type: 'hybrid',
+        search_config: { strategy: 'fallback', items: [
+            item('a', 'text', 'context', { keywords: ['甲'] }),
+            item('b', 'text', 'vector_db', { query_text: '乙', top_k: 3 }),
+            item('c', 'table', 'table_match', { table_match_keywords: ['表'] }),
+        ] },
+    };
+    const html = rc.buildFieldForm(field);
+    w.document.getElementById('editor').innerHTML = html;
+    // 模拟 openFieldForm 的动态区域初始化
+    rc.state.editingField = field;
+    rc.onSourceTypeChange('hybrid');
+    rc.onSearchTypeChange('hybrid');
+    assert.equal(w.document.querySelectorAll('#fm-hybrid-items > .hybrid-item').length, 3);
+    assert.match(w.document.getElementById('fm-hybrid-tabs').textContent, /配置 1/);
+    assert.match(w.document.getElementById('fm-hybrid-tabs').textContent, /配置 2/);
+    assert.match(w.document.getElementById('fm-hybrid-tabs').textContent, /配置 3/);
+});

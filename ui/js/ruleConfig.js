@@ -877,6 +877,9 @@ const RuleConfig = {
         if (sourceType === 'text') {
             const searchType = (field && field.search_type) || 'context';
             this.onSearchTypeChange(searchType);
+        } else if (sourceType === 'hybrid') {
+            // 组合检索也使用文本区域的配置容器；显式重绘以确保保存的 items 全量恢复。
+            this.onSearchTypeChange('hybrid');
         }
     },
 
@@ -1017,6 +1020,7 @@ const RuleConfig = {
                         <option value="chunk_db" ${searchType === 'chunk_db' ? 'selected' : ''}>分块数据库</option>
                         <option value="vector_db" ${searchType === 'vector_db' ? 'selected' : ''}>向量数据库</option>
                         <option value="page" ${searchType === 'page' ? 'selected' : ''}>按页码取文</option>
+                        <option value="hybrid" ${searchType === 'hybrid' ? 'selected' : ''}>组合检索</option>
                     </select>
                 </div>
                 <div id="fm-search-config-area" class="${searchType === 'hybrid' ? 'hybrid-config-area' : ''}">
