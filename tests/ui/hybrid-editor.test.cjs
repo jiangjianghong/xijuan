@@ -146,7 +146,7 @@ test('保存后的 hybrid 字段重新打开时来源仍显示组合检索并有
     w.document.getElementById('editor').innerHTML = html;
     const source = w.document.getElementById('fm-source-type');
     assert.equal(source.value, 'hybrid');
-    assert.match(w.document.getElementById('fm-hybrid-items').textContent, /配置 1/);
+    assert.match(w.document.getElementById('fm-hybrid-tabs').textContent, /配置 1/);
     assert.match(w.document.querySelector('#fm-search-config-area').textContent, /添加配置/);
 });
 
