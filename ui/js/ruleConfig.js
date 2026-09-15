@@ -1727,8 +1727,13 @@ const RuleConfig = {
             row.querySelector('.hybrid-item-title').textContent = `配置 ${i + 1}`;
             row.querySelector('.hybrid-delete').disabled = rows.length === 1;
         });
-        const tabs = document.querySelectorAll('#fm-hybrid-tabs .hybrid-tab');
-        tabs.forEach((tab, i) => { tab.textContent = `配置 ${i + 1}`; tab.onclick = () => this.showHybridItem(i); });
+        const tabsEl = document.getElementById('fm-hybrid-tabs');
+        if (tabsEl) {
+            // 面板增删后同步生成标签，不能只更新原有按钮。
+            tabsEl.innerHTML = rows.map((_, i) =>
+                `<button type="button" class="hybrid-tab" onclick="RuleConfig.showHybridItem(${i})">配置 ${i + 1}</button>`
+            ).join('');
+        }
     },
 
     showHybridItem(index) {
