@@ -925,6 +925,7 @@ const RuleConfig = {
                     <select class="form-select" id="fm-source-type" onchange="RuleConfig.onSourceTypeChange(this.value)">
                         <option value="table" ${sourceType === 'table' ? 'selected' : ''}>表格</option>
                         <option value="text" ${sourceType === 'text' ? 'selected' : ''}>文本</option>
+                        <option value="hybrid" ${sourceType === 'hybrid' || searchType === 'hybrid' ? 'selected' : ''}>组合检索</option>
                         <option value="vl" ${sourceType === 'vl' ? 'selected' : ''}>VL（PDF 视觉模型）</option>
                     </select>
                 </div>
@@ -1016,10 +1017,9 @@ const RuleConfig = {
                         <option value="chunk_db" ${searchType === 'chunk_db' ? 'selected' : ''}>分块数据库</option>
                         <option value="vector_db" ${searchType === 'vector_db' ? 'selected' : ''}>向量数据库</option>
                         <option value="page" ${searchType === 'page' ? 'selected' : ''}>按页码取文</option>
-                        <option value="hybrid" ${searchType === 'hybrid' ? 'selected' : ''}>组合检索</option>
                     </select>
                 </div>
-                <div id="fm-search-config-area">
+                <div id="fm-search-config-area" class="${searchType === 'hybrid' ? 'hybrid-config-area' : ''}">
                     ${this.buildSearchConfigFields(searchType, field.search_config || {})}
                 </div>
                 <div id="fm-text-prompt-wrap">
@@ -1097,6 +1097,7 @@ const RuleConfig = {
                     </div>
                     <div class="form-group">
                         <div class="form-label-row"><label class="form-label">检索配置</label><button type="button" class="btn btn-secondary" onclick="RuleConfig.addHybridItem()">＋ 添加配置</button></div>
+                        <div id="fm-hybrid-tabs" class="hybrid-tabs">${items.map((_, i) => `<button type="button" class="hybrid-tab ${i === 0 ? 'active' : ''}" onclick="RuleConfig.showHybridItem(${i})">配置 ${i + 1}</button>`).join('')}</div>
                         <div id="fm-hybrid-items">${this.renderHybridItems(items, strategy)}</div>
                     </div>
                     <div class="form-hint">提示词请统一引用：<code>&lt;search_result&gt;混合检索结果&lt;/search_result&gt;</code></div>`;
@@ -1667,11 +1668,9 @@ const RuleConfig = {
         return items.map((item, index) => {
             const source = item.source_type || 'text';
             const method = item.method === 'table' ? 'table_match' : (item.method || this.hybridMethods(source)[0][0]);
-            return `<div class="hybrid-item" data-index="${index}" data-id="${Utils.escapeHtml(item.id)}" data-source="${source}" data-method="${method}"
+            return `<div class="hybrid-item" data-index="${index}" data-id="${Utils.escapeHtml(item.id)}" data-source="${source}" data-method="${method}" style="display:${index === 0 ? '' : 'none'}"
                 ondragover="RuleConfig.onHybridDragOver(event)" ondrop="RuleConfig.onHybridDrop(event)">
-                <div class="form-label-row hybrid-item-header"><span><button type="button" class="hybrid-drag-handle" draggable="true" ondragstart="RuleConfig.onHybridDragStart(event)" title="拖动排序；也可使用上下移按钮" aria-label="拖动配置排序">☷</button> <strong class="hybrid-item-title">配置 ${index + 1}</strong></span><span>
-                    <button type="button" class="btn btn-secondary hybrid-up" onclick="RuleConfig.moveHybridItem(Number(this.closest('.hybrid-item').dataset.index),-1)" ${index === 0 ? 'disabled' : ''}>上移</button>
-                    <button type="button" class="btn btn-secondary hybrid-down" onclick="RuleConfig.moveHybridItem(Number(this.closest('.hybrid-item').dataset.index),1)" ${index === items.length - 1 ? 'disabled' : ''}>下移</button>
+                <div class="form-label-row hybrid-item-header"><span><button type="button" class="hybrid-drag-handle" draggable="true" ondragstart="RuleConfig.onHybridDragStart(event)" title="长按拖动排序" aria-label="拖动配置排序">☷</button> <strong class="hybrid-item-title">配置 ${index + 1}</strong></span><span>
                     <button type="button" class="btn btn-secondary hybrid-delete" onclick="RuleConfig.removeHybridItem(Number(this.closest('.hybrid-item').dataset.index))" ${items.length === 1 ? 'disabled' : ''}>删除</button>
                 </span></div>
                 <div class="form-row"><div class="form-group"><label class="form-label">来源</label><select class="form-select hybrid-source" onchange="RuleConfig.onHybridSourceChange(this)">
@@ -1722,10 +1721,16 @@ const RuleConfig = {
         rows.forEach((row, i) => {
             row.dataset.index = i;
             row.querySelector('.hybrid-item-title').textContent = `配置 ${i + 1}`;
-            row.querySelector('.hybrid-up').disabled = i === 0;
-            row.querySelector('.hybrid-down').disabled = i === rows.length - 1;
             row.querySelector('.hybrid-delete').disabled = rows.length === 1;
         });
+        const tabs = document.querySelectorAll('#fm-hybrid-tabs .hybrid-tab');
+        tabs.forEach((tab, i) => { tab.textContent = `配置 ${i + 1}`; tab.onclick = () => this.showHybridItem(i); });
+    },
+
+    showHybridItem(index) {
+        const rows = [...document.querySelectorAll('#fm-hybrid-items > .hybrid-item')];
+        rows.forEach((row, i) => { row.style.display = i === index ? '' : 'none'; });
+        document.querySelectorAll('#fm-hybrid-tabs .hybrid-tab').forEach((tab, i) => tab.classList.toggle('active', i === index));
     },
 
     addHybridItem() {
@@ -1736,6 +1741,7 @@ const RuleConfig = {
         // 不采集、不重建其他项：尚未回车的关键词、空数值和焦点都保留在原节点。
         area.insertAdjacentHTML('beforeend', this.renderHybridItems([item], strategy));
         this.updateHybridOrder();
+        this.showHybridItem(this.getHybridItemsFromDom().length - 1);
     },
 
     removeHybridItem(index) {
@@ -1847,8 +1853,9 @@ const RuleConfig = {
         const vlSection = document.getElementById('fm-vl-section');
         if (!tableSection || !textSection) return;
 
+        const isHybrid = type === 'hybrid';
         tableSection.style.display = type === 'table' ? 'block' : 'none';
-        textSection.style.display = type === 'text' ? 'block' : 'none';
+        textSection.style.display = (type === 'text' || isHybrid) ? 'block' : 'none';
         if (vlSection) {
             vlSection.style.display = type === 'vl' ? 'block' : 'none';
         }
@@ -1856,11 +1863,15 @@ const RuleConfig = {
         // LLM 开关仅对表格 / 文本类有意义，VL 恒需模型
         const useLlmGroup = document.getElementById('fm-use-llm-group');
         if (useLlmGroup) {
-            useLlmGroup.style.display = type === 'vl' ? 'none' : 'block';
+            useLlmGroup.style.display = (type === 'vl' || isHybrid) ? 'none' : 'block';
         }
         // 同步「跳过 LLM」对提示词区的显隐
         const skipLlm = document.getElementById('fm-skip-llm');
-        this.onSkipLlmChange(skipLlm ? skipLlm.checked : false);
+        this.onSkipLlmChange(isHybrid || (skipLlm ? skipLlm.checked : false));
+        if (isHybrid) {
+            const st = document.getElementById('fm-search-type');
+            if (st) st.value = 'hybrid';
+        }
     },
 
     onSkipLlmChange(skip) {
@@ -1881,6 +1892,7 @@ const RuleConfig = {
             ? (this.state.editingField.search_config || {})
             : {};
 
+        area.className = type === 'hybrid' ? 'hybrid-config-area' : '';
         area.innerHTML = this.buildSearchConfigFields(type, config);
 
         if (type === 'section') {
@@ -2148,7 +2160,7 @@ const RuleConfig = {
         const data = {
             field_id: document.getElementById('fm-field-id').value.trim(),
             field_name: document.getElementById('fm-field-name').value.trim(),
-            source_type: sourceType,
+            source_type: sourceType === 'hybrid' ? 'text' : sourceType,
             enabled: existingField ? existingField.enabled : 1,
             priority: this.parseIntOrDefault('fm-priority', 0),
             use_llm: (sourceType === 'vl' || !document.getElementById('fm-skip-llm').checked) ? 1 : 0,
