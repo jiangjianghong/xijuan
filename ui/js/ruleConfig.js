@@ -580,9 +580,15 @@ const RuleConfig = {
             // 后端 label = table_name_pattern or "表格"，表名留空时占位符标签就是"表格"
             labels = (val && val.trim()) ? [val.trim()] : ['表格'];
         } else if (textareaId === 'fm-text-extract-prompt') {
+            const sourceTypeEl = document.getElementById('fm-source-type');
             const searchTypeEl = document.getElementById('fm-search-type');
             const searchType = searchTypeEl ? searchTypeEl.value : '';
-            if (searchType === 'page') {
+            // 混合检索的所有子通道共用一份证据，始终只暴露固定标签。
+            // 不能读取子通道关键词，否则提示词会被错误地要求写多个标签。
+            if (sourceTypeEl?.value === 'hybrid' || searchType === 'hybrid') {
+                labels = ['混合检索结果'];
+                emptyHint = '混合检索结果';
+            } else if (searchType === 'page') {
                 labels = ['page_content'];
             } else if (searchType === 'section') {
                 const val = (document.getElementById('fm-sc-section-pattern') || {}).value;

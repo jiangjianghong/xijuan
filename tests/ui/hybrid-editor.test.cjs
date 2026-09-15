@@ -27,6 +27,54 @@ const item = (id, source_type, method, config) => ({ id, source_type, method, co
 const control = (row, id) => row.querySelector(`[id$="${id}"]`);
 const change = (w, el, value) => { el.value = value; el.dispatchEvent(new w.Event('change', { bubbles: true })); };
 
+for (const strategy of ['union', 'fallback']) {
+    test(`组合检索 ${strategy} 的占位符菜单始终提供固定标签并在光标处插入`, () => {
+        const { w, rc } = setup([]);
+        w.document.getElementById('editor').innerHTML = rc.buildFieldForm({
+            field_id: 'tag_test', source_type: 'text', search_type: 'hybrid',
+            search_config: { strategy, items: [item('a', 'text', 'context', {})] },
+        });
+        const textarea = w.document.getElementById('fm-text-extract-prompt');
+        const button = textarea.closest('.form-group').querySelector('.insert-tag-btn');
+        textarea.value = '前文待替换后文';
+        textarea.setSelectionRange(2, 5);
+        button.click();
+        const choices = [...w.document.querySelectorAll('#_insert-tag-dropdown .dropdown-item')];
+        assert.deepEqual(choices.map(el => el.textContent), ['混合检索结果']);
+        choices[0].click();
+        assert.equal(textarea.value, '前文<search_result>混合检索结果</search_result>后文');
+        assert.equal(w.document.getElementById('_insert-tag-dropdown'), null);
+
+        // 增加子通道及关键词不会变成多个占位符标签。
+        rc.addHybridItem();
+        const row = w.document.querySelector('.hybrid-item');
+        const input = control(row, 'fm-sc-keywords').querySelector('input');
+        input.value = '投资金额';
+        input.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        button.click();
+        assert.deepEqual([...w.document.querySelectorAll('#_insert-tag-dropdown .dropdown-item')]
+            .map(el => el.textContent), ['混合检索结果']);
+        w.close();
+    });
+}
+
+test('普通文本与组合检索切换后占位符菜单使用当前模式的标签', () => {
+    const { w, rc } = setup([]);
+    w.document.getElementById('editor').innerHTML = rc.buildFieldForm({
+        field_id: 'tag_switch', source_type: 'text', search_type: 'context',
+        search_config: { keywords: ['原关键词'] },
+    });
+    const button = w.document.getElementById('fm-text-extract-prompt')
+        .closest('.form-group').querySelector('.insert-tag-btn');
+    for (const [source, expected] of [['hybrid', '混合检索结果'], ['text', '原关键词']]) {
+        change(w, w.document.getElementById('fm-source-type'), source);
+        button.click();
+        assert.deepEqual([...w.document.querySelectorAll('#_insert-tag-dropdown .dropdown-item')]
+            .map(el => el.textContent), [expected]);
+    }
+    w.close();
+});
+
 test('文本、表格、三种 VL 复用普通配置控件，不提供 JSON 或复制', () => {
     const { rows } = setup([
         item('t', 'text', 'vector_db', { query_text: '总投资', top_k: 6 }),
