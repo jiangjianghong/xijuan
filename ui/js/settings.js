@@ -51,7 +51,7 @@ const SettingsManager = {
             ['timeout', '请求超时', 'number', { min: 1, unit: '秒' }],
             ['retry_count', '重试次数', 'number', { min: 1 }],
             ['max_context_length', '最大上下文长度', 'number', { min: 1, unit: '字符' }],
-            ['enable_thinking', '启用思考模式', 'boolean'],
+            ['enable_thinking', '传入顶层思考参数', 'thinking'],
             ['extra_body', '额外请求参数', 'json', { rows: 4 }],
         ],
         table_name_validation: [
@@ -217,7 +217,15 @@ const SettingsManager = {
         const nullable = options.nullable ? ' data-nullable="true"' : '';
         const inputId = `setting-${group}-${name}`;
         let control;
-        if (type === 'boolean') {
+        if (type === 'thinking') {
+            control = `<div data-thinking-control>
+                <label class="settings-toggle"><input id="${inputId}" data-path="${path}" data-type="thinking" type="checkbox"${value != null ? ' checked' : ''} onchange="SettingsManager.toggleThinking(this)"><span></span></label>
+                <div data-thinking-value-row${value == null ? ' style="display:none"' : ''}>
+                    <label for="${inputId}-value">思考参数值（开启 true / 关闭 false）</label>
+                    <label class="settings-toggle"><input id="${inputId}-value" data-thinking-value type="checkbox"${value === true ? ' checked' : ''}><span></span></label>
+                </div>
+            </div>`;
+        } else if (type === 'boolean') {
             control = `<label class="settings-toggle"><input id="${inputId}" data-path="${path}" type="checkbox"${value ? ' checked' : ''}${readonly}><span></span></label>`;
         } else if (type === 'select') {
             control = `<select id="${inputId}" data-path="${path}" class="form-select"${readonly}>${options.options.map(item => `<option value="${this.escape(item)}"${item === value ? ' selected' : ''}>${this.escape(item)}</option>`).join('')}</select>`;
@@ -324,7 +332,14 @@ const SettingsManager = {
         activeItem?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     },
 
+    toggleThinking(control) {
+        control.closest('[data-thinking-control]').querySelector('[data-thinking-value-row]').style.display = control.checked ? '' : 'none';
+    },
+
     parseControl(control) {
+        if (control.dataset.type === 'thinking') {
+            return control.checked ? control.closest('[data-thinking-control]').querySelector('[data-thinking-value]').checked : null;
+        }
         if (control.type === 'checkbox') return control.checked;
         const raw = control.value.trim();
         if (control.dataset.nullable === 'true' && raw === '') return null;
@@ -443,7 +458,11 @@ const SettingsManager = {
             Object.entries(fields).forEach(([field, value]) => {
                 const control = document.querySelector(`[data-path="${group}.${field}"]`);
                 if (!control || control.disabled) return;
-                if (control.type === 'checkbox') control.checked = Boolean(value);
+                if (control.dataset.type === 'thinking') {
+                    control.checked = value != null;
+                    control.closest('[data-thinking-control]').querySelector('[data-thinking-value]').checked = value === true;
+                    this.toggleThinking(control);
+                } else if (control.type === 'checkbox') control.checked = Boolean(value);
                 else if (control.dataset.type === 'json') control.value = value == null ? '' : JSON.stringify(value, null, 2);
                 else control.value = value == null ? '' : value;
             });

@@ -1209,17 +1209,19 @@ _PLAIN_LEVEL = 90
 
 
 def _strip_trailing_page_num(title: str) -> str:
-    """剥掉目录标题尾部的页码（'... 22' -> '...'）。仅删"空格+纯数字"结尾。"""
-    return re.sub(r"\s+\d+$", "", title).strip()
+    """去掉目录页码及其引导点，避免目录和正文产生不同标题。"""
+    stripped = re.sub(r"(?:\s+|[.．…·]{2,}\s*)\d+$", "", title).strip()
+    return stripped.rstrip(" .．…·") if stripped != title.strip() else stripped
 
 
 # 编号体系 → level。顺序敏感：点分十进制必须早于单数字，否则 '7.1' 被切成 '7.'
 _HEADING_RULES = [
-    (1, re.compile(r"^第[一二三四五六七八九十百千]+[章卷篇部]")),   # 第二章
+    (1, re.compile(r"^第\s*[零〇一二三四五六七八九十百千\d]+\s*[章卷篇部]")),
     (1, re.compile(r"^[一二三四五六七八九十]+\s*[、.．]")),          # 一、 二.
     (2, re.compile(r"^[（(]\s*[一二三四五六七八九十]+\s*[)）]")),    # （一） (一)
-    (2, re.compile(r"^第[一二三四五六七八九十百千]+条")),           # 第七条
+    (2, re.compile(r"^第\s*[零〇一二三四五六七八九十百千\d]+\s*[节条]")),
     (4, re.compile(r"^[（(]\s*\d+\s*[)）]")),                        # (1) （1）
+    (5, re.compile(r"^\d+\s*[)）]")),                               # 1）
     (3, re.compile(r"^\d+\s*[.．]\s*\d+(?:\s*[.．]\s*\d+)*")),       # 7.1  8.1.2
     (3, re.compile(r"^\d+\s*[、.．]")),                              # 1.  2、  3．
     (3, re.compile(r"^\d+(?=\s)")),                                  # 1 概述（纯数字+空格，兼容旧格式）
@@ -1234,6 +1236,9 @@ def _classify_heading(raw_title: str):
         无编号标题返回 (_PLAIN_LEVEL, "", 原标题, False)。
     """
     t = _strip_trailing_page_num(raw_title)
+    # 工程图名中的尺寸不是编号，不能让“2.5米高挡土墙”截断 4.4.2。
+    if re.match(r"^\d+(?:[.．]\d+)?(?:毫米|厘米|公里|米|公顷|亩|吨|万元|元|[%％])", t):
+        return _PLAIN_LEVEL, "", t, False
     for level, pat in _HEADING_RULES:
         m = pat.match(t)
         if m:
@@ -1243,6 +1248,7 @@ def _classify_heading(raw_title: str):
             # 1.1.1 → 4，避免所有多级编号都被压成同一层而截断父节。
             if level == 3 and re.match(r"^\d+\s*[.．]\s*\d", number):
                 level = len(re.findall(r"\d+", number)) + 1
+                clean = clean.lstrip(".．").strip()
             return level, number, clean or t, True
     return _PLAIN_LEVEL, "", t, False
 
@@ -1258,12 +1264,61 @@ class SectionInfo:
     start_pos: int
     end_pos: int        # 平铺边界：下一个任意标题（自身正文，向后兼容）
     tree_end_pos: int   # 层级边界：下一个 level ≤ 自己的标题（含子树）
+    is_toc: bool = False  # 带尾部页码的目录候选；检索时有正文同章则优先正文
+
+
+def _infer_heading_levels(metas):
+    """对 MinerU 压平为同级 # 的标题，按章节作用域恢复混合编号层级。"""
+    levels = []
+    # 栈元素为（体系、体系内深度、实际层级）；局部序号只在当前章/节内比较。
+    stack = []
+    for i, (fallback, number, _title, numbered) in enumerate(metas):
+        if not numbered:
+            levels.append(_PLAIN_LEVEL)
+            continue
+
+        structural = number.startswith("第")
+        parts = re.findall(r"\d+", number)
+        decimal = bool(re.fullmatch(r"\d+(?:\s*[.．]\s*\d+)+", number))
+        # 纯数字章节若后接同前缀多级编号，作为该编号树的根，而非局部列表。
+        root = False
+        if re.fullmatch(r"\d+[.．]?", number) and i + 1 < len(metas):
+            next_number = re.sub(r"\s+|．", lambda m: "." if m[0] == "．" else "", metas[i + 1][1])
+            root = next_number.startswith(parts[0] + ".") and bool(re.match(r"^\d+\.\d", next_number))
+
+        if structural:
+            rank = {"部": 0, "篇": 0, "卷": 0, "章": 1, "节": 2, "条": 3}[number[-1]]
+            while stack and not (stack[-1][0] == "structural" and stack[-1][1] < rank):
+                stack.pop()
+            level = max(fallback, stack[-1][2] + 1 if stack else 1)
+            kind = "structural"
+        elif decimal or root:
+            rank = len(parts)
+            while stack and (stack[-1][0] == "local" or (stack[-1][0] == "decimal" and stack[-1][1] >= rank)):
+                stack.pop()
+            structural_level = next((entry[2] for entry in reversed(stack) if entry[0] == "structural"), 0)
+            root_level = next((entry[2] for entry in stack if entry[0] == "decimal" and entry[1] == 1), None)
+            level = (root_level + rank - 1) if root_level is not None else max(3, structural_level + 1) + max(0, rank - 2)
+            kind = "decimal"
+        else:
+            rank = fallback
+            while stack and stack[-1][0] == "local" and stack[-1][1] >= rank:
+                stack.pop()
+            scoped = any(entry[0] != "local" for entry in stack)
+            level = stack[-1][2] + 1 if stack else fallback
+            if not scoped:
+                level = max(fallback, level)
+            kind = "local"
+        stack.append((kind, rank, level))
+        levels.append(level)
+    return levels
 
 
 def parse_sections(content: str) -> List[SectionInfo]:
     """解析 Markdown 文档中所有章节（层级化）。
 
-    每个 `#{1,6}` 标题都是一个节点，编号体系推断 level，无编号标题记为叶子。
+    显式多级 Markdown 使用 # 深度；同级 # 使用编号及当前章/节上下文推断。
+    压平文档中的无编号标题仍记为叶子。
     end_pos 为平铺边界（下一个任意标题），tree_end_pos 为层级边界（下一个
     level ≤ 自己的标题，父章因此包含全部子节内容）。
 
@@ -1273,19 +1328,23 @@ def parse_sections(content: str) -> List[SectionInfo]:
     Returns:
         章节信息列表。
     """
-    pattern = re.compile(r"^#{1,6}[ \t]+(.+?)[ \t]*$", re.MULTILINE)
+    pattern = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*$", re.MULTILINE)
     matches = list(pattern.finditer(content))
     n = len(matches)
 
-    metas = [_classify_heading(m.group(1).strip()) for m in matches]
+    raw_titles = [m.group(2).strip() for m in matches]
+    metas = [_classify_heading(title) for title in raw_titles]
+    markdown_levels = [len(m.group(1)) for m in matches]
+    levels = markdown_levels if len(set(markdown_levels)) > 1 else _infer_heading_levels(metas)
     sections: List[SectionInfo] = []
 
     for i, m in enumerate(matches):
-        level, number, title, numbered = metas[i]
+        _fallback, number, title, numbered = metas[i]
+        level = levels[i]
         flat_end = matches[i + 1].start() if i + 1 < n else len(content)
         tree_end = len(content)
         for j in range(i + 1, n):
-            if metas[j][0] <= level:
+            if levels[j] <= level:
                 tree_end = matches[j].start()
                 break
         sections.append(
@@ -1298,6 +1357,7 @@ def parse_sections(content: str) -> List[SectionInfo]:
                 start_pos=m.start(),
                 end_pos=flat_end,
                 tree_end_pos=tree_end,
+                is_toc=numbered and _strip_trailing_page_num(raw_titles[i]) != raw_titles[i],
             )
         )
 
