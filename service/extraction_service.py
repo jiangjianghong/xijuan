@@ -42,6 +42,7 @@ from utils.concurrency import (
 )
 from utils.errors import format_exception
 from utils.llm_client import chat_completion, get_embeddings
+from utils.empty_retry import retry_empty, retry_empty_stream, mark_retry_failure, retry_failure_boundary
 from utils.milvus_client import get_milvus_client
 from utils.page_mapping import (
     build_page_projection,
@@ -118,7 +119,9 @@ def _extract_value_reason_pages(data: Dict[str, Any]) -> Tuple[str, str, List[in
     pages 走 _normalize_pages 归一（去重升序正整数）。
     """
     raw_value = data.get("value", "")
-    if isinstance(raw_value, (list, dict)):
+    if raw_value is None:
+        value = ""
+    elif isinstance(raw_value, (list, dict)):
         value = json.dumps(raw_value, ensure_ascii=False)
     else:
         value = normalize_cjk_quotes(str(raw_value).strip())
@@ -1550,6 +1553,7 @@ async def search_section(
                     })
         except Exception as e:
             logger.warning("LLM 章节匹配失败: {}", e)
+            mark_retry_failure()
     elif match_type != "llm":
         # 非 LLM 匹配：逐章节匹配
         for section in sections:
@@ -2125,6 +2129,7 @@ async def _extract_page_field(
         return value, reason, source_refs, model_pages
     except Exception as e:
         logger.error("LLM 文本提取失败 (page): {}", e)
+        mark_retry_failure()
         return "", "", None, []
 
 
@@ -2172,6 +2177,7 @@ def _build_table_source_refs(
     return source_refs, results_text_by_label
 
 
+@retry_empty
 async def extract_table_field(
     file_id: str, field: ExtractionField, snapshot: "FileExtractionSnapshot"
 ) -> Tuple[str, str, Optional[Dict], List[int]]:
@@ -2224,6 +2230,7 @@ async def extract_table_field(
             ]
         except Exception as e:
             logger.warning("LLM 表格匹配失败: {}", e)
+            mark_retry_failure()
             matched_tables = []
     elif match_type != "llm":
         # 非 LLM 匹配：逐关键词逐表格匹配
@@ -2288,6 +2295,7 @@ async def extract_table_field(
         return value, reason, source_refs, model_pages
     except Exception as e:
         logger.error("LLM 表格提取失败: {}", e)
+        mark_retry_failure()
         return "", "", None, []
 
 
@@ -2384,6 +2392,7 @@ def _build_text_source_refs(
     return source_refs, results_text_by_label
 
 
+@retry_empty
 async def extract_text_field(
     file_id: str, field: ExtractionField, snapshot: "FileExtractionSnapshot"
 ) -> Tuple[str, str, Optional[Dict], List[int]]:
@@ -2466,9 +2475,11 @@ async def extract_text_field(
         return value, reason, source_refs, model_pages
     except Exception as e:
         logger.error("LLM 文本提取失败: {}", e)
+        mark_retry_failure()
         return "", "", None, []
 
 
+@retry_empty
 async def extract_vl_field(
     file_id: str,
     field: ExtractionField,
@@ -2544,6 +2555,7 @@ async def extract_vl_field(
             return "", f"未知 vl_method={method}", None, []
     except Exception as e:
         logger.error("VL 抽取失败 file_id={} method={} error={}", file_id, method, e)
+        mark_retry_failure()
         return "", f"VL 抽取失败: {e}", None, []
 
     return value, reason, {"_vl": refs}, []
@@ -2877,6 +2889,7 @@ async def _hybrid_run_search_item(
     return await extract_text_field(file_id, run, snapshot)
 
 
+@retry_empty
 async def extract_hybrid_field(
     file_id: str, field: ExtractionField, snapshot: "FileExtractionSnapshot",
     *, debug_events: Optional[List[Dict[str, Any]]] = None,
@@ -2941,6 +2954,7 @@ async def _hybrid_extract_evidence(
         value, reason, pages = parse_llm_json_response(response)
     except Exception as exc:
         logger.error("混合检索 LLM 提取失败: {}", exc)
+        mark_retry_failure()
         # 模型请求失败必须让字段失败，不能保留真实引用后伪装成有效空结果。
         raise
     yield _hybrid_result_event(value, reason, refs, pages)
@@ -3020,9 +3034,15 @@ async def _iter_hybrid_extraction(
                         raise ValueError("VL 未返回提取结果")
                     value, reason, refs, pages = vl_result
                 else:
-                    value, reason, refs, pages = await extract_vl_field(file_id, run)
+                    with retry_failure_boundary() as branch:
+                        value, reason, refs, pages = await extract_vl_field(file_id, run)
+                    if branch["failed"]:
+                        raise ValueError(reason)
             else:
-                value, reason, refs, pages = await _hybrid_run_search_item(file_id, field, item, snapshot)
+                with retry_failure_boundary() as branch:
+                    value, reason, refs, pages = await _hybrid_run_search_item(file_id, field, item, snapshot)
+                if branch["failed"]:
+                    raise ValueError(reason)
 
             hits = _hybrid_search_event(refs or {})["data"]["results"]
             source_pages = derive_source_pages(pages, refs)
@@ -3679,6 +3699,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
     logger.info("流式字段提取完成: {}", file_id)
 
 
+@retry_empty_stream
 async def test_field_extraction_stream(
     file_id: str, field: ExtractionField, session: AsyncSession
 ) -> AsyncIterator[Dict[str, Any]]:
@@ -3783,6 +3804,7 @@ async def test_field_extraction_stream(
                         ]
                     except Exception as e:
                         logger.warning("LLM 表格匹配失败: {}", e)
+                        mark_retry_failure()
                         yield {
                             "event": "match_llm",
                             "data": {

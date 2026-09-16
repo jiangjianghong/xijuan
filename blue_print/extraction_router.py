@@ -116,6 +116,8 @@ async def list_fields(type_id: str = "", db: AsyncSession = Depends(get_db)):
                 enabled=f.enabled,
                 priority=f.priority,
                 use_llm=f.use_llm if f.use_llm is not None else 1,
+                empty_retry_enabled=bool(getattr(f, "empty_retry_enabled", False)),
+                empty_retry_count=getattr(f, "empty_retry_count", None) or 2,
                 table_name_pattern=f.table_name_pattern,
                 table_match_type=f.table_match_type,
                 table_match_keywords=f.table_match_keywords,
@@ -244,6 +246,8 @@ async def upsert_field(
         existing.enabled = field.enabled
         existing.priority = field.priority
         existing.use_llm = field.use_llm
+        existing.empty_retry_enabled = field.empty_retry_enabled
+        existing.empty_retry_count = field.empty_retry_count
         existing.table_name_pattern = field.table_name_pattern
         existing.table_match_type = field.table_match_type
         existing.table_match_keywords = field.table_match_keywords
@@ -273,6 +277,8 @@ async def upsert_field(
             enabled=field.enabled,
             priority=field.priority,
             use_llm=field.use_llm,
+            empty_retry_enabled=bool(getattr(field, "empty_retry_enabled", False)),
+            empty_retry_count=getattr(field, "empty_retry_count", None) or 2,
             table_name_pattern=field.table_name_pattern,
             table_match_type=field.table_match_type,
             table_match_keywords=field.table_match_keywords,
@@ -349,11 +355,20 @@ def _build_temp_field(config: Dict[str, Any]) -> ExtractionField:
     `/test` 与 `/test/stream` 共用；`is_advanced` 必须透传，否则进阶字段在调试时
     不会解析 `<field_result>` 引用与页码联动，调出来的结果与正式抽取不一致。
     """
+    from utils.empty_retry import EmptyRetryConfig
+    from pydantic import ValidationError
+
+    try:
+        retry_config = EmptyRetryConfig.model_validate(config)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return ExtractionField(
         field_id=config.get("field_id") or "__test__",
         field_name=config.get("field_name", "测试字段"),
         source_type=config.get("source_type", "text"),
         use_llm=config.get("use_llm", 1),
+        empty_retry_enabled=retry_config.empty_retry_enabled,
+        empty_retry_count=retry_config.empty_retry_count,
         is_advanced=config.get("is_advanced", 0) or 0,
         table_name_pattern=config.get("table_name_pattern"),
         table_match_type=config.get("table_match_type"),

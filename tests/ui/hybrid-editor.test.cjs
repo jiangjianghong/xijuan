@@ -27,6 +27,26 @@ const item = (id, source_type, method, config) => ({ id, source_type, method, co
 const control = (row, id) => row.querySelector(`[id$="${id}"]`);
 const change = (w, el, value) => { el.value = value; el.dispatchEvent(new w.Event('change', { bubbles: true })); };
 
+test('字段空值重试开关、次数可保存并在重新打开时恢复', () => {
+    const { w, rc } = setup([]);
+    const config = {field_id: 'retry_field', field_name: '字段', source_type: 'text', search_type: 'context', use_llm: 0};
+    const editor = w.document.getElementById('editor');
+    editor.innerHTML = rc.buildFieldForm(config);
+    const toggle = w.document.getElementById('fm-empty-retry-enabled');
+    const count = w.document.getElementById('fm-empty-retry-count');
+    assert.equal(toggle.checked, false);
+    assert.equal(count.disabled, true);
+    toggle.click();
+    assert.equal(count.disabled, false);
+    count.value = '3';
+    const data = rc.collectFieldFormData();
+    assert.equal(data.empty_retry_enabled, true);
+    assert.equal(data.empty_retry_count, 3);
+    editor.innerHTML = rc.buildFieldForm(data);
+    assert.equal(w.document.getElementById('fm-empty-retry-enabled').checked, true);
+    assert.equal(w.document.getElementById('fm-empty-retry-count').value, '3');
+});
+
 for (const strategy of ['union', 'fallback']) {
     test(`组合检索 ${strategy} 的占位符菜单始终提供固定标签并在光标处插入`, () => {
         const { w, rc } = setup([]);

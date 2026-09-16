@@ -77,6 +77,8 @@ class ExportFieldItem(BaseModel):
     enabled: int = 1
     priority: int = 0
     use_llm: int = 1
+    empty_retry_enabled: bool = False
+    empty_retry_count: int = Field(2, ge=1, le=10)
     is_advanced: int = 0
     depend_fields: Optional[List[str]] = None
     table_name_pattern: Optional[str] = None
@@ -326,6 +328,8 @@ class ExtractionFieldCreate(BaseModel):
     priority: int = 0
     # 0=跳过 LLM 直接返回检索原文（仅 text/table 生效）；须早于 *_extract_prompt 声明，供其校验器读取
     use_llm: int = 1
+    empty_retry_enabled: bool = False
+    empty_retry_count: int = Field(2, ge=1, le=10)
     # 表格类
     table_name_pattern: Optional[str] = None
     table_match_type: Optional[TableMatchTypeEnum] = None

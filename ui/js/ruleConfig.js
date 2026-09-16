@@ -947,6 +947,18 @@ const RuleConfig = {
                 </div>
             </div>
 
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label"><input type="checkbox" id="fm-empty-retry-enabled" ${field.empty_retry_enabled ? 'checked' : ''} onchange="document.getElementById('fm-empty-retry-count').disabled = !this.checked"> 为空重试</label>
+                    <div class="form-hint">抽取值为空时重新检索并抽取；从第二次起温度固定降低 0.1，不累计降低。</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">重试次数</label>
+                    <input class="form-input" id="fm-empty-retry-count" type="number" min="1" max="10" step="1" value="${field.empty_retry_count ?? 2}" ${field.empty_retry_enabled ? '' : 'disabled'}>
+                    <div class="form-hint">首次之外再尝试的次数，1–10 次；有结果立即停止。</div>
+                </div>
+            </div>
+
             <!-- LLM 开关（仅表格 / 文本类生效） -->
             <div class="form-group" id="fm-use-llm-group">
                 <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
@@ -2237,6 +2249,8 @@ const RuleConfig = {
             source_type: sourceType === 'hybrid' ? 'text' : sourceType,
             enabled: existingField ? existingField.enabled : 1,
             priority: this.parseIntOrDefault('fm-priority', 0),
+            empty_retry_enabled: document.getElementById('fm-empty-retry-enabled').checked,
+            empty_retry_count: Number(document.getElementById('fm-empty-retry-count').value),
             use_llm: (sourceType === 'vl' || !document.getElementById('fm-skip-llm').checked) ? 1 : 0,
             // 进阶字段标志（depend_fields 由服务端扫描配置算出，前端不传）
             is_advanced: this.state.formIsAdvanced ? 1 : 0,
@@ -2451,6 +2465,10 @@ const RuleConfig = {
 
     validateFieldForm(data) {
         const idPattern = /^[a-zA-Z0-9_]+$/;
+        if (!Number.isInteger(data.empty_retry_count) || data.empty_retry_count < 1 || data.empty_retry_count > 10) {
+            Toast.error('重试次数必须是 1–10 的整数');
+            return false;
+        }
 
         if (!data.field_id) {
             Toast.error('字段 ID 不能为空');
@@ -3144,6 +3162,8 @@ const RuleConfig = {
         // 构建精简的配置预览
         const displayConfig = {};
         displayConfig.source_type = config.source_type;
+        displayConfig.empty_retry_enabled = !!config.empty_retry_enabled;
+        displayConfig.empty_retry_count = config.empty_retry_count ?? 2;
         if (config.source_type !== 'vl') {
             displayConfig.use_llm = config.use_llm === 0 ? 0 : 1;
         }
@@ -3164,6 +3184,10 @@ const RuleConfig = {
 
     handleDebugEvent(evt) {
         const { event, data } = evt;
+        if (event === 'retry') {
+            this._showDebugLoading(`结果为空，正在重试（${data.attempt}/${data.total}）...`);
+            return;
+        }
         if (['hybrid_start','hybrid_item_start','hybrid_item_done','hybrid_item_progress','hybrid_done'].includes(event)) {
             this.handleHybridDebugEvent(event, data || {});
             return;

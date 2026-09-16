@@ -15,6 +15,7 @@ from PIL import Image
 
 from utils.concurrency import get_limiter
 from utils.config import get_config
+from utils.empty_retry import is_empty_retry_active, retry_temperature
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -61,6 +62,8 @@ async def vl_chat(
     }
     if body_extras:
         payload["extra_body"] = body_extras
+    if is_empty_retry_active():
+        payload["temperature"] = retry_temperature(body_extras.pop("temperature", cfg.temperature))
 
     headers = {"Content-Type": "application/json"}
     if cfg.api_key:

@@ -65,6 +65,8 @@ async def init_database() -> None:
             ("extraction_field", "vl_system_prompt", "TEXT NULL"),
             ("extraction_field", "vl_extract_prompt", "TEXT NULL"),
             ("extraction_field", "use_llm", "TINYINT NOT NULL DEFAULT 1"),
+            ("extraction_field", "empty_retry_enabled", "TINYINT NOT NULL DEFAULT 0"),
+            ("extraction_field", "empty_retry_count", "INT NOT NULL DEFAULT 2"),
             ("doc_type", "is_template", "TINYINT NOT NULL DEFAULT 0"),
             ("doc_type", "parent_type_id", "VARCHAR(64) NULL"),
             ("doc_type", "project_id", "VARCHAR(64) NULL"),

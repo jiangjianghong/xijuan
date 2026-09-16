@@ -196,6 +196,9 @@ class ExtractionField(Base):
     depend_fields: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # 是否走 LLM 二次抽取；0 表示跳过 LLM 直接返回检索原文（仅 text/table 生效，NULL/1 视为启用）
     use_llm: Mapped[int] = mapped_column(TINYINT, default=1)
+    # 空值重试次数为首次之外的追加次数。
+    empty_retry_enabled: Mapped[bool] = mapped_column(TINYINT, nullable=False, default=False)
+    empty_retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
