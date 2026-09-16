@@ -52,12 +52,46 @@ def test_chapter_and_chinese_list_are_different_levels():
     assert sections[0].tree_end_pos == sections[4].start_pos
 
 
+@pytest.mark.parametrize("root1,root2", [("一、概况", "二、预算"), ("（一）概况", "（二）预算")])
+def test_chinese_root_stays_open_while_decimal_children_are_parsed(root1, root2):
+    content = document(root1, "1.1 位置", root2, "2.1 费用")
+    sections = parse_sections(content)
+    assert sections[0].level == sections[2].level
+    assert sections[0].tree_end_pos == sections[2].start_pos
+    assert sections[2].level < sections[3].level
+    assert sections[2].tree_end_pos == len(content)
+
+
 def test_single_number_root_contains_decimal_children():
     content = document("1 概况", "1.1 位置", "1.1.1 坐标", "2 方案", "2.1 道路")
     sections = parse_sections(content)
     assert sections[0].level < sections[1].level < sections[2].level
     assert sections[0].tree_end_pos == sections[3].start_pos
     assert sections[0].level == sections[3].level
+
+
+def test_numeric_root_sibling_without_children_still_closes_previous_root():
+    content = document("1 概况", "1.1 位置", "2 结论", "3 预算", "3.1 明细")
+    sections = parse_sections(content)
+    assert sections[0].level == sections[2].level == sections[3].level
+    assert sections[0].tree_end_pos == sections[2].start_pos
+    assert sections[1].tree_end_pos == sections[2].start_pos
+
+
+def test_numeric_root_can_have_a_plain_heading_before_its_child():
+    content = document("1 概况", "位置示意图", "1.1 位置", "2 结论")
+    sections = parse_sections(content)
+    assert sections[0].level < sections[2].level
+    assert sections[0].tree_end_pos == sections[3].start_pos
+
+
+def test_local_numeric_series_does_not_advance_root_series():
+    content = document("1. 概况", "1.1 位置", "1. 施工", "2. 材料", "1.2 方案", "2. 预算")
+    sections = parse_sections(content)
+    assert sections[0].level == sections[5].level
+    assert sections[2].level == sections[3].level > sections[1].level
+    assert sections[1].tree_end_pos == sections[4].start_pos
+    assert sections[0].tree_end_pos == sections[5].start_pos
 
 
 def test_measurement_heading_does_not_close_section():
@@ -73,6 +107,22 @@ def test_explicit_markdown_hierarchy_keeps_plain_parent():
     assert [s.level for s in sections] == [1, 2, 3, 2, 1]
     assert sections[0].tree_end_pos == sections[4].start_pos
     assert sections[1].tree_end_pos == sections[3].start_pos
+
+
+def test_partial_markdown_depth_does_not_override_numbered_hierarchy():
+    content = "# 第一章 概况\n\n# 1.1 位置\n\n## 插图\n\n图说明\n\n# 第二章 预算\n"
+    sections = parse_sections(content)
+    assert sections[0].level < sections[1].level < sections[2].level
+    assert sections[0].tree_end_pos == sections[3].start_pos
+    assert sections[1].tree_end_pos == sections[3].start_pos
+
+
+def test_plain_same_markdown_heading_with_child_does_not_close_numbered_chapter():
+    content = "# 第一章 概况\n\n# 1.1 位置\n\n# 插图\n\n## 细节\n\n# 1.2 方案\n\n# 第二章 预算\n"
+    sections = parse_sections(content)
+    assert sections[0].tree_end_pos == sections[5].start_pos
+    assert sections[1].tree_end_pos == sections[4].start_pos
+    assert sections[1].level < sections[2].level < sections[3].level
 
 
 def test_toc_leaders_and_decimal_trailing_dot_are_not_title():
@@ -107,3 +157,22 @@ async def test_section_retrieval_includes_local_subsections(match_type):
     assert len(results) == 1
     assert "材料" in results[0]["content"] and "规格" in results[0]["content"]
     assert "供水工程" not in results[0]["content"]
+
+
+async def test_outline_endpoint_and_search_share_subtree_boundaries():
+    """直接调用真实路由，数据库仅返回固定原文，验证 API 和检索切片一致。"""
+    from types import SimpleNamespace
+    from blue_print.file_router import get_file_outline
+
+    content = document("第1章 概况", "1.1 项目概况", "1.1.1 位置", "(1) 坐标", "第2章 预算")
+
+    class ReadOnlySession:
+        async def execute(self, _statement):
+            return SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(file_content=content))
+
+    outline = (await get_file_outline("fixture", ReadOnlySession())).data
+    result = (await search_section(content, {"section_pattern": "项目概况", "section_match_type": "exact"}))[0]
+    assert outline[1]["tree_content"] == result["content"]
+    assert outline[1]["tree_end_pos"] == result["end_pos"] == outline[4]["start_pos"]
+    assert "坐标" in outline[1]["tree_content"]
+    assert "坐标" not in outline[1]["content"]

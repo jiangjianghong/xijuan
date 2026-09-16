@@ -574,6 +574,10 @@ _data 为数组，每个元素：_
 
 正则解析 Markdown 章节标题，与 `search_type=section` 同一套切片口径。
 
+编号层级结合当前章/节作用域推断，支持 `第1章`、多段数字及混合局部编号。
+`content` 为自身正文，`tree_content` 为包含子节的完整正文；章节检索使用 `tree_end_pos`。
+目录命中会优先映射到同编号同标题的正文。详见 [章节树计算与检索](../SECTION_HIERARCHY.md)。
+
 - 方法路径：`GET /file/{file_id}/outline`
 - 认证：无（内网部署）
 

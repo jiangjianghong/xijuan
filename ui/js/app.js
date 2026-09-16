@@ -883,12 +883,16 @@ const App = {
                     if (data.length === 0) {
                         html = '<div class="tab-content-empty">暂无章节(文档无标题)</div>';
                     } else {
-                        // 显示深度：编号标题按 level（封顶 4 级）缩进，无编号标题顶格
-                        const depthOf = (it) => (it.numbered ? Math.min(it.level, 4) - 1 : 0);
+                        // 用后端子树边界计算真实祖先数量，保持深层和无编号子节的缩进。
+                        const ancestorEnds = [];
                         let sidebar = '';
                         data.forEach((item, idx) => {
                             const label = item.number ? `${item.number} ${item.title}` : item.title;
-                            const depth = depthOf(item);
+                            while (ancestorEnds.length && item.start_pos >= ancestorEnds[ancestorEnds.length - 1]) {
+                                ancestorEnds.pop();
+                            }
+                            const depth = ancestorEnds.length;
+                            ancestorEnds.push(item.tree_end_pos);
                             const numHtml = item.number
                                 ? `<span class="outline-num">${this.escapeHtml(item.number)}</span> `
                                 : '';

@@ -65,6 +65,7 @@ async def _extract_table_name_with_llm(
     preceding_text: str,
     table_index: int,
     fallback_name: str,
+    table_content: str = "",
 ) -> str:
     """调用 LLM 提取表名，失败时回退到最后一行。"""
     app_cfg = get_config()
@@ -76,6 +77,8 @@ async def _extract_table_name_with_llm(
     context_text = _build_llm_context_text(preceding_text, max_lines=max_lines) or "(无)"
     if max_context_length and len(context_text) > max_context_length:
         context_text = context_text[-max_context_length:]
+    # 只补充表格开头，供模型检查表内标题，避免大表占用过多上下文。
+    table_head = table_content[:4000] or "(无)"
 
     base_url = table_name_cfg.base_url or extraction_cfg.base_url
     model = table_name_cfg.model or extraction_cfg.model
@@ -86,8 +89,12 @@ async def _extract_table_name_with_llm(
 
     prompt = (
         "你是文档表格标题抽取助手。\n"
-        "请根据给定上文，找出当前表格最贴近的标题。\n"
-        "核心要求：table_name 必须【原样复制】上文中出现的标题文字，"
+        "请优先根据给定上文，找出当前表格最贴近的标题。\n"
+        "只有上文中确实没有合适的表名时，才查看表格内部的标题行或表头，"
+        "判断是否存在能作为整个表格名称的标题（例如首行合并单元格中的标题）。\n"
+        "不要把普通列名（如序号、项目、金额）、单位说明或数据内容当作表名，"
+        "也不要拼接列名或根据表格内容自行概括表名。\n"
+        "核心要求：table_name 必须【原样复制】上文或表格内部出现的标题文字，"
         "逐字照抄，不得改写、概括、缩写、翻译、补充或删减任何字词"
         "（包括年份、单位、编号、括号注释等修饰成分都要完整保留）。\n"
         "若上文有多个候选，选与当前表格最贴近且最完整的那一条。\n"
@@ -95,7 +102,8 @@ async def _extract_table_name_with_llm(
         "不要输出\"无法提取\"、\"未找到明确标题\"等其他失败文案。\n"
         "仅输出 JSON：{\"table_name\":\"...\", \"reason\":\"...\"}\n\n"
         f"表格序号: {table_index}\n"
-        f"上文片段:\n{context_text}"
+        f"上文片段:\n{context_text}\n\n"
+        f"表格开头片段（HTML，可能截断）:\n{table_head}"
     )
 
     try:
@@ -161,6 +169,7 @@ async def parse_tables(content: str, file_id: str, page_mapping: Optional[List] 
                         preceding_text=preceding_text,
                         table_index=table_index,
                         fallback_name=fallback_name,
+                        table_content=table_content,
                     )
 
         logger.info("表格名称校验完成: file_id={}, {}/{}, name={}", file_id, table_index, total_table, table_name)

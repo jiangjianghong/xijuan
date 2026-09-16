@@ -1272,6 +1272,13 @@ def _infer_heading_levels(metas):
     levels = []
     # 栈元素为（体系、体系内深度、实际层级）；局部序号只在当前章/节内比较。
     stack = []
+    numeric_root = None
+    next_numbers = [""] * len(metas)
+    next_number = ""
+    for i in range(len(metas) - 1, -1, -1):
+        next_numbers[i] = next_number
+        if metas[i][3]:
+            next_number = re.sub(r"\s+", "", metas[i][1]).replace("．", ".")
     for i, (fallback, number, _title, numbered) in enumerate(metas):
         if not numbered:
             levels.append(_PLAIN_LEVEL)
@@ -1282,21 +1289,43 @@ def _infer_heading_levels(metas):
         decimal = bool(re.fullmatch(r"\d+(?:\s*[.．]\s*\d+)+", number))
         # 纯数字章节若后接同前缀多级编号，作为该编号树的根，而非局部列表。
         root = False
-        if re.fullmatch(r"\d+[.．]?", number) and i + 1 < len(metas):
-            next_number = re.sub(r"\s+|．", lambda m: "." if m[0] == "．" else "", metas[i + 1][1])
+        if re.fullmatch(r"\d+[.．]?", number):
+            marker = re.sub(r"\d+", "", number).replace("．", ".")
+            next_number = next_numbers[i]
             root = next_number.startswith(parts[0] + ".") and bool(re.match(r"^\d+\.\d", next_number))
+            # 已建立的根编号体系持续有效：后继章即使没有子节也必须闭合前章。
+            local_series = any(entry[0] == "local" and entry[1] == fallback for entry in stack)
+            if numeric_root and not local_series and marker == numeric_root[0] and int(parts[0]) > numeric_root[1]:
+                root = True
+            if root:
+                numeric_root = marker, int(parts[0])
 
         if structural:
+            numeric_root = None
             rank = {"部": 0, "篇": 0, "卷": 0, "章": 1, "节": 2, "条": 3}[number[-1]]
             while stack and not (stack[-1][0] == "structural" and stack[-1][1] < rank):
                 stack.pop()
             level = max(fallback, stack[-1][2] + 1 if stack else 1)
             kind = "structural"
+        elif fallback in (1, 2) and (
+            not any(entry[0] == "decimal" for entry in stack)
+            or any(entry[0] == "outline" and entry[1] == fallback for entry in stack)
+        ):
+            # 已有中文上层章不能因进入 1.1 被丢弃；章内第一次出现的中文枚举仍属局部。
+            numeric_root = None
+            rank = fallback
+            while stack and not (
+                stack[-1][0] == "structural"
+                or (stack[-1][0] == "outline" and stack[-1][1] < rank)
+            ):
+                stack.pop()
+            level = max(fallback, stack[-1][2] + 1 if stack else fallback)
+            kind = "outline"
         elif decimal or root:
             rank = len(parts)
             while stack and (stack[-1][0] == "local" or (stack[-1][0] == "decimal" and stack[-1][1] >= rank)):
                 stack.pop()
-            structural_level = next((entry[2] for entry in reversed(stack) if entry[0] == "structural"), 0)
+            structural_level = next((entry[2] for entry in reversed(stack) if entry[0] in ("structural", "outline")), 0)
             root_level = next((entry[2] for entry in stack if entry[0] == "decimal" and entry[1] == 1), None)
             level = (root_level + rank - 1) if root_level is not None else max(3, structural_level + 1) + max(0, rank - 2)
             kind = "decimal"
@@ -1317,8 +1346,8 @@ def _infer_heading_levels(metas):
 def parse_sections(content: str) -> List[SectionInfo]:
     """解析 Markdown 文档中所有章节（层级化）。
 
-    显式多级 Markdown 使用 # 深度；同级 # 使用编号及当前章/节上下文推断。
-    压平文档中的无编号标题仍记为叶子。
+    编号及当前章/节上下文推断层级；Markdown 深度补充无编号标题及显式父子关系。
+    全部压平为同级 # 时，无编号标题仍记为叶子。
     end_pos 为平铺边界（下一个任意标题），tree_end_pos 为层级边界（下一个
     level ≤ 自己的标题，父章因此包含全部子节内容）。
 
@@ -1335,7 +1364,22 @@ def parse_sections(content: str) -> List[SectionInfo]:
     raw_titles = [m.group(2).strip() for m in matches]
     metas = [_classify_heading(title) for title in raw_titles]
     markdown_levels = [len(m.group(1)) for m in matches]
-    levels = markdown_levels if len(set(markdown_levels)) > 1 else _infer_heading_levels(metas)
+    levels = _infer_heading_levels(metas)
+    if len(set(markdown_levels)) > 1:
+        markdown_stack = []
+        last_numbered_level = 0
+        for i, markdown_level in enumerate(markdown_levels):
+            while markdown_stack and markdown_stack[-1][0] >= markdown_level:
+                markdown_stack.pop()
+            parent_level = markdown_stack[-1][1] if markdown_stack else 0
+            if not metas[i][3]:
+                # 混合压平文档的同级插图仍属于当前编号章节，不提升为新根。
+                levels[i] = (parent_level or last_numbered_level) + 1
+            elif markdown_stack:
+                levels[i] = max(levels[i], parent_level + 1)
+            if metas[i][3]:
+                last_numbered_level = levels[i]
+            markdown_stack.append((markdown_level, levels[i]))
     sections: List[SectionInfo] = []
 
     for i, m in enumerate(matches):
@@ -1362,6 +1406,28 @@ def parse_sections(content: str) -> List[SectionInfo]:
         )
 
     return sections
+
+
+def _section_body_aliases(sections: List[SectionInfo]) -> Dict[int, SectionInfo]:
+    """只合并同编号、同标题的目录/正文，保留不同正文中的同名章节。"""
+    def key(section):
+        number = re.sub(r"\s+", "", section.number).replace("．", ".").rstrip(".")
+        return number, re.sub(r"\s+", "", section.title)
+
+    bodies = {}
+    for section in sections:
+        if not section.is_toc:
+            bodies.setdefault(key(section), []).append(section)
+    aliases = {}
+    for section in sections:
+        candidates = bodies.get(key(section), []) if section.is_toc else []
+        if candidates:
+            # 合订文件可能多次出现相同编号，优先该目录后最近的正文。
+            aliases[section.index] = min(
+                candidates,
+                key=lambda body: (body.index < section.index, abs(body.index - section.index)),
+            )
+    return aliases
 
 
 # ── 检索方法 ────────────────────────────────────────────────
@@ -1450,6 +1516,7 @@ async def search_section(
     sort_order = config.get("sort_order", "asc")
 
     sections = parse_sections(content)
+    body_aliases = _section_body_aliases(sections)
     results = []
 
     # LLM 匹配：一次性给出所有章节标题列表，让模型返回匹配的序号
@@ -1470,6 +1537,7 @@ async def search_section(
             for idx in indices:
                 if 1 <= idx <= len(sections):
                     section = sections[idx - 1]
+                    section = body_aliases.get(section.index, section)
                     section_content = content[section.start_pos:section.tree_end_pos]
                     results.append({
                         "section_number": section.number,
@@ -1485,6 +1553,7 @@ async def search_section(
     elif match_type != "llm":
         # 非 LLM 匹配：逐章节匹配
         for section in sections:
+            section = body_aliases.get(section.index, section)
             matched = False
 
             if match_type == "exact":
@@ -1507,12 +1576,10 @@ async def search_section(
                     "end_pos": section.tree_end_pos,
                 })
 
-    # 目录/正文同名去重：完全同名的多命中只保留 content 最长的（目录条极短，正文条含整章）
-    deduped: Dict[str, Dict[str, Any]] = {}
+    # 目录命中已映射到正文；按节点去重，不丢掉不同章中同名的“保障措施”等。
+    deduped: Dict[int, Dict[str, Any]] = {}
     for r in results:
-        key = r["section_title"]
-        if key not in deduped or len(r["content"]) > len(deduped[key]["content"]):
-            deduped[key] = r
+        deduped[r["section_index"]] = r
     results = list(deduped.values())
 
     # 按章节索引排序
