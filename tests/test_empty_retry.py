@@ -10,6 +10,19 @@ def field(enabled=True, count=2):
     return SimpleNamespace(empty_retry_enabled=enabled, empty_retry_count=count, field_id="f")
 
 
+@pytest.mark.parametrize("original,expected", [(0.0, 0.1), (0.7, 0.8), (0.95, 1.0), (1.0, 1.0), (1.2, 1.0)])
+async def test_retry_temperature_increases_once_and_caps_at_one(original, expected):
+    temperatures = []
+
+    @retry_empty
+    async def extract(file_id, field):
+        temperatures.append(retry_temperature(original))
+        return "", "", None, []
+
+    await extract("doc", field())
+    assert temperatures == [original, expected, expected]
+
+
 @pytest.mark.parametrize("value", [None, "", " \n"])
 async def test_empty_retries_with_fixed_temperature(value):
     temperatures = []
@@ -21,7 +34,7 @@ async def test_empty_retries_with_fixed_temperature(value):
 
     result = await extract("doc", field())
     assert result[0] == value
-    assert temperatures == [0.7, 0.6, 0.6]
+    assert temperatures == [0.7, 0.8, 0.8]
     assert retry_temperature(0.7) == 0.7
 
 
@@ -60,7 +73,7 @@ async def test_errors_do_not_retry_and_context_resets():
     async def extract(file_id, field):
         calls.append(1)
         if len(calls) > 1:
-            assert retry_temperature(0.05) == 0
+            assert retry_temperature(0.05) == 0.15
             raise RuntimeError("网络错误")
         return "", "", None, []
 
@@ -97,7 +110,7 @@ async def test_stream_only_emits_final_result_and_done():
         yield {"event": "done", "data": {}}
 
     events = [event async for event in extract("doc", field())]
-    assert calls == [0.7, 0.6, 0.6]
+    assert calls == [0.7, 0.8, 0.8]
     assert [e["event"] for e in events].count("retry") == 2
     assert [e["event"] for e in events].count("result") == 1
     assert [e["event"] for e in events].count("done") == 1
@@ -143,7 +156,7 @@ async def test_real_text_extraction_retries_null(monkeypatch):
     result = await svc.extract_text_field("doc", config, snapshot)
     assert result[0] == "找到"
     assert result[3] == [1]
-    assert calls == [0.7, 0.6, 0.6]
+    assert calls == [0.7, 0.8, 0.8]
 
 
 async def test_parallel_retry_does_not_change_other_field_temperature():
@@ -167,10 +180,10 @@ async def test_parallel_retry_does_not_change_other_field_temperature():
         other_finished.set()
 
     await asyncio.gather(extract("doc", field()), other())
-    assert temperatures == [0.7, 0.6]
+    assert temperatures == [0.7, 0.8]
 
 
-@pytest.mark.parametrize("kind,base,expected", [("text", None, [1.0, 0.9, 0.9]), ("text", 0.7, [0.7, 0.6, 0.6]), ("vl", 0.05, [0.05, 0.0, 0.0])])
+@pytest.mark.parametrize("kind,base,expected", [("text", None, [1.0, 1.0, 1.0]), ("text", 0.7, [0.7, 0.8, 0.8]), ("vl", 0.05, [0.05, 0.15, 0.15])])
 async def test_actual_model_payloads(monkeypatch, kind, base, expected):
     import copy
     import httpx
@@ -296,7 +309,7 @@ async def test_hybrid_handled_channel_error_does_not_suppress_retry(monkeypatch,
     monkeypatch.setattr(svc, "_hybrid_run_search_item", search)
     monkeypatch.setattr(svc, "chat_completion", chat)
     await svc.extract_hybrid_field("doc", config, SimpleNamespace(), debug_events=[] if debug else None)
-    assert calls == [0.7, 0.6, 0.6]
+    assert calls == [0.7, 0.8, 0.8]
 
 
 async def test_stream_close_cleans_up_without_leaking_context():

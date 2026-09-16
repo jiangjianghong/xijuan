@@ -950,7 +950,7 @@ const RuleConfig = {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label"><input type="checkbox" id="fm-empty-retry-enabled" ${field.empty_retry_enabled ? 'checked' : ''} onchange="document.getElementById('fm-empty-retry-count').disabled = !this.checked"> 为空重试</label>
-                    <div class="form-hint">抽取值为空时重新检索并抽取；从第二次起温度固定降低 0.1，不累计降低。</div>
+                    <div class="form-hint">抽取值为空时重新检索并抽取；从第二次起温度固定升高 0.1，不累计升高，最高为 1。</div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">重试次数</label>

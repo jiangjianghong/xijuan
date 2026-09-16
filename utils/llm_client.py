@@ -72,7 +72,7 @@ async def chat_completion(
     if merged_extra:
         payload["extra_body"] = merged_extra
     if is_empty_retry_active():
-        # 开启重试时明确首次基准，避免未知服务端默认值导致重试反而升温。
+        # 开启重试时明确首次基准，追加尝试固定加 0.1，最高为 1。
         payload["temperature"] = retry_temperature(merged_extra.pop("temperature", 1.0))
     if cfg.enable_thinking is not None:
         payload["enable_thinking"] = cfg.enable_thinking
