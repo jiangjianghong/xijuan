@@ -1670,7 +1670,11 @@ async def search_rule(
                         # 保留最靠近关键词的停用词（最小的 idx）
                         end = min(end, idx)
 
-            extracted_text = content[start:end].strip()
+            raw_text = content[start:end]
+            extracted_text = raw_text.strip()
+            # 去掉首尾空白时同步收紧全文坐标，保证逐页标注及引用定位不偏移。
+            start += len(raw_text) - len(raw_text.lstrip())
+            end = start + len(extracted_text)
 
             # 检查最小长度
             if len(extracted_text) < min_length:

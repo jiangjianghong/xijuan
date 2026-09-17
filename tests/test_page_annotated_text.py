@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from service.extraction_service import _page_annotated_text
 
 _MAPPING = [
@@ -55,3 +57,28 @@ def test_debug_stream_join_matches_official_extraction():
     # 调试流不得再用裸 _page_prefix 拼接文本段，必须走 _page_annotated_text
     assert "_page_annotated_text(" in src
     assert "_page_prefix(_result_page_num" not in src
+
+
+@pytest.mark.parametrize("direction", ["forward", "backward", "both"])
+async def test_rule_trimmed_cross_page_result_keeps_per_page_markers(direction):
+    """规则去除首尾空白后仍准确定位原文，并逐页注入模型。"""
+    from service.extraction_service import search_rule, _build_text_source_refs
+
+    content = "前缀。 \t甲关键词乙\n丙关键词丁 \t。后缀"
+    boundary = content.index("丙")
+    mapping = [
+        {"start_pos": 0, "page_num": 1},
+        {"start_pos": boundary, "page_num": 2},
+    ]
+    results = await search_rule(content, {
+        "keywords": ["关键词"], "stop_words": ["。"],
+        "direction": direction, "max_length": 200,
+    })
+    refs, texts = _build_text_source_refs("rule", results, mapping)
+    assert "【第1-2页】" not in texts["关键词"]
+    assert "【第1页】" in texts["关键词"]
+    assert "【第2页】" in texts["关键词"]
+    for result in results:
+        assert content[result["start_pos"]:result["end_pos"]] == result["extracted_text"]
+        assert content[result["position"]:].startswith("关键词")
+    assert refs["_texts"] == texts
