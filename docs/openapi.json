@@ -7971,6 +7971,19 @@
             "title": "Rule Name",
             "description": "规则名（配置删除则 null）"
           },
+          "rule_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rule Type",
+            "description": "规则类型：`judge` / `calc` / `custom`（配置删除则 null）"
+          },
           "result_value": {
             "title": "Result Value",
             "type": "string",

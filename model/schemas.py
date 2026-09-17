@@ -815,6 +815,7 @@ class AnalysisResultItem(BaseModel):
     file_id: str
     rule_id: str
     rule_name: Optional[str] = None
+    rule_type: Optional[str] = None
     result_value: str
     input_values: Optional[Dict[str, str]] = None
     reason: Optional[str] = None

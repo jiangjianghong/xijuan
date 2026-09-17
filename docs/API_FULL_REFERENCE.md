@@ -1157,7 +1157,7 @@ curl "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340/extraction"
 
 ### 3.18 `GET /file/{file_id}/analysis` 查询逻辑分析结果
 
-返回 `analysis_result` 中该文件的分析结果，并左连接规则配置补充 `rule_name`。
+返回 `analysis_result` 中该文件的分析结果，并左连接规则配置补充 `rule_name` 与 `rule_type`。
 
 | 项 | 说明 |
 |---|---|
@@ -1174,6 +1174,7 @@ curl "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340/extraction"
 | `file_id` | string | 文件 ID |
 | `rule_id` | string | 规则 ID |
 | `rule_name` | string/null | 规则名；配置被删时可能为 `null` |
+| `rule_type` | string/null | 规则类型：`judge` / `calc` / `custom`；配置被删时可能为 `null` |
 | `result_value` | string | judge/calc/custom 结果 |
 | `input_values` | object/null | 分析时依赖字段值快照 |
 | `reason` | string/null | 判断/计算/生成理由 |
@@ -1196,6 +1197,7 @@ curl "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340/analysis"
       "file_id": "3f2a7d4b0c2e45a98e0d6a5c1b8f9340",
       "rule_id": "profit_positive",
       "rule_name": "是否盈利",
+      "rule_type": "judge",
       "result_value": "true",
       "input_values": {"net_profit": "5000000"},
       "reason": "净利润大于 0，因此判断为盈利。",

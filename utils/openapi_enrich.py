@@ -1538,6 +1538,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         "description": "逻辑分析结果行。",
         "properties": {
             "file_id": "文件唯一 ID", "rule_id": "规则 ID", "rule_name": "规则名（配置删除则 null）",
+            "rule_type": "规则类型：`judge` / `calc` / `custom`（配置删除则 null）",
             "result_value": "分析结果", "input_values": "依赖字段取值", "reason": "判断/计算理由（可空）",
             "source_refs": "溯源（judge 启用网络搜索时含 _web_search）",
         },

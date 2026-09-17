@@ -1080,9 +1080,9 @@ async def get_extraction_results(file_id: str, db: AsyncSession = Depends(get_db
 
 @router.get("/{file_id}/analysis", response_model=ResponseWrapper)
 async def get_analysis_results(file_id: str, db: AsyncSession = Depends(get_db)):
-    """获取文件逻辑分析结果（含规则名称）。"""
+    """获取文件逻辑分析结果（含规则名称与类型）。"""
     stmt = (
-        select(AnalysisResult, AnalysisRule.rule_name)
+        select(AnalysisResult, AnalysisRule.rule_name, AnalysisRule.rule_type)
         .outerjoin(
             AnalysisRule,
             AnalysisResult.rule_id == AnalysisRule.rule_id,
@@ -1098,12 +1098,13 @@ async def get_analysis_results(file_id: str, db: AsyncSession = Depends(get_db))
                 file_id=r.file_id,
                 rule_id=r.rule_id,
                 rule_name=rule_name,
+                rule_type=rule_type,
                 result_value=r.result_value,
                 input_values=r.input_values,
                 reason=r.reason,
                 source_refs=r.source_refs,
             ).model_dump()
-            for r, rule_name in rows
+            for r, rule_name, rule_type in rows
         ]
     )
 

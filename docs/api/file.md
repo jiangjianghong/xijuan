@@ -711,6 +711,7 @@ _data 为数组，每个元素：_
 | file_id | string | 否 | 文件唯一 ID |
 | rule_id | string | 否 | 规则 ID |
 | rule_name | string | 是 | 规则名（配置删除则 null） |
+| rule_type | string | 是 | 规则类型：`judge` / `calc` / `custom`（配置删除则 null） |
 | result_value | string | 否 | 分析结果 |
 | input_values | object | 是 | 依赖字段取值（结构详见 [input_values](../reference/data-model.md#analysis_result)） |
 | reason | string | 是 | 判断/计算理由（可空） |
