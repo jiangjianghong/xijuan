@@ -215,9 +215,15 @@ class TableNameValidationConfig(BaseModel):
 
 
 class AnalysisConfig(BaseModel):
+    # 分析模型独立配置，空地址或模型在调用时明确报错，不继承抽取配置。
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+    retry_count: int = Field(3, ge=1)
+    extra_body: Dict[str, Any] = Field(default_factory=dict)
+    enable_thinking: bool | None = None
     calc_precision: int = Field(2, ge=0)
     # 分析阶段（judge 与 custom，正式与调试）单次 LLM 请求超时。
-    # 默认与 extraction.timeout 一致，是这份配置真正生效前的历史行为。
     judge_timeout: int = Field(60, ge=1)
 
 

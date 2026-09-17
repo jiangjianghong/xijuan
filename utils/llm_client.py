@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AsyncExitStack
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import httpx
 from loguru import logger
@@ -29,6 +29,7 @@ async def chat_completion(
     messages: Optional[List[Dict[str, str]]] = None,
     max_retries: Optional[int] = None,
     extra_body: Optional[Dict[str, Any]] = None,
+    config_group: Literal["extraction", "analysis"] = "extraction",
 ) -> str:
     """调用 OpenAI 兼容 chat/completions 接口。
 
@@ -41,16 +42,21 @@ async def chat_completion(
         messages: 自定义 messages 列表，优先于 prompt。
         max_retries: 最大重试次数，默认从配置读取。
         extra_body: 额外请求参数，与配置中的 extra_body 合并（参数优先）。
+        config_group: 使用抽取或分析的完整配置，分析不回退到抽取配置。
 
     Returns:
         LLM 返回的文本内容。
     """
     app_cfg = get_config()
-    cfg = app_cfg.extraction
+    if config_group not in ("extraction", "analysis"):
+        raise ValueError("未知的模型配置分组")
+    cfg = app_cfg.analysis if config_group == "analysis" else app_cfg.extraction
     base_url = base_url or cfg.base_url
     model = model or cfg.model
+    if config_group == "analysis" and (not base_url.strip() or not model.strip()):
+        raise ValueError("分析模型尚未配置，请在设置的逻辑分析中配置服务地址和模型名称")
     api_key = api_key or cfg.api_key or "EMPTY"
-    timeout = timeout or cfg.timeout
+    timeout = timeout or (cfg.judge_timeout if config_group == "analysis" else cfg.timeout)
     retry_count = max_retries or cfg.retry_count or 1
 
     if messages is None:

@@ -87,6 +87,12 @@ table_name_validation:
 
 # 逻辑分析配置
 analysis:
+  base_url: ""                                          # 独立分析模型地址，使用前必填，不继承 extraction
+  model: ""                                             # 独立分析模型名称，使用前必填
+  api_key: ""                                           # 独立分析密钥，可留空
+  retry_count: 3
+  enable_thinking: null
+  extra_body: {}
   calc_precision: 2                                     # calc 规则结果保留的小数位数
   judge_timeout: 60                                     # 分析单次 LLM 请求超时（秒）；judge 与 custom 规则、正式与调试路径共用
 

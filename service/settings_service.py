@@ -37,6 +37,7 @@ EMBEDDING_EDITABLE = {"base_url", "api_key", "model", "model_name"}
 EMBEDDING_READONLY = ["embedding_dim", "batch_size", "timeout", "retry_count"]
 
 SECRET_PATHS = {
+    "analysis.api_key",
     "embedding.api_key",
     "extraction.api_key",
     "table_name_validation.api_key",

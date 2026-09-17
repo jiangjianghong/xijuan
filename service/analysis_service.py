@@ -412,9 +412,9 @@ async def execute_judge(resolved_expression: str, *, system_prompt: str = "") ->
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": prompt},
             ]
-            response = await chat_completion("", messages=messages, timeout=timeout)
+            response = await chat_completion("", messages=messages, timeout=timeout, config_group="analysis")
         else:
-            response = await chat_completion(prompt, timeout=timeout)
+            response = await chat_completion(prompt, timeout=timeout, config_group="analysis")
         response = response.strip()
 
         # 尝试提取 JSON 块
@@ -602,9 +602,9 @@ async def execute_custom(
             {"role": "system", "content": sys_prompt},
             {"role": "user", "content": prompt},
         ]
-        response = await chat_completion("", messages=messages, timeout=timeout)
+        response = await chat_completion("", messages=messages, timeout=timeout, config_group="analysis")
     else:
-        response = await chat_completion(prompt, timeout=timeout)
+        response = await chat_completion(prompt, timeout=timeout, config_group="analysis")
     return parse_custom_json_response(response)
 
 
@@ -999,11 +999,11 @@ async def test_rule_analysis_stream(
                     {"role": "user", "content": user_prompt},
                 ]
                 raw_response = await chat_completion(
-                    "", messages=messages, timeout=cfg.judge_timeout
+                    "", messages=messages, timeout=cfg.judge_timeout, config_group="analysis"
                 )
             else:
                 raw_response = await chat_completion(
-                    user_prompt, timeout=cfg.judge_timeout
+                    user_prompt, timeout=cfg.judge_timeout, config_group="analysis"
                 )
             raw_response = raw_response.strip()
 
@@ -1115,11 +1115,11 @@ async def test_rule_analysis_stream(
                     {"role": "user", "content": user_prompt},
                 ]
                 raw_response = await chat_completion(
-                    "", messages=messages, timeout=cfg.judge_timeout
+                    "", messages=messages, timeout=cfg.judge_timeout, config_group="analysis"
                 )
             else:
                 raw_response = await chat_completion(
-                    user_prompt, timeout=cfg.judge_timeout
+                    user_prompt, timeout=cfg.judge_timeout, config_group="analysis"
                 )
             raw_response = raw_response.strip()
             yield {"event": "llm_response", "data": {"raw_response": raw_response}}

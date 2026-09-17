@@ -154,6 +154,30 @@ def test_public_config_only_exposes_allowed_groups_and_secret_status(config_path
     ]
 
 
+def test_analysis_model_settings_and_secret_are_independent(config_path: Path):
+    service = SettingsService(config_path)
+    before = service.read_public_config()
+    result = service.update_config(
+        base_version=before["version"],
+        changes={"analysis": {"base_url": "http://judge.test/v1", "model": "judge",
+                              "retry_count": 2, "enable_thinking": False,
+                              "extra_body": {"temperature": 0.1}}},
+        secrets={"analysis.api_key": {"action": "replace", "value": "analysis-secret"}},
+    )
+    assert result["config"]["analysis"]["api_key"] == {"configured": True}
+    assert "analysis-secret" not in repr(result)
+    assert get_config().analysis.api_key == "analysis-secret"
+    assert get_config().analysis.model == "judge"
+    assert get_config().extraction.api_key == "extraction-secret"
+    result = service.update_config(
+        base_version=result["version"], changes={},
+        secrets={"analysis.api_key": {"action": "clear"}},
+    )
+    assert get_config().analysis.api_key == ""
+    assert get_config().extraction.api_key == "extraction-secret"
+    assert result["config"]["analysis"]["api_key"] == {"configured": False}
+
+
 def test_update_changes_editable_values_and_preserves_closed_config(config_path: Path):
     service = SettingsService(config_path)
     before = service.read_public_config()
