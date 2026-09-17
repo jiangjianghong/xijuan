@@ -26,8 +26,8 @@ def _extract_block_text(block: dict) -> str:
     return " ".join(parts)
 
 
-# 唯一锚前缀尝试长度：先长(更易唯一)后短(容忍 md 渲染在中段与块文本分叉)
-_PROBE_LENS = (40, 25)
+# 完整探针优先；渲染差异导致全文不匹配时，再从长到短尝试前缀。
+_PROBE_LENS = (160, 80, 40, 25)
 
 
 def _block_probes_and_bbox(block: dict):
@@ -67,20 +67,37 @@ def _block_probes_and_bbox(block: dict):
     return probes, block.get("bbox")
 
 
-def _unique_find(md_content: str, probes: List[str]):
-    """在整篇 md 里找候选探针的全局唯一出现;返回 (pos, used_len),都不唯一返回 (-1, 0)。
+def _unique_find(
+    md_content: str,
+    probes: List[str],
+    *,
+    start: int = 0,
+    end: Optional[int] = None,
+    full_only: bool = False,
+):
+    """找范围内唯一探针，返回 (pos, used_len)，有歧义时返回 (-1, 0)。
 
-    按 probes 顺序逐个尝试,每个再按 _PROBE_LENS 先长后短——整体探针命中时 pos 即块
-    起始,最精确;失败才退到片段。片段列表保持块内原序,故首片段命中时 pos 同样是块
-    起始。
+    完整正文/HTML 可以区分前缀相同的投资说明和表格。局部补锚只允许完整探针，
+    避免窗口把原本有歧义的短前缀变成假唯一；不复制窗口字符串，位置始终相对全文。
     """
+    if end is None:
+        end = len(md_content)
     for probe in probes:
-        for length in _PROBE_LENS:
+        lengths = (len(probe),) if full_only else (len(probe), *_PROBE_LENS)
+        seen = set()
+        for length in lengths:
             candidate = probe[:length].strip()
-            if len(candidate) < 8:
+            if len(candidate) < 8 or candidate in seen:
                 continue
-            if md_content.count(candidate) == 1:
-                return md_content.find(candidate), len(candidate)
+            seen.add(candidate)
+            pos = md_content.find(candidate, start, end)
+            if pos < 0:
+                continue
+            # 从 pos + 1 起查，重叠出现同样属于歧义。
+            if md_content.find(candidate, pos + 1, end) < 0:
+                return pos, len(candidate)
+            # 长探针已经重复，它的所有更短前缀必然也重复。
+            break
     return -1, 0
 
 
@@ -353,16 +370,61 @@ def _longest_nondecreasing_keep(pages: List[int]) -> List[int]:
     return keep
 
 
+def _bounded_block_anchors(md_content: str, blocks: list, anchors: list) -> list:
+    """在前后全局锚之间补遗漏块；窗口固定、不以补锚递推游标。
+
+    anchors 末项是原始块序号。两端必须完整匹配原始块的整体探针，并在原始块
+    顺序、Markdown 位置上都相容。短前缀/块内片段不是可靠的块边界，不开窗口。
+    全文首尾没有双侧证据的区域不做局部猜测。
+    同一窗口内的认领必须互不重叠且保持块顺序，否则冲突双方均放弃。
+    """
+    fixed = sorted((a for a in anchors if a[5] >= 0), key=lambda anchor: anchor[5])
+    position_order = {anchor[5]: i for i, anchor in enumerate(anchors)}
+    additions = []
+    for left, right in zip(fixed, fixed[1:]):
+        # 原始块相邻还不够：同页阅读顺序可能改变，不能让窗口跨过其他固定锚。
+        if position_order[right[5]] != position_order[left[5]] + 1:
+            continue
+        if any(
+            anchor[1] != len(blocks[anchor[5]][0][0])
+            or not md_content.startswith(blocks[anchor[5]][0][0], anchor[0])
+            for anchor in (left, right)
+        ):
+            continue
+        start, end = left[0] + left[1], right[0]
+        if start >= end or right[5] <= left[5] + 1:
+            continue
+        proposals = []
+        for index in range(left[5] + 1, right[5]):
+            probes, page_num, bbox, page_size = blocks[index]
+            pos, used_len = _unique_find(
+                md_content, probes, start=start, end=end, full_only=True,
+            )
+            if pos >= 0:
+                proposals.append((pos, used_len, page_num, bbox, page_size, index))
+        # 前缀最大末位置 + 后缀最小起位置，线性排除重叠/逆序的双方。
+        next_starts = [end] * len(proposals)
+        next_start = end
+        for i in range(len(proposals) - 1, -1, -1):
+            next_starts[i] = next_start
+            next_start = min(next_start, proposals[i][0])
+        previous_end = start
+        for i, anchor in enumerate(proposals):
+            anchor_end = anchor[0] + anchor[1]
+            if anchor[0] >= previous_end and anchor_end <= next_starts[i]:
+                additions.append(anchor)
+            previous_end = max(previous_end, anchor_end)
+    return additions
+
+
 def build_page_mapping(
     md_content: str,
     middle_json_raw: Union[str, dict],
 ) -> List[Dict[str, Any]]:
-    """构建 markdown 文本位置 → 页码的映射表(全局唯一锚 + LIS 单调清洗)。
+    """构建 markdown 文本位置 → 页码的映射表（全局唯一锚 + 固定窗口补锚）。
 
-    算法：遍历 middle_json 每页每块，取足够长前缀在整篇 md 做全局唯一匹配
-    (count==1)得到可信锚 (pos, page_num, bbox, page_size)；跨页表格额外补一个
-    末页锚(见 _cross_page_table_anchors)；锚点按 pos 排序后用 LIS 保留 page_num
-    非降的最长子序列，剔除极少数破坏单调的假唯一匹配。
+    优先用完整探针/长前缀构建全局唯一锚，经 LIS 单调清洗后，在前后固定锚
+    限定的窗口内用完整探针补遗漏块；跨页表格补末页锚，最终仍作单调清洗。
     产出 schema 与历史版本一致，lookup_page_num/lookup_bboxes 无需改动。
 
     Args:
@@ -381,22 +443,31 @@ def build_page_mapping(
         return []
 
     # 1) 候选：每块取全局唯一锚
-    candidates = []  # (pos, used_len, page_num, bbox, page_size)
+    blocks = []
+    candidates = []  # (pos, used_len, page_num, bbox, page_size, block_index)
     for page in pdf_info:
         page_num = page.get("page_idx", 0) + 1
         page_size = page.get("page_size")
         for block in page.get("para_blocks", []):
             probes, bbox = _block_probes_and_bbox(block)
+            block_index = len(blocks)
+            blocks.append((probes, page_num, bbox, page_size))
             pos, used_len = _unique_find(md_content, probes)
             if pos < 0:
                 continue
-            candidates.append((pos, used_len, page_num, bbox, page_size))
+            candidates.append((pos, used_len, page_num, bbox, page_size, block_index))
 
     if not candidates:
         return []
 
-    # 1.5) 跨页表格补末页锚（空壳块产不出锚，表格后的正文否则会继承表格之前的页码）
-    candidates.extend(_cross_page_table_anchors(md_content, pdf_info))
+    # 1.5) 跨页末页锚必须一同参与首次清洗，否则可能提前删除正确的末页正文锚。
+    # -1 表示人工分界，不能作为原始块窗口边界，窗口也不能跨过它。
+    candidates.extend((*anchor, -1) for anchor in _cross_page_table_anchors(md_content, pdf_info))
+    candidates.sort(key=lambda c: c[0])
+    keep = _longest_nondecreasing_keep([c[2] for c in candidates])
+    candidates = [candidates[i] for i in keep]
+    candidates.extend(_bounded_block_anchors(md_content, blocks, candidates))
+    candidates = [c[:5] for c in candidates]
 
     # 2) 按位置排序
     candidates.sort(key=lambda c: c[0])
