@@ -127,8 +127,9 @@ async def test_analysis_run_async_returns_task_id(
 
     async def fake_background(
         task_id, items, callback_url, source="values", persist=False,
+        callback_mode="full",
     ):
-        calls.append((task_id, items, callback_url))
+        calls.append((task_id, items, callback_url, callback_mode))
 
     monkeypatch.setattr(
         analysis_router,
@@ -150,7 +151,19 @@ async def test_analysis_run_async_returns_task_id(
     )
     assert response.status_code == 200
     assert response.json()["data"] == {"task_id": "task-fixed"}
-    assert calls == [("task-fixed", [DUMPED_ITEM], "http://callback.local/result")]
+    assert calls == [("task-fixed", [DUMPED_ITEM], "http://callback.local/result", "full")]
+
+    response = await client.post(
+        "/analysis/run",
+        json={
+            "mode": "async",
+            "callback_url": "http://callback.local/result",
+            "callback_mode": "simple",
+            "items": [REQUEST_ITEM],
+        },
+    )
+    assert response.status_code == 200
+    assert calls[-1][3] == "simple"
 
 
 @pytest.mark.anyio
@@ -225,6 +238,43 @@ async def test_analysis_run_background_failure_pushes_task_failed(monkeypatch):
         ("analysis_failed", "task_failed"),
     ]
     assert calls[-1]["data"] == {"error": "RuntimeError: 规则加载失败"}
+
+
+@pytest.mark.anyio
+async def test_analysis_run_background_simple_skips_rule_done(monkeypatch):
+    calls = []
+    on_rule_done_seen = []
+
+    async def fake_notify(
+        callback_url,
+        task_id,
+        status,
+        *,
+        event=None,
+        data=None,
+        timeout=2.5,
+    ):
+        calls.append({"status": status, "event": event})
+
+    async def fake_run(items, *, on_rule_done=None, source="values", persist=False):
+        on_rule_done_seen.append(on_rule_done)
+        return {"total_items": 1, "items": []}
+
+    monkeypatch.setattr(analysis_router, "notify_analysis_task_callback", fake_notify)
+    monkeypatch.setattr(analysis_router, "_run_analysis_with_session", fake_run)
+
+    await analysis_router._run_analysis_task_background(
+        "task-1",
+        [REQUEST_ITEM],
+        "http://callback.local/result",
+        callback_mode="simple",
+    )
+
+    assert on_rule_done_seen == [None]
+    assert [(call["status"], call["event"]) for call in calls] == [
+        ("analyzing", None),
+        ("complete", "task_done"),
+    ]
 
 
 # ── source=file 模式 ────────────────────────────────────────

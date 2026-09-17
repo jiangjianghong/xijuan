@@ -610,6 +610,7 @@ curl -X DELETE http://localhost:5019/file/batch \
 | `mode` | string | 否 | `async` | `async` 后台处理立即返回；`sync` 阻塞到完成；`stream` 返回 SSE。源码中非 `async` / `stream` 的值按同步处理 |
 | `type_id` | string | 否 | `default` | 文档类型 ID，决定字段/规则配置作用域 |
 | `callback_url` | string | 否 | 无 | `async` / `sync` 模式可用；阶段开始、阶段完成、字段/规则完成都会 POST 回调；`stream` 模式忽略 |
+| `callback_mode` | string | 否 | `full` | 回调粒度：`full` 保留 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`（`results` 仍完整）。`stream` 忽略 |
 
 表单字段：
 
@@ -680,6 +681,7 @@ curl -N -X POST "http://localhost:5019/file/parse?type_id=default&mode=stream" \
 - `params` 落库的是合并默认值后的完整快照；后续 retry 沿用上传时的值，不受类型默认值之后修改的影响。
 - 上传时会尝试把原始 PDF 写到 `uploads/{file_id}.pdf`，VL 字段和 PDF 预览依赖该文件；写盘失败只记 warning，不阻断管线。
 - `callback_url` 每次回调超时默认 2.5 秒（`callback.timeout` 可配），失败不影响主流程。
+- `callback_mode=simple` 时不发 `field_done`/`rule_done`，接收端只能看到阶段起止与终态汇总，无法拿到「N/M 字段完成」的中途进度。
 - `mode=stream` 的响应是 SSE，不再返回 JSON 信封。
 
 ### 3.6 `GET /file/{file_id}/status` 查询文件处理状态
@@ -815,6 +817,7 @@ curl -X DELETE "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340"
 |---|---|:--:|---|---|
 | `mode` | string | 否 | `async` | `async` / `sync` / `stream` |
 | `callback_url` | string | 否 | 无 | `async` / `sync` 模式下接收回调；`stream` 忽略 |
+| `callback_mode` | string | 否 | `full` | `full` 保留逐条事件；`simple` 抽取/分析阶段只发 `stage_done` |
 
 请求示例：
 
@@ -850,6 +853,7 @@ curl -X POST "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340/retry/
 | `file_id` | path string | 是 | 无 | 目标文件 ID |
 | `mode` | query string | 否 | `async` | `async` / `sync` / `stream` |
 | `callback_url` | query string | 否 | 无 | 回调地址 |
+| `callback_mode` | query string | 否 | `full` | `full` / `simple` |
 
 请求示例：
 
@@ -872,6 +876,7 @@ curl -X POST "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340/retry/
 | `file_id` | path string | 是 | 无 | 目标文件 ID |
 | `mode` | query string | 否 | `async` | `async` / `sync` / `stream` |
 | `callback_url` | query string | 否 | 无 | 回调地址 |
+| `callback_mode` | query string | 否 | `full` | `full` / `simple` |
 
 请求示例：
 
@@ -1989,6 +1994,7 @@ curl -X POST http://localhost:5019/analysis/test \
 | `source` | string | 否 | `values` | `values` 使用请求字段值；`file` 从文件 `extraction_result` 读取 |
 | `persist` | boolean | 否 | `false` | 是否写入 `analysis_result`；仅 `source=file` 可用 |
 | `callback_url` | string | 条件 | `null` | `async` 模式必填 |
+| `callback_mode` | string | 否 | `full` | 回调粒度：`full` 推送每条 `rule_done`；`simple` 跳过 `rule_done`，只推任务开始与一次 `task_done` |
 | `items` | object[] | 是 | 无 | 待分析的业务对象列表，至少 1 个；一个元素代表一个业务对象，响应按请求顺序逐项对应 |
 
 `items[]` 参数：
@@ -3027,6 +3033,9 @@ data: {"file":"app_2026-08-07.log","ts":1786087200.123}
 | 超时 | 默认 2.5 秒，由 `callback.timeout` 配置（可在设置页热改） |
 | 失败处理 | 只记录 warning，不影响主流程 |
 | `stream` 模式 | 忽略 `callback_url`，改用 SSE |
+| `callback_mode` | 回调粒度：`full`（默认）保留 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`（`results` 仍完整）。独立分析 `simple` 时只推任务开始 + `task_done` |
+
+`callback_mode` 接入位置：`POST /file/parse`、`POST /file/{file_id}/retry/{stage}`（含两个快捷重试）的 query 参数；`POST /analysis/run` 的请求体字段。不影响阶段入口、`stage_failed`/`task_failed`、`complete`，以及 `parsing`/`tableing`/`chunking`/`embedding` 的 `stage_done`。
 
 管线阶段入口回调：
 
@@ -3034,7 +3043,7 @@ data: {"file":"app_2026-08-07.log","ts":1786087200.123}
 {"file_id": "3f2a...", "status": "extracting"}
 ```
 
-字段完成回调：
+字段完成回调（`callback_mode=simple` 时跳过）：
 
 ```json
 {
@@ -3056,7 +3065,7 @@ data: {"file":"app_2026-08-07.log","ts":1786087200.123}
 }
 ```
 
-规则完成回调：
+规则完成回调（`callback_mode=simple` 时跳过）：
 
 ```json
 {
@@ -3105,7 +3114,7 @@ data: {"file":"app_2026-08-07.log","ts":1786087200.123}
 | 事件 | 说明 |
 |---|---|
 | 无 `event`，`status=analyzing` | 任务开始 |
-| `rule_done` | 单条规则完成，数据包含 `item_index` / `biz_id` |
+| `rule_done` | 单条规则完成，数据包含 `item_index` / `biz_id`；`callback_mode=simple` 时跳过 |
 | `task_done` | 全部 item 完成，`data` 等同 sync 响应体 |
 | `task_failed` | 任务级失败 |
 
@@ -3171,6 +3180,7 @@ parsing -> tableing -> chunking -> embedding -> extracting -> field_extracted*N 
 | `RuleType` | `judge` / `calc` / `custom` | 分析规则类型 |
 | `AnalysisRunMode` | `sync` / `async` / `stream` | `POST /analysis/run` |
 | `AnalysisRunSource` | `values` / `file` | `POST /analysis/run` |
+| `CallbackMode` | `full` / `simple` | `callback_url` 相关接口；`simple` 跳过 `field_done`/`rule_done` |
 
 ### 11.2 `source_refs` 结构要点
 

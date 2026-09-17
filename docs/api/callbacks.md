@@ -6,13 +6,31 @@
 
 > **契约要点**：每次回调超时默认 **2.5s**（由 `callback.timeout` 配置，可在设置页热改）；失败仅记 warning、**绝不阻断主流程**。回调载荷**不在 openapi 里**，故本页字段表全部人工维护。老消费者只读 `status` 字段不受影响（新事件靠 `event` 字段区分）。
 
+## 回调粒度：`callback_mode`
+
+可选参数 `callback_mode`，控制抽取/分析阶段的回调密度。默认 `full`，与历史行为完全一致。
+
+| 取值 | 行为 |
+|---|---|
+| `full`（默认） | 现状：每字段 `field_done`、每规则 `rule_done`，外加阶段 `stage_done` |
+| `simple` | **跳过**全部 `field_done` / `rule_done`；抽取与分析阶段只发一次 `stage_done`（`results` 仍是完整字段/规则列表，含 `source_refs`） |
+
+接入位置：
+
+- 管线：`POST /file/parse`、`POST /file/{file_id}/retry/{stage}`（含 `retry/extracting`、`retry/analyzing`）的 query 参数
+- 独立逻辑分析：`POST /analysis/run` 请求体字段；`simple` 时跳过全部 `rule_done`，只推任务开始 + 一次 `task_done`
+
+不影响：阶段入口包、`stage_failed` / `task_failed`、`complete`、`parsing`/`tableing`/`chunking`/`embedding` 的 `stage_done`、落库结果。`stream` 模式忽略该参数（事件走 SSE）。
+
+`simple` 下接收端无法再拿到「N/M 字段完成」的中途进度，只能看到阶段起止与终态汇总。
+
 ## 事件模板速览
 
 | status | event | 触发 |
 |---|---|---|
 | `<stage>` | （无 event） | 每阶段开始各 1 次 |
-| `extracting` | `field_done` | 单字段完成（仅 extracting 阶段） |
-| `analyzing` | `rule_done` | 单规则完成（仅 analyzing 阶段） |
+| `extracting` | `field_done` | 单字段完成（仅 extracting 阶段；`callback_mode=simple` 时不发） |
+| `analyzing` | `rule_done` | 单规则完成（仅 analyzing 阶段；`callback_mode=simple` 时不发） |
 | `<stage>` | `stage_done` | 每阶段结束各 1 次（携带完整数据） |
 | `<stage>_failed` | `stage_failed` | 阶段失败 1 次，替代 stage_done 及后续事件，序列终止 |
 
@@ -29,7 +47,7 @@
 
 #### field_done（单字段完成）
 
-- 触发时机：extracting 阶段每个字段抽取完成
+- 触发时机：extracting 阶段每个字段抽取完成（`callback_mode=simple` 时跳过）
 - 通道：回调 POST body
 
 | 字段 | 类型 | 可空 | 说明 |
@@ -58,7 +76,7 @@
 
 #### rule_done（单规则完成）
 
-- 触发时机：analyzing 阶段每条规则完成
+- 触发时机：analyzing 阶段每条规则完成（`callback_mode=simple` 时跳过）
 - 通道：回调 POST body
 
 | 字段 | 类型 | 可空 | 说明 |
@@ -98,6 +116,7 @@
 ## 完整事件序列（一次成功管线）
 
 ```
+# callback_mode=full（默认）
 parsing                    → parsing + stage_done（完整 md）
 tableing                   → tableing + stage_done（完整 tables）
 chunking                   → chunking + stage_done（完整 chunks）
@@ -106,13 +125,22 @@ extracting + field_done×N  → extracting + stage_done（完整 results）
 analyzing  + rule_done×N   → analyzing  + stage_done（完整 results）
 complete
 （任一阶段失败 → 该阶段 stage_failed，序列终止，无 complete）
+
+# callback_mode=simple
+parsing                    → parsing + stage_done（完整 md）
+tableing                   → tableing + stage_done（完整 tables）
+chunking                   → chunking + stage_done（完整 chunks）
+embedding                  → embedding + stage_done（无 data）
+extracting                 → extracting + stage_done（完整 results，无 field_done）
+analyzing                  → analyzing  + stage_done（完整 results，无 rule_done）
+complete
 ```
 
 ## 独立逻辑分析任务回调（POST /analysis/run）
 
 `async` 模式的 `POST /analysis/run` 用 `task_id` 通过 `callback_url` 推送：
 
-- `rule_done` — 单条规则完成（结构同上，附 `item_index` / `biz_id`）
+- `rule_done` — 单条规则完成（结构同上，附 `item_index` / `biz_id`）；`callback_mode=simple` 时跳过
 - `task_done` — 全部 item 完成；`data` 即 sync 模式的响应体（`{total_items, items}`，每个 item 含 `unknown_rule_ids` 与 `error` —— `error` 为 `source=file` 时该 item 的失败原因，正常为 `null`）
 - `task_failed` — 任务失败
 

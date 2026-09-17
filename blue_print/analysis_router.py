@@ -28,7 +28,11 @@ from model.schemas import (
 from model.tables import AnalysisRule
 from service.analysis_service import test_rule_analysis_stream
 from service.analysis_run_service import run_analysis_batch
-from utils.callback import build_analysis_task_payload, notify_analysis_task_callback
+from utils.callback import (
+    build_analysis_task_payload,
+    is_simple_callback,
+    notify_analysis_task_callback,
+)
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -283,8 +287,12 @@ async def _run_analysis_task_background(
     callback_url: str,
     source: str = "values",
     persist: bool = False,
+    callback_mode: str = "full",
 ) -> None:
-    """运行 async 模式任务并推送开始、逐规则和任务终态。"""
+    """运行 async 模式任务并推送开始、逐规则和任务终态。
+
+    callback_mode=simple 时跳过全部 rule_done，只推开始信号与 task_done。
+    """
 
     await notify_analysis_task_callback(
         callback_url,
@@ -292,14 +300,16 @@ async def _run_analysis_task_background(
         "analyzing",
     )
     try:
-        async def on_rule_done(data: Dict[str, Any]) -> None:
-            await notify_analysis_task_callback(
-                callback_url,
-                task_id,
-                "analyzing",
-                event="rule_done",
-                data=data,
-            )
+        on_rule_done = None
+        if not is_simple_callback(callback_mode):
+            async def on_rule_done(data: Dict[str, Any]) -> None:
+                await notify_analysis_task_callback(
+                    callback_url,
+                    task_id,
+                    "analyzing",
+                    event="rule_done",
+                    data=data,
+                )
 
         result = await _run_analysis_with_session(
             items,
@@ -441,6 +451,7 @@ async def run_independent_analysis(
             str(req.callback_url),
             source,
             persist,
+            req.callback_mode.value,
         )
         return ResponseWrapper(
             message="分析任务已提交（异步）",

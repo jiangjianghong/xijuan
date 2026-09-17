@@ -327,6 +327,8 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 "
                 "`field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时默认 2.5s（`callback.timeout` 可配），失败仅 warning，"
                 "不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n"
+                "**`callback_mode`**：回调粒度。`full`（默认）保留 `field_done`/`rule_done`；"
+                "`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`（results 仍完整）。\n\n"
                 "**`params` 文档类型入参**：可选的 multipart form 字段，内容必须是 JSON 对象字符串。"
                 "对象值仅支持字符串、数字、布尔值或 `null`（统一转成字符串，`null` 转为空字符串）；"
                 "字段与规则配置中的 `<param>参数标识</param>` 会使用合并后的值渲染。\n\n"
@@ -432,6 +434,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "兼容旧别名 `table_name_validating` → `tableing`。其它值返回 **400**。\n\n"
                 "**`mode`**：`async`（默认，后台任务）/ `sync`（阻塞返回）/ `stream`（SSE 流）。\n\n"
                 "**`callback_url`** 仅在 `async` / `sync` 模式生效；`stream` 模式忽略，事件改走 SSE。\n\n"
+                "**`callback_mode`**：`full`（默认）/ `simple`（跳过 `field_done`/`rule_done`，只发 `stage_done`）。\n\n"
                 "`stream` 返回的事件序列与 `/file/parse?mode=stream` 完全一致。\n\n"
                 "**状态码**：200 / 400（无效阶段名）/ 404（文件不存在）。"
             ),
@@ -442,7 +445,8 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "summary": "快捷重试：字段提取",
             "description": (
                 "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=extracting`，内部即转发调用。\n\n"
-                "支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）。"
+                "支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、"
+                "`callback_mode`（full/simple）。"
             ),
         }
     },
@@ -451,7 +455,8 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "summary": "快捷重试：逻辑分析",
             "description": (
                 "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=analyzing`，内部即转发调用。\n\n"
-                "支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）。"
+                "支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、"
+                "`callback_mode`（full/simple）。"
             ),
         }
     },
@@ -946,7 +951,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
 # GLOBAL_PARAM_DOCS 按参数名兜底；PARAM_OVERRIDES 按 (path, method) 精确覆盖。
 # 值可为 str（仅 description）或 dict（description / enum / example）。
 
-GLOBAL_PARAM_DOCS: Dict[str, str] = {
+GLOBAL_PARAM_DOCS: Dict[str, Any] = {
     "file_id": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。",
     "field_id": "字段配置 ID（全局唯一，匹配 `^[a-zA-Z0-9_]+$`，最长 100）。",
     "rule_id": "分析规则 ID（全局唯一，匹配 `^[a-zA-Z0-9_]+$`，最长 100）。",
@@ -955,6 +960,15 @@ GLOBAL_PARAM_DOCS: Dict[str, str] = {
     "page": "页码，从 1 开始。",
     "page_size": "每页条数。",
     "callback_url": "可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时默认 2.5s，由 `callback.timeout` 配置，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。",
+    "callback_mode": {
+        "description": (
+            "回调粒度：`full`（默认）保留逐条 `field_done`/`rule_done`；"
+            "`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`。"
+            "`stream` 模式忽略。"
+        ),
+        "enum": ["full", "simple"],
+        "example": "full",
+    },
 }
 
 PARAM_OVERRIDES: Dict[tuple, Dict[str, Any]] = {
@@ -1590,6 +1604,10 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
                 "**不改 `files.progress`**"
             ),
             "callback_url": "`async` 模式必填，用于推送 `rule_done` / `task_done` / `task_failed`",
+            "callback_mode": (
+                "回调粒度：`full`（默认）推送每条 `rule_done`；"
+                "`simple` 跳过 `rule_done`，只推任务开始与一次 `task_done`"
+            ),
             "items": (
                 "待分析的业务输入列表，至少 1 项。一个 item 代表一个业务对象；item 与其规则均并发执行，"
                 "响应 `data.items[]` 按请求顺序逐项对应。即使只分析一个对象也必须传数组。"

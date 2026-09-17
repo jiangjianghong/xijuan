@@ -335,6 +335,37 @@ async def test_run_extraction_stage_done_sorted_by_config_index(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_extraction_simple_callback_skips_field_done(monkeypatch):
+    """callback_mode=simple 时不发 field_done，仍发一次完整 stage_done。"""
+    callbacks = []
+
+    async def record_callback(url, file_id, status, *, event=None, data=None, timeout=2.5):
+        callbacks.append((event, data))
+
+    async def fake_iter(*args, **kwargs):
+        for item in (
+            {"field_id": "f1", "index": 1, "success": True},
+            {"field_id": "f2", "index": 2, "success": True},
+        ):
+            yield item
+
+    monkeypatch.setattr(es, "notify_callback", record_callback)
+    monkeypatch.setattr(es, "_iter_extraction_results", fake_iter)
+    monkeypatch.setattr(es, "load_extraction_snapshot", _fake_load_snapshot)
+
+    session = _StubExtractionSession()
+    await es.run_extraction(
+        "file1", session, callback_url="http://cb", callback_mode="simple"
+    )
+
+    assert [e for e, _ in callbacks if e] == ["stage_done"]
+    stage_done = next(d for e, d in callbacks if e == "stage_done")
+    assert [r["field_id"] for r in stage_done["results"]] == ["f1", "f2"]
+    assert stage_done["succeeded"] == 2
+    assert stage_done["failed"] == 0
+
+
+@pytest.mark.asyncio
 async def test_run_extraction_stream_key_mapping(monkeypatch):
     """流式对外键名保持 extracted_value / current，不因内部统一而变更契约。"""
 

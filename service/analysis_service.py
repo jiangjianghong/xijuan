@@ -20,7 +20,7 @@ from service.extraction_service import (
     build_temporary_extraction_plan,
     iter_temporary_extraction_results,
 )
-from utils.callback import notify_callback
+from utils.callback import is_simple_callback, notify_callback
 from utils.config import get_config
 from utils.concurrency import (
     get_limiter,
@@ -747,8 +747,12 @@ async def run_analysis(
     file_id: str,
     session: AsyncSession,
     callback_url: Optional[str] = None,
+    callback_mode: Optional[str] = None,
 ) -> None:
-    """并发计算文件规则，并按配置顺序落库和发送回调。"""
+    """并发计算文件规则，并按配置顺序落库和发送回调。
+
+    callback_mode=simple 时跳过全部 rule_done，只发一次 stage_done。
+    """
     logger.info("开始逻辑分析: {}", file_id)
     rules, field_values, field_source_refs, input_params = await _load_file_analysis_context(
         file_id,
@@ -764,6 +768,7 @@ async def run_analysis(
     )
     total = len(computed)
     aggregated: list[dict[str, Any]] = []
+    simple_cb = is_simple_callback(callback_mode)
     for index, computation in enumerate(computed, start=1):
         settled = await _persist_file_computation_safely(
             file_id,
@@ -772,13 +777,14 @@ async def run_analysis(
         )
         outward = _callback_item(settled, index, total)
         aggregated.append(outward)
-        await notify_callback(
-            callback_url,
-            file_id,
-            "analyzing",
-            event="rule_done",
-            data=outward,
-        )
+        if not simple_cb:
+            await notify_callback(
+                callback_url,
+                file_id,
+                "analyzing",
+                event="rule_done",
+                data=outward,
+            )
 
     await session.execute(
         update(File).where(File.file_id == file_id).values(progress="complete")

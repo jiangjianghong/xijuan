@@ -662,6 +662,13 @@ class AnalysisRunModeEnum(str, Enum):
     stream = "stream"
 
 
+class CallbackModeEnum(str, Enum):
+    """回调粒度：full 保留逐条事件；simple 只发阶段/任务终态。"""
+
+    full = "full"
+    simple = "simple"
+
+
 class AnalysisRunSourceEnum(str, Enum):
     values = "values"   # 字段值由请求 field_values 提供
     file = "file"       # 字段值取自该 file_id 已落库的 extraction_result
@@ -746,6 +753,7 @@ class AnalysisRunRequest(BaseModel):
     source: AnalysisRunSourceEnum = AnalysisRunSourceEnum.values
     persist: bool = False
     callback_url: Optional[AnyHttpUrl] = None
+    callback_mode: CallbackModeEnum = CallbackModeEnum.full
     items: List[AnalysisRunItem] = Field(..., min_length=1)
 
     @model_validator(mode="after")

@@ -19,6 +19,7 @@ from model.schemas import (
     AnalysisResultItem,
     BatchDeleteRequest,
     BatchDeleteResponse,
+    CallbackModeEnum,
     ExtractionResultItem,
     FileChunkItem,
     FileContextQueryRequest,
@@ -498,6 +499,7 @@ async def _run_pipeline_background(
     file_content_bytes: bytes,
     callback_url: str | None = None,
     type_id: str = "default",
+    callback_mode: str | None = None,
 ):
     """后台运行 pipeline。"""
     from model.database import get_session_factory
@@ -507,7 +509,14 @@ async def _run_pipeline_background(
             session_factory = get_session_factory()
             async with session_factory() as session:
                 try:
-                    await run_pipeline(file_id, file_name, file_content_bytes, session, callback_url=callback_url)
+                    await run_pipeline(
+                        file_id,
+                        file_name,
+                        file_content_bytes,
+                        session,
+                        callback_url=callback_url,
+                        callback_mode=callback_mode,
+                    )
                 except Exception as e:
                     logger.exception("Pipeline 后台执行失败: type={}, repr={}", type(e).__name__, repr(e))
 
@@ -536,6 +545,7 @@ async def parse_file(
     mode: str = "async",
     type_id: str = "default",
     callback_url: Optional[str] = None,
+    callback_mode: CallbackModeEnum = CallbackModeEnum.full,
     params: Optional[str] = Form(
         None,
         description=(
@@ -554,6 +564,7 @@ async def parse_file(
       一律 400，且文件不建档。
     - 当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：
       {"file_id": "...", "status": "parsing/tableing/chunking/embedding/extracting/analyzing/complete"}
+    - callback_mode=simple 时，抽取/分析阶段不发 field_done / rule_done，只发一次 stage_done。
     """
     cfg = get_config().mineru
 
@@ -627,7 +638,13 @@ async def parse_file(
 
     if mode == "async":
         background_tasks.add_task(
-            _run_pipeline_background, file_id, file_name, file_content_bytes, callback_url, type_id
+            _run_pipeline_background,
+            file_id,
+            file_name,
+            file_content_bytes,
+            callback_url,
+            type_id,
+            callback_mode.value,
         )
         return ResponseWrapper(
             message="文件已提交处理（异步）",
@@ -646,7 +663,14 @@ async def parse_file(
     else:
         with log_context(file_id=file_id, type_id=type_id):
             async with pipeline_slot(file_id, file_name=file_name):
-                await run_pipeline(file_id, file_name, file_content_bytes, db, callback_url=callback_url)
+                await run_pipeline(
+                    file_id,
+                    file_name,
+                    file_content_bytes,
+                    db,
+                    callback_url=callback_url,
+                    callback_mode=callback_mode.value,
+                )
         return ResponseWrapper(
             message="文件处理完成",
             data={"file_id": file_id},
@@ -771,12 +795,14 @@ async def retry_file(
     background_tasks: BackgroundTasks,
     mode: str = "async",
     callback_url: Optional[str] = None,
+    callback_mode: CallbackModeEnum = CallbackModeEnum.full,
     db: AsyncSession = Depends(get_db),
 ):
     """从指定阶段重试（支持 async/stream/sync）。
 
     当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：
     {"file_id": "...", "status": "parsing/tableing/chunking/embedding/extracting/analyzing/complete"}
+    callback_mode=simple 时，抽取/分析阶段不发 field_done / rule_done，只发一次 stage_done。
     """
     # 检查文件是否存在
     stmt = select(FileModel).where(FileModel.file_id == file_id)
@@ -824,7 +850,13 @@ async def retry_file(
     elif mode == "sync":
         with log_context(file_id=file_id, type_id=type_id):
             async with pipeline_slot(file_id, file_name=file_name):
-                await run_from_stage(file_id, stage, db, callback_url=callback_url)
+                await run_from_stage(
+                    file_id,
+                    stage,
+                    db,
+                    callback_url=callback_url,
+                    callback_mode=callback_mode.value,
+                )
         return ResponseWrapper(message=f"已从 {stage} 阶段重试完成")
     else:
         # async 模式（默认）
@@ -836,7 +868,13 @@ async def retry_file(
                     session_factory = get_session_factory()
                     async with session_factory() as session:
                         try:
-                            await run_from_stage(file_id, stage, session, callback_url=callback_url)
+                            await run_from_stage(
+                                file_id,
+                                stage,
+                                session,
+                                callback_url=callback_url,
+                                callback_mode=callback_mode.value,
+                            )
                         except Exception as e:
                             logger.exception(
                                 "从 {} 阶段重试失败: type={}, repr={}",
@@ -855,10 +893,13 @@ async def retry_extracting(
     background_tasks: BackgroundTasks,
     mode: str = "async",
     callback_url: Optional[str] = None,
+    callback_mode: CallbackModeEnum = CallbackModeEnum.full,
     db: AsyncSession = Depends(get_db),
 ):
     """重试字段提取（支持 async/stream/sync）。"""
-    return await retry_file(file_id, "extracting", background_tasks, mode, callback_url, db)
+    return await retry_file(
+        file_id, "extracting", background_tasks, mode, callback_url, callback_mode, db
+    )
 
 
 @router.post("/{file_id}/retry/analyzing")
@@ -867,10 +908,13 @@ async def retry_analyzing(
     background_tasks: BackgroundTasks,
     mode: str = "async",
     callback_url: Optional[str] = None,
+    callback_mode: CallbackModeEnum = CallbackModeEnum.full,
     db: AsyncSession = Depends(get_db),
 ):
     """重试逻辑分析（支持 async/stream/sync）。"""
-    return await retry_file(file_id, "analyzing", background_tasks, mode, callback_url, db)
+    return await retry_file(
+        file_id, "analyzing", background_tasks, mode, callback_url, callback_mode, db
+    )
 
 
 @router.get("/{file_id}/tables", response_model=ResponseWrapper)

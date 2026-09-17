@@ -32,7 +32,7 @@ from service.match_prompts import build_section_match_prompt, build_table_match_
 from service.vl_service._common import append_reason_first_output_instruction
 from service.search_ranking import compute_keyword_weights, rank_and_truncate
 from utils import vl_client
-from utils.callback import notify_callback
+from utils.callback import is_simple_callback, notify_callback
 from utils.config import get_config
 from utils.concurrency import (
     get_limiter,
@@ -3545,6 +3545,7 @@ async def run_extraction(
     file_id: str,
     session: AsyncSession,
     callback_url: Optional[str] = None,
+    callback_mode: Optional[str] = None,
 ) -> None:
     """执行文件的完整字段提取流程。
 
@@ -3560,6 +3561,7 @@ async def run_extraction(
         file_id: 文件 ID。
         session: 数据库会话。
         callback_url: 可选回调地址。每完成一个字段会推 field_done；阶段终态推 stage_done。
+        callback_mode: 回调粒度。`simple` 跳过全部 field_done，只发一次 stage_done。
     """
     logger.info("开始字段提取: {}", file_id)
 
@@ -3592,6 +3594,7 @@ async def run_extraction(
     succeeded = 0
     failed = 0
     aggregated: List[Dict[str, Any]] = []
+    simple_cb = is_simple_callback(callback_mode)
 
     app_cfg = get_config()
     async for item in _iter_extraction_results(
@@ -3608,7 +3611,8 @@ async def run_extraction(
         else:
             failed += 1
         aggregated.append(item)
-        await notify_callback(callback_url, file_id, "extracting", event="field_done", data=item)
+        if not simple_cb:
+            await notify_callback(callback_url, file_id, "extracting", event="field_done", data=item)
 
     # field_done 按完成序推送，stage_done.results 按配置序回填，聚合口径与串行时代一致
     aggregated.sort(key=lambda i: i["index"])

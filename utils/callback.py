@@ -10,6 +10,16 @@ from loguru import logger
 from utils.config import get_config
 
 
+CALLBACK_MODE_FULL = "full"
+CALLBACK_MODE_SIMPLE = "simple"
+CALLBACK_MODES = (CALLBACK_MODE_FULL, CALLBACK_MODE_SIMPLE)
+
+
+def is_simple_callback(mode: Optional[str]) -> bool:
+    """回调粒度是否为简洁版（只发阶段/任务终态，不发 field_done / rule_done）。"""
+    return (mode or CALLBACK_MODE_FULL) == CALLBACK_MODE_SIMPLE
+
+
 def _resolve_timeout(timeout: Optional[float]) -> float:
     """显式参数优先，否则取当前配置快照。
 

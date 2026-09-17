@@ -404,6 +404,7 @@ async def run_pipeline(
     file_content_bytes: bytes,
     session: AsyncSession,
     callback_url: str | None = None,
+    callback_mode: str | None = None,
 ) -> None:
     """完整文件处理管线。
 
@@ -421,6 +422,7 @@ async def run_pipeline(
         file_content_bytes: 文件二进制内容。
         session: 数据库会话。
         callback_url: 可选回调地址，每个阶段完成后 POST 状态通知。
+        callback_mode: 回调粒度。`simple` 时抽取/分析阶段不发 field_done / rule_done。
     """
     logger.info("开始处理管线: {}", file_id)
 
@@ -571,7 +573,9 @@ async def run_pipeline(
 
         await notify_callback(callback_url, file_id, "extracting")
         try:
-            await run_extraction(file_id, session, callback_url=callback_url)
+            await run_extraction(
+                file_id, session, callback_url=callback_url, callback_mode=callback_mode
+            )
 
             stmt = (
                 update(File)
@@ -596,7 +600,9 @@ async def run_pipeline(
 
         await notify_callback(callback_url, file_id, "analyzing")
         try:
-            await run_analysis(file_id, session, callback_url=callback_url)
+            await run_analysis(
+                file_id, session, callback_url=callback_url, callback_mode=callback_mode
+            )
 
             stmt = (
                 update(File)
@@ -1079,6 +1085,7 @@ async def run_from_stage_stream(
 
 async def run_from_stage(
     file_id: str, stage: str, session: AsyncSession, callback_url: str | None = None,
+    callback_mode: str | None = None,
 ) -> None:
     """从指定阶段重新开始处理。
 
@@ -1087,6 +1094,7 @@ async def run_from_stage(
         stage: 起始阶段 (parsing/tableing/chunking/embedding/extracting/analyzing)。
         session: 数据库会话。
         callback_url: 可选回调地址，每个阶段完成后 POST 状态通知。
+        callback_mode: 回调粒度。`simple` 时抽取/分析阶段不发 field_done / rule_done。
     """
     logger.info("从 {} 阶段重新开始: {}", stage, file_id)
 
@@ -1342,7 +1350,9 @@ async def run_from_stage(
 
             await notify_callback(callback_url, file_id, "extracting")
             try:
-                await run_extraction(file_id, session, callback_url=callback_url)
+                await run_extraction(
+                    file_id, session, callback_url=callback_url, callback_mode=callback_mode
+                )
 
                 stmt = (
                     update(File)
@@ -1369,7 +1379,9 @@ async def run_from_stage(
 
             await notify_callback(callback_url, file_id, "analyzing")
             try:
-                await run_analysis(file_id, session, callback_url=callback_url)
+                await run_analysis(
+                    file_id, session, callback_url=callback_url, callback_mode=callback_mode
+                )
 
                 stmt = (
                     update(File)

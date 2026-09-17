@@ -237,6 +237,44 @@ async def test_run_analysis_persists_and_callbacks_in_rule_order(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_analysis_simple_callback_skips_rule_done(monkeypatch):
+    _install_limits(monkeypatch, file_limit=3, total_limit=3)
+    rules = [_rule("r1"), _rule("r2")]
+    callbacks = []
+
+    async def fake_load(file_id, session):
+        return rules, {}, {}, {}
+
+    async def fake_compute(rule, *args, **kwargs):
+        return _computed(rule, result=rule.rule_id)
+
+    async def fake_persist(file_id, item, session):
+        return None
+
+    async def fake_callback(url, file_id, status, *, event=None, data=None):
+        callbacks.append((event, data))
+
+    monkeypatch.setattr(
+        analysis_service, "_load_file_analysis_context", fake_load, raising=False
+    )
+    monkeypatch.setattr(analysis_service, "_compute_file_rule", fake_compute)
+    monkeypatch.setattr(
+        analysis_service, "_persist_file_computation", fake_persist, raising=False
+    )
+    monkeypatch.setattr(analysis_service, "notify_callback", fake_callback)
+
+    await analysis_service.run_analysis(
+        "f1", _FinalSession(), "http://callback.test", callback_mode="simple"
+    )
+
+    assert [e for e, _ in callbacks if e] == ["stage_done"]
+    stage_done = next(d for e, d in callbacks if e == "stage_done")
+    assert [r["rule_id"] for r in stage_done["results"]] == ["r1", "r2"]
+    assert stage_done["total"] == 2
+    assert stage_done["succeeded"] == 2
+
+
+@pytest.mark.asyncio
 async def test_run_analysis_stream_yields_in_rule_order(monkeypatch):
     _install_limits(monkeypatch, file_limit=3, total_limit=3)
     rules = [_rule("r1"), _rule("r2"), _rule("r3")]
