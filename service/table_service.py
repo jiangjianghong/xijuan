@@ -29,6 +29,7 @@ from service.table_name_utils import (
     _clean_text_line,
     _extract_last_line,
     _extract_table_name,
+    _extract_table_header_name,
     _is_unknown_table_name,
     _resolve_continuation_names,
 )
@@ -67,7 +68,7 @@ async def _extract_table_name_with_llm(
     fallback_name: str,
     table_content: str = "",
 ) -> str:
-    """调用 LLM 提取表名，失败时回退到最后一行。"""
+    """调用 LLM 提取表名，失败时优先回退到局部上文或表内明确标题。"""
     app_cfg = get_config()
     extraction_cfg = app_cfg.extraction
     table_name_cfg = app_cfg.table_name_validation
@@ -79,6 +80,12 @@ async def _extract_table_name_with_llm(
         context_text = context_text[-max_context_length:]
     # 只补充表格开头，供模型检查表内标题，避免大表占用过多上下文。
     table_head = table_content[:4000] or "(无)"
+    # 局部上文优先；没有合法候选时检查表内标题，最后才用旧规则候选。
+    fallback_name = (
+        _extract_table_name(context_text if context_text != "(无)" else "")
+        or _extract_table_header_name(table_content)
+        or fallback_name
+    )
 
     base_url = table_name_cfg.base_url or extraction_cfg.base_url
     model = table_name_cfg.model or extraction_cfg.model
@@ -123,7 +130,7 @@ async def _extract_table_name_with_llm(
         return llm_name[:200]
     except Exception as e:
         logger.warning(
-            "LLM 表名抽取失败，回退最后一行: table_index={}, type={}, repr={}",
+            "LLM 表名抽取失败，使用规则回退: table_index={}, type={}, repr={}",
             table_index,
             type(e).__name__,
             repr(e),

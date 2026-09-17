@@ -8,6 +8,7 @@ parse_service._clean_text_line / _extract_table_name 等旧引用继续可用。
 from __future__ import annotations
 
 import re
+from html import unescape
 from typing import List, Sequence
 
 
@@ -73,6 +74,11 @@ _TABLE_TYPE_WORDS = (
     "记录", "目录", "说明", "表", "图",
 )
 
+# 明确以表类名称结尾，可带人数、单位等括注；不放宽「说明」「表明」等正文词。
+_EXPLICIT_CAPTION_END_RE = re.compile(
+    r"(?:表|清单|台账|花名册|目录)(?:\s*[（(][^（）()]*[）)])*\s*$"
+)
+
 
 def _contains_table_type_word(name: str) -> bool:
     """名称中是否出现表类型词（表 / 图 / 台账 / 明细表 …）。"""
@@ -95,7 +101,9 @@ def _looks_like_non_caption(name: str) -> bool:
         return True
     if s.endswith("公司"):
         return True
-    if _LIST_LEAD_RE.match(s):
+    if re.match(r"^第\s*[0-9一二三四五六七八九十百]+\s*章", s) and not _EXPLICIT_CAPTION_END_RE.search(s):
+        return True
+    if _LIST_LEAD_RE.match(s) and not _EXPLICIT_CAPTION_END_RE.search(s):
         return True
     if re.search(r"[。，；]", s):
         return True
@@ -159,6 +167,20 @@ def _extract_table_name(preceding_text: str) -> str:
     return _extract_last_line(preceding_text)[:200]
 
 
+def _extract_table_header_name(table_content: str) -> str:
+    """只认首行唯一单元格中的明确表题，不从列名或数据行推断。"""
+    row = re.search(r"<tr\b[^>]*>(.*?)</tr\s*>", table_content or "", re.I | re.S)
+    if not row:
+        return ""
+    cells = re.findall(r"<t[dh]\b[^>]*>(.*?)</t[dh]\s*>", row.group(1), re.I | re.S)
+    if len(cells) != 1:
+        return ""
+    name = _clean_text_line(unescape(re.sub(r"<[^>]+>", "", cells[0])))
+    if not _EXPLICIT_CAPTION_END_RE.search(name) or _is_unknown_table_name(name):
+        return ""
+    return name[:200]
+
+
 def _is_unknown_table_name(name: str) -> bool:
     """判断模型是否返回了"无法识别/未知"类占位结果。
 
@@ -181,7 +203,8 @@ def _is_unknown_table_name(name: str) -> bool:
     if _looks_like_invalid_candidate(_clean_text_line(name)):
         return True
     # 语义硬过滤：日期 / 比例尺 / 公司名 / 行首序号 / 正文句
-    return _looks_like_non_caption(cleaned)
+    # 语义判断保留成对括号，避免破坏编号及表题末尾的人数、单位括注。
+    return _looks_like_non_caption(_clean_text_line(name))
 
 
 def _gap_has_title(gap_text: str) -> bool:

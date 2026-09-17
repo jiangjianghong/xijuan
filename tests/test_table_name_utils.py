@@ -13,6 +13,7 @@ from service.table_name_utils import (
     _contains_table_type_word,
     _extract_last_line,
     _extract_table_name,
+    _extract_table_header_name,
     _gap_has_title,
     _is_same_page,
     _is_unknown_table_name,
@@ -101,6 +102,38 @@ def test_non_caption_rejects_semantic_garbage(name):
 )
 def test_non_caption_keeps_real_captions(name):
     assert _looks_like_non_caption(name) is False
+
+
+@pytest.mark.parametrize("name", [
+    "7.1.1. 劳动力调查情况表（195人）",
+    "1、主要设备一览表",
+    "（一）投资估算表",
+])
+def test_numbered_table_captions_are_not_discarded(name):
+    """章节编号不应让明确的表题被过滤并回退到远处章节名。"""
+    assert _looks_like_non_caption(name) is False
+    assert _is_unknown_table_name(name) is False
+    assert _extract_table_name("第7章 项目用工需求和劳务报酬测算\n" + name) == name
+
+
+@pytest.mark.parametrize("name", ["1、编制说明", "2. 表明项目可行", "1、请填写调查表。", "第6章 项目投融资与财务方案"])
+def test_numbered_prose_is_still_discarded(name):
+    assert _looks_like_non_caption(name) is True
+
+
+def test_extract_merged_first_row_caption():
+    title = "边坝县都瓦乡瓦地行政村瓦自然村道路维修项目投资概算(预算)表"
+    html = f'<table><tr><td colspan="9">{title}</td></tr><tr><td>序号</td><td>金额</td></tr></table>'
+    assert _extract_table_header_name(html) == title
+
+
+@pytest.mark.parametrize("html", [
+    '<table><tr><td>序号</td><td>金额</td></tr></table>',
+    '<table><tr><td colspan="2">单位：万元</td></tr></table>',
+    '<table><tr><td>项目</td></tr><tr><td>投资估算表</td></tr></table>',
+])
+def test_table_header_fallback_ignores_columns_units_and_body(html):
+    assert _extract_table_header_name(html) == ""
 
 
 def test_table_type_word_excludes_ambiguous_single_chars():
