@@ -12,6 +12,42 @@ from httpx import ASGITransport, AsyncClient
 
 
 @pytest.fixture
+def analysis_task_db(monkeypatch):
+    """任务存储使用真实 SQLite 表；只适配同步驱动，不模拟 SQL 行为。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from model.tables import AnalysisTask
+    from service import analysis_task_store
+
+    engine = create_engine("sqlite://")
+    AnalysisTask.__table__.create(engine)
+
+    class SessionAdapter:
+        async def __aenter__(self):
+            self.session = Session(engine)
+            return self
+
+        async def __aexit__(self, *args):
+            self.session.close()
+
+        def add(self, obj):
+            self.session.add(obj)
+
+        async def execute(self, statement):
+            return self.session.execute(statement)
+
+        async def get(self, model, key):
+            return self.session.get(model, key)
+
+        async def commit(self):
+            self.session.commit()
+
+    monkeypatch.setattr(analysis_task_store, "get_session_factory", lambda: SessionAdapter)
+    yield SessionAdapter
+    engine.dispose()
+
+
+@pytest.fixture
 def anyio_backend():
     return "asyncio"
 

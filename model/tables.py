@@ -22,6 +22,21 @@ class Base(DeclarativeBase):
     pass
 
 
+class AnalysisTask(Base):
+    """独立分析异步任务；与文件级 analysis_result 的 persist 开关无关。"""
+
+    __tablename__ = "analysis_task"
+
+    task_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
 # ── 0. doc_type 表 ──────────────────────────────────────────
 
 class DocType(Base):

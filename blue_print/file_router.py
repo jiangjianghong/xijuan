@@ -800,6 +800,7 @@ async def retry_file(
 ):
     """从指定阶段重试（支持 async/stream/sync）。
 
+    callback_url 可省略；异步提交后使用原 file_id 查询 /status 及对应结果接口。
     当 mode=async 时，可传入 callback_url 参数，管线每完成一个阶段会向该地址 POST：
     {"file_id": "...", "status": "parsing/tableing/chunking/embedding/extracting/analyzing/complete"}
     callback_mode=simple 时，抽取/分析阶段不发 field_done / rule_done，只发一次 stage_done。

@@ -288,10 +288,10 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 <!-- AUTOGEN:request-body POST /analysis/run -->
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
-| mode | AnalysisRunModeEnum | 是 | — | 执行模式：`sync` 同步返回 / `async` 后台跑并回调 / `stream` SSE 流式 |
+| mode | AnalysisRunModeEnum | 是 | — | 执行模式：`sync` 同步返回 / `async` 后台执行（可选回调） / `stream` SSE 流式 |
 | source | AnalysisRunSourceEnum | 否 | values | 字段值来源：`values`（默认）用请求里的 `field_values`；`file` 读各 item `file_id` 已落库的 `extraction_result` |
 | persist | boolean | 否 | False | 是否把结果 upsert 进 `analysis_result`；仅 `source=file` 可用，**不改 `files.progress`** |
-| callback_url | string | 否 | — | `async` 模式必填，用于推送 `rule_done` / `task_done` / `task_failed` |
+| callback_url | string | 否 | — | 可选；仅在 `async` 模式提供时推送 `rule_done` / `task_done` / `task_failed` |
 | callback_mode | CallbackModeEnum | 否 | full | 回调粒度：`full`（默认）推送每条 `rule_done`；`simple` 跳过 `rule_done`，只推任务开始与一次 `task_done` |
 | items | array[AnalysisRunItem] | 是 | — | 待分析的业务输入列表，至少 1 项。一个 item 代表一个业务对象；item 与其规则均并发执行，响应 `data.items[]` 按请求顺序逐项对应。即使只分析一个对象也必须传数组。 |
 <!-- /AUTOGEN:request-body -->
@@ -499,7 +499,7 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 | mode | 最终结果位置 |
 |---|---|
 | `sync` | HTTP 响应的 `data` |
-| `async` | 回调 `event=task_done` 的 `data` |
+| `async` | 查询 `GET /analysis/tasks/{task_id}` 的 `data.result`；提供回调地址时也在 `event=task_done` 的 `data` |
 | `stream` | SSE `task_done` 事件负载的 `data` |
 
 **状态码 / 错误**
@@ -507,9 +507,51 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 | 状态码 | 触发条件 | 响应体 |
 |---|---|---|
 | 200 | sync 完成 / async 已受理 | ResponseWrapper |
-| 422 | `async` 模式缺 `callback_url` / 校验失败 | Pydantic 错误体 |
+| 422 | 请求校验失败（省略 `callback_url` 合法） | Pydantic 错误体 |
 | 422 | `source=file` 缺 `file_id`、`source=file` 传了 `field_values`、`source=values` 传了 `file_id`、`persist=true` 但 `source≠file` | Pydantic 错误体 |
 
 > 校验分层：能从请求体判断的问题返回 **422**；需查库才知道的问题（文件不存在 / `type_id` 不一致 / 无提取结果）记在 item 级 `error` 字段并返回 **200**，不让一个坏 item 拖垮整批。
 
-> 显式点名时无视 `enabled` 开关；点名了该类型下不存在的 rule_id **不报错**，收进 `unknown_rule_ids` 回传，需调用方自行检查。items 间并发，单 item 内按 `priority, rule_id` 顺序执行。`async` 用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`（见 [callbacks.md](callbacks.md)），`stream` 走 SSE（见 [sse.md](sse.md)）。
+> 显式点名时无视 `enabled` 开关；点名了该类型下不存在的 rule_id **不报错**，收进 `unknown_rule_ids` 回传，需调用方自行检查。`async` 仅在传入 `callback_url` 时推送 `rule_done` / `task_done` / `task_failed`（见 [callbacks.md](callbacks.md)），`stream` 走 SSE（见 [sse.md](sse.md)）。
+
+## 查询独立分析异步任务
+
+`GET /analysis/tasks/{task_id}`
+
+先调用 `POST /analysis/run`，传入 `mode=async`（可以省略 `callback_url`），从响应的 `data.task_id` 取得任务编号，再轮询此接口。
+
+<!-- AUTOGEN:response GET /analysis/tasks/{task_id} status=200 -->
+| 字段 | 类型 | 可空 | 说明 |
+|---|---|:--:|---|
+| task_id | string | 否 | 异步提交返回的任务编号 |
+| status | string | 否 | 任务状态：排队 / 执行中 / 完成 / 失败 |
+| result | AnalysisRunResponse | 是 | 完整批次结果，仅完成时有值 |
+| error | string | 是 | 任务失败原因；单规则失败请查看 result |
+| created_at | string | 否 | 任务创建时间 |
+| updated_at | string | 否 | 最后状态更新时间 |
+<!-- /AUTOGEN:response -->
+
+- `queued`：已提交，等待后台执行。
+- `analyzing`：正在执行，`result=null`。
+- `complete`：批次执行结束，`result` 与同步分析的 `data`、完成回调的 `data` 结构相同。单条规则是否成功仍需检查 `result.items[].results[].success`。
+- `analysis_failed`：任务异常中止，查看 `error`。
+- 不存在的任务返回 HTTP 404：`{"detail":"独立分析任务不存在"}`。
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "task_id": "异步提交返回的任务编号",
+    "status": "queued",
+    "result": null,
+    "error": null,
+    "created_at": "2026-09-17T16:00:00",
+    "updated_at": "2026-09-17T16:00:00"
+  }
+}
+```
+
+所有异步任务都会保存状态和完整结果，与是否传入回调地址、`persist` 值无关。`persist` 仍仅控制 `source=file` 是否写入文件级 `analysis_result`。完成结果在重启后保留；当前单 worker 启动会把 `queued/analyzing` 标记为失败，消费方需重新提交。任务记录暂不自动过期。`sync`、`stream` 以及功能上线前的任务编号没有可查询记录。
+
+部署后启动服务会自动创建 `analysis_task` 表。指定阶段重试继续使用原 `file_id`，通过 `GET /file/{file_id}/status` 查询进度，通过文件的 `/extraction`、`/analysis` 接口查询结果。

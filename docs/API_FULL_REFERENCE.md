@@ -1993,7 +1993,7 @@ curl -X POST http://localhost:5019/analysis/test \
 | `mode` | string | 是 | 无 | `sync` / `async` / `stream` |
 | `source` | string | 否 | `values` | `values` 使用请求字段值；`file` 从文件 `extraction_result` 读取 |
 | `persist` | boolean | 否 | `false` | 是否写入 `analysis_result`；仅 `source=file` 可用 |
-| `callback_url` | string | 条件 | `null` | `async` 模式必填 |
+| `callback_url` | string | 否 | `null` | 可选，仅提供时发送异步回调 |
 | `callback_mode` | string | 否 | `full` | 回调粒度：`full` 推送每条 `rule_done`；`simple` 跳过 `rule_done`，只推任务开始与一次 `task_done` |
 | `items` | object[] | 是 | 无 | 待分析的业务对象列表，至少 1 个；一个元素代表一个业务对象，响应按请求顺序逐项对应 |
 
@@ -2177,7 +2177,7 @@ curl -X POST http://localhost:5019/analysis/test \
 | `mode` | 最终结果位置 |
 |---|---|
 | `sync` | HTTP 响应 `data` |
-| `async` | 回调 `event=task_done` 的 `data` |
+| `async` | 查询 `GET /analysis/tasks/{task_id}` 的 `data.result`；提供回调时也在 `event=task_done` 的 `data` |
 | `stream` | SSE `task_done` 事件负载的 `data` |
 
 异步请求示例：
@@ -2198,9 +2198,11 @@ curl -X POST http://localhost:5019/analysis/run \
 
 | 状态 | 条件 | 说明 |
 |---|---|---|
-| `422` | `async` 缺 `callback_url`；`source=file` 缺 `file_id`；`source=values` 传了 `file_id`；`persist=true` 但 `source!=file` | 请求体校验失败 |
+| `422` | `source=file` 缺 `file_id`；`source=values` 传了 `file_id`；`persist=true` 但 `source!=file` 等（省略 `callback_url` 合法） | 请求体校验失败 |
 | HTTP `200` + item `error` | `source=file` 时文件不存在、文件类型不一致、无提取结果 | 单个 item 失败不影响批次其它 item |
 | HTTP `500` | 批量执行外层异常 | sync 模式抛出 |
+
+独立分析异步任务另提供 `GET /analysis/tasks/{task_id}`：响应 `data` 包含 `task_id`、`status`、`result`、`error`、`created_at`、`updated_at`；状态为 `queued/analyzing/complete/analysis_failed`，不存在返回 404。所有 async 任务均保存状态及完整结果，与 `callback_url` 和 `persist` 无关。已完成结果在服务重启后保留，中断任务会标记为失败；任务记录暂不自动过期。`sync/stream` 和功能上线前的任务编号不可查询。详细说明见 [独立分析接口](api/analysis.md#查询独立分析异步任务)。
 
 ### 5.7 `POST /analysis/test/stream` 逻辑分析流式调试
 
@@ -3736,7 +3738,7 @@ judge / custom 规则可在执行前先联网检索（博查 Bocha AI），把�
 - **点名了不存在 / 不属于该 `type_id` 的规则不报错**，这些 ID 收进该 item 结果的 `unknown_rule_ids` 数组回传，需调用方自行检查（配错 ID 不会让请求失败）。显式点名时无视 `enabled` 开关，禁用规则也会执行。
 - `items` 之间**并发**，单个 item 内按 `priority, rule_id` 顺序执行。
 - judge / custom 的 `web_search` 在这里**同样生效**。
-- `async` 模式必须带 `callback_url`，用 `task_id` 推送 `rule_done` / `task_done` / `task_failed`；`stream` 走 SSE。字段签名与状态码见第 5 节。
+- `async` 模式可选传入 `callback_url`，提供时用 `task_id` 推送 `rule_done` / `task_done` / `task_failed`；`stream` 走 SSE。字段签名与状态码见第 5 节。
 
 ---
 

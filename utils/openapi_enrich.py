@@ -937,12 +937,27 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "`results` 按 `priority, rule_id` 配置序回填、`rule_done` 按完成序推送；"
                 "`source=file` 的读库集中在并发前、"
                 "`persist` 写库在并发后（`AsyncSession` 非并发安全）\n"
-                "- `sync` 的最终结果在 HTTP 响应 `data`；`async` 的最终结果在 `task_done.data`；"
+                "- `sync` 的最终结果在 HTTP 响应 `data`；`async` 可通过 "
+                "`GET /analysis/tasks/{task_id}` 的 `data.result` 查询，提供回调时也在 `task_done.data`；"
                 "`stream` 的最终结果在 SSE `task_done` 事件的 `data`。三者最终结果均为"
                 " `AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`\n"
-                "- `async` 模式用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`"
+                "- `async` 模式仅在提供 `callback_url` 时用 `task_id` 推送 `rule_done` / `task_done` / `task_failed`"
             ),
         }
+    },
+    "/analysis/tasks/{task_id}": {
+        "get": {
+            "summary": "查询独立分析异步任务",
+            "description": (
+                "使用 POST /analysis/run 的 async 响应 task_id 查询任务。"
+                "状态为 queued / analyzing / complete / analysis_failed；"
+                "完成时 result 为完整批次结果，失败时 error 为错误说明。不存在返回 HTTP 404。"
+                "所有 async 任务均保存查询结果，与 callback_url 和 persist 无关；"
+                "persist 仍只控制文件级 analysis_result 写入。"
+                "重启后已完成结果保留，中断任务标记为失败（当前单 worker 模式）。"
+                "sync/stream 及功能上线前的 task_id 无查询记录。任务记录暂不自动过期。"
+            ),
+        },
     },
 }
 
@@ -1594,7 +1609,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "或一个文件，不代表规则。响应会为每个请求 item 返回一个同位置的 item 结果。"
         ),
         "properties": {
-            "mode": "执行模式：`sync` 同步返回 / `async` 后台跑并回调 / `stream` SSE 流式",
+            "mode": "执行模式：`sync` 同步返回 / `async` 后台执行（可选回调） / `stream` SSE 流式",
             "source": (
                 "字段值来源：`values`（默认）用请求里的 `field_values`；"
                 "`file` 读各 item `file_id` 已落库的 `extraction_result`"
@@ -1603,7 +1618,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
                 "是否把结果 upsert 进 `analysis_result`；仅 `source=file` 可用，"
                 "**不改 `files.progress`**"
             ),
-            "callback_url": "`async` 模式必填，用于推送 `rule_done` / `task_done` / `task_failed`",
+            "callback_url": "可选；仅在 `async` 模式提供时推送 `rule_done` / `task_done` / `task_failed`",
             "callback_mode": (
                 "回调粒度：`full`（默认）推送每条 `rule_done`；"
                 "`simple` 跳过 `rule_done`，只推任务开始与一次 `task_done`"

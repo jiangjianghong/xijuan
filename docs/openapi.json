@@ -325,7 +325,7 @@
           "file"
         ],
         "summary": "提交文件解析",
-        "description": "上传文件并启动 6 阶段处理管线（parsing → tableing → chunking → embedding → extracting → analyzing → complete）。`Content-Type` 必须为 `multipart/form-data`。\n\n**`mode` 行为差异**\n- `async`（默认）：后台任务，立即返回 `data={file_id}`，`message=\"文件已提交处理（异步）\"`\n- `sync`：阻塞直到全部完成或失败，再返回 `data={file_id}`\n- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `docs/api/sse.md`）\n- 其它任意值按 `sync` 处理（代码 fallback 分支）\n\n**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 `field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时默认 2.5s（`callback.timeout` 可配），失败仅 warning，不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n**`params` 文档类型入参**：可选的 multipart form 字段，内容必须是 JSON 对象字符串。对象值仅支持字符串、数字、布尔值或 `null`（统一转成字符串，`null` 转为空字符串）；字段与规则配置中的 `<param>参数标识</param>` 会使用合并后的值渲染。\n\n服务端按 `type_id` 的参数定义执行 `默认值 <- 传入值覆盖`，并把完整快照写入 `files.input_params`，因此后续 retry 沿用上传时的值。非法 JSON、顶层非对象、对象/数组值、未知 key，或缺少无默认值的必填参数，均返回 **HTTP 400**；校验发生在建档和写 PDF 之前。\n\n**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— 每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`，**不要**重新上传（会产生新记录）。\n\n原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n**文件大小限制**：受 `mineru.max_file_size` 控制（默认 100MB / 104857600 字节），超限返回 `ResponseWrapper{code:400, message:\"文件大小超过限制 (100MB)\"}`（不抛 HTTP 错误）。\n\n**`type_id` 校验**：类型必须已存在于 `doc_type`，否则返回 **HTTP 400** `{detail:\"文档类型不存在: xxx\"}`（区别于文件大小超限的 body 内 `code`——这里抛真正的 HTTP 错误，且不建档、不写盘）。只校验存在性，**不校验 `enabled`**——禁用类型仍可上传。`default` 由启动流程保证存在。",
+        "description": "上传文件并启动 6 阶段处理管线（parsing → tableing → chunking → embedding → extracting → analyzing → complete）。`Content-Type` 必须为 `multipart/form-data`。\n\n**`mode` 行为差异**\n- `async`（默认）：后台任务，立即返回 `data={file_id}`，`message=\"文件已提交处理（异步）\"`\n- `sync`：阻塞直到全部完成或失败，再返回 `data={file_id}`\n- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `docs/api/sse.md`）\n- 其它任意值按 `sync` 处理（代码 fallback 分支）\n\n**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 `field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时默认 2.5s（`callback.timeout` 可配），失败仅 warning，不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n**`callback_mode`**：回调粒度。`full`（默认）保留 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`（results 仍完整）。\n\n**`params` 文档类型入参**：可选的 multipart form 字段，内容必须是 JSON 对象字符串。对象值仅支持字符串、数字、布尔值或 `null`（统一转成字符串，`null` 转为空字符串）；字段与规则配置中的 `<param>参数标识</param>` 会使用合并后的值渲染。\n\n服务端按 `type_id` 的参数定义执行 `默认值 <- 传入值覆盖`，并把完整快照写入 `files.input_params`，因此后续 retry 沿用上传时的值。非法 JSON、顶层非对象、对象/数组值、未知 key，或缺少无默认值的必填参数，均返回 **HTTP 400**；校验发生在建档和写 PDF 之前。\n\n**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— 每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`，**不要**重新上传（会产生新记录）。\n\n原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n**文件大小限制**：受 `mineru.max_file_size` 控制（默认 100MB / 104857600 字节），超限返回 `ResponseWrapper{code:400, message:\"文件大小超过限制 (100MB)\"}`（不抛 HTTP 错误）。\n\n**`type_id` 校验**：类型必须已存在于 `doc_type`，否则返回 **HTTP 400** `{detail:\"文档类型不存在: xxx\"}`（区别于文件大小超限的 body 内 `code`——这里抛真正的 HTTP 错误，且不建档、不写盘）。只校验存在性，**不校验 `enabled`**——禁用类型仍可上传。`default` 由启动流程保证存在。",
         "operationId": "parse_file_file_parse_post",
         "parameters": [
           {
@@ -371,6 +371,21 @@
               "title": "Callback Url"
             },
             "description": "可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时默认 2.5s，由 `callback.timeout` 配置，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。"
+          },
+          {
+            "name": "callback_mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CallbackModeEnum",
+              "default": "full",
+              "enum": [
+                "full",
+                "simple"
+              ]
+            },
+            "description": "回调粒度：`full`（默认）保留逐条 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`。`stream` 模式忽略。",
+            "example": "full"
           }
         ],
         "requestBody": {
@@ -573,7 +588,7 @@
           "file"
         ],
         "summary": "从指定阶段重试",
-        "description": "清掉指定阶段及其下游已有数据（依赖 `init_service` 同款清理逻辑），从该阶段重跑。\n\n**有效 `stage`**：`tableing` / `chunking` / `embedding` / `extracting` / `analyzing`。\n兼容旧别名 `table_name_validating` → `tableing`。其它值返回 **400**。\n\n**`mode`**：`async`（默认，后台任务）/ `sync`（阻塞返回）/ `stream`（SSE 流）。\n\n**`callback_url`** 仅在 `async` / `sync` 模式生效；`stream` 模式忽略，事件改走 SSE。\n\n`stream` 返回的事件序列与 `/file/parse?mode=stream` 完全一致。\n\n**状态码**：200 / 400（无效阶段名）/ 404（文件不存在）。",
+        "description": "清掉指定阶段及其下游已有数据（依赖 `init_service` 同款清理逻辑），从该阶段重跑。\n\n**有效 `stage`**：`tableing` / `chunking` / `embedding` / `extracting` / `analyzing`。\n兼容旧别名 `table_name_validating` → `tableing`。其它值返回 **400**。\n\n**`mode`**：`async`（默认，后台任务）/ `sync`（阻塞返回）/ `stream`（SSE 流）。\n\n**`callback_url`** 仅在 `async` / `sync` 模式生效；`stream` 模式忽略，事件改走 SSE。\n\n**`callback_mode`**：`full`（默认）/ `simple`（跳过 `field_done`/`rule_done`，只发 `stage_done`）。\n\n`stream` 返回的事件序列与 `/file/parse?mode=stream` 完全一致。\n\n**状态码**：200 / 400（无效阶段名）/ 404（文件不存在）。",
         "operationId": "retry_file_file__file_id__retry__stage__post",
         "parameters": [
           {
@@ -635,6 +650,21 @@
               "title": "Callback Url"
             },
             "description": "可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时默认 2.5s，由 `callback.timeout` 配置，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。"
+          },
+          {
+            "name": "callback_mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CallbackModeEnum",
+              "default": "full",
+              "enum": [
+                "full",
+                "simple"
+              ]
+            },
+            "description": "回调粒度：`full`（默认）保留逐条 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`。`stream` 模式忽略。",
+            "example": "full"
           }
         ],
         "responses": {
@@ -665,7 +695,7 @@
           "file"
         ],
         "summary": "快捷重试：字段提取",
-        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=extracting`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）。",
+        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=extracting`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、`callback_mode`（full/simple）。",
         "operationId": "retry_extracting_file__file_id__retry_extracting_post",
         "parameters": [
           {
@@ -710,6 +740,21 @@
               "title": "Callback Url"
             },
             "description": "可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时默认 2.5s，由 `callback.timeout` 配置，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。"
+          },
+          {
+            "name": "callback_mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CallbackModeEnum",
+              "default": "full",
+              "enum": [
+                "full",
+                "simple"
+              ]
+            },
+            "description": "回调粒度：`full`（默认）保留逐条 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`。`stream` 模式忽略。",
+            "example": "full"
           }
         ],
         "responses": {
@@ -740,7 +785,7 @@
           "file"
         ],
         "summary": "快捷重试：逻辑分析",
-        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=analyzing`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）。",
+        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=analyzing`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、`callback_mode`（full/simple）。",
         "operationId": "retry_analyzing_file__file_id__retry_analyzing_post",
         "parameters": [
           {
@@ -785,6 +830,21 @@
               "title": "Callback Url"
             },
             "description": "可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时默认 2.5s，由 `callback.timeout` 配置，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。"
+          },
+          {
+            "name": "callback_mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CallbackModeEnum",
+              "default": "full",
+              "enum": [
+                "full",
+                "simple"
+              ]
+            },
+            "description": "回调粒度：`full`（默认）保留逐条 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`。`stream` 模式忽略。",
+            "example": "full"
           }
         ],
         "responses": {
@@ -1961,13 +2021,56 @@
         }
       }
     },
+    "/analysis/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "查询独立分析异步任务",
+        "description": "使用 POST /analysis/run 的 async 响应 task_id 查询任务。状态为 queued / analyzing / complete / analysis_failed；完成时 result 为完整批次结果，失败时 error 为错误说明。不存在返回 HTTP 404。所有 async 任务均保存查询结果，与 callback_url 和 persist 无关；persist 仍只控制文件级 analysis_result 写入。重启后已完成结果保留，中断任务标记为失败（当前单 worker 模式）。sync/stream 及功能上线前的 task_id 无查询记录。任务记录暂不自动过期。",
+        "operationId": "get_independent_analysis_task_analysis_tasks__task_id__get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisTaskQueryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/analysis/run": {
       "post": {
         "tags": [
           "analysis"
         ],
         "summary": "独立逻辑分析执行",
-        "description": "按 `type_id` 加载启用规则批量执行逻辑判断 / 计算。支持 `sync` / `async` / `stream`，可批量 `items`。\n\n**先理解两层数组：** 请求 `items[]` 是待分析的业务对象列表；响应 `data.items[]` 与请求逐项对应，表示每个业务对象的执行汇总；每个响应 item 内的 `results[]` 才是该业务对象逐条执行规则的结果。即 `请求 items[0] -> 响应 data.items[0] -> data.items[0].results[]`。即使只提交 1 个业务对象或只执行 1 条规则，对应字段仍保持数组；没有规则实际执行时 `results` 为 `[]`。\n\n- 取值来源由请求级 `source` 决定：`values`（默认）用请求里的 `field_values`（不读文件提取结果、不写 `analysis_result`）；`file` 改读各 item `file_id` 已落库的 `extraction_result`，此时 `field_values` 不得传（422）、`type_id` 可省（取 `files.type_id`，传了且不一致该 item 报错）\n- `persist=true`（仅 `source=file` 可用）把结果 upsert 进 `analysis_result`，**不改 `files.progress`**；文件不存在 / 无提取结果等查库才知道的问题记在 item 级 `error` 字段，不影响同批其它 item\n- 规则范围由 item 级 `rule_ids` 决定：不传 / `null` = 该类型全部启用规则，且只执行 `field_values` 覆盖了 `depend_fields` 的那些（其余静默跳过）；`[]` = 不执行任何规则；显式点名 = 只跑指定规则，**不做**覆盖过滤，缺依赖字段的规则产出 `success=false` 结果（`reason` 列出缺失字段）并计入 `total` / `failed`，不会从 `results` 里消失\n- 显式点名时无视 `enabled` 开关；该 `type_id` 下不存在的 rule_id 不报错，收进 `AnalysisRunItemResult.unknown_rule_ids` 回传\n- items 与规则双层并发（闸门在规则层，配置项 `concurrency.independent_analysis`）；`results` 按 `priority, rule_id` 配置序回填、`rule_done` 按完成序推送；`source=file` 的读库集中在并发前、`persist` 写库在并发后（`AsyncSession` 非并发安全）\n- `sync` 的最终结果在 HTTP 响应 `data`；`async` 的最终结果在 `task_done.data`；`stream` 的最终结果在 SSE `task_done` 事件的 `data`。三者最终结果均为 `AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`\n- `async` 模式用 `task_id` 通过 `callback_url` 推送 `rule_done` / `task_done` / `task_failed`",
+        "description": "按 `type_id` 加载启用规则批量执行逻辑判断 / 计算。支持 `sync` / `async` / `stream`，可批量 `items`。\n\n**先理解两层数组：** 请求 `items[]` 是待分析的业务对象列表；响应 `data.items[]` 与请求逐项对应，表示每个业务对象的执行汇总；每个响应 item 内的 `results[]` 才是该业务对象逐条执行规则的结果。即 `请求 items[0] -> 响应 data.items[0] -> data.items[0].results[]`。即使只提交 1 个业务对象或只执行 1 条规则，对应字段仍保持数组；没有规则实际执行时 `results` 为 `[]`。\n\n- 取值来源由请求级 `source` 决定：`values`（默认）用请求里的 `field_values`（不读文件提取结果、不写 `analysis_result`）；`file` 改读各 item `file_id` 已落库的 `extraction_result`，此时 `field_values` 不得传（422）、`type_id` 可省（取 `files.type_id`，传了且不一致该 item 报错）\n- `persist=true`（仅 `source=file` 可用）把结果 upsert 进 `analysis_result`，**不改 `files.progress`**；文件不存在 / 无提取结果等查库才知道的问题记在 item 级 `error` 字段，不影响同批其它 item\n- 规则范围由 item 级 `rule_ids` 决定：不传 / `null` = 该类型全部启用规则，且只执行 `field_values` 覆盖了 `depend_fields` 的那些（其余静默跳过）；`[]` = 不执行任何规则；显式点名 = 只跑指定规则，**不做**覆盖过滤，缺依赖字段的规则产出 `success=false` 结果（`reason` 列出缺失字段）并计入 `total` / `failed`，不会从 `results` 里消失\n- 显式点名时无视 `enabled` 开关；该 `type_id` 下不存在的 rule_id 不报错，收进 `AnalysisRunItemResult.unknown_rule_ids` 回传\n- items 与规则双层并发（闸门在规则层，配置项 `concurrency.independent_analysis`）；`results` 按 `priority, rule_id` 配置序回填、`rule_done` 按完成序推送；`source=file` 的读库集中在并发前、`persist` 写库在并发后（`AsyncSession` 非并发安全）\n- `sync` 的最终结果在 HTTP 响应 `data`；`async` 可通过 `GET /analysis/tasks/{task_id}` 的 `data.result` 查询，提供回调时也在 `task_done.data`；`stream` 的最终结果在 SSE `task_done` 事件的 `data`。三者最终结果均为 `AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`\n- `async` 模式仅在提供 `callback_url` 时用 `task_id` 推送 `rule_done` / `task_done` / `task_failed`",
         "operationId": "run_independent_analysis_analysis_run_post",
         "requestBody": {
           "content": {
@@ -4230,6 +4333,79 @@
         "title": "AnalysisRunItem",
         "description": "独立分析的一组业务输入。一个 item 通常代表一份合同、一张订单、一份报表或一个文件；服务会在该 item 上执行零到多条规则，并把规则结果放进对应响应 item 的 `results[]`。"
       },
+      "AnalysisRunItemResult": {
+        "properties": {
+          "item_index": {
+            "type": "integer",
+            "title": "Item Index",
+            "description": "对应请求 `items[]` 的零基下标；响应顺序与请求保持一致。"
+          },
+          "biz_id": {
+            "type": "string",
+            "title": "Biz Id",
+            "description": "对应请求 item 的业务 ID，原样回传，方便调用方关联结果。"
+          },
+          "type_id": {
+            "type": "string",
+            "title": "Type Id",
+            "description": "该业务输入实际使用的文档类型 ID。"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "当前业务输入实际执行的规则总数，等于 `results` 数组长度。"
+          },
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded",
+            "description": "当前 `results[]` 中 `success=true` 的数量。"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "当前 `results[]` 中 `success=false` 的数量；正常满足 `succeeded + failed = total`。"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisRunRuleResult"
+            },
+            "type": "array",
+            "title": "Results",
+            "description": "当前业务输入的逐规则结果列表，每个元素对应一条实际执行的规则。它不是另一批 item；一条规则也仍用单元素数组表示。"
+          },
+          "unknown_rule_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unknown Rule Ids",
+            "description": "请求点名了但该类型下不存在的 rule_id；不点名时恒为空。显式点名的禁用规则仍会执行，不属于 unknown。"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "file 模式的 item 级错误（文件不存在 / type_id 不一致 / 无提取结果）；正常为 null"
+          }
+        },
+        "type": "object",
+        "required": [
+          "item_index",
+          "biz_id",
+          "type_id",
+          "total",
+          "succeeded",
+          "failed"
+        ],
+        "title": "AnalysisRunItemResult",
+        "description": "一个请求 item 的执行汇总。响应 `items[i]` 对应请求 `items[i]`；其中 `results[]` 是这个业务对象实际执行的逐规则结果。即使只有一条规则也仍是数组，没有规则执行时为 `[]`。"
+      },
       "AnalysisRunModeEnum": {
         "type": "string",
         "enum": [
@@ -4243,7 +4419,7 @@
         "properties": {
           "mode": {
             "$ref": "#/components/schemas/AnalysisRunModeEnum",
-            "description": "执行模式：`sync` 同步返回 / `async` 后台跑并回调 / `stream` SSE 流式"
+            "description": "执行模式：`sync` 同步返回 / `async` 后台执行（可选回调） / `stream` SSE 流式"
           },
           "source": {
             "$ref": "#/components/schemas/AnalysisRunSourceEnum",
@@ -4268,7 +4444,12 @@
               }
             ],
             "title": "Callback Url",
-            "description": "`async` 模式必填，用于推送 `rule_done` / `task_done` / `task_failed`"
+            "description": "可选；仅在 `async` 模式提供时推送 `rule_done` / `task_done` / `task_failed`"
+          },
+          "callback_mode": {
+            "$ref": "#/components/schemas/CallbackModeEnum",
+            "default": "full",
+            "description": "回调粒度：`full`（默认）推送每条 `rule_done`；`simple` 跳过 `rule_done`，只推任务开始与一次 `task_done`"
           },
           "items": {
             "items": {
@@ -4320,6 +4501,196 @@
           }
         ]
       },
+      "AnalysisRunResponse": {
+        "properties": {
+          "total_items": {
+            "title": "Total Items",
+            "type": "integer",
+            "description": "本批业务输入总数，等于请求 `items` 长度，也等于响应 `items` 长度。"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisRunItemResult"
+            },
+            "title": "Items",
+            "type": "array",
+            "description": "逐业务输入的执行汇总列表。响应 `items[i]` 对应请求 `items[i]`，不是逐规则列表；逐规则列表位于各元素的 `results[]`。"
+          }
+        },
+        "required": [
+          "total_items"
+        ],
+        "title": "AnalysisRunResponse",
+        "type": "object",
+        "description": "独立逻辑分析的批量最终结果。`items[]` 按顺序对应请求 `items[]`；每个 item 内的 `results[]` 再列出该业务输入执行的规则结果。sync 直接返回此结构，async/stream 在 `task_done.data` 中返回此结构。",
+        "examples": [
+          {
+            "total_items": 2,
+            "items": [
+              {
+                "item_index": 0,
+                "biz_id": "doc-001",
+                "type_id": "financial_report",
+                "total": 2,
+                "succeeded": 2,
+                "failed": 0,
+                "results": [
+                  {
+                    "rule_id": "profit_positive",
+                    "rule_name": "是否盈利",
+                    "rule_type": "judge",
+                    "result": "true",
+                    "reason": "净利润大于 0。",
+                    "input_values": {
+                      "net_profit": "5000000"
+                    },
+                    "source_refs": null,
+                    "success": true,
+                    "index": 1,
+                    "total": 2
+                  },
+                  {
+                    "rule_id": "profit_margin",
+                    "rule_name": "净利率",
+                    "rule_type": "calc",
+                    "result": "0.0333333333",
+                    "reason": "计算成功",
+                    "input_values": {
+                      "net_profit": "5000000",
+                      "revenue": "150000000"
+                    },
+                    "source_refs": null,
+                    "success": true,
+                    "index": 2,
+                    "total": 2
+                  }
+                ],
+                "unknown_rule_ids": [],
+                "error": null
+              },
+              {
+                "item_index": 1,
+                "biz_id": "doc-002",
+                "type_id": "financial_report",
+                "total": 2,
+                "succeeded": 2,
+                "failed": 0,
+                "results": [
+                  {
+                    "rule_id": "profit_positive",
+                    "rule_name": "是否盈利",
+                    "rule_type": "judge",
+                    "result": "false",
+                    "reason": "净利润小于 0。",
+                    "input_values": {
+                      "net_profit": "-100000"
+                    },
+                    "source_refs": null,
+                    "success": true,
+                    "index": 1,
+                    "total": 2
+                  },
+                  {
+                    "rule_id": "profit_margin",
+                    "rule_name": "净利率",
+                    "rule_type": "calc",
+                    "result": "-0.0125",
+                    "reason": "计算成功",
+                    "input_values": {
+                      "net_profit": "-100000",
+                      "revenue": "8000000"
+                    },
+                    "source_refs": null,
+                    "success": true,
+                    "index": 2,
+                    "total": 2
+                  }
+                ],
+                "unknown_rule_ids": [],
+                "error": null
+              }
+            ]
+          }
+        ]
+      },
+      "AnalysisRunRuleResult": {
+        "properties": {
+          "rule_id": {
+            "type": "string",
+            "title": "Rule Id",
+            "description": "本条结果对应的规则 ID。"
+          },
+          "rule_name": {
+            "type": "string",
+            "title": "Rule Name",
+            "description": "本条结果对应的规则名称。"
+          },
+          "rule_type": {
+            "type": "string",
+            "title": "Rule Type",
+            "description": "规则类型：`judge` / `calc` / `custom`。"
+          },
+          "result": {
+            "type": "string",
+            "title": "Result",
+            "default": "",
+            "description": "规则执行结果；失败时通常为空字符串，结合 `success` 和 `reason` 判断。"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": "",
+            "description": "规则给出的理由，或执行失败原因。"
+          },
+          "input_values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Input Values",
+            "description": "本条规则实际使用的依赖字段值，形如 `{field_id: value}`。"
+          },
+          "source_refs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Refs",
+            "description": "依赖字段溯源；`source=values` 通常为 null，`source=file` 可包含提取溯源。"
+          },
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "本条规则是否执行成功；不是规则业务结论本身。"
+          },
+          "index": {
+            "type": "integer",
+            "title": "Index",
+            "description": "本条规则在当前 item 的执行序号，从 1 开始。"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "当前 item 实际执行的规则总数，与外层 item 的 `total` 相同。"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rule_id",
+          "rule_name",
+          "rule_type",
+          "success",
+          "index",
+          "total"
+        ],
+        "title": "AnalysisRunRuleResult",
+        "description": "某一个业务输入 item 执行某一条分析规则所得的结果。它是 `AnalysisRunItemResult.results[]` 的元素，不代表一个新的业务输入。"
+      },
       "AnalysisRunSourceEnum": {
         "type": "string",
         "enum": [
@@ -4327,6 +4698,92 @@
           "file"
         ],
         "title": "AnalysisRunSourceEnum"
+      },
+      "AnalysisTaskQueryResponse": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AnalysisTaskStatusResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "AnalysisTaskQueryResponse"
+      },
+      "AnalysisTaskStatusResponse": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id",
+            "description": "异步提交返回的任务编号"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "analyzing",
+              "complete",
+              "analysis_failed"
+            ],
+            "title": "Status",
+            "description": "任务状态：排队 / 执行中 / 完成 / 失败"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisRunResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "完整批次结果，仅完成时有值"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "任务失败原因；单规则失败请查看 result"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "任务创建时间"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At",
+            "description": "最后状态更新时间"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AnalysisTaskStatusResponse",
+        "description": "独立分析异步任务快照；非完成状态的 result 为 null。"
       },
       "AnalysisTestRequest": {
         "properties": {
@@ -4473,6 +4930,15 @@
           "file"
         ],
         "title": "Body_parse_file_file_parse_post"
+      },
+      "CallbackModeEnum": {
+        "type": "string",
+        "enum": [
+          "full",
+          "simple"
+        ],
+        "title": "CallbackModeEnum",
+        "description": "回调粒度：full 保留逐条事件；simple 只发阶段/任务终态。"
       },
       "CopyConfigsRequest": {
         "properties": {
@@ -4681,6 +5147,18 @@
             "type": "integer",
             "title": "Use Llm",
             "default": 1
+          },
+          "empty_retry_enabled": {
+            "type": "boolean",
+            "title": "Empty Retry Enabled",
+            "default": false
+          },
+          "empty_retry_count": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Empty Retry Count",
+            "default": 2
           },
           "is_advanced": {
             "type": "integer",
@@ -5127,6 +5605,18 @@
             "title": "Use Llm",
             "default": 1,
             "description": "是否走 LLM 二次抽取（1/0，默认 1）。置 0 时跳过占位符校验与 LLM 调用，直接返回检索原文；**仅 text / table 生效**，vl 恒需模型。"
+          },
+          "empty_retry_enabled": {
+            "type": "boolean",
+            "title": "Empty Retry Enabled",
+            "default": false
+          },
+          "empty_retry_count": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Empty Retry Count",
+            "default": 2
           },
           "table_name_pattern": {
             "anyOf": [
@@ -5691,7 +6181,8 @@
           "rule",
           "chunk_db",
           "vector_db",
-          "page"
+          "page",
+          "hybrid"
         ],
         "title": "SearchTypeEnum",
         "description": "文本检索方式：`context` 关键词上下文 / `section` 章节匹配 / `rule` 关键词+停止词边界 / `chunk_db` MySQL 分块检索 / `vector_db` Milvus 语义检索 / `page` 按页码区间切片。"
@@ -7576,6 +8067,18 @@
             "title": "Use Llm",
             "type": "integer"
           },
+          "empty_retry_enabled": {
+            "default": false,
+            "title": "Empty Retry Enabled",
+            "type": "boolean"
+          },
+          "empty_retry_count": {
+            "default": 2,
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Empty Retry Count",
+            "type": "integer"
+          },
           "table_name_pattern": {
             "anyOf": [
               {
@@ -7880,6 +8383,35 @@
             ],
             "default": null,
             "title": "Resolved Refs"
+          },
+          "hybrid": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Hybrid"
+          },
+          "debug_events": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Debug Events"
           }
         },
         "title": "ExtractionTestResponse",
@@ -8058,271 +8590,6 @@
         "title": "AnalysisTestResponse",
         "type": "object",
         "description": "逻辑分析调试结果。"
-      },
-      "AnalysisRunItemResult": {
-        "properties": {
-          "item_index": {
-            "title": "Item Index",
-            "type": "integer",
-            "description": "对应请求 `items[]` 的零基下标；响应顺序与请求保持一致。"
-          },
-          "biz_id": {
-            "title": "Biz Id",
-            "type": "string",
-            "description": "对应请求 item 的业务 ID，原样回传，方便调用方关联结果。"
-          },
-          "type_id": {
-            "title": "Type Id",
-            "type": "string",
-            "description": "该业务输入实际使用的文档类型 ID。"
-          },
-          "total": {
-            "title": "Total",
-            "type": "integer",
-            "description": "当前业务输入实际执行的规则总数，等于 `results` 数组长度。"
-          },
-          "succeeded": {
-            "title": "Succeeded",
-            "type": "integer",
-            "description": "当前 `results[]` 中 `success=true` 的数量。"
-          },
-          "failed": {
-            "title": "Failed",
-            "type": "integer",
-            "description": "当前 `results[]` 中 `success=false` 的数量；正常满足 `succeeded + failed = total`。"
-          },
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/AnalysisRunRuleResult"
-            },
-            "title": "Results",
-            "type": "array",
-            "description": "当前业务输入的逐规则结果列表，每个元素对应一条实际执行的规则。它不是另一批 item；一条规则也仍用单元素数组表示。"
-          },
-          "unknown_rule_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Unknown Rule Ids",
-            "type": "array",
-            "description": "请求点名了但该类型下不存在的 rule_id；不点名时恒为空。显式点名的禁用规则仍会执行，不属于 unknown。"
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Error",
-            "description": "file 模式的 item 级错误（文件不存在 / type_id 不一致 / 无提取结果）；正常为 null"
-          }
-        },
-        "required": [
-          "item_index",
-          "biz_id",
-          "type_id",
-          "total",
-          "succeeded",
-          "failed"
-        ],
-        "title": "AnalysisRunItemResult",
-        "type": "object",
-        "description": "一个请求 item 的执行汇总。响应 `items[i]` 对应请求 `items[i]`；其中 `results[]` 是这个业务对象实际执行的逐规则结果。即使只有一条规则也仍是数组，没有规则执行时为 `[]`。"
-      },
-      "AnalysisRunRuleResult": {
-        "properties": {
-          "rule_id": {
-            "title": "Rule Id",
-            "type": "string",
-            "description": "本条结果对应的规则 ID。"
-          },
-          "rule_name": {
-            "title": "Rule Name",
-            "type": "string",
-            "description": "本条结果对应的规则名称。"
-          },
-          "rule_type": {
-            "title": "Rule Type",
-            "type": "string",
-            "description": "规则类型：`judge` / `calc` / `custom`。"
-          },
-          "result": {
-            "default": "",
-            "title": "Result",
-            "type": "string",
-            "description": "规则执行结果；失败时通常为空字符串，结合 `success` 和 `reason` 判断。"
-          },
-          "reason": {
-            "default": "",
-            "title": "Reason",
-            "type": "string",
-            "description": "规则给出的理由，或执行失败原因。"
-          },
-          "input_values": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "title": "Input Values",
-            "type": "object",
-            "description": "本条规则实际使用的依赖字段值，形如 `{field_id: value}`。"
-          },
-          "source_refs": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Source Refs",
-            "description": "依赖字段溯源；`source=values` 通常为 null，`source=file` 可包含提取溯源。"
-          },
-          "success": {
-            "title": "Success",
-            "type": "boolean",
-            "description": "本条规则是否执行成功；不是规则业务结论本身。"
-          },
-          "index": {
-            "title": "Index",
-            "type": "integer",
-            "description": "本条规则在当前 item 的执行序号，从 1 开始。"
-          },
-          "total": {
-            "title": "Total",
-            "type": "integer",
-            "description": "当前 item 实际执行的规则总数，与外层 item 的 `total` 相同。"
-          }
-        },
-        "required": [
-          "rule_id",
-          "rule_name",
-          "rule_type",
-          "success",
-          "index",
-          "total"
-        ],
-        "title": "AnalysisRunRuleResult",
-        "type": "object",
-        "description": "某一个业务输入 item 执行某一条分析规则所得的结果。它是 `AnalysisRunItemResult.results[]` 的元素，不代表一个新的业务输入。"
-      },
-      "AnalysisRunResponse": {
-        "properties": {
-          "total_items": {
-            "title": "Total Items",
-            "type": "integer",
-            "description": "本批业务输入总数，等于请求 `items` 长度，也等于响应 `items` 长度。"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/AnalysisRunItemResult"
-            },
-            "title": "Items",
-            "type": "array",
-            "description": "逐业务输入的执行汇总列表。响应 `items[i]` 对应请求 `items[i]`，不是逐规则列表；逐规则列表位于各元素的 `results[]`。"
-          }
-        },
-        "required": [
-          "total_items"
-        ],
-        "title": "AnalysisRunResponse",
-        "type": "object",
-        "description": "独立逻辑分析的批量最终结果。`items[]` 按顺序对应请求 `items[]`；每个 item 内的 `results[]` 再列出该业务输入执行的规则结果。sync 直接返回此结构，async/stream 在 `task_done.data` 中返回此结构。",
-        "examples": [
-          {
-            "total_items": 2,
-            "items": [
-              {
-                "item_index": 0,
-                "biz_id": "doc-001",
-                "type_id": "financial_report",
-                "total": 2,
-                "succeeded": 2,
-                "failed": 0,
-                "results": [
-                  {
-                    "rule_id": "profit_positive",
-                    "rule_name": "是否盈利",
-                    "rule_type": "judge",
-                    "result": "true",
-                    "reason": "净利润大于 0。",
-                    "input_values": {
-                      "net_profit": "5000000"
-                    },
-                    "source_refs": null,
-                    "success": true,
-                    "index": 1,
-                    "total": 2
-                  },
-                  {
-                    "rule_id": "profit_margin",
-                    "rule_name": "净利率",
-                    "rule_type": "calc",
-                    "result": "0.0333333333",
-                    "reason": "计算成功",
-                    "input_values": {
-                      "net_profit": "5000000",
-                      "revenue": "150000000"
-                    },
-                    "source_refs": null,
-                    "success": true,
-                    "index": 2,
-                    "total": 2
-                  }
-                ],
-                "unknown_rule_ids": [],
-                "error": null
-              },
-              {
-                "item_index": 1,
-                "biz_id": "doc-002",
-                "type_id": "financial_report",
-                "total": 2,
-                "succeeded": 2,
-                "failed": 0,
-                "results": [
-                  {
-                    "rule_id": "profit_positive",
-                    "rule_name": "是否盈利",
-                    "rule_type": "judge",
-                    "result": "false",
-                    "reason": "净利润小于 0。",
-                    "input_values": {
-                      "net_profit": "-100000"
-                    },
-                    "source_refs": null,
-                    "success": true,
-                    "index": 1,
-                    "total": 2
-                  },
-                  {
-                    "rule_id": "profit_margin",
-                    "rule_name": "净利率",
-                    "rule_type": "calc",
-                    "result": "-0.0125",
-                    "reason": "计算成功",
-                    "input_values": {
-                      "net_profit": "-100000",
-                      "revenue": "8000000"
-                    },
-                    "source_refs": null,
-                    "success": true,
-                    "index": 2,
-                    "total": 2
-                  }
-                ],
-                "unknown_rule_ids": [],
-                "error": null
-              }
-            ]
-          }
-        ]
       },
       "SearchResultItem": {
         "properties": {

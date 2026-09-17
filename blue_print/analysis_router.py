@@ -19,6 +19,7 @@ from model.schemas import (
     AnalysisRunModeEnum,
     AnalysisRunRequest,
     AnalysisRunResponse,
+    AnalysisTaskQueryResponse,
     AnalysisRuleCreate,
     AnalysisRuleResponse,
     AnalysisTestRequest,
@@ -28,6 +29,7 @@ from model.schemas import (
 from model.tables import AnalysisRule
 from service.analysis_service import test_rule_analysis_stream
 from service.analysis_run_service import run_analysis_batch
+from service import analysis_task_store
 from utils.callback import (
     build_analysis_task_payload,
     is_simple_callback,
@@ -284,7 +286,7 @@ async def _run_analysis_with_session(
 async def _run_analysis_task_background(
     task_id: str,
     items: list[dict[str, Any]],
-    callback_url: str,
+    callback_url: str | None,
     source: str = "values",
     persist: bool = False,
     callback_mode: str = "full",
@@ -294,14 +296,12 @@ async def _run_analysis_task_background(
     callback_mode=simple 时跳过全部 rule_done，只推开始信号与 task_done。
     """
 
-    await notify_analysis_task_callback(
-        callback_url,
-        task_id,
-        "analyzing",
-    )
     try:
+        await analysis_task_store.set_task_state(task_id, "analyzing")
+        if callback_url:
+            await notify_analysis_task_callback(callback_url, task_id, "analyzing")
         on_rule_done = None
-        if not is_simple_callback(callback_mode):
+        if callback_url and not is_simple_callback(callback_mode):
             async def on_rule_done(data: Dict[str, Any]) -> None:
                 await notify_analysis_task_callback(
                     callback_url,
@@ -317,13 +317,15 @@ async def _run_analysis_task_background(
             source=source,
             persist=persist,
         )
-        await notify_analysis_task_callback(
-            callback_url,
-            task_id,
-            "complete",
-            event="task_done",
-            data=result,
-        )
+        await analysis_task_store.set_task_state(task_id, "complete", result=result)
+        if callback_url:
+            await notify_analysis_task_callback(
+                callback_url,
+                task_id,
+                "complete",
+                event="task_done",
+                data=result,
+            )
     except Exception as exc:
         logger.exception(
             "独立逻辑分析后台任务失败: task_id={}, type={}, error={}",
@@ -331,13 +333,19 @@ async def _run_analysis_task_background(
             type(exc).__name__,
             exc,
         )
-        await notify_analysis_task_callback(
-            callback_url,
-            task_id,
-            "analysis_failed",
-            event="task_failed",
-            data={"error": f"{type(exc).__name__}: {exc}"},
-        )
+        error = f"{type(exc).__name__}: {exc}"
+        try:
+            await analysis_task_store.set_task_state(task_id, "analysis_failed", error=error)
+        except Exception:
+            logger.exception("独立分析失败状态写入失败: task_id={}", task_id)
+        if callback_url:
+            await notify_analysis_task_callback(
+                callback_url,
+                task_id,
+                "analysis_failed",
+                event="task_failed",
+                data={"error": error},
+            )
 
 
 async def _analysis_run_stream(
@@ -415,6 +423,15 @@ async def _analysis_run_stream(
         await asyncio.gather(worker_task, return_exceptions=True)
 
 
+@router.get("/tasks/{task_id}", response_model=AnalysisTaskQueryResponse)
+async def get_independent_analysis_task(task_id: str):
+    """查询 async 独立分析任务的状态与结果；不存在的任务返回 404。"""
+    task = await analysis_task_store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="独立分析任务不存在")
+    return ResponseWrapper(data=task)
+
+
 @router.post("/run")
 async def run_independent_analysis(
     req: AnalysisRunRequest,
@@ -444,11 +461,12 @@ async def run_independent_analysis(
 
     task_id = _new_analysis_task_id()
     if req.mode == AnalysisRunModeEnum.async_:
+        await analysis_task_store.create_task(task_id)
         background_tasks.add_task(
             _run_analysis_task_background,
             task_id,
             items,
-            str(req.callback_url),
+            str(req.callback_url) if req.callback_url else None,
             source,
             persist,
             req.callback_mode.value,

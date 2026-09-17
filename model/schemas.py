@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import AnyHttpUrl, BaseModel, Field, field_validator, model_validator
 
@@ -746,8 +746,25 @@ class AnalysisRunResponse(BaseModel):
     items: List[AnalysisRunItemResult] = Field(default_factory=list)
 
 
+class AnalysisTaskStatusResponse(BaseModel):
+    """独立分析异步任务快照；非完成状态的 result 为 null。"""
+
+    task_id: str = Field(description="异步提交返回的任务编号")
+    status: Literal["queued", "analyzing", "complete", "analysis_failed"] = Field(
+        description="任务状态：排队 / 执行中 / 完成 / 失败"
+    )
+    result: Optional[AnalysisRunResponse] = Field(None, description="完整批次结果，仅完成时有值")
+    error: Optional[str] = Field(None, description="任务失败原因；单规则失败请查看 result")
+    created_at: datetime = Field(description="任务创建时间")
+    updated_at: datetime = Field(description="最后状态更新时间")
+
+
+class AnalysisTaskQueryResponse(ResponseWrapper):
+    data: AnalysisTaskStatusResponse
+
+
 class AnalysisRunRequest(BaseModel):
-    """独立逻辑分析请求；async 模式必须通过 callback_url 接收结果。"""
+    """独立逻辑分析请求；callback_url 可选，仅提供时发送异步回调。"""
 
     mode: AnalysisRunModeEnum
     source: AnalysisRunSourceEnum = AnalysisRunSourceEnum.values
@@ -757,10 +774,7 @@ class AnalysisRunRequest(BaseModel):
     items: List[AnalysisRunItem] = Field(..., min_length=1)
 
     @model_validator(mode="after")
-    def validate_async_callback(self):
-        if self.mode == AnalysisRunModeEnum.async_ and self.callback_url is None:
-            raise ValueError("async 模式必须提供 callback_url")
-
+    def validate_source_items(self):
         is_file = self.source == AnalysisRunSourceEnum.file
         if self.persist and not is_file:
             raise ValueError("persist=true 仅在 source=file 时可用")

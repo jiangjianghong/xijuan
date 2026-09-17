@@ -26,9 +26,9 @@ def test_analysis_run_rejects_empty_items():
         AnalysisRunRequest(mode="sync", items=[])
 
 
-def test_analysis_run_async_requires_callback_url():
-    with pytest.raises(ValidationError, match="async 模式必须提供 callback_url"):
-        AnalysisRunRequest(mode="async", items=[_item()])
+def test_analysis_run_async_callback_url_is_optional():
+    request = AnalysisRunRequest(mode="async", items=[_item()])
+    assert request.callback_url is None
 
 
 def test_analysis_run_rejects_unknown_mode():

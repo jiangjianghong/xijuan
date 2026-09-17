@@ -33,6 +33,8 @@ _data 为数组，每个元素：_
 | enabled | integer | 是 |  |
 | priority | integer | 是 |  |
 | use_llm | integer | 是 |  |
+| empty_retry_enabled | boolean | 是 |  |
+| empty_retry_count | integer | 是 |  |
 | table_name_pattern | string | 是 |  |
 | table_match_type | TableMatchTypeEnum | 是 |  |
 | table_match_keywords | array[string] | 是 |  |
@@ -80,6 +82,8 @@ _data 为数组，每个元素：_
 | enabled | integer | 否 | 1 | 是否启用（1/0）。 |
 | priority | integer | 否 | 0 | 执行优先级，数字越小越先（升序）。 |
 | use_llm | integer | 否 | 1 | 是否走 LLM 二次抽取（1/0，默认 1）。置 0 时跳过占位符校验与 LLM 调用，直接返回检索原文；**仅 text / table 生效**，vl 恒需模型。 |
+| empty_retry_enabled | boolean | 否 | False |  |
+| empty_retry_count | integer | 否 | 2 |  |
 | table_name_pattern | string | 否 | — | [table] 表名匹配模式（配合 `table_match_type`）。 |
 | table_match_type | TableMatchTypeEnum | 否 | — | [table] 匹配方式：`exact` / `fuzzy` / `contains` / `llm`。 |
 | table_match_keywords | array[string] | 否 | — | [table] 匹配关键词列表。 |
@@ -268,6 +272,8 @@ curl -X POST http://localhost:5019/extraction/fields \
 | pages | array[integer] | 是 | 模型自报参考页（1-indexed int 数组）；VL / use_llm=0 / 模型未返回时为 [] |
 | source_pages | array[integer] | 是 | 可用页码：pages 优先、程序命中页兜底。键恒存在，无命中时为 [] |
 | resolved_refs | object | 是 |  |
+| hybrid | object | 是 |  |
+| debug_events | array[object] | 是 |  |
 <!-- /AUTOGEN:response -->
 
 **状态码 / 错误**

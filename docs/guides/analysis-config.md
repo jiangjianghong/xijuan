@@ -497,7 +497,7 @@ judge / custom 规则可在执行前先联网检索（博查 Bocha AI），把�
 - **点名了不存在 / 未启用 / 不属于该 `type_id` 的规则不报错**，这些 ID 收进该 item 结果的 `unknown_rule_ids` 数组回传，需调用方自行检查（配错 ID 不会让请求失败）。
 - `items` 之间**并发**，单个 item 内按 `priority, rule_id` 顺序执行。
 - judge / custom 的 `web_search` 在这里**同样生效**。
-- `async` 模式必须带 `callback_url`，用 `task_id` 推送 `rule_done` / `task_done` / `task_failed`；`stream` 走 SSE。字段签名与状态码见 [analysis 接口参考](../api/analysis.md)。
+- `async` 模式可选传入 `callback_url`，提供时用 `task_id` 推送 `rule_done` / `task_done` / `task_failed`；`stream` 走 SSE。字段签名与状态码见 [analysis 接口参考](../api/analysis.md)。
 
 ---
 

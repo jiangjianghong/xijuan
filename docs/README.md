@@ -53,6 +53,7 @@
 | DELETE | `/analysis/rules/{rule_id}` | 逻辑分析 | 删除分析规则 | [api/analysis.md](api/analysis.md) |
 | GET | `/analysis/rules/{rule_id}/check` | 逻辑分析 | 检查规则 ID 是否存在 | [api/analysis.md](api/analysis.md) |
 | POST | `/analysis/run` | 逻辑分析 | 独立逻辑分析执行 | [api/analysis.md](api/analysis.md) |
+| GET | `/analysis/tasks/{task_id}` | 逻辑分析 | 查询独立分析异步任务 | [api/analysis.md](api/analysis.md) |
 | POST | `/analysis/test` | 逻辑分析 | 逻辑分析调试（同步） | [api/analysis.md](api/analysis.md) |
 | POST | `/analysis/test/stream` | 逻辑分析 | 逻辑分析流式调试（SSE） | [api/analysis.md](api/analysis.md) |
 | POST | `/doctype` | 文档类型 | 新增/更新文档类型（upsert） | [api/doctype.md](api/doctype.md) |

@@ -404,6 +404,8 @@ async def run_init() -> None:
     session_factory = get_session_factory()
     async with session_factory() as session:
         await recover_abnormal_status(session)
+        from service.analysis_task_store import recover_interrupted_tasks
+        await recover_interrupted_tasks(session)
         await cleanup_garbage_data(session)
         await cleanup_orphan_pdfs(session)
         from service.retention_service import enforce_pdf_retention
