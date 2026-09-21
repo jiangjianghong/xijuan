@@ -525,6 +525,7 @@ const RuleConfig = {
         const container = document.getElementById(containerId);
         if (!container) return;
         const list = container.querySelector('.keyword-tags-list');
+        if (!list) return;
         // Avoid duplicates
         const existing = this.getKeywordTags(containerId);
         if (existing.includes(value)) return;
@@ -1624,6 +1625,12 @@ const RuleConfig = {
         return root ? root.querySelector(`[data-field="${id}"]`) : document.getElementById(id);
     },
 
+    /** 读控件 value；节点缺失时回退，避免组合项 DOM 残缺导致调试采集直接抛错。 */
+    formValue(root, id, fallback = '') {
+        const el = this.formElement(root, id);
+        return el && typeof el.value === 'string' ? el.value : fallback;
+    },
+
     hybridMethods(source) {
         return source === 'table' ? [['table_match', '表格匹配']]
             : source === 'vl' ? [['vl_model', '全量视觉提取'], ['vl_progressive', '逐批扫描'], ['vl_locate', '定位后提取']]
@@ -1708,7 +1715,7 @@ const RuleConfig = {
 
     collectHybridItem(row) {
         const panel = row.querySelector('.hybrid-panel');
-        const original = JSON.parse(panel.dataset.config || '{}');
+        const original = panel ? this._parseHybridPanelConfig(panel) : {};
         const source = row.dataset.source;
         const method = row.dataset.method;
         let config;
@@ -1720,15 +1727,15 @@ const RuleConfig = {
             const oldOptions = { ...(original.vl_config || original) };
             ['max_pages', 'page_source_field', 'batch_prompt_template', 'locate_prompt_template'].forEach(key => delete oldOptions[key]);
             config = original.vl_config ? { vl_config: { ...oldOptions, ...options } } : { ...oldOptions, ...options };
-            config.vl_system_prompt = this.formElement(panel, 'fm-vl-system-prompt').value.trim() || null;
-            config.vl_extract_prompt = this.formElement(panel, 'fm-vl-extract-prompt').value.trim();
+            config.vl_system_prompt = this.formValue(panel, 'fm-vl-system-prompt').trim() || null;
+            config.vl_extract_prompt = this.formValue(panel, 'fm-vl-extract-prompt').trim();
         } else {
             config = {
-                table_name_pattern: this.formElement(panel, 'fm-table-name-pattern').value.trim() || null,
-                table_match_type: this.formElement(panel, 'fm-table-match-type').value,
+                table_name_pattern: this.formValue(panel, 'fm-table-name-pattern').trim() || null,
+                table_match_type: this.formValue(panel, 'fm-table-match-type', 'contains'),
                 table_match_keywords: this.getKeywordTags('fm-table-match-keywords', panel),
                 table_match_max_results: this.parseIntOrNull('fm-table-match-max-results', panel),
-                table_match_prompt: this.formElement(panel, 'fm-table-match-prompt').value.trim() || null,
+                table_match_prompt: this.formValue(panel, 'fm-table-match-prompt').trim() || null,
             };
         }
         // 未展示的兼容键原样保留；已展示且被清空的可选值必须删除，不能恢复旧值。
@@ -1741,6 +1748,15 @@ const RuleConfig = {
         return { id: row.dataset.id, source_type: source, method, config: { ...original, ...config } };
     },
 
+    _parseHybridPanelConfig(panel) {
+        try {
+            return JSON.parse(panel.dataset.config || '{}') || {};
+        } catch (e) {
+            console.warn('组合检索面板 data-config 解析失败，按空配置处理', e);
+            return {};
+        }
+    },
+
     getHybridItemsFromDom() {
         return [...document.querySelectorAll('#fm-hybrid-items > .hybrid-item')].map(row => this.collectHybridItem(row));
     },
@@ -1750,7 +1766,8 @@ const RuleConfig = {
         const activeIndex = Math.max(0, rows.findIndex(row => row.style.display !== 'none'));
         rows.forEach((row, i) => {
             row.dataset.index = i;
-            row.querySelector('.hybrid-delete').disabled = rows.length === 1;
+            const del = row.querySelector('.hybrid-delete');
+            if (del) del.disabled = rows.length === 1;
         });
         const tabsEl = document.getElementById('fm-hybrid-tabs');
         if (tabsEl) {
@@ -2241,17 +2258,26 @@ const RuleConfig = {
     // ─────────────────────────────────────────────────────────
 
     collectFieldFormData() {
-        const sourceType = document.getElementById('fm-source-type').value;
+        const sourceTypeEl = document.getElementById('fm-source-type');
+        const sourceType = sourceTypeEl ? sourceTypeEl.value : 'table';
         const existingField = this.state.editingField;
+        const getVal = (id, fallback = '') => {
+            const el = document.getElementById(id);
+            return el && typeof el.value === 'string' ? el.value : fallback;
+        };
+        const isChecked = (id) => {
+            const el = document.getElementById(id);
+            return !!(el && el.checked);
+        };
         const data = {
-            field_id: document.getElementById('fm-field-id').value.trim(),
-            field_name: document.getElementById('fm-field-name').value.trim(),
+            field_id: getVal('fm-field-id').trim(),
+            field_name: getVal('fm-field-name').trim(),
             source_type: sourceType === 'hybrid' ? 'text' : sourceType,
             enabled: existingField ? existingField.enabled : 1,
             priority: this.parseIntOrDefault('fm-priority', 0),
-            empty_retry_enabled: document.getElementById('fm-empty-retry-enabled').checked,
-            empty_retry_count: Number(document.getElementById('fm-empty-retry-count').value),
-            use_llm: (sourceType === 'vl' || !document.getElementById('fm-skip-llm').checked) ? 1 : 0,
+            empty_retry_enabled: isChecked('fm-empty-retry-enabled'),
+            empty_retry_count: Number(getVal('fm-empty-retry-count', '2')) || 2,
+            use_llm: (sourceType === 'vl' || !isChecked('fm-skip-llm')) ? 1 : 0,
             // 进阶字段标志（depend_fields 由服务端扫描配置算出，前端不传）
             is_advanced: this.state.formIsAdvanced ? 1 : 0,
             table_name_pattern: null,
@@ -2271,12 +2297,12 @@ const RuleConfig = {
         };
 
         if (sourceType === 'table') {
-            data.table_name_pattern = document.getElementById('fm-table-name-pattern').value.trim() || null;
-            data.table_match_type = document.getElementById('fm-table-match-type').value;
+            data.table_name_pattern = getVal('fm-table-name-pattern').trim() || null;
+            data.table_match_type = getVal('fm-table-match-type', 'contains');
             data.table_match_keywords = this.getKeywordTags('fm-table-match-keywords');
             data.table_match_max_results = this.parseIntOrNull('fm-table-match-max-results');
-            data.table_system_prompt = document.getElementById('fm-table-system-prompt').value.trim() || null;
-            data.table_extract_prompt = document.getElementById('fm-table-extract-prompt').value.trim() || null;
+            data.table_system_prompt = getVal('fm-table-system-prompt').trim() || null;
+            data.table_extract_prompt = getVal('fm-table-extract-prompt').trim() || null;
             {
                 const tpl = document.getElementById('fm-table-match-prompt');
                 const val = tpl ? tpl.value.trim() : '';
@@ -2285,16 +2311,16 @@ const RuleConfig = {
                 data.table_match_prompt = (val && val !== def) ? val : null;
             }
         } else if (sourceType === 'vl') {
-            data.vl_method = document.getElementById('fm-vl-method').value;
+            data.vl_method = getVal('fm-vl-method', 'vl_locate');
             data.vl_config = this.collectVLConfig(data.vl_method);
-            data.vl_system_prompt = document.getElementById('fm-vl-system-prompt').value.trim() || null;
-            data.vl_extract_prompt = document.getElementById('fm-vl-extract-prompt').value.trim() || null;
+            data.vl_system_prompt = getVal('fm-vl-system-prompt').trim() || null;
+            data.vl_extract_prompt = getVal('fm-vl-extract-prompt').trim() || null;
         } else {
-            const searchType = sourceType === 'hybrid' ? 'hybrid' : document.getElementById('fm-search-type').value;
+            const searchType = sourceType === 'hybrid' ? 'hybrid' : (getVal('fm-search-type') || 'context');
             data.search_type = searchType;
             data.search_config = this.collectSearchConfig(searchType);
-            data.text_system_prompt = document.getElementById('fm-text-system-prompt').value.trim() || null;
-            data.text_extract_prompt = document.getElementById('fm-text-extract-prompt').value.trim() || null;
+            data.text_system_prompt = getVal('fm-text-system-prompt').trim() || null;
+            data.text_extract_prompt = getVal('fm-text-extract-prompt').trim() || null;
         }
 
         return data;
@@ -2747,10 +2773,18 @@ const RuleConfig = {
     // ─────────────────────────────────────────────────────────
 
     toggleDebugMode() {
-        if (this.state.debugMode) {
-            this.exitDebugMode();
-        } else {
-            this.enterDebugMode();
+        try {
+            if (this.state.debugMode) {
+                this.exitDebugMode();
+            } else {
+                this.enterDebugMode();
+            }
+        } catch (error) {
+            console.error('调试模式切换失败:', error);
+            this.state.debugMode = false;
+            this.state.debugTestRunning = false;
+            if (this.els.debugBtn) this.els.debugBtn.textContent = '调试';
+            Toast.error('进入调试失败: ' + (error && error.message ? error.message : error));
         }
     },
 
@@ -3111,39 +3145,39 @@ const RuleConfig = {
         if (this.state.debugTestRunning) return;
         this.state.debugTestRunning = true;
 
-        // 收集当前表单数据
-        const formData = this.collectFieldFormData();
-        // 记录是否跳过 LLM，供调试事件渲染时避免误导性的「构建提示词/调用 LLM」提示
-        this.state.debugSkipLlm = formData.use_llm === 0;
-
-        // 显示检索配置预览
-        this.showDebugConfigPreview(formData);
-
-        // 重置结果区域
-        this.resetDebugResults();
-
-        // 显示 loading
-        this._showDebugLoading('正在执行测试...');
-
-        // 禁用测试按钮
         const testBtn = document.getElementById('debug-test-btn');
         if (testBtn) {
             testBtn.disabled = true;
             testBtn.textContent = '测试中...';
         }
 
-        const payload = {
-            file_id: fileId,
-            config: formData,
-            params: TypeParams.collectDebugValues(),
-        };
-
         try {
+            // 收集当前表单数据（组合检索 DOM 残缺时曾在此抛错并卡死 running）
+            const formData = this.collectFieldFormData();
+            // 记录是否跳过 LLM，供调试事件渲染时避免误导性的「构建提示词/调用 LLM」提示
+            this.state.debugSkipLlm = formData.use_llm === 0;
+
+            // 显示检索配置预览
+            this.showDebugConfigPreview(formData);
+
+            // 重置结果区域
+            this.resetDebugResults();
+
+            // 显示 loading
+            this._showDebugLoading('正在执行测试...');
+
+            const payload = {
+                file_id: fileId,
+                config: formData,
+                params: TypeParams.collectDebugValues(),
+            };
+
             await API.testFieldStream(payload, (evt) => {
                 this.handleDebugEvent(evt);
             });
         } catch (error) {
-            this.showDebugError(error.message);
+            this._hideDebugLoading();
+            this.showDebugError(error && error.message ? error.message : String(error));
         } finally {
             this.state.debugTestRunning = false;
             this._hideDebugLoading();
@@ -3638,40 +3672,41 @@ const RuleConfig = {
         if (this.state.debugTestRunning) return;
         this.state.debugTestRunning = true;
 
-        // 收集当前表单数据
-        const formData = this.collectRuleFormData();
-
-        // 显示规则配置预览
-        this.showRuleDebugConfigPreview(formData);
-
-        // 重置结果区域
-        this.resetRuleDebugResults();
-
-        // 显示 loading
-        this._showDebugLoading(reExtractToggle?.checked ? '准备重新抽取依赖字段...' : '正在获取依赖字段值...');
-
-        // 锁定本次请求上下文
         const testBtn = document.getElementById('debug-test-btn');
-        if (fileSelect) fileSelect.disabled = true;
+        const fileSelectEl = fileSelect;
+        if (fileSelectEl) fileSelectEl.disabled = true;
         if (reExtractToggle) reExtractToggle.disabled = true;
         if (testBtn) {
             testBtn.disabled = true;
             testBtn.textContent = '测试中...';
         }
 
-        const payload = {
-            file_id: fileId,
-            config: formData,
-            re_extract: !!reExtractToggle?.checked,
-            params: TypeParams.collectDebugValues(),
-        };
-
         try {
+            // 收集当前表单数据（采集失败必须复位 running，否则后续点击无反应）
+            const formData = this.collectRuleFormData();
+
+            // 显示规则配置预览
+            this.showRuleDebugConfigPreview(formData);
+
+            // 重置结果区域
+            this.resetRuleDebugResults();
+
+            // 显示 loading
+            this._showDebugLoading(reExtractToggle?.checked ? '准备重新抽取依赖字段...' : '正在获取依赖字段值...');
+
+            const payload = {
+                file_id: fileId,
+                config: formData,
+                re_extract: !!reExtractToggle?.checked,
+                params: TypeParams.collectDebugValues(),
+            };
+
             await API.testRuleStream(payload, (evt) => {
                 this.handleRuleDebugEvent(evt);
             });
         } catch (error) {
-            this.showDebugError(error.message);
+            this._hideDebugLoading();
+            this.showDebugError(error && error.message ? error.message : String(error));
         } finally {
             this.state.debugTestRunning = false;
             this._hideDebugLoading();
@@ -3916,3 +3951,7 @@ const RuleConfig = {
         if (errorArea) errorArea.innerHTML = '';
     },
 };
+
+// inline onclick 走全局对象查找；脚本顶层 const 不会挂到 window，
+// 必须显式导出，否则个别环境下点「调试/保存」会毫无反应。
+window.RuleConfig = RuleConfig;
