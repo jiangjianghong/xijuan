@@ -898,26 +898,9 @@ async def test_rule_analysis_stream(
                 },
             }
             items_by_id = {item["field_id"]: item for item in extraction_items}
-            invalid_fields = []
-            for field_id in depend_fields:
-                item = items_by_id.get(field_id)
-                if (
-                    not item
-                    or not item["success"]
-                    or not str(item["value"] or "").strip()
-                ):
-                    invalid_fields.append(field_id)
-            if invalid_fields:
-                yield {
-                    "event": "error",
-                    "data": {
-                        "message": "本次抽取的依赖字段失败或为空: "
-                        + ", ".join(invalid_fields)
-                    },
-                }
-                return
+            # 失败字段按空值处理，统一由下方校验判断是否有可用依赖。
             field_values = {
-                field_id: str(item["value"] or "")
+                field_id: str(item["value"] or "") if item["success"] else ""
                 for field_id, item in items_by_id.items()
             }
         else:

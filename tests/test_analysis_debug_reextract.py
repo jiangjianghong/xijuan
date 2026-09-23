@@ -341,6 +341,97 @@ async def test_rule_debug_reextract_stops_when_direct_field_invalid(
     assert all(event["event"] != "resolved_expression" for event in events)
 
 
+@pytest.mark.parametrize("re_extract", [False, True])
+@pytest.mark.parametrize(
+    ("other_value", "other_success", "missing"),
+    [("", True, False), ("   ", True, False), ("", False, False),
+     ("", True, True)],
+)
+async def test_rule_debug_judge_runs_with_one_nonempty_dependency(
+    monkeypatch, re_extract, other_value, other_success, missing,
+):
+    """重新抽取与读取已有结果均允许部分依赖为空、失败或缺失。"""
+    items = [dict(_temporary_item(value="本次有效内容"), field_id="a")]
+    if not missing:
+        items.append(dict(
+            _temporary_item(value=other_value, success=other_success), field_id="b"
+        ))
+    plan = SimpleNamespace(
+        ordered_fields=(SimpleNamespace(field_id="a"), SimpleNamespace(field_id="b")),
+        direct_field_ids=("a", "b"),
+    )
+
+    async def fake_build(*_args, **_kwargs):
+        return plan
+
+    async def fake_iter(_plan):
+        for item in items:
+            yield item
+
+    prompts = []
+
+    async def fake_chat(prompt, **_kwargs):
+        prompts.append(prompt)
+        return '{"reason": "根据有效字段判断", "result": "true"}'
+
+    monkeypatch.setattr(analysis_service, "build_temporary_extraction_plan", fake_build)
+    monkeypatch.setattr(analysis_service, "iter_temporary_extraction_results", fake_iter)
+    monkeypatch.setattr(analysis_service, "chat_completion", fake_chat)
+    session = _QueuedSession([_ScalarResult(rows=[
+        SimpleNamespace(field_id=item["field_id"], extracted_value=item["value"])
+        for item in items
+    ])])
+
+    events = [event async for event in analysis_service.test_rule_analysis_stream(
+        "f1", "judge",
+        "<field_result>a</field_result>；<field_result>b</field_result>",
+        ["a", "b"], "", session, re_extract=re_extract,
+    )]
+
+    assert not [event for event in events if event["event"] == "error"]
+    assert len(prompts) == 1
+    assert "本次有效内容" in prompts[0]
+    assert next(event for event in events if event["event"] == "result")["data"]["result_value"] == "true"
+    assert events[-1]["event"] == "done"
+    if re_extract:
+        assert session._results, "重新抽取不应读取旧结果兜底"
+
+
+async def test_rule_debug_reextract_skips_judge_when_all_direct_values_empty(monkeypatch):
+    """非直接依赖有值也不能绕过直接依赖全部为空的校验。"""
+    items = [
+        dict(_temporary_item(value=""), field_id="a"),
+        dict(_temporary_item(value=" \t"), field_id="b"),
+        dict(_temporary_item(value="前置字段内容"), field_id="base", is_direct_dependency=False),
+    ]
+
+    async def fake_build(*_args, **_kwargs):
+        return SimpleNamespace(ordered_fields=items, direct_field_ids=("a", "b"))
+
+    async def fake_iter(_plan):
+        for item in items:
+            yield item
+
+    calls = []
+
+    async def fake_chat(*_args, **_kwargs):
+        calls.append(True)
+        return '{"result": "true"}'
+
+    monkeypatch.setattr(analysis_service, "build_temporary_extraction_plan", fake_build)
+    monkeypatch.setattr(analysis_service, "iter_temporary_extraction_results", fake_iter)
+    monkeypatch.setattr(analysis_service, "chat_completion", fake_chat)
+    events = [event async for event in analysis_service.test_rule_analysis_stream(
+        "f1", "judge", "<field_result>a</field_result>", ["a", "b"], "",
+        _QueuedSession([]), re_extract=True,
+    )]
+
+    error = next(event for event in events if event["event"] == "error")
+    assert "所有依赖字段均为空" in error["data"]["message"]
+    assert not calls
+    assert all(event["event"] != "result" for event in events)
+
+
 def _debug_session():
     """调试路由用的 session：先查文件行（取 type_id），再查该类型的入参清单。
 
