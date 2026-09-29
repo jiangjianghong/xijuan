@@ -236,13 +236,14 @@ def replace_search_result_placeholders(
             return results_by_label[label]
         return no_result_hint.format(label)
 
-    return re.sub(pattern, replacer, prompt_template)
+    # 进阶字段引用展开后，标签可能是含换行的抽取值。
+    return re.sub(pattern, replacer, prompt_template, flags=re.DOTALL)
 
 
 def validate_prompt_has_placeholder(prompt: str) -> bool:
     """校验 prompt 中是否包含至少一个有效占位符。"""
     pattern = r"<search_result>.+?</search_result>"
-    return bool(re.search(pattern, prompt))
+    return bool(re.search(pattern, prompt, flags=re.DOTALL))
 
 
 # source_refs 中非 ref 列表的保留键（元数据），遍历命中 / 判定成败时都要跳过
