@@ -98,7 +98,14 @@ async def chat_completion(
                 status_code = e.response.status_code if e.response else None
                 # 4xx（除 429）通常是参数/权限/模型错误，直接抛出不重试
                 if status_code is not None and 400 <= status_code < 500 and status_code != 429:
-                    raise
+                    detail = ""
+                    try:
+                        detail = (e.response.text or "")[:500]
+                    except Exception:
+                        pass
+                    raise RuntimeError(
+                        f"LLM 调用失败: HTTP {status_code} {e.request.url}\n{detail}"
+                    ) from e
 
                 if attempt + 1 == retry_count:
                     raise
