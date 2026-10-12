@@ -681,7 +681,8 @@
                 </section>
                 <section class="runtime-help-group">
                     <h3>管线</h3>
-                    <article class="runtime-help-item"><h4>文件管线</h4><code>concurrency.global_pipeline</code><p>统计完整文件管线任务。默认配置值 4 目前尚未接入调度，只显示“未接入”，不产生控制效果。</p></article>
+                    <article class="runtime-help-item"><h4>文件管线</h4><code>concurrency.global_pipeline</code><p>统计完整文件管线任务。默认上限 4，上传与重试从开始到完成持续持有令牌，超限文件排队等待。</p></article>
+                    <article class="runtime-help-item"><h4>MinerU 解析</h4><code>mineru.queue_width</code><p>限制当前 worker 同时请求 MinerU 的解析文件数，默认上限 1。管线宽度为 10、队列宽度为 2 时，最多 2 个文件同时请求 MinerU；响应后释放解析令牌，下游阶段继续推进。设置页保存后即时调整，缩容不会中断在途请求。</p></article>
                 </section>
             </div>
         </section>

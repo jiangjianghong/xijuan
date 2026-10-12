@@ -54,7 +54,7 @@ test('orderedPools uses canonical group order regardless of API order', () => {
     const ids = [
         'independent_analysis', 'global_vl', 'global_analysis',
         'global_llm', 'global_pipeline', 'global_extraction',
-        'global_embedding', 'global_table_validation',
+        'global_embedding', 'global_table_validation', 'mineru_parse',
     ];
     const snapshot = RuntimeMonitor.normalizeSnapshot({
         pools: ids.map(id => ({ id, scope: 'global', limit: 4, active: 0, queued: 0 })),
@@ -63,6 +63,6 @@ test('orderedPools uses canonical group order regardless of API order', () => {
     assert.deepEqual(RuntimeMonitor.orderedPools(snapshot).map(pool => pool.id), [
         'global_llm', 'global_embedding', 'global_vl',
         'global_table_validation', 'global_extraction', 'global_analysis',
-        'independent_analysis', 'global_pipeline',
+        'independent_analysis', 'mineru_parse', 'global_pipeline',
     ]);
 });

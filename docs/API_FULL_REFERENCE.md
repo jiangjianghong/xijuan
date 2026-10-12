@@ -3911,7 +3911,7 @@ calc 更短：`input_values → resolved_expression → result → done`。事�
 |---|---|---|---|
 | `base_url` | 字符串 | `"http://localhost:8888"` | MinerU 服务地址 |
 | `backend` | 字符串 | `"vllm-async-engine"` | MinerU 解析后端引擎 |
-| `queue_width` | 整数 | `1` | 解析队列宽度（并发度） |
+| `queue_width` | 整数 | `1` | 当前进程同时请求 MinerU 的解析并发上限，独立于管线总闸，设置页保存后即时生效 |
 | `parse_timeout` | 整数 | `300` | 单文件解析轮询超时（秒）。示例: `1200` |
 | `max_file_size` | 整数 | `104857600` | 上传 PDF 大小上限（字节），超限直接拒收。示例: `1048576000`（约 1000MB） |
 
@@ -6430,7 +6430,7 @@ parse_service.save_file_content() ← 写入 file_content 表（md + middle_json
 mineru:
   base_url: "http://36.151.147.207:7078"   # MinerU 服务地址
   backend: "vllm-async-engine"             # 解析后端，随表单透传给 MinerU
-  queue_width: 1                           # 预留字段，当前代码未引用
+  queue_width: 1                           # 当前进程的 MinerU 解析并发上限（独立于 global_pipeline）
   parse_timeout: 1200                      # HTTP 超时（秒），整个解析请求的等待上限
   max_file_size: 104857600                 # 上传文件大小上限（字节），100MB，在上传路由校验
 ```
@@ -6498,7 +6498,7 @@ files = {"files": (file_name, file_content, "application/pdf")}
 `parse_file(file_path, file_content_bytes, file_id, session)`：
 
 1. 先把 `files.progress` 置为 `"parsing"`，写 `start_parsing_time`，commit。
-2. 读取 mineru 配置 + 文件类型的 `max_parse_pages`，调用 `parse_pdf`。
+2. 读取 mineru 配置 + 文件类型的 `max_parse_pages`，释放只读事务，取得 `mineru_parse` 令牌后调用 `parse_pdf`，请求结束即释放令牌。
 3. 成功：写 `end_parsing_time`，返回 `(content, middle_json_str)`。**注意此处不改 progress**——进入下一阶段（tableing）时由管线置位。
 4. 失败：捕获任何异常，置 `progress="parsing_failed"`、写格式化后的错误信息到 `files.error`，commit 后 **re-raise**（由管线层处理回调/SSE error 事件）。
 

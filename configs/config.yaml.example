@@ -13,7 +13,7 @@ server:
 mineru:
   base_url: "http://your-mineru-server:7078"  # MinerU 服务地址
   backend: "vllm-async-engine"                # MinerU 使用的解析后端
-  queue_width: 1                               # MinerU 服务端并行队列宽度
+  queue_width: 1                               # 当前进程的 MinerU 解析并发上限（独立于 global_pipeline，建议不超过总闸）
   parse_timeout: 1200                           # 单文件解析超时（秒）
   max_file_size: 104857600                      # 单文件大小上限（字节），默认 100MB
 
@@ -127,7 +127,7 @@ concurrency:
   task_file_analysis: 4                                 # 单文件逻辑分析规则的并发上限
   task_embedding: 4                                     # 单文件向量化批次的并发上限（须小于 global_embedding）
   independent_analysis: 4                               # 所有独立分析请求合计的 item 并发上限
-  global_pipeline: 4                                    # 文件管线全局并发预留值；当前不改变入口调度
+  global_pipeline: 4                                    # 同时处理的文件管线数，上传与重试超限时排队
 
 # 网络搜索配置（博查 Bocha AI，逻辑分析 judge 规则使用）
 web_search:

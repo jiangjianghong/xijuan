@@ -164,3 +164,22 @@ concurrency:
         logger.remove(sink_id)
 
     assert any("task_embedding" in message for message in messages)
+
+
+def test_queue_width_over_pipeline_warns(tmp_path):
+    """容量较大仍可加载，但提示实际并发受管线总闸约束。"""
+    from loguru import logger
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "mineru:\n  queue_width: 10\nconcurrency:\n  global_pipeline: 4\n",
+        encoding="utf-8",
+    )
+    messages = []
+    sink_id = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        cfg = load_config(path)
+    finally:
+        logger.remove(sink_id)
+    assert cfg.mineru.queue_width == 10
+    assert any("mineru.queue_width" in msg and "global_pipeline" in msg for msg in messages)

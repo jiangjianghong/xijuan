@@ -19,6 +19,7 @@ async def test_runtime_concurrency_snapshot_shape(client):
         "global_analysis",
         "independent_analysis",
         "global_pipeline",
+        "mineru_parse",
     }
 
     global_llm = next(pool for pool in data["pools"] if pool["id"] == "global_llm")

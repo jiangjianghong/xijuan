@@ -14,6 +14,7 @@ from service.mineru_client import parse_pdf
 from service.stage_status import mark_file_failed
 from service.type_config_service import get_file_type_runtime_config
 from utils.config import get_config
+from utils.concurrency import get_limiter
 
 
 async def parse_file(
@@ -44,14 +45,17 @@ async def parse_file(
                 type_cfg.type_id,
                 type_cfg.max_parse_pages,
             )
-        result = await parse_pdf(
-            file_name=file_path,
-            file_content=file_content_bytes,
-            file_id=file_id,
-            base_url=cfg.base_url,
-            timeout=cfg.parse_timeout,
-            max_parse_pages=type_cfg.max_parse_pages,
-        )
+        # 解析请求独立限流；排队与请求期间不占用数据库连接，响应后即释放令牌。
+        limiter = get_limiter("mineru_parse", get_config().mineru.queue_width)
+        async with limiter.context({"file_id": file_id, "stage": "parsing"}):
+            result = await parse_pdf(
+                file_name=file_path,
+                file_content=file_content_bytes,
+                file_id=file_id,
+                base_url=cfg.base_url,
+                timeout=cfg.parse_timeout,
+                max_parse_pages=type_cfg.max_parse_pages,
+            )
         content = result["md_content"]
         middle_json_str = result["middle_json"]
 

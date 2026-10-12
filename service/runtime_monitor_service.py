@@ -119,18 +119,46 @@ def _pipeline_record(raw: dict, limits: dict[str, int]) -> dict:
     }
 
 
+def _mineru_record(raw: dict, limit: int) -> dict:
+    """容量来自 mineru.queue_width，独立展示解析请求的实时水位。"""
+    item = dict(raw.get("mineru_parse") or {})
+    active = int(item.get("active", 0))
+    queued = int(item.get("queued", 0))
+    return {
+        "id": "mineru_parse",
+        "label": "MinerU 解析",
+        "group": "管线调度",
+        "scope": "global",
+        "limit": limit,
+        "active": active,
+        "queued": queued,
+        "completed": int(item.get("completed", 0)),
+        "gate_wait_p95_ms": float(item.get("gate_wait_p95_ms", 0)),
+        "total_wait_p95_ms": float(item.get("total_wait_p95_ms", 0)),
+        "status": _status(active, limit, queued),
+        "connected": True,
+        "constraints": ["global_pipeline"],
+        "tasks": list(item.get("holders", [])),
+        "note": "同时打向 MinerU 的解析请求上限；响应后释放令牌，下游阶段继续推进。",
+    }
+
+
 def build_snapshot() -> dict[str, Any]:
     """构建当前 worker 的并发快照（不含 history）。"""
-    limits = get_config().concurrency.model_dump(mode="python")
+    cfg = get_config()
+    limits = cfg.concurrency.model_dump(mode="python")
     for pool_id, _, _, _ in _GLOBAL_POOLS:
         get_limiter(pool_id, int(limits[pool_id]))
     # 闸门池不在 _GLOBAL_POOLS（它单独成组展示），但同样要预注册，
     # 否则首个文件进管线之前快照里读不到这个池
     get_limiter("global_pipeline", int(limits["global_pipeline"]))
+    get_limiter("mineru_parse", cfg.mineru.queue_width)
 
     raw = runtime_snapshot()
     pools_raw = raw.get("pools", {})
     global_records = _global_pool_records(pools_raw, limits)
+    # 与前端容量矩阵口径一致，纳入解析池；文件管线仍单独汇总展示。
+    global_records.append(_mineru_record(pools_raw, cfg.mineru.queue_width))
     summary = {
         "active": sum(item["active"] for item in global_records),
         "capacity": sum(item["limit"] for item in global_records),

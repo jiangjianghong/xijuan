@@ -35,12 +35,16 @@ parse_service.save_file_content() ← 写入 file_content 表（md + middle_json
 mineru:
   base_url: "http://36.151.147.207:7078"   # MinerU 服务地址
   backend: "vllm-async-engine"             # 解析后端，随表单透传给 MinerU
-  queue_width: 1                           # 预留字段，当前代码未引用
+  queue_width: 1                           # 当前进程的 MinerU 解析并发上限（独立于 global_pipeline）
   parse_timeout: 1200                      # HTTP 超时（秒），整个解析请求的等待上限
   max_file_size: 104857600                 # 上传文件大小上限（字节），100MB，在上传路由校验
 ```
 
 Pydantic 模型默认值（`utils/config.py:25`）：`base_url="http://localhost:8888"`、`backend="vllm-async-engine"`、`parse_timeout=300`、`max_file_size=104857600`。
+
+`mineru.queue_width` 通过 `mineru_parse` 全局 limiter 限制同时发往 MinerU 的解析请求，所有上传模式及解析重试共用该池。令牌只覆盖 `parse_pdf` 请求，响应或异常时释放；超限请求在当前进程内等待，不占用数据库连接。等待期间文件状态为 `parsing`，运行台「MinerU 解析」池展示运行数、排队数与等待时间。它与管线总闸共同约束解析并发：例如 `global_pipeline=10`、`queue_width=2` 时，最多 2 个文件同时请求 MinerU。
+
+设置页修改队列宽度并保存后即时生效；扩容唤醒等待请求，缩容保留在途请求，后续请求等占用降到新上限以下再进入。限制作用于当前 worker，不修改 MinerU 服务端配置。
 
 另有**按文档类型覆盖**的 `max_parse_pages`（最大解析页数）：`parse_service.parse_file` 通过 `get_file_type_runtime_config(file_id)` 读取文件所属类型的运行时配置，若设置了 `max_parse_pages` 则只解析前 N 页。
 
@@ -103,7 +107,7 @@ files = {"files": (file_name, file_content, "application/pdf")}
 `parse_file(file_path, file_content_bytes, file_id, session)`：
 
 1. 先把 `files.progress` 置为 `"parsing"`，写 `start_parsing_time`，commit。
-2. 读取 mineru 配置 + 文件类型的 `max_parse_pages`，调用 `parse_pdf`。
+2. 读取 mineru 配置 + 文件类型的 `max_parse_pages`，释放只读事务，取得 `mineru_parse` 令牌后调用 `parse_pdf`，请求结束即释放令牌。
 3. 成功：写 `end_parsing_time`，返回 `(content, middle_json_str)`。**注意此处不改 progress**——进入下一阶段（tableing）时由管线置位。
 4. 失败：捕获任何异常，置 `progress="parsing_failed"`、写格式化后的错误信息到 `files.error`，commit 后 **re-raise**（由管线层处理回调/SSE error 事件）。
 

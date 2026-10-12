@@ -18,7 +18,7 @@ def test_runtime_help_dialog_is_static_accessible_and_read_only():
     assert 'aria-modal="true"' in html
     assert 'id="runtime-help-close"' in html
     assert "默认配置示例 · 当前 worker · 只读监控" in html
-    assert "所有独立分析请求合计最多同时处理 4 个 item" in html
+    assert "所有独立分析请求合计最多同时执行 4 条规则" in html
     assert "两类来源合计最多同时执行 8 条规则" in html
     assert "openHelp()" in javascript
     assert "closeHelp(" in javascript

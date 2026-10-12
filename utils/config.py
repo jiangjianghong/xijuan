@@ -365,6 +365,18 @@ class AppConfig(BaseSettings):
             data["concurrency"] = limits
         return data
 
+    @model_validator(mode="after")
+    def _warn_queue_width_over_pipeline(self) -> "AppConfig":
+        """解析并发上限大于管线容量时提示实际并发受总闸约束。"""
+        if self.mineru.queue_width > self.concurrency.global_pipeline:
+            logger.warning(
+                "并发配置 mineru.queue_width={} > concurrency.global_pipeline={}，"
+                "MinerU 解析并发将先受管线总闸限制，建议 queue_width 不超过 global_pipeline。",
+                self.mineru.queue_width,
+                self.concurrency.global_pipeline,
+            )
+        return self
+
 
 def _load_yaml(path: Path) -> dict:
     with open(path, "r", encoding="utf-8") as f:

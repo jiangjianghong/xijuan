@@ -392,6 +392,84 @@ def test_unknown_top_level_nodes_are_preserved_and_never_exposed(config_path: Pa
     assert "plugin-top-secret" in written
 
 
+@pytest.mark.asyncio
+async def test_update_resizes_live_mineru_limiter(config_path: Path):
+    """扩容唤醒排队请求，缩容保留在途令牌并阻止新请求超限。"""
+    import asyncio
+    from utils.concurrency import clear_limiters, get_limiter
+
+    clear_limiters()
+    service = SettingsService(config_path)
+    limiter = get_limiter("mineru_parse", 1)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    def resize(width):
+        service.update_config(
+            base_version=service.read_public_config()["version"],
+            changes={"mineru": {"queue_width": width}}, secrets={},
+        )
+
+    async def waiter():
+        async with limiter.context({"file_id": "waiter"}):
+            entered.set()
+            await release.wait()
+
+    task = None
+    try:
+        async with limiter.context({"file_id": "holder"}):
+            task = asyncio.create_task(waiter())
+            await asyncio.sleep(0)
+            assert limiter.snapshot()["queued"] == 1
+            resize(2)
+            await asyncio.wait_for(entered.wait(), 1)
+            assert get_limiter("mineru_parse", 2) is limiter
+            assert limiter.snapshot()["active"] == 2
+            resize(1)
+            assert limiter.limit == 1
+            assert limiter.snapshot()["active"] == 2
+            release.set()
+            await asyncio.wait_for(task, 1)
+            entered.clear()
+            task = asyncio.create_task(waiter())
+            await asyncio.sleep(0)
+            assert not entered.is_set()
+            assert limiter.snapshot()["queued"] == 1
+        await asyncio.wait_for(task, 1)
+        assert entered.is_set()
+        assert limiter.snapshot()["active"] == 0
+    finally:
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        clear_limiters()
+
+
+@pytest.mark.asyncio
+async def test_failed_save_keeps_mineru_limiter_capacity(config_path: Path, monkeypatch):
+    from service.settings_service import ConfigWriteError
+    from utils.concurrency import clear_limiters, get_limiter
+
+    clear_limiters()
+    service = SettingsService(config_path)
+    limiter = get_limiter("mineru_parse", 1)
+    original = get_config()
+
+    def fail_write(document):
+        raise ConfigWriteError("写入失败")
+
+    monkeypatch.setattr(service, "_write_atomic", fail_write)
+    try:
+        with pytest.raises(ConfigWriteError):
+            service.update_config(
+                base_version=service.read_public_config()["version"],
+                changes={"mineru": {"queue_width": 3}}, secrets={},
+            )
+        assert limiter.limit == 1
+        assert get_config() is original
+    finally:
+        clear_limiters()
+
+
 def test_invalid_existing_config_error_does_not_echo_input_value(config_path: Path):
     marker = "sensitive-invalid-value"
     config_path.write_text(

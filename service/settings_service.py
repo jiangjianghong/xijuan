@@ -311,9 +311,10 @@ class SettingsService:
             _remove_retired_analysis_concurrency(document)
             validated = _validate_document(document)
 
-            # 新信号量在落盘前构造；后续仅做不会失败的引用切换。
+            # 配置校验通过并成功落盘后再同步容量，避免写入失败改变运行中的闸门。
             limits = validated.concurrency.model_dump(mode="python")
-            replace_limiters(limits)
+            limits["mineru_parse"] = validated.mineru.queue_width
             self._write_atomic(document)
+            replace_limiters(limits)
             replace_config(validated)
             return self._public_payload(document)

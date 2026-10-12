@@ -32,9 +32,11 @@
 |---|---|---|---|
 | `base_url` | 字符串 | `"http://localhost:8888"` | MinerU 服务地址 |
 | `backend` | 字符串 | `"vllm-async-engine"` | MinerU 解析后端引擎 |
-| `queue_width` | 整数 | `1` | 解析队列宽度（并发度） |
+| `queue_width` | 整数 | `1` | 当前进程同时请求 MinerU 的解析并发上限，独立于管线总闸，设置页保存后即时生效 |
 | `parse_timeout` | 整数 | `300` | 单文件解析轮询超时（秒）。示例: `1200` |
 | `max_file_size` | 整数 | `104857600` | 上传 PDF 大小上限（字节），超限直接拒收。示例: `1048576000`（约 1000MB） |
+
+`queue_width=2`、`concurrency.global_pipeline=10` 时，最多 2 个文件同时请求 MinerU，其余在解析池中等待；请求结束即释放解析令牌，下游阶段继续推进。运行台「MinerU 解析」池可查看运行、排队和等待时间。扩容会唤醒等待任务，缩容不会中断在途请求，待占用低于新上限后才放行后续请求。该值仅限制当前 worker 发出的请求，不修改 MinerU 服务端配置；建议不超过 `global_pipeline`。
 
 ## chunking — 递归文本分块
 

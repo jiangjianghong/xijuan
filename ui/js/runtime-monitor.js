@@ -21,11 +21,12 @@
         global_analysis: { short: 'ANALYZE', note: '由文件管线分析和独立分析接口共享。' },
         independent_analysis: { short: 'INDEPENDENT', note: '展示当前 worker 内所有独立分析请求共享的 item 并发。' },
         global_pipeline: { short: 'PIPELINE', note: '同时处理的文件数上限。上传与重试的六个入口全程持有令牌，超限文件落 queued 排队。' },
+        mineru_parse: { short: 'MinerU', note: '由 mineru.queue_width 限制同时打向 MinerU 的解析请求，响应后释放令牌。' },
     };
     const POOL_ORDER = [
         'global_llm', 'global_embedding', 'global_vl',
         'global_table_validation', 'global_extraction', 'global_analysis',
-        'independent_analysis', 'global_pipeline',
+        'independent_analysis', 'mineru_parse', 'global_pipeline',
     ];
     const reduceMotion = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
