@@ -29,7 +29,7 @@ async def chat_completion(
     messages: Optional[List[Dict[str, str]]] = None,
     max_retries: Optional[int] = None,
     extra_body: Optional[Dict[str, Any]] = None,
-    config_group: Literal["extraction", "analysis"] = "extraction",
+    config_group: Literal["extraction", "analysis", "table_name_validation"] = "extraction",
 ) -> str:
     """调用 OpenAI 兼容 chat/completions 接口。
 
@@ -48,9 +48,17 @@ async def chat_completion(
         LLM 返回的文本内容。
     """
     app_cfg = get_config()
-    if config_group not in ("extraction", "analysis"):
+    if config_group not in ("extraction", "analysis", "table_name_validation"):
         raise ValueError("未知的模型配置分组")
-    cfg = app_cfg.analysis if config_group == "analysis" else app_cfg.extraction
+    cfg = (app_cfg.analysis if config_group == "analysis" else
+           app_cfg.table_name_validation if config_group == "table_name_validation" else
+           app_cfg.extraction)
+    fallback_cfg = app_cfg.extraction
+    temperature = getattr(cfg, "temperature", None)
+    top_p = getattr(cfg, "top_p", None)
+    if config_group == "table_name_validation":
+        temperature = fallback_cfg.temperature if temperature is None else temperature
+        top_p = fallback_cfg.top_p if top_p is None else top_p
     base_url = base_url or cfg.base_url
     model = model or cfg.model
     if config_group == "analysis" and (not base_url.strip() or not model.strip()):
@@ -67,9 +75,12 @@ async def chat_completion(
         headers["Authorization"] = f"Bearer {api_key}"
 
     # 合并配置的 extra_body 与调用方传入的 extra_body（参数优先）
-    merged_extra: Dict[str, Any] = dict(cfg.extra_body)
+    merged_extra: Dict[str, Any] = dict(cfg.extra_body or {})
     if extra_body:
         merged_extra.update(extra_body)
+    # 标准采样参数统一放在请求顶层，避免旧 extra_body 配置产生冲突。
+    merged_extra.pop("temperature", None)
+    merged_extra.pop("top_p", None)
 
     payload: Dict[str, Any] = {
         "model": model,
@@ -77,11 +88,17 @@ async def chat_completion(
     }
     if merged_extra:
         payload["extra_body"] = merged_extra
+    payload["temperature"] = temperature
+    if top_p is not None:
+        payload["top_p"] = top_p
     if is_empty_retry_active():
         # 开启重试时明确首次基准，追加尝试固定加 0.1，最高为 1。
-        payload["temperature"] = retry_temperature(merged_extra.pop("temperature", 1.0))
-    if cfg.enable_thinking is not None:
-        payload["enable_thinking"] = cfg.enable_thinking
+        payload["temperature"] = retry_temperature(temperature)
+    enable_thinking = getattr(cfg, "enable_thinking", None)
+    if enable_thinking is None and config_group == "table_name_validation":
+        enable_thinking = fallback_cfg.enable_thinking
+    if enable_thinking is not None:
+        payload["enable_thinking"] = enable_thinking
 
     url = f"{base_url.rstrip('/')}/chat/completions"
     limiter = get_limiter("global_llm", app_cfg.concurrency.global_llm)

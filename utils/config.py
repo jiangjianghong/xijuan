@@ -112,6 +112,8 @@ class ExtractionConfig(BaseModel):
     timeout: int = Field(60, ge=1)
     retry_count: int = Field(3, ge=1)
     max_context_length: int = Field(4096, ge=1)
+    temperature: float = Field(0.1, ge=0)
+    top_p: float | None = Field(None, ge=0, le=1)
     extra_body: Dict[str, Any] = {}
     enable_thinking: bool | None = None
 
@@ -168,6 +170,8 @@ class TableNameValidationConfig(BaseModel):
     max_context_length: int | None = Field(None, ge=1)
     max_context_lines: int | None = Field(None, ge=1)
     max_concurrency: int | None = Field(None, ge=1)
+    temperature: float | None = Field(None, ge=0)
+    top_p: float | None = Field(None, ge=0, le=1)
     extra_body: Dict[str, Any] | None = None
 
     @model_validator(mode="before")
@@ -220,6 +224,8 @@ class AnalysisConfig(BaseModel):
     model: str = ""
     api_key: str = ""
     retry_count: int = Field(3, ge=1)
+    temperature: float = Field(0.1, ge=0)
+    top_p: float | None = Field(None, ge=0, le=1)
     extra_body: Dict[str, Any] = Field(default_factory=dict)
     enable_thinking: bool | None = None
     calc_precision: int = Field(2, ge=0)

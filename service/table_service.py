@@ -122,6 +122,7 @@ async def _extract_table_name_with_llm(
             timeout=timeout,
             max_retries=retry_count,
             extra_body=extra_body,
+            config_group="table_name_validation",
         )
         data = _extract_json_obj(response)
         llm_name = _clean_text_line(str(data.get("table_name", "")))

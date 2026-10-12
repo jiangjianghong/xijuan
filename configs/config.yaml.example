@@ -66,6 +66,8 @@ extraction:
   timeout: 60                                          # 单次 LLM 请求超时（秒）
   retry_count: 3                                       # 单次请求失败后的最大尝试次数
   max_context_length: 4096                             # 检索文本注入 prompt 的最大字符数
+  temperature: 0.1                                      # 抽取/表格名校验默认温度
+  top_p: null                                           # 可选顶层参数；null=不传
   # 额外请求参数会原样写入 OpenAI 兼容请求的 extra_body 字段
   # 自部署模型（vLLM / Ollama 等）关闭思考链示例：
   # extra_body: {chat_template_kwargs: {enable_thinking: false}}
@@ -82,6 +84,8 @@ table_name_validation:
   timeout: null                                         # 独立请求超时（秒）；为空回退 extraction.timeout
   retry_count: null                                     # 独立重试次数；为空回退 extraction.retry_count
   max_context_length: null                              # 上文字符上限；为空回退 extraction.max_context_length
+  temperature: null                                     # 为空回退 extraction.temperature
+  top_p: null                                           # 为空回退 extraction.top_p
   max_context_lines: 3                                  # 表格名提取时参考的最大上文行数
   extra_body: null                                      # 额外请求参数；为空回退 extraction.extra_body
 
@@ -91,6 +95,8 @@ analysis:
   model: ""                                             # 独立分析模型名称，使用前必填
   api_key: ""                                           # 独立分析密钥，可留空
   retry_count: 3
+  temperature: 0.1                                      # 逻辑分析温度
+  top_p: null                                           # 可选顶层参数；null=不传
   enable_thinking: null
   extra_body: {}
   calc_precision: 2                                     # calc 规则结果保留的小数位数

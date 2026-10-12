@@ -96,6 +96,8 @@
 | `timeout` | 整数 | `60` | 请求超时（秒） |
 | `retry_count` | 整数 | `3` | 失败重试次数；指数退避，4xx（除 429）不重试 |
 | `max_context_length` | 整数 | `4096` | 注入 prompt 的检索文本字符上限，超长从末尾截断 |
+| `temperature` | 数字 | `0.1` | 文本抽取请求的顶层温度 |
+| `top_p` | 数字 / null | `null` | 可选顶层参数；留空时不传 |
 | `extra_body` | 对象 | `{}` | 透传到请求 `extra_body` 的额外参数。示例: `{chat_template_kwargs: {enable_thinking: false}}`（关闭思考） |
 
 ## table_name_validation — 表名校验 LLM（tableing 阶段，独立且可回退）
@@ -110,6 +112,8 @@
 | `timeout` | 整数 / null | `null` | 为空回退 `extraction.timeout` |
 | `retry_count` | 整数 / null | `null` | 为空回退 `extraction.retry_count` |
 | `max_context_length` | 整数 / null | `null` | 表名上文取样的字符上限；为空回退 `extraction.max_context_length` |
+| `temperature` | 数字 / null | `null` | 表格名校验温度；为空回退 `extraction.temperature` |
+| `top_p` | 数字 / null | `null` | 表格名校验 Top P；为空回退 `extraction.top_p` |
 | `max_context_lines` | 整数 / null | `null` | 表格前用于推断表名的上文行数；为空按 `3` |
 | `extra_body` | 对象 / null | `null` | 透传到请求 `extra_body` 的额外参数 |
 
@@ -117,6 +121,8 @@
 
 | 配置项 | 类型 | 默认值 | 含义 |
 |---|---|---|---|
+| `temperature` | 数字 | `0.1` | 逻辑分析请求的顶层温度 |
+| `top_p` | 数字 / null | `null` | 可选顶层参数；留空时不传 |
 | `calc_precision` | 整数 | `2` | `calc` 规则 numexpr 计算结果保留的小数位 |
 | `judge_timeout` | 整数 | `60` | 分析阶段单次 LLM 请求超时（秒）。覆盖 `judge` 与 `custom` 两种规则，正式与调试路径共用；`calc` 走 numexpr 不调模型，不受影响 |
 

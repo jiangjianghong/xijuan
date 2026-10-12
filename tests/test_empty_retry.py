@@ -183,7 +183,7 @@ async def test_parallel_retry_does_not_change_other_field_temperature():
     assert temperatures == [0.7, 0.8]
 
 
-@pytest.mark.parametrize("kind,base,expected", [("text", None, [1.0, 1.0, 1.0]), ("text", 0.7, [0.7, 0.8, 0.8]), ("vl", 0.05, [0.05, 0.15, 0.15])])
+@pytest.mark.parametrize("kind,base,expected", [("text", None, [0.1, 0.2, 0.2]), ("text", 0.7, [0.7, 0.8, 0.8]), ("vl", 0.05, [0.05, 0.15, 0.15])])
 async def test_actual_model_payloads(monkeypatch, kind, base, expected):
     import copy
     import httpx
@@ -191,7 +191,7 @@ async def test_actual_model_payloads(monkeypatch, kind, base, expected):
     from utils.config import AppConfig
     cfg = AppConfig()
     if kind == "text" and base is not None:
-        cfg.extraction.extra_body = {"temperature": base}
+        cfg.extraction.temperature = base
     if kind == "vl":
         cfg.vl_model.temperature = base
     client_module = llm_client if kind == "text" else vl_client
@@ -225,8 +225,8 @@ async def test_actual_model_payloads(monkeypatch, kind, base, expected):
     await extract("doc", field())
     assert [p.get("temperature") for p in payloads] == expected
     assert all("temperature" not in p.get("extra_body", {}) for p in payloads[1:])
-    if kind == "text" and base is not None:
-        assert cfg.extraction.extra_body["temperature"] == base
+    if kind == "text":
+        assert all("temperature" not in p.get("extra_body", {}) for p in payloads)
 
 
 async def test_client_exception_is_not_retried_as_empty(monkeypatch):
