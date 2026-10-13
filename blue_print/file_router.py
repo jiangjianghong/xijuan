@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
 from loguru import logger
 from sqlalchemy import case, delete, func, select, text
@@ -50,6 +50,7 @@ from model.tables import (
     FileTable,
     Project,
 )
+from service.invocation_log_service import new_log_id, track_file_call
 from service.file_context_service import query_file_context
 from service.pipeline_service import run_from_stage, run_from_stage_stream, run_pipeline, run_pipeline_stream
 from service.pipeline_gate import pipeline_slot
@@ -492,6 +493,15 @@ async def batch_delete_files(
 # 辅助函数
 # ─────────────────────────────────────────────────────────────
 
+async def _raw_file_request(request: Request) -> dict:
+    """保留 query/form 的原始字段及重复项，不读取或保存上传文件内容。"""
+    form = await request.form()
+    return {
+        "file": "xxx",
+        "query": list(request.query_params.multi_items()),
+        "form": [(key, value) for key, value in form.multi_items() if isinstance(value, str)],
+    }
+
 
 async def _run_pipeline_background(
     file_id: str,
@@ -500,6 +510,7 @@ async def _run_pipeline_background(
     callback_url: str | None = None,
     type_id: str = "default",
     callback_mode: str | None = None,
+    log_id: str | None = None,
 ):
     """后台运行 pipeline。"""
     from model.database import get_session_factory
@@ -509,14 +520,11 @@ async def _run_pipeline_background(
             session_factory = get_session_factory()
             async with session_factory() as session:
                 try:
-                    await run_pipeline(
-                        file_id,
-                        file_name,
-                        file_content_bytes,
-                        session,
-                        callback_url=callback_url,
-                        callback_mode=callback_mode,
-                    )
+                    async with track_file_call(log_id, file_id, session):
+                        await run_pipeline(
+                            file_id, file_name, file_content_bytes, session,
+                            callback_url=callback_url, callback_mode=callback_mode,
+                        )
                 except Exception as e:
                     logger.exception("Pipeline 后台执行失败: type={}, repr={}", type(e).__name__, repr(e))
 
@@ -526,6 +534,7 @@ async def _stream_pipeline_generator(
     file_name: str,
     file_content_bytes: bytes,
     type_id: str = "default",
+    log_id: str | None = None,
 ):
     """流式 pipeline 生成器，内部管理数据库会话。"""
     from model.database import get_session_factory
@@ -534,8 +543,9 @@ async def _stream_pipeline_generator(
         async with pipeline_slot(file_id, file_name=file_name):
             session_factory = get_session_factory()
             async with session_factory() as session:
-                async for event in run_pipeline_stream(file_id, file_name, file_content_bytes, session):
-                    yield event
+                async with track_file_call(log_id, file_id, session):
+                    async for event in run_pipeline_stream(file_id, file_name, file_content_bytes, session):
+                        yield event
 
 
 @router.post("/parse")
@@ -554,6 +564,7 @@ async def parse_file(
         ),
     ),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     """提交文件解析（支持 sync/async/stream）。
 
@@ -632,7 +643,20 @@ async def parse_file(
         progress="queued",
     )
     db.add(new_file)
+    log_id = new_log_id()
+    raw_input = await _raw_file_request(request) if request else {
+        "file": "xxx", "mode": mode, "type_id": type_id, "callback_url": callback_url,
+        "callback_mode": callback_mode.value, "params": params,
+    }
     await db.commit()
+    from service.invocation_log_service import create_log
+    await create_log(
+        log_id=log_id, kind="file_parse", status="queued", file_id=file_id,
+        file_name=file_name, file_size=len(file_content_bytes), type_id=type_id,
+        request_input=raw_input, parameters={"mode": mode, "type_id": type_id,
+            "callback_url": callback_url, "callback_mode": callback_mode.value,
+            "input_params": input_params}, created_at=datetime.now(),
+    )
 
     background_tasks.add_task(_enforce_retention_background)
 
@@ -645,6 +669,7 @@ async def parse_file(
             callback_url,
             type_id,
             callback_mode.value,
+            log_id,
         )
         return ResponseWrapper(
             message="文件已提交处理（异步）",
@@ -652,7 +677,7 @@ async def parse_file(
         )
     elif mode == "stream":
         return StreamingResponse(
-            _stream_pipeline_generator(file_id, file_name, file_content_bytes, type_id),
+            _stream_pipeline_generator(file_id, file_name, file_content_bytes, type_id, log_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -663,14 +688,11 @@ async def parse_file(
     else:
         with log_context(file_id=file_id, type_id=type_id):
             async with pipeline_slot(file_id, file_name=file_name):
-                await run_pipeline(
-                    file_id,
-                    file_name,
-                    file_content_bytes,
-                    db,
-                    callback_url=callback_url,
-                    callback_mode=callback_mode.value,
-                )
+                async with track_file_call(log_id, file_id, db):
+                    await run_pipeline(
+                        file_id, file_name, file_content_bytes, db,
+                        callback_url=callback_url, callback_mode=callback_mode.value,
+                    )
         return ResponseWrapper(
             message="文件处理完成",
             data={"file_id": file_id},
@@ -797,6 +819,7 @@ async def retry_file(
     callback_url: Optional[str] = None,
     callback_mode: CallbackModeEnum = CallbackModeEnum.full,
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     """从指定阶段重试（支持 async/stream/sync）。
 
@@ -828,6 +851,18 @@ async def retry_file(
             detail=f"无效的阶段: {stage}，有效值: {valid_stages}",
         )
 
+    log_id = new_log_id()
+    from service.invocation_log_service import create_log
+    await create_log(
+        log_id=log_id, kind="file_retry", status="queued", file_id=file_id,
+        file_name=file_name, file_size=file_record.file_size, type_id=type_id,
+        request_input={"path": {"file_id": file_id, "stage": stage},
+            "query": list(request.query_params.multi_items()) if request else []},
+        parameters={"mode": mode, "type_id": type_id, "stage": stage,
+            "callback_url": callback_url, "callback_mode": callback_mode.value,
+            "input_params": file_record.input_params or {}}, created_at=datetime.now(),
+    )
+
     if mode == "stream":
         async def _retry_stream_generator():
             from model.database import get_session_factory
@@ -836,8 +871,9 @@ async def retry_file(
                 async with pipeline_slot(file_id, file_name=file_name):
                     session_factory = get_session_factory()
                     async with session_factory() as session:
-                        async for event in run_from_stage_stream(file_id, stage, session):
-                            yield event
+                        async with track_file_call(log_id, file_id, session):
+                            async for event in run_from_stage_stream(file_id, stage, session):
+                                yield event
 
         return StreamingResponse(
             _retry_stream_generator(),
@@ -851,13 +887,11 @@ async def retry_file(
     elif mode == "sync":
         with log_context(file_id=file_id, type_id=type_id):
             async with pipeline_slot(file_id, file_name=file_name):
-                await run_from_stage(
-                    file_id,
-                    stage,
-                    db,
-                    callback_url=callback_url,
-                    callback_mode=callback_mode.value,
-                )
+                async with track_file_call(log_id, file_id, db):
+                    await run_from_stage(
+                        file_id, stage, db, callback_url=callback_url,
+                        callback_mode=callback_mode.value,
+                    )
         return ResponseWrapper(message=f"已从 {stage} 阶段重试完成")
     else:
         # async 模式（默认）
@@ -869,13 +903,11 @@ async def retry_file(
                     session_factory = get_session_factory()
                     async with session_factory() as session:
                         try:
-                            await run_from_stage(
-                                file_id,
-                                stage,
-                                session,
-                                callback_url=callback_url,
-                                callback_mode=callback_mode.value,
-                            )
+                            async with track_file_call(log_id, file_id, session):
+                                await run_from_stage(
+                                    file_id, stage, session, callback_url=callback_url,
+                                    callback_mode=callback_mode.value,
+                                )
                         except Exception as e:
                             logger.exception(
                                 "从 {} 阶段重试失败: type={}, repr={}",
@@ -896,10 +928,11 @@ async def retry_extracting(
     callback_url: Optional[str] = None,
     callback_mode: CallbackModeEnum = CallbackModeEnum.full,
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     """重试字段提取（支持 async/stream/sync）。"""
     return await retry_file(
-        file_id, "extracting", background_tasks, mode, callback_url, callback_mode, db
+        file_id, "extracting", background_tasks, mode, callback_url, callback_mode, db, request
     )
 
 
@@ -911,10 +944,11 @@ async def retry_analyzing(
     callback_url: Optional[str] = None,
     callback_mode: CallbackModeEnum = CallbackModeEnum.full,
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ):
     """重试逻辑分析（支持 async/stream/sync）。"""
     return await retry_file(
-        file_id, "analyzing", background_tasks, mode, callback_url, callback_mode, db
+        file_id, "analyzing", background_tasks, mode, callback_url, callback_mode, db, request
     )
 
 

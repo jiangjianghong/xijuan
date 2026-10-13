@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Dict
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlalchemy import select
@@ -30,6 +31,7 @@ from model.tables import AnalysisRule
 from service.analysis_service import test_rule_analysis_stream
 from service.analysis_run_service import run_analysis_batch
 from service import analysis_task_store
+from service.invocation_log_service import create_log, track_analysis_call, complete_analysis_log
 from utils.callback import (
     build_analysis_task_payload,
     is_simple_callback,
@@ -290,12 +292,14 @@ async def _run_analysis_task_background(
     source: str = "values",
     persist: bool = False,
     callback_mode: str = "full",
+    log_id: str | None = None,
 ) -> None:
     """运行 async 模式任务并推送开始、逐规则和任务终态。
 
     callback_mode=simple 时跳过全部 rule_done，只推开始信号与 task_done。
     """
 
+    log_id = log_id or task_id
     try:
         await analysis_task_store.set_task_state(task_id, "analyzing")
         if callback_url:
@@ -311,12 +315,11 @@ async def _run_analysis_task_background(
                     data=data,
                 )
 
-        result = await _run_analysis_with_session(
-            items,
-            on_rule_done=on_rule_done,
-            source=source,
-            persist=persist,
-        )
+        async with track_analysis_call(log_id):
+            result = await _run_analysis_with_session(
+                items, on_rule_done=on_rule_done, source=source, persist=persist,
+            )
+            await complete_analysis_log(log_id, result)
         await analysis_task_store.set_task_state(task_id, "complete", result=result)
         if callback_url:
             await notify_analysis_task_callback(
@@ -353,9 +356,11 @@ async def _analysis_run_stream(
     items: list[dict[str, Any]],
     source: str = "values",
     persist: bool = False,
+    log_id: str | None = None,
 ):
     """把批量执行的异步回调桥接为 SSE 事件。"""
 
+    log_id = log_id or task_id
     queue: asyncio.Queue = asyncio.Queue()
     sentinel = object()
 
@@ -376,12 +381,11 @@ async def _analysis_run_stream(
                     ),
                 ))
 
-            result = await _run_analysis_with_session(
-                items,
-                on_rule_done=on_rule_done,
-                source=source,
-                persist=persist,
-            )
+            async with track_analysis_call(log_id):
+                result = await _run_analysis_with_session(
+                    items, on_rule_done=on_rule_done, source=source, persist=persist,
+                )
+                await complete_analysis_log(log_id, result)
             await queue.put((
                 "task_done",
                 build_analysis_task_payload(
@@ -436,17 +440,28 @@ async def get_independent_analysis_task(task_id: str):
 async def run_independent_analysis(
     req: AnalysisRunRequest,
     background_tasks: BackgroundTasks,
+    request: Request = None,
 ):
     """使用外部字段值批量执行逻辑规则，支持 sync/async/stream。"""
 
     items = _dump_run_items(req)
     source = req.source.value
     persist = req.persist
+    task_id = _new_analysis_task_id()
+    raw_body = (await request.body()).decode("utf-8") if request else None
+    log_id = await create_log(
+        log_id=task_id, kind="independent_analysis", status="queued", task_id=task_id,
+        type_id=items[0].get("type_id") if len({item.get("type_id") for item in items}) == 1 else None,
+        request_input={"body": json.loads(raw_body) if raw_body else req.model_dump(mode="json"),
+                       "raw_body": raw_body,
+                       "query": list(request.query_params.multi_items()) if request else []},
+        parameters=req.model_dump(mode="json"), created_at=datetime.now(),
+    )
     if req.mode == AnalysisRunModeEnum.sync:
         try:
-            data = await _run_analysis_with_session(
-                items, source=source, persist=persist,
-            )
+            async with track_analysis_call(log_id):
+                data = await _run_analysis_with_session(items, source=source, persist=persist)
+                await complete_analysis_log(log_id, data)
         except Exception as exc:
             logger.exception(
                 "独立逻辑分析失败: type={}, error={}",
@@ -459,7 +474,6 @@ async def run_independent_analysis(
             data=AnalysisRunResponse.model_validate(data).model_dump(),
         )
 
-    task_id = _new_analysis_task_id()
     if req.mode == AnalysisRunModeEnum.async_:
         await analysis_task_store.create_task(task_id)
         background_tasks.add_task(

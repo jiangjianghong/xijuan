@@ -406,6 +406,8 @@ async def run_init() -> None:
         await recover_abnormal_status(session)
         from service.analysis_task_store import recover_interrupted_tasks
         await recover_interrupted_tasks(session)
+        from service.invocation_log_service import recover_interrupted_logs
+        await recover_interrupted_logs(session)
         await cleanup_garbage_data(session)
         await cleanup_orphan_pdfs(session)
         from service.retention_service import enforce_pdf_retention

@@ -1331,6 +1331,11 @@ const App = {
             }
         }
 
+        if (typeof InvocationLogs !== 'undefined') {
+            if (page === 'invocations') InvocationLogs.activate();
+            else InvocationLogs.deactivate();
+        }
+
         if (typeof RuntimeMonitor !== 'undefined') {
             if (page === 'runtime-monitor') {
                 RuntimeMonitor.activate();

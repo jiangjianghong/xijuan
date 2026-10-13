@@ -16,11 +16,12 @@ def analysis_task_db(monkeypatch):
     """任务存储使用真实 SQLite 表；只适配同步驱动，不模拟 SQL 行为。"""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
-    from model.tables import AnalysisTask
-    from service import analysis_task_store
+    from model.tables import AnalysisTask, InvocationLog
+    from service import analysis_task_store, invocation_log_service
 
     engine = create_engine("sqlite://")
     AnalysisTask.__table__.create(engine)
+    InvocationLog.__table__.create(engine)
 
     class SessionAdapter:
         async def __aenter__(self):
@@ -43,6 +44,7 @@ def analysis_task_db(monkeypatch):
             self.session.commit()
 
     monkeypatch.setattr(analysis_task_store, "get_session_factory", lambda: SessionAdapter)
+    monkeypatch.setattr(invocation_log_service, "get_session_factory", lambda: SessionAdapter)
     yield SessionAdapter
     engine.dispose()
 

@@ -37,6 +37,32 @@ class AnalysisTask(Base):
     )
 
 
+class InvocationLog(Base):
+    """业务调用日志；与运行时文本日志分离，便于审计和结果回看。"""
+
+    __tablename__ = "invocation_log"
+
+    log_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    file_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    task_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    type_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    file_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    request_input: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    parameters: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    stage_times: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
 # ── 0. doc_type 表 ──────────────────────────────────────────
 
 class DocType(Base):
