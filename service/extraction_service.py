@@ -31,6 +31,7 @@ from service.file_vector_index import FileVectorIndex, select_parent_hits
 from service.match_prompts import build_section_match_prompt, build_table_match_prompt
 from service.vl_service._common import append_reason_first_output_instruction
 from service.search_ranking import compute_keyword_weights, rank_and_truncate
+from service.search_merge import merge_keyword_spans
 from utils import vl_client
 from utils.callback import is_simple_callback, notify_callback
 from utils.config import get_config
@@ -1441,7 +1442,7 @@ async def search_context(
     config: Dict[str, Any],
     chunks: Sequence["ChunkRow"] = (),
 ) -> List[Dict[str, Any]]:
-    """上下文检索：根据关键词在全文中定位并提取上下文。
+    """上下文检索：定位关键词，补齐表格并合并重叠窗口后排序截断。
 
     Args:
         content: 文档全文。
@@ -1483,6 +1484,8 @@ async def search_context(
                 "end_pos": end,
             })
 
+    # 先合并原文窗口，避免密集命中重复注入并占满条数限额；后续仍逐页标注。
+    results = merge_keyword_spans(content, results, text_key="context", sort_order=sort_order)
     # 分组排序 + 每关键词限额 + 轮转合并到总量上限
     return rank_and_truncate(
         results,
@@ -1689,6 +1692,8 @@ async def search_rule(
                 "end_pos": end,
             })
 
+    # 规则扩展同样可能重叠，补齐表格后按原文坐标合并，再应用条数限额。
+    results = merge_keyword_spans(content, results, text_key="extracted_text", sort_order=sort_order)
     # 分组排序 + 每关键词限额 + 轮转合并到总量上限
     return rank_and_truncate(
         results,

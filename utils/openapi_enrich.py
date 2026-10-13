@@ -1054,6 +1054,9 @@ PARAM_OVERRIDES: Dict[tuple, Dict[str, Any]] = {
 
 _SEARCH_CONFIG_DOC = (
     "检索配置（自由 JSON，键随 `search_type` 不同）：\n"
+    "`context` / `rule` 先补齐窗口边界内的 HTML 表格，再合并同一关键词的重叠或相接窗口；"
+    "`max_results` 按每个关键词合并后的片段计数，`max_total_results` 控制总条数（缺省等于 `max_results`，0=不限）。"
+    "合并后长度可超过单次窗口长度，注入模型时仍逐页标注，不同关键词分别保留占位符标签。\n"
     "- `context`：`keywords`[必] / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)\n"
     "- `section`：`section_pattern` / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)"
     "；`section_match_type=llm` 时另可配 `section_match_prompt`（自定义匹配提示词，空=用系统默认，须含 `{section_list}`）\n"

@@ -427,6 +427,8 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 
 根据 `search_type` 不同，结构有所差异：
 
+`context` / `rule` 会先补齐窗口边界内的 HTML 表格，再按原文坐标合并同一关键词的重叠或相接窗口。`max_results` 按每个关键词合并后的片段计数，`max_total_results` 控制总条数（缺省等于 `max_results`，显式 `0` 表示不限）；合并后的长度可能超过单个窗口长度。不同关键词的占位符标签分别保留，注入模型时继续按页标注。
+
 **context 模式**
 ```json
 {
