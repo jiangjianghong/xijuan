@@ -1,0 +1,1 @@
+{"extraction": [{"field_id": "amount", "extracted_value": "100", "reason": "已抽取"}], "analysis": [{"rule_id": "check", "result_value": "true"}]}
