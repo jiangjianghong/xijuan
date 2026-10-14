@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import math
 from typing import Any, Dict, List, Sequence
+from service.text_matching import TextProjection
 
 
 def compute_keyword_weights(
     keywords: Sequence[str],
     chunks: Sequence[Any],
+    *, ignore_whitespace: bool = False, case_sensitive: bool = False,
 ) -> Dict[str, float]:
     """按 IDF 计算每个关键词的权重，罕见词权重高。
 
@@ -43,17 +45,16 @@ def compute_keyword_weights(
     if total == 0:
         return {kw: 1.0 for kw in valid}
 
-    lowered_chunks = [(getattr(c, "chunk_content", "") or "").lower() for c in chunks]
+    projections = [TextProjection.build(getattr(c, "chunk_content", "") or "", ignore_whitespace) for c in chunks]
 
     weights: Dict[str, float] = {}
     for kw in valid:
-        needle = kw.lower()
-        df = sum(1 for text in lowered_chunks if needle in text)
+        df = sum(1 for text in projections if next(text.spans(kw, case_sensitive), None) is not None)
         weights[kw] = math.log(1 + total / (1 + df))
     return weights
 
 
-def score_segment(segment: str, weights: Dict[str, float]) -> float:
+def score_segment(segment: str, weights: Dict[str, float], *, ignore_whitespace: bool = False, case_sensitive: bool = False) -> float:
     """片段的相关度：其中出现的**不同**关键词的权重之和。
 
     Args:
@@ -65,8 +66,8 @@ def score_segment(segment: str, weights: Dict[str, float]) -> float:
     """
     if not segment:
         return 0.0
-    lowered = segment.lower()
-    return sum(w for kw, w in weights.items() if kw.lower() in lowered)
+    projection = TextProjection.build(segment, ignore_whitespace)
+    return sum(w for kw, w in weights.items() if next(projection.spans(kw, case_sensitive), None) is not None)
 
 
 def rank_and_truncate(
@@ -78,6 +79,8 @@ def rank_and_truncate(
     max_results: int,
     max_total: int = 0,
     sort_order: str = "relevance",
+    ignore_whitespace: bool = False,
+    case_sensitive: bool = False,
 ) -> List[Dict[str, Any]]:
     """按关键词分组排序 → 每组限额 → 轮转合并到总量上限。
 
@@ -107,7 +110,7 @@ def rank_and_truncate(
     # asc/desc 不需要分数，省掉一次全量扫描
     if sort_order == "relevance":
         for r in results:
-            r["_score"] = score_segment(r.get(segment_key, "") or "", weights)
+            r["_score"] = score_segment(r.get(segment_key, "") or "", weights, ignore_whitespace=ignore_whitespace, case_sensitive=case_sensitive)
 
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for r in results:

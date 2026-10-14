@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import AnyHttpUrl, BaseModel, Field, field_validator, model_validator
+from service.text_matching import compile_keyword
 
 
 # ── 通用响应包装 ────────────────────────────────────────────
@@ -353,6 +354,14 @@ class ExtractionFieldCreate(BaseModel):
     is_advanced: int = 0
     depend_fields: Optional[List[str]] = None
 
+    @field_validator("table_match_keywords")
+    @classmethod
+    def validate_table_match_keywords(cls, v, info):
+        if cls.__name__ == "ExtractionFieldCreate" and info.data.get("table_match_type") != TableMatchTypeEnum.llm:
+            for keyword in v or []:
+                compile_keyword(keyword)
+        return v
+
     @field_validator("text_extract_prompt")
     @classmethod
     def validate_text_prompt(cls, v, info):
@@ -399,6 +408,17 @@ class ExtractionFieldCreate(BaseModel):
             return v
         if not isinstance(v, dict):
             return v
+        if cls.__name__ == "ExtractionFieldCreate" and v.get("ignore_whitespace") is not None and not isinstance(v.get("ignore_whitespace"), bool):
+            raise ValueError("ignore_whitespace 必须是布尔值")
+        if cls.__name__ == "ExtractionFieldCreate":
+            section_type = v.get("section_match_type") or v.get("match_type")
+            if section_type != "llm":
+                regex_values = list(v.get("keywords") or [])
+                if v.get("section_pattern"):
+                    regex_values.append(v["section_pattern"])
+                for value in regex_values:
+                    if isinstance(value, str) and value:
+                        compile_keyword(value)
         tpl = v.get("section_match_prompt")
         if not isinstance(tpl, str) or not tpl.strip():
             return v
@@ -447,6 +467,24 @@ class ExtractionFieldCreate(BaseModel):
                 raise ValueError("hybrid item.method 必填")
             if not isinstance(item.get("config", {}), dict):
                 raise ValueError("hybrid item.config 必须是对象")
+            item_config = item.get("config") or {}
+            item_method = item.get("method")
+            should_validate_regex = not (
+                item.get("source_type") == "table"
+                and (item_config.get("table_match_type") or item_config.get("match_type")) == "llm"
+            ) and not (
+                item.get("source_type") == "text"
+                and item_method == "section"
+                and (item_config.get("section_match_type") or item_config.get("match_type")) == "llm"
+            )
+            if should_validate_regex:
+                for keyword in item_config.get("keywords") or item_config.get("table_match_keywords") or []:
+                    if isinstance(keyword, str) and keyword:
+                        compile_keyword(keyword)
+            if should_validate_regex and item_config.get("section_pattern"):
+                compile_keyword(item_config["section_pattern"])
+            if item_config.get("ignore_whitespace") is not None and not isinstance(item_config["ignore_whitespace"], bool):
+                raise ValueError("hybrid item.config.ignore_whitespace 必须是布尔值")
             if source_type == "text" and method not in allowed_text:
                 raise ValueError(f"text 混合通道不支持检索方法: {method}")
             if source_type == "table" and method not in {"table_match", "table"}:

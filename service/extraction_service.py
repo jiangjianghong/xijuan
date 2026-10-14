@@ -32,6 +32,7 @@ from service.match_prompts import build_section_match_prompt, build_table_match_
 from service.vl_service._common import append_reason_first_output_instruction
 from service.search_ranking import compute_keyword_weights, rank_and_truncate
 from service.search_merge import merge_keyword_spans
+from service.text_matching import TextProjection, matches_text
 from utils import vl_client
 from utils.callback import is_simple_callback, notify_callback
 from utils.config import get_config
@@ -1470,11 +1471,11 @@ async def search_context(
     sort_order = config.get("sort_order", "relevance")
 
     results = []
+    projection = TextProjection.build(content, config.get("ignore_whitespace", False))
     for keyword in keywords:
-        for match in re.finditer(re.escape(keyword), content):
-            pos = match.start()
+        for pos, match_end in projection.spans(keyword):
             start = max(0, pos - context_before)
-            end = min(len(content), pos + len(keyword) + context_after)
+            end = min(len(content), match_end + context_after)
             context_text = content[start:end]
             results.append({
                 "keyword": keyword,
@@ -1489,8 +1490,9 @@ async def search_context(
     # 分组排序 + 每关键词限额 + 轮转合并到总量上限
     return rank_and_truncate(
         results,
-        weights=compute_keyword_weights(keywords, chunks),
+        weights=compute_keyword_weights(keywords, chunks, ignore_whitespace=config.get("ignore_whitespace", False)),
         segment_key="context",
+        ignore_whitespace=config.get("ignore_whitespace", False),
         order_key="position",
         max_results=max_results,
         max_total=max_total,
@@ -1564,13 +1566,8 @@ async def search_section(
             section = body_aliases.get(section.index, section)
             matched = False
 
-            if match_type == "exact":
-                matched = section.title == section_pattern
-            elif match_type == "fuzzy":
-                ratio = SequenceMatcher(None, section.title, section_pattern).ratio()
-                matched = ratio >= threshold
-            elif match_type == "contains":
-                matched = section_pattern.lower() in section.title.lower()
+            matched = matches_text(section.title, section_pattern, match_type=match_type,
+                                   ignore_whitespace=config.get("ignore_whitespace", False), threshold=threshold)
 
             if matched:
                 section_content = content[section.start_pos:section.tree_end_pos]
@@ -1643,10 +1640,9 @@ async def search_rule(
 
     results = []
 
+    projection = TextProjection.build(content, config.get("ignore_whitespace", False))
     for keyword in keywords:
-        for match in re.finditer(re.escape(keyword), content):
-            pos = match.start()
-            end_pos = match.end()
+        for pos, end_pos in projection.spans(keyword):
 
             # 向【前文】方向扩展（direction=backward）：从关键词开头 pos 向左，
             # 止于最近停用词之后；无停用词时扩展到 max_length。
@@ -1697,8 +1693,9 @@ async def search_rule(
     # 分组排序 + 每关键词限额 + 轮转合并到总量上限
     return rank_and_truncate(
         results,
-        weights=compute_keyword_weights(keywords, chunks),
+        weights=compute_keyword_weights(keywords, chunks, ignore_whitespace=config.get("ignore_whitespace", False)),
         segment_key="extracted_text",
+        ignore_whitespace=config.get("ignore_whitespace", False),
         order_key="position",
         max_results=max_results,
         max_total=max_total,
@@ -1762,11 +1759,10 @@ async def search_chunk_db(
         # 把 .lower() 留在内层会让开销随关键词数线性翻倍（实测 4000 分块 ×
         # 10 关键词：138ms → 77ms）。这是纯 CPU 操作且跑在事件循环里，会
         # 阻塞并发协程。
-        lowered_chunks = [(c.chunk_content or "").lower() for c in ordered_chunks]
+        projections = [TextProjection.build(c.chunk_content or "", config.get("ignore_whitespace", False)) for c in ordered_chunks]
         for kw in keywords:
-            needle = kw.lower()
-            for chunk, lowered in zip(ordered_chunks, lowered_chunks):
-                if needle in lowered:
+            for chunk, projection in zip(ordered_chunks, projections):
+                if next(projection.spans(kw, False), None) is not None:
                     results.append(_row(chunk, kw))
     else:
         # 无关键词时全部纳入候选，由截断层取前 max_results 个
@@ -1774,8 +1770,9 @@ async def search_chunk_db(
 
     return rank_and_truncate(
         results,
-        weights=compute_keyword_weights(keywords, chunks),
+        weights=compute_keyword_weights(keywords, chunks, ignore_whitespace=config.get("ignore_whitespace", False)),
         segment_key="chunk_content",
+        ignore_whitespace=config.get("ignore_whitespace", False),
         order_key="chunk_index",
         max_results=max_results,
         max_total=max_total,
@@ -2247,13 +2244,8 @@ async def extract_table_field(
         for table in tables:
             matched = False
             for kw in keywords:
-                if match_type == "exact":
-                    matched = table.table_name == kw
-                elif match_type == "fuzzy":
-                    ratio = SequenceMatcher(None, table.table_name, kw).ratio()
-                    matched = ratio >= 0.8
-                elif match_type == "contains":
-                    matched = kw.lower() in table.table_name.lower()
+                matched = matches_text(table.table_name, kw, match_type=match_type,
+                                       ignore_whitespace=(field.search_config or {}).get("ignore_whitespace", False))
                 if matched:
                     break
             if matched:
@@ -2801,6 +2793,7 @@ def _hybrid_item_field(field: ExtractionField, item: Dict[str, Any]) -> Extracti
         run.table_match_keywords = cfg.get("table_match_keywords", cfg.get("keywords", []))
         run.table_match_max_results = cfg.get("table_match_max_results", cfg.get("max_results"))
         run.table_match_prompt = cfg.get("table_match_prompt", getattr(field, "table_match_prompt", None))
+        run.search_config = cfg
     elif source == "vl":
         run.vl_method = item.get("method")
         run.vl_config = cfg.get("vl_config", cfg)
@@ -3832,13 +3825,8 @@ async def test_field_extraction_stream(
                     for table in tables:
                         matched = False
                         for kw in keywords:
-                            if match_type == "exact":
-                                matched = table.table_name == kw
-                            elif match_type == "fuzzy":
-                                ratio = SequenceMatcher(None, table.table_name, kw).ratio()
-                                matched = ratio >= 0.8
-                            elif match_type == "contains":
-                                matched = kw.lower() in table.table_name.lower()
+                            matched = matches_text(table.table_name, kw, match_type=match_type,
+                                                   ignore_whitespace=(field.search_config or {}).get("ignore_whitespace", False))
                             if matched:
                                 break
 

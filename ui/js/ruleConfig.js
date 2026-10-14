@@ -989,6 +989,7 @@ const RuleConfig = {
                         </select>
                     </div>
                 </div>
+                ${this.buildTextMatchOptions(field.search_config || { ignore_whitespace: field.ignore_whitespace }, 'fm-table-ignore-whitespace')}
                 ${this.buildKeywordTagsHtml('fm-table-match-keywords', '表格匹配词', field.table_match_keywords || [], '输入匹配词后按回车或点击添加，支持多个匹配词检索表格', this.state.formIsAdvanced)}
                 <div class="form-group">
                     <label class="form-label">最大返回数量</label>
@@ -1366,7 +1367,17 @@ const RuleConfig = {
             }
         }
 
+        if (['context', 'section', 'rule', 'chunk_db'].includes(searchType)) {
+            html = this.buildTextMatchOptions(config) + html;
+        }
         return html;
+    },
+
+    buildTextMatchOptions(config, id = 'fm-sc-ignore-whitespace') {
+        return `<div class="form-group">
+            <label class="form-label"><input type="checkbox" id="${id}" ${config.ignore_whitespace === true ? 'checked' : ''}> 容忍空白</label>
+            <div class="form-hint">忽略原文行内空格、制表符和全角空格，保留换行；默认关闭。关键词直接使用 Python 正则，例如 <code>年限为\\s*[0-9]+年</code>；匹配字面括号、点号时需转义。精确匹配要求整个标题命中；模糊匹配中的正则按包含匹配执行；LLM 匹配仍按语义执行。</div>
+        </div>`;
     },
 
     // 三种 VL 方法共用的页码配置块：手填范围 + 最大页数 +（进阶）页码来源字段
@@ -1731,6 +1742,7 @@ const RuleConfig = {
             config.vl_extract_prompt = this.formValue(panel, 'fm-vl-extract-prompt').trim();
         } else {
             config = {
+                ignore_whitespace: !!this.formElement(panel, 'fm-table-ignore-whitespace')?.checked,
                 table_name_pattern: this.formValue(panel, 'fm-table-name-pattern').trim() || null,
                 table_match_type: this.formValue(panel, 'fm-table-match-type', 'contains'),
                 table_match_keywords: this.getKeywordTags('fm-table-match-keywords', panel),
@@ -2297,6 +2309,7 @@ const RuleConfig = {
         };
 
         if (sourceType === 'table') {
+            data.search_config = { ignore_whitespace: isChecked('fm-table-ignore-whitespace') };
             data.table_name_pattern = getVal('fm-table-name-pattern').trim() || null;
             data.table_match_type = getVal('fm-table-match-type', 'contains');
             data.table_match_keywords = this.getKeywordTags('fm-table-match-keywords');
@@ -2328,6 +2341,9 @@ const RuleConfig = {
 
     collectSearchConfig(searchType, root = null) {
         const config = {};
+        if (['context', 'section', 'rule', 'chunk_db'].includes(searchType)) {
+            config.ignore_whitespace = !!this.formElement(root, 'fm-sc-ignore-whitespace')?.checked;
+        }
 
         const getVal = (id) => {
             const el = this.formElement(root, id);
