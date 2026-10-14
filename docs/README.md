@@ -101,6 +101,9 @@
 | POST | `/file/{file_id}/retry/{stage}` | 文件处理 | 从指定阶段重试 | [api/file.md](api/file.md) |
 | GET | `/file/{file_id}/status` | 文件处理 | 查询文件处理进度 | [api/file.md](api/file.md) |
 | GET | `/file/{file_id}/tables` | 文件处理 | 文件表格列表 | [api/file.md](api/file.md) |
+| GET | `/invocations` | 其他 | List Invocations | [api/overview.md](api/overview.md) |
+| GET | `/invocations/{log_id}` | 其他 | Get Invocation | [api/overview.md](api/overview.md) |
+| GET | `/invocations/{log_id}/result.json` | 其他 | Download Invocation Result | [api/overview.md](api/overview.md) |
 | GET | `/log/files` | 日志 | 应用日志文件列表 | [api/logs.md](api/logs.md) |
 | GET | `/log/recent` | 日志 | 读取最近日志 | [api/logs.md](api/logs.md) |
 | GET | `/log/stream` | 日志 | 实时日志流（SSE） | [api/logs.md](api/logs.md) |

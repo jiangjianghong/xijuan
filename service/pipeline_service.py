@@ -30,6 +30,7 @@ from utils.callback import notify_callback
 from utils.errors import format_exception as _format_exception
 from utils.milvus_client import MilvusClient
 from utils.page_mapping import build_page_mapping
+from utils.model_config import with_model_config
 
 EMBEDDING_DISABLED_MESSAGE = "配置已关闭此文件的向量化，直接进行下一步"
 
@@ -52,6 +53,7 @@ def _stage_time_reset_values(stage: str) -> Dict[str, None]:
     }
 
 
+@with_model_config
 async def run_pipeline_stream(
     file_id: str, file_path: str, file_content_bytes: bytes, session: AsyncSession
 ) -> AsyncGenerator[str, None]:
@@ -398,6 +400,7 @@ async def run_pipeline_stream(
         })
 
 
+@with_model_config
 async def run_pipeline(
     file_id: str,
     file_path: str,
@@ -630,6 +633,7 @@ async def run_pipeline(
         raise
 
 
+@with_model_config
 async def run_from_stage_stream(
     file_id: str, stage: str, session: AsyncSession
 ) -> AsyncGenerator[str, None]:
@@ -1083,6 +1087,7 @@ async def run_from_stage_stream(
         })
 
 
+@with_model_config
 async def run_from_stage(
     file_id: str, stage: str, session: AsyncSession, callback_url: str | None = None,
     callback_mode: str | None = None,

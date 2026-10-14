@@ -116,6 +116,7 @@ logger.add(
     sys.stderr,
     level="INFO",
     format=_console_format,
+    diagnose=False,
 )
 
 # 文件输出（按天轮转，保留 30 天）
@@ -127,4 +128,5 @@ logger.add(
     compression="zip",
     encoding="utf-8",
     format=_file_format,
+    diagnose=False,
 )

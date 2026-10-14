@@ -13,6 +13,7 @@ from loguru import logger
 
 from model.database import get_session_factory
 from model.tables import File, InvocationLog
+from utils.model_config import redact_model_config
 
 
 def new_log_id() -> str:
@@ -20,6 +21,7 @@ def new_log_id() -> str:
 
 
 async def create_log(**values: Any) -> str:
+    values = redact_model_config(values)
     log_id = values.pop("log_id", None) or new_log_id()
     try:
         async with get_session_factory()() as session:

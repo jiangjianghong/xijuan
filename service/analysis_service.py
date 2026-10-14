@@ -22,6 +22,7 @@ from service.extraction_service import (
 )
 from utils.callback import is_simple_callback, notify_callback
 from utils.config import get_config
+from utils.model_config import resolve_model_config, with_model_config
 from utils.concurrency import (
     get_limiter,
     register_task_limiter,
@@ -406,7 +407,7 @@ async def execute_judge(resolved_expression: str, *, system_prompt: str = "") ->
 
     try:
         sys_prompt = (system_prompt or "").strip()
-        timeout = get_config().analysis.judge_timeout
+        timeout = resolve_model_config(get_config()).analysis.judge_timeout
         if sys_prompt:
             messages = [
                 {"role": "system", "content": sys_prompt},
@@ -596,7 +597,7 @@ async def execute_custom(
     """
     prompt = _build_custom_prompt(resolved_expression, is_formatted, output_schema)
     sys_prompt = (system_prompt or "").strip()
-    timeout = get_config().analysis.judge_timeout
+    timeout = resolve_model_config(get_config()).analysis.judge_timeout
     if sys_prompt:
         messages = [
             {"role": "system", "content": sys_prompt},
@@ -763,7 +764,7 @@ async def run_analysis(
         rules,
         field_values,
         field_source_refs,
-        get_config().analysis.calc_precision,
+        resolve_model_config(get_config()).analysis.calc_precision,
         input_params,
     )
     total = len(computed)
@@ -818,7 +819,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
         rules,
         field_values,
         field_source_refs,
-        get_config().analysis.calc_precision,
+        resolve_model_config(get_config()).analysis.calc_precision,
         input_params,
     )
     total = len(computed)
@@ -837,6 +838,7 @@ async def run_analysis_stream(file_id: str, session: AsyncSession):
     logger.info("流式逻辑分析完成: {}", file_id)
 
 
+@with_model_config
 async def test_rule_analysis_stream(
     file_id: str,
     rule_type: str,
@@ -871,7 +873,7 @@ async def test_rule_analysis_stream(
     """
     logger.info("开始规则调试流: file_id={}, rule_type={}", file_id, rule_type)
 
-    cfg = get_config().analysis
+    cfg = resolve_model_config(get_config()).analysis
 
     # ── Step 1: 获取依赖字段值 ──
     try:

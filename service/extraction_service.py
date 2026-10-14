@@ -36,6 +36,7 @@ from service.text_matching import TextProjection, matches_text
 from utils import vl_client
 from utils.callback import is_simple_callback, notify_callback
 from utils.config import get_config
+from utils.model_config import resolve_model_config, with_model_config
 from utils.concurrency import (
     get_limiter,
     register_task_limiter,
@@ -2507,7 +2508,7 @@ async def extract_vl_field(
     cfg = field.vl_config or {}
     fixed_vl_prompt = append_reason_first_output_instruction(field.vl_extract_prompt or "")
     method = field.vl_method
-    default_max_pixels = get_config().vl_model.default_max_pixels
+    default_max_pixels = resolve_model_config(get_config()).vl_model.default_max_pixels
 
     try:
         page_range = cfg.get("page_range", "all")
@@ -2594,7 +2595,7 @@ async def _vl_field_extraction_stream(
 
     cfg = field.vl_config or {}
     fixed_vl_prompt = append_reason_first_output_instruction(field.vl_extract_prompt or "")
-    default_max_pixels = get_config().vl_model.default_max_pixels
+    default_max_pixels = resolve_model_config(get_config()).vl_model.default_max_pixels
     method = field.vl_method
     page_range = cfg.get("page_range", "all")
     max_pages = cfg.get("max_pages")
@@ -3707,6 +3708,7 @@ async def run_extraction_stream(file_id: str, session: AsyncSession):
 
 
 @retry_empty_stream
+@with_model_config
 async def test_field_extraction_stream(
     file_id: str, field: ExtractionField, session: AsyncSession
 ) -> AsyncIterator[Dict[str, Any]]:

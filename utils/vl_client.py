@@ -15,6 +15,7 @@ from PIL import Image
 
 from utils.concurrency import get_limiter
 from utils.config import get_config
+from utils.model_config import resolve_model_config
 from utils.empty_retry import is_empty_retry_active, retry_temperature
 
 
@@ -47,7 +48,7 @@ async def vl_chat(
     重试：max_retries 次指数退避（1s/2s/4s）；4xx（除 429）直接抛 VLAPIError。
     全局并发限：concurrency.global_vl。
     """
-    cfg = get_config().vl_model
+    cfg = resolve_model_config(get_config()).vl_model
 
     # 合并配置的 extra_body 与调用方传入的 extra_body（参数优先）
     body_extras: dict[str, Any] = dict(cfg.extra_body)

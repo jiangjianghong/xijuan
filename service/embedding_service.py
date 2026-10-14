@@ -12,6 +12,7 @@ from loguru import logger
 
 from service.subchunk_service import split_into_subchunks
 from utils.config import get_config
+from utils.model_config import resolve_model_config
 from utils.llm_client import get_embeddings
 from utils.milvus_client import get_milvus_client
 
@@ -39,7 +40,7 @@ async def embed_chunks(chunks: List[Dict]) -> Tuple[List[Dict], List[List[float]
 
     texts = [sub["chunk_content"] for sub in sub_chunks]
 
-    cfg = get_config().embedding
+    cfg = resolve_model_config(get_config()).embedding
     embeddings = await get_embeddings(
         texts=texts,
         base_url=cfg.base_url,

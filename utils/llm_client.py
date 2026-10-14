@@ -16,6 +16,7 @@ from utils.concurrency import (
     work_item,
 )
 from utils.config import get_config
+from utils.model_config import model_override, resolve_model_config
 from utils.empty_retry import is_empty_retry_active, retry_temperature
 
 
@@ -47,7 +48,7 @@ async def chat_completion(
     Returns:
         LLM 返回的文本内容。
     """
-    app_cfg = get_config()
+    app_cfg = resolve_model_config(get_config())
     if config_group not in ("extraction", "analysis", "table_name_validation"):
         raise ValueError("未知的模型配置分组")
     cfg = (app_cfg.analysis if config_group == "analysis" else
@@ -59,13 +60,17 @@ async def chat_completion(
     if config_group == "table_name_validation":
         temperature = fallback_cfg.temperature if temperature is None else temperature
         top_p = fallback_cfg.top_p if top_p is None else top_p
-    base_url = base_url or cfg.base_url
-    model = model or cfg.model
+    base_url = base_url if base_url is not None else model_override(config_group, "base_url", cfg.base_url)
+    model = model if model is not None else model_override(config_group, "model", cfg.model)
     if config_group == "analysis" and (not base_url.strip() or not model.strip()):
         raise ValueError("分析模型尚未配置，请在设置的逻辑分析中配置服务地址和模型名称")
-    api_key = api_key or cfg.api_key or "EMPTY"
-    timeout = timeout or (cfg.judge_timeout if config_group == "analysis" else cfg.timeout)
-    retry_count = max_retries or cfg.retry_count or 1
+    # 显式传空密钥时不发送鉴权头；未覆盖时保留服务端 EMPTY 兼容行为。
+    api_key = api_key if api_key is not None else model_override(config_group, "api_key", cfg.api_key or "EMPTY")
+    timeout = timeout if timeout is not None else model_override(
+        config_group, "judge_timeout" if config_group == "analysis" else "timeout",
+        cfg.judge_timeout if config_group == "analysis" else cfg.timeout,
+    )
+    retry_count = max_retries if max_retries is not None else model_override(config_group, "retry_count", cfg.retry_count or 1)
 
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
@@ -75,7 +80,7 @@ async def chat_completion(
         headers["Authorization"] = f"Bearer {api_key}"
 
     # 合并配置的 extra_body 与调用方传入的 extra_body（参数优先）
-    merged_extra: Dict[str, Any] = dict(cfg.extra_body or {})
+    merged_extra: Dict[str, Any] = dict(model_override(config_group, "extra_body", cfg.extra_body) or {})
     if extra_body:
         merged_extra.update(extra_body)
     # 标准采样参数统一放在请求顶层，避免旧 extra_body 配置产生冲突。
@@ -94,7 +99,7 @@ async def chat_completion(
     if is_empty_retry_active():
         # 开启重试时明确首次基准，追加尝试固定加 0.1，最高为 1。
         payload["temperature"] = retry_temperature(temperature)
-    enable_thinking = getattr(cfg, "enable_thinking", None)
+    enable_thinking = model_override(config_group, "enable_thinking", getattr(cfg, "enable_thinking", None))
     if enable_thinking is None and config_group == "table_name_validation":
         enable_thinking = fallback_cfg.enable_thinking
     if enable_thinking is not None:
@@ -183,11 +188,11 @@ async def get_embeddings(
     Returns:
         与 texts 等长、顺序一致的向量列表。
     """
-    app_cfg = get_config()
+    app_cfg = resolve_model_config(get_config())
     cfg = app_cfg.embedding
-    base_url = base_url or cfg.base_url
-    model = model or cfg.model
-    api_key = api_key or cfg.api_key or "EMPTY"
+    base_url = base_url if base_url is not None else model_override("embedding", "base_url", cfg.base_url)
+    model = model if model is not None else model_override("embedding", "model", cfg.model)
+    api_key = api_key if api_key is not None else model_override("embedding", "api_key", cfg.api_key or "EMPTY")
     batch_size = batch_size or cfg.batch_size
     timeout = timeout or cfg.timeout
 

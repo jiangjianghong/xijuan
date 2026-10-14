@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import AnyHttpUrl, BaseModel, Field, field_validator, model_validator
 from service.text_matching import compile_keyword
+from utils.model_config import ModelConfigRequest
 
 
 # ── 通用响应包装 ────────────────────────────────────────────
@@ -801,7 +802,7 @@ class AnalysisTaskQueryResponse(ResponseWrapper):
     data: AnalysisTaskStatusResponse
 
 
-class AnalysisRunRequest(BaseModel):
+class AnalysisRunRequest(ModelConfigRequest):
     """独立逻辑分析请求；callback_url 可选，仅提供时发送异步回调。"""
 
     mode: AnalysisRunModeEnum
@@ -862,7 +863,7 @@ class AnalysisResultItem(BaseModel):
 
 # ── 调试接口 ────────────────────────────────────────────────
 
-class ExtractionTestRequest(BaseModel):
+class ExtractionTestRequest(ModelConfigRequest):
     """字段提取调试请求：field_id + file_id 模式 或 完整 config 模式。"""
     file_id: str
     field_id: Optional[str] = None
@@ -889,7 +890,7 @@ class ExtractionTestResponse(BaseModel):
     debug_events: Optional[List[Dict[str, Any]]] = None
 
 
-class AnalysisTestRequest(BaseModel):
+class AnalysisTestRequest(ModelConfigRequest):
     """逻辑分析调试请求：rule_id + file_id 模式 或 完整 config 模式。"""
     file_id: str
     rule_id: Optional[str] = None

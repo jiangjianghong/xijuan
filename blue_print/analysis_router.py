@@ -11,6 +11,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from utils.model_config import with_model_config
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -157,6 +158,7 @@ async def check_rule(rule_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/test", response_model=ResponseWrapper)
+@with_model_config
 async def test_analysis(
     req: AnalysisTestRequest, db: AsyncSession = Depends(get_db)
 ):
@@ -285,6 +287,7 @@ async def _run_analysis_with_session(
         )
 
 
+@with_model_config
 async def _run_analysis_task_background(
     task_id: str,
     items: list[dict[str, Any]],
@@ -293,6 +296,7 @@ async def _run_analysis_task_background(
     persist: bool = False,
     callback_mode: str = "full",
     log_id: str | None = None,
+    model_config: dict | None = None,
 ) -> None:
     """运行 async 模式任务并推送开始、逐规则和任务终态。
 
@@ -351,12 +355,14 @@ async def _run_analysis_task_background(
             )
 
 
+@with_model_config
 async def _analysis_run_stream(
     task_id: str,
     items: list[dict[str, Any]],
     source: str = "values",
     persist: bool = False,
     log_id: str | None = None,
+    model_config: dict | None = None,
 ):
     """把批量执行的异步回调桥接为 SSE 事件。"""
 
@@ -437,6 +443,7 @@ async def get_independent_analysis_task(task_id: str):
 
 
 @router.post("/run")
+@with_model_config
 async def run_independent_analysis(
     req: AnalysisRunRequest,
     background_tasks: BackgroundTasks,
@@ -484,6 +491,7 @@ async def run_independent_analysis(
             source,
             persist,
             req.callback_mode.value,
+            **({"model_config": req.model_overrides} if req.model_overrides is not None else {}),
         )
         return ResponseWrapper(
             message="分析任务已提交（异步）",
@@ -491,7 +499,7 @@ async def run_independent_analysis(
         )
 
     return StreamingResponse(
-        _analysis_run_stream(task_id, items, source, persist),
+        _analysis_run_stream(task_id, items, source, persist, **({"model_config": req.model_overrides} if req.model_overrides is not None else {})),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -559,6 +567,7 @@ async def test_analysis_stream(
             file_id, rule_type, expression, depend_fields, system_prompt, db,
             web_search=web_search, is_formatted=is_formatted, output_schema=output_schema,
             re_extract=req.re_extract,
+            **({"model_config": req.model_overrides} if req.model_overrides is not None else {}),
         ):
             yield _sse_event(item["event"], item["data"])
 

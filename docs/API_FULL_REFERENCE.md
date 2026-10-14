@@ -119,6 +119,7 @@ PDF 上传
   - [1.4 处理管线与进度状态](#14-处理管线与进度状态)
   - [1.5 ID 与隔离规则](#15-id-与隔离规则)
   - [1.6 分页约定](#16-分页约定)
+  - [1.7 请求级模型配置 `model_config`](#17-请求级模型配置-model_config)
 - [2. 接口总览](#2-接口总览)
 - [3. 文件处理接口 `/file`](#3-文件处理接口-file)
   - [3.1 `GET /file/list` 分页查询文件列表](#31-get-filelist-分页查询文件列表)
@@ -281,6 +282,109 @@ parsing -> tableing -> chunking -> embedding -> extracting -> analyzing -> compl
 `GET /file/list` 固定返回 `data={items,total,page,page_size,total_pages}`。`GET /doctype/list` 为兼容旧调用方，只有同时传入 `page` 和 `page_size` 才返回 `data={items,total}`；否则返回 `data=[...]`。
 
 ---
+
+### 1.7 请求级模型配置 `model_config`
+
+上传主流程、指定阶段重试、独立逻辑分析、字段提取调试和逻辑分析调试均支持可选 `model_config`，同步、异步和流式模式语义一致。其结构与设置里的模型分组一致：`extraction`、`analysis`、`table_name_validation`、`vl_model`、`embedding`。
+
+字段按“只覆盖请求中出现的键”合并；不传的分组/字段继续使用服务器设置。字段值会按与设置相同的 Pydantic 规则校验，未知分组、未知字段、类型错误或数值越界会拒绝请求。
+
+所有分组及其字段都是可选的，没有额外的请求级固定默认值。`model_config` 整体不传、传 `null` 或传 `{}` 均表示沿用设置；分组值必须是对象，分组传 `{}` 表示该组不覆盖，传 `null` 则校验失败。只有下表明确标为可空的字段才接受 `null`，例如 `extraction.api_key=null` 不合法。
+
+| 分组 | 可覆盖字段 | 类型与约束 | 说明 |
+|---|---|---|---|
+| `extraction` | `base_url` | string | OpenAI 兼容 API 根地址 |
+|  | `model` | string | 文本/表格抽取模型 |
+|  | `api_key` | string | API Key；传 `""` 表示本次不发送 `Authorization` |
+|  | `timeout` | integer >= 1 | 单次文本模型请求超时秒数 |
+|  | `retry_count` | integer >= 1 | 最大请求尝试次数，包含首次调用；`1` 表示不重试 |
+|  | `max_context_length` | integer >= 1 | 表名识别未独立配置长度时使用的前文字符上限；不会统一截断所有字段抽取提示词 |
+|  | `temperature` | number >= 0 | 采样温度 |
+|  | `top_p` | number 0..1 或 null | nucleus sampling；`null` 表示不发送该参数 |
+|  | `extra_body` | object | 整体替换设置中的额外请求体，传 `{}` 可清空 |
+|  | `enable_thinking` | boolean 或 null | 是否启用思考模式；`null` 表示不发送该参数 |
+| `analysis` | `base_url` | string | 逻辑分析模型 API 根地址；分析模型不回退到 extraction |
+|  | `model` | string | judge/custom 模型 |
+|  | `api_key` | string | API Key；空字符串不发送鉴权头 |
+|  | `retry_count` | integer >= 1 | 最大请求尝试次数，包含首次调用；`1` 表示不重试 |
+|  | `temperature` | number >= 0 | 采样温度 |
+|  | `top_p` | number 0..1 或 null | nucleus sampling；`null` 表示不发送该参数 |
+|  | `extra_body` | object | 整体替换额外请求体 |
+|  | `enable_thinking` | boolean 或 null | 是否启用思考模式；`null` 表示不发送该参数 |
+|  | `calc_precision` | integer >= 0 | calc 结果小数位数 |
+|  | `judge_timeout` | integer >= 1 | judge/custom 请求超时秒数 |
+| `table_name_validation` | `base_url` / `model` | string 或 null | 表名识别 API 根地址、模型名；空字符串或 `null` 时继承本次调用的 extraction 对应值 |
+|  | `api_key` | string 或 null | `null` 时继承本次调用的 extraction 密钥；空字符串表示不发送鉴权头 |
+|  | `timeout` | integer >= 1 或 null | 单次请求超时秒数；`null` 时继承 extraction.timeout |
+|  | `retry_count` | integer >= 1 或 null | 包含首次调用的最大尝试次数；`null` 时继承 extraction.retry_count |
+|  | `max_context_length` | integer >= 1 或 null | 表名前文字符上限；`null` 时继承 extraction.max_context_length |
+|  | `max_context_lines` | integer >= 1 或 null | 表名前文行数上限；`null` 时使用 3 行 |
+|  | `temperature` | number >= 0 或 null | `null` 时继承本次调用的 extraction.temperature |
+|  | `top_p` | number 0..1 或 null | `null` 时继承本次调用的 extraction.top_p；继承结果仍为 `null` 时不发送 |
+|  | `extra_body` | object 或 null | 整体替换表名模型的额外请求体；传 `{}` 或 `null` 可清空，不继承 extraction.extra_body |
+| `vl_model` | `base_url` / `api_key` / `model` | string | VL API 根地址、Key、模型名 |
+|  | `temperature` | number >= 0 | VL 采样温度 |
+|  | `max_tokens` | integer >= 1 | VL 最大输出 token 数 |
+|  | `timeout` | integer >= 1 | VL 单次请求超时秒数 |
+|  | `default_max_pixels` | integer >= 1 | VL 默认图片像素上限；字段 vl_config 已指定 max_pixels 时优先使用字段值 |
+|  | `extra_body` | object | 整体替换 VL 额外请求体 |
+| `embedding` | `base_url` / `model` / `api_key` | string | 向量模型配置；兼容 `model_name` 别名。为保证 Milvus 维度一致，不能覆盖 `embedding_dim`、`batch_size`、`timeout`、`retry_count` |
+
+以下设置不会被请求级配置修改：所有 `concurrency.*`、`table_name_validation.max_concurrency`、`vl_model.global_max_concurrency`、`vl_model.pdf_storage_dir`，以及 embedding 的只读字段。这样同一服务的请求级模型切换仍共用服务器并发池和存储策略。
+
+兼容以下别名。推荐使用规范字段；同一请求同时传别名与规范字段时，值必须相同，否则拒绝请求。
+
+| 适用分组 | 兼容别名 | 规范字段 |
+|---|---|---|
+| extraction、table_name_validation | `llm_base_url` | `base_url` |
+| extraction、table_name_validation | `llm_model` | `model` |
+| extraction、table_name_validation | `llm_api_key` | `api_key` |
+| extraction、table_name_validation | `llm_timeout` | `timeout` |
+| extraction、table_name_validation | `llm_retry_count` | `retry_count` |
+| extraction、table_name_validation | `llm_extra_body` | `extra_body` |
+| embedding | `model_name` | `model` |
+
+```json
+{
+  "model_config": {
+    "extraction": {"base_url": "https://example.com/v1", "model": "extract-model", "api_key": "your-key", "temperature": 0.2},
+    "analysis": {"base_url": "https://example.com/v1", "model": "judge-model", "judge_timeout": 120},
+    "table_name_validation": {"model": "table-title-model", "max_context_lines": 5},
+    "vl_model": {"model": "vision-model", "max_tokens": 8192},
+    "embedding": {"model": "embedding-model"}
+  }
+}
+```
+
+| 接口 | 传入位置 |
+|---|---|
+| `POST /file/parse` | multipart 表单字段 `model_config`，值为 JSON 对象字符串，与 `file` 一起提交 |
+| `POST /file/{file_id}/retry/{stage}`（含快捷重试） | 可选 JSON 请求体 `{"model_config": {...}}`；原 `mode`、回调参数仍放 query |
+| `POST /analysis/run` | JSON 请求体顶层 `model_config`，同一次批次全部 items 共用 |
+| `POST /extraction/test`、`POST /extraction/test/stream` | JSON 请求体顶层 `model_config`，与字段 `config` 并列 |
+| `POST /analysis/test`、`POST /analysis/test/stream` | JSON 请求体顶层 `model_config`；`re_extract=true` 时临时抽取也使用其中的抽取/VL/Embedding 配置 |
+
+覆盖按字段进行：未传分组或字段继续读取服务器设置；`extra_body` 整个对象替换，传 `{}` 可清空。`api_key` 直接传字符串，空字符串表示本次调用不使用密钥，不接受设置读取接口的 `{configured: bool}` 或设置更新的 secrets 操作。兼容 `embedding.model_name` 及 extraction/table_name_validation 的旧 `llm_*` 别名；别名与规范字段值冲突时拒绝请求。
+
+配置仅在本次调用及其子任务中生效，不修改 YAML、进程设置或文件记录；后续重试若要继续使用相同模型，需要再次传入。不同请求独立隔离，仍共用服务器的全局和任务并发限制。`concurrency`、旧模型并发字段及 `vl_model.pdf_storage_dir` 不允许覆盖。Embedding 与设置一样只开放 `base_url`、`model`（或 `model_name`）、`api_key`；所选模型需要与现有 Milvus 向量数据及集合维度匹配。
+
+上传表单 JSON 非法、未知分组/字段或参数值非法返回 HTTP 400；重试的配置语义错误返回 HTTP 400（请求体结构错误为 422）；分析与调试 JSON schema 校验失败为 HTTP 422。校验在提交任务前完成，传入密钥在调用日志中脱敏。表名模型仍按原规则在空配置时继承抽取模型。
+
+上传示例：
+
+```bash
+curl -X POST 'http://localhost:5019/file/parse?mode=async' \
+  -F 'file=@example.pdf' \
+  -F 'model_config={"extraction":{"model":"extract-model","temperature":0.2},"analysis":{"model":"judge-model"}}'
+```
+
+重试示例：
+
+```bash
+curl -X POST 'http://localhost:5019/file/FILE_ID/retry/analyzing?mode=sync' \
+  -H 'Content-Type: application/json' \
+  -d '{"model_config":{"analysis":{"base_url":"https://example.com/v1","model":"judge-model","api_key":"your-key"}}}'
+```
 
 ## 2. 接口总览
 
@@ -617,6 +721,7 @@ curl -X DELETE http://localhost:5019/file/batch \
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|:--:|---|
 | `file` | file | 是 | PDF 文件；大小受 `mineru.max_file_size` 限制 |
+| `model_config` | string | 否 | 请求级模型覆盖的 JSON 对象字符串；字段清单见本章 1.7，未传字段沿用设置，并发仍使用服务器配置 |
 | `params` | string | 否 | 文档类型入参的 JSON 对象字符串；值仅支持字符串、数字、布尔值或 `null` |
 
 `params` 中的 key 必须已通过 `GET /doctype/{type_id}/params` 定义。服务端按“默认值 <- 本次传入值覆盖”合并参数，并把完整快照写入 `files.input_params`；字段和规则配置中的 `<param>参数标识</param>` 会使用该快照渲染。`null` 会归一为空字符串，未传 `params` 等价于空对象。
@@ -800,7 +905,7 @@ curl -X DELETE "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340"
 |---|---|
 | 方法 | `POST` |
 | 路径 | `/file/{file_id}/retry/{stage}` |
-| 请求体 | 无 |
+| 请求体 | 可选 JSON：`{"model_config": {...}}`；按字段覆盖本次重试的模型设置 |
 | 响应 | `async/sync` 返回 `ResponseWrapper`；`stream` 返回 SSE |
 | 副作用 | 重置目标阶段及下游阶段时间戳，清理下游数据，重新写入阶段产物和结果 |
 
@@ -818,6 +923,12 @@ curl -X DELETE "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340"
 | `mode` | string | 否 | `async` | `async` / `sync` / `stream` |
 | `callback_url` | string | 否 | 无 | `async` / `sync` 模式下接收回调；`stream` 忽略 |
 | `callback_mode` | string | 否 | `full` | `full` 保留逐条事件；`simple` 抽取/分析阶段只发 `stage_done` |
+
+请求体：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `model_config` | object | 否 | 请求级模型覆盖；支持五个模型分组，字段与约束见 1.7；未传字段沿用服务器设置 |
 
 请求示例：
 
@@ -855,6 +966,12 @@ curl -X POST "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340/retry/
 | `callback_url` | query string | 否 | 无 | 回调地址 |
 | `callback_mode` | query string | 否 | `full` | `full` / `simple` |
 
+请求体（`application/json`，整体可省略）：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `model_config` | object | 否 | 本次重试的模型覆盖；字段与约束见 [1.7 请求级模型配置](#17-请求级模型配置-model_config)，未传字段沿用设置，并发仍由服务器控制 |
+
 请求示例：
 
 ```bash
@@ -877,6 +994,12 @@ curl -X POST "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340/retry/
 | `mode` | query string | 否 | `async` | `async` / `sync` / `stream` |
 | `callback_url` | query string | 否 | 无 | 回调地址 |
 | `callback_mode` | query string | 否 | `full` | `full` / `simple` |
+
+请求体（`application/json`，整体可省略）：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `model_config` | object | 否 | 本次重试的模型覆盖；字段与约束见 [1.7 请求级模型配置](#17-请求级模型配置-model_config)，未传字段沿用设置，并发仍由服务器控制 |
 
 请求示例：
 
@@ -1600,6 +1723,7 @@ curl "http://localhost:5019/extraction/fields/company_name/check"
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
 | `file_id` | string | 是 | 无 | 目标文件 ID |
+| `model_config` | object | 否 | `null` | 本次调试的请求级模型覆盖；按字段覆盖五个模型分组，未传字段沿用服务器设置，并发仍由服务器控制 |
 | `field_id` | string | 条件 | `null` | 已保存字段配置 ID；与 `config` 二选一 |
 | `config` | object | 条件 | `null` | 临时字段配置，字段名同 `POST /extraction/fields`；与 `field_id` 二选一 |
 
@@ -1665,6 +1789,16 @@ curl "http://localhost:5019/extraction/fields/company_name/check"
 | Content-Type | `application/json` |
 | 响应 | `text/event-stream` |
 | 副作用 | 无；只调用检索/LLM/VL |
+
+请求体参数：
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| `model_config` | object | 否 | `null` | 本次流式调试的请求级模型覆盖；支持五个模型分组，字段和约束见 [1.7 请求级模型配置](#17-请求级模型配置-model_config)，未传字段沿用设置，并发仍由服务器控制 |
+| `file_id` | string | 是 | 无 | 目标文件 ID；文本类需已完成 parsing，VL 类需保留对应 PDF |
+| `field_id` | string | 条件 | `null` | 已保存字段配置 ID；与 `config` 二选一 |
+| `config` | object | 条件 | `null` | 临时字段配置；结构同 `POST /extraction/fields`，与 `field_id` 二选一 |
+| `params` | object | 否 | `{}` | 文档类型参数；按字段配置校验并补默认值 |
 
 请求示例：
 
@@ -1918,6 +2052,7 @@ curl "http://localhost:5019/analysis/rules/profit_positive/check"
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
 | `file_id` | string | 是 | 无 | 目标文件 ID，依赖字段值来自该文件的 `extraction_result` |
+| `model_config` | object | 否 | `null` | 本次调试的请求级模型覆盖；按字段覆盖五个模型分组，未传字段沿用服务器设置，并发仍由服务器控制 |
 | `rule_id` | string | 条件 | `null` | 已保存规则 ID；与 `config` 二选一 |
 | `config` | object | 条件 | `null` | 临时规则配置；与 `rule_id` 二选一 |
 
@@ -1993,6 +2128,7 @@ curl -X POST http://localhost:5019/analysis/test \
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
 | `mode` | string | 是 | 无 | `sync` / `async` / `stream` |
+| `model_config` | object | 否 | `null` | 同一批次所有 items 共用的请求级模型覆盖；字段与约束见 1.7 |
 | `source` | string | 否 | `values` | `values` 使用请求字段值；`file` 从文件 `extraction_result` 读取 |
 | `persist` | boolean | 否 | `false` | 是否写入 `analysis_result`；仅 `source=file` 可用 |
 | `callback_url` | string | 否 | `null` | 可选，仅提供时发送异步回调 |
@@ -2217,6 +2353,17 @@ curl -X POST http://localhost:5019/analysis/run \
 | Content-Type | `application/json` |
 | 响应 | `text/event-stream` |
 | 副作用 | 无 |
+
+请求体参数：
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| `model_config` | object | 否 | `null` | 本次流式调试的请求级模型覆盖；支持五个模型分组，字段和约束见 [1.7 请求级模型配置](#17-请求级模型配置-model_config)，未传字段沿用设置，并发仍由服务器控制 |
+| `file_id` | string | 是 | 无 | 目标文件 ID；依赖字段值来自该文件的 `extraction_result` |
+| `rule_id` | string | 条件 | `null` | 已保存规则 ID；与 `config` 二选一 |
+| `config` | object | 条件 | `null` | 临时规则配置；结构同 `POST /analysis/rules`，与 `rule_id` 二选一 |
+| `re_extract` | boolean | 否 | `false` | 是否按规则依赖字段重新执行字段提取 |
+| `params` | object | 否 | `{}` | 文档类型参数；按字段配置校验并补默认值 |
 
 请求示例：
 
@@ -3139,9 +3286,9 @@ data: <JSON 字符串>
 | 接口 | 触发方式 | 说明 |
 |---|---|---|
 | `POST /file/parse?mode=stream` | multipart 上传 | 新文件处理管线流 |
-| `POST /file/{file_id}/retry/{stage}?mode=stream` | 无请求体 | 重试管线流 |
-| `POST /file/{file_id}/retry/extracting?mode=stream` | 无请求体 | 字段提取重试流 |
-| `POST /file/{file_id}/retry/analyzing?mode=stream` | 无请求体 | 逻辑分析重试流 |
+| `POST /file/{file_id}/retry/{stage}?mode=stream` | 可选 JSON 请求体 `{"model_config": {...}}` | 重试管线流 |
+| `POST /file/{file_id}/retry/extracting?mode=stream` | 可选 JSON 请求体 `{"model_config": {...}}` | 字段提取重试流 |
+| `POST /file/{file_id}/retry/analyzing?mode=stream` | 可选 JSON 请求体 `{"model_config": {...}}` | 逻辑分析重试流 |
 | `POST /extraction/test/stream` | JSON | 字段提取调试流 |
 | `POST /analysis/test/stream` | JSON | 逻辑分析调试流 |
 | `POST /analysis/run` 且 `mode=stream` | JSON | 独立分析执行流 |

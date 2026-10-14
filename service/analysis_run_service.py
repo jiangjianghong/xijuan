@@ -27,6 +27,7 @@ from service.type_param_store import (
 )
 from service.type_params import render_rule_params
 from utils.config import get_config
+from utils.model_config import resolve_model_config, with_model_config
 from utils.concurrency import (
     get_limiter,
     work_item,
@@ -235,7 +236,7 @@ async def execute_rule(
         elif rule.rule_type == "calc":
             value, reason = await execute_calc(
                 resolved,
-                get_config().analysis.calc_precision,
+                resolve_model_config(get_config()).analysis.calc_precision,
             )
         elif rule.rule_type == "custom":
             resolved, web_ref = await apply_web_search(
@@ -404,6 +405,7 @@ async def persist_analysis_results(
     await session.commit()
 
 
+@with_model_config
 async def run_analysis_batch(
     items: Sequence[Mapping[str, Any]],
     session: AsyncSession,

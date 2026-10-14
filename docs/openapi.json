@@ -325,7 +325,7 @@
           "file"
         ],
         "summary": "提交文件解析",
-        "description": "上传文件并启动 6 阶段处理管线（parsing → tableing → chunking → embedding → extracting → analyzing → complete）。`Content-Type` 必须为 `multipart/form-data`。\n\n**`mode` 行为差异**\n- `async`（默认）：后台任务，立即返回 `data={file_id}`，`message=\"文件已提交处理（异步）\"`\n- `sync`：阻塞直到全部完成或失败，再返回 `data={file_id}`\n- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `docs/api/sse.md`）\n- 其它任意值按 `sync` 处理（代码 fallback 分支）\n\n**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 `field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时默认 2.5s（`callback.timeout` 可配），失败仅 warning，不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n**`callback_mode`**：回调粒度。`full`（默认）保留 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`（results 仍完整）。\n\n**`params` 文档类型入参**：可选的 multipart form 字段，内容必须是 JSON 对象字符串。对象值仅支持字符串、数字、布尔值或 `null`（统一转成字符串，`null` 转为空字符串）；字段与规则配置中的 `<param>参数标识</param>` 会使用合并后的值渲染。\n\n服务端按 `type_id` 的参数定义执行 `默认值 <- 传入值覆盖`，并把完整快照写入 `files.input_params`，因此后续 retry 沿用上传时的值。非法 JSON、顶层非对象、对象/数组值、未知 key，或缺少无默认值的必填参数，均返回 **HTTP 400**；校验发生在建档和写 PDF 之前。\n\n**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— 每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`，**不要**重新上传（会产生新记录）。\n\n原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n**文件大小限制**：受 `mineru.max_file_size` 控制（默认 100MB / 104857600 字节），超限返回 `ResponseWrapper{code:400, message:\"文件大小超过限制 (100MB)\"}`（不抛 HTTP 错误）。\n\n**`type_id` 校验**：类型必须已存在于 `doc_type`，否则返回 **HTTP 400** `{detail:\"文档类型不存在: xxx\"}`（区别于文件大小超限的 body 内 `code`——这里抛真正的 HTTP 错误，且不建档、不写盘）。只校验存在性，**不校验 `enabled`**——禁用类型仍可上传。`default` 由启动流程保证存在。",
+        "description": "上传文件并启动 6 阶段处理管线（parsing → tableing → chunking → embedding → extracting → analyzing → complete）。`Content-Type` 必须为 `multipart/form-data`。\n\n**`mode` 行为差异**\n- `async`（默认）：后台任务，立即返回 `data={file_id}`，`message=\"文件已提交处理（异步）\"`\n- `sync`：阻塞直到全部完成或失败，再返回 `data={file_id}`\n- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `docs/api/sse.md`）\n- 其它任意值按 `sync` 处理（代码 fallback 分支）\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 multipart 表单字段名为 `model_config`，值为 JSON 对象字符串。\n\n**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 `field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时默认 2.5s（`callback.timeout` 可配），失败仅 warning，不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n**`callback_mode`**：回调粒度。`full`（默认）保留 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`（results 仍完整）。\n\n**`params` 文档类型入参**：可选的 multipart form 字段，内容必须是 JSON 对象字符串。对象值仅支持字符串、数字、布尔值或 `null`（统一转成字符串，`null` 转为空字符串）；字段与规则配置中的 `<param>参数标识</param>` 会使用合并后的值渲染。\n\n服务端按 `type_id` 的参数定义执行 `默认值 <- 传入值覆盖`，并把完整快照写入 `files.input_params`，因此后续 retry 沿用上传时的值。非法 JSON、顶层非对象、对象/数组值、未知 key，或缺少无默认值的必填参数，均返回 **HTTP 400**；校验发生在建档和写 PDF 之前。\n\n**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— 每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`，**不要**重新上传（会产生新记录）。\n\n原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n**文件大小限制**：受 `mineru.max_file_size` 控制（默认 100MB / 104857600 字节），超限返回 `ResponseWrapper{code:400, message:\"文件大小超过限制 (100MB)\"}`（不抛 HTTP 错误）。\n\n**`type_id` 校验**：类型必须已存在于 `doc_type`，否则返回 **HTTP 400** `{detail:\"文档类型不存在: xxx\"}`（区别于文件大小超限的 body 内 `code`——这里抛真正的 HTTP 错误，且不建档、不写盘）。只校验存在性，**不校验 `enabled`**——禁用类型仍可上传。`default` 由启动流程保证存在。",
         "operationId": "parse_file_file_parse_post",
         "parameters": [
           {
@@ -588,7 +588,7 @@
           "file"
         ],
         "summary": "从指定阶段重试",
-        "description": "清掉指定阶段及其下游已有数据（依赖 `init_service` 同款清理逻辑），从该阶段重跑。\n\n**有效 `stage`**：`tableing` / `chunking` / `embedding` / `extracting` / `analyzing`。\n兼容旧别名 `table_name_validating` → `tableing`。其它值返回 **400**。\n\n**`mode`**：`async`（默认，后台任务）/ `sync`（阻塞返回）/ `stream`（SSE 流）。\n\n**`callback_url`** 仅在 `async` / `sync` 模式生效；`stream` 模式忽略，事件改走 SSE。\n\n**`callback_mode`**：`full`（默认）/ `simple`（跳过 `field_done`/`rule_done`，只发 `stage_done`）。\n\n`stream` 返回的事件序列与 `/file/parse?mode=stream` 完全一致。\n\n**状态码**：200 / 400（无效阶段名）/ 404（文件不存在）。",
+        "description": "清掉指定阶段及其下游已有数据（依赖 `init_service` 同款清理逻辑），从该阶段重跑。\n\n**有效 `stage`**：`tableing` / `chunking` / `embedding` / `extracting` / `analyzing`。\n兼容旧别名 `table_name_validating` → `tableing`。其它值返回 **400**。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过可选 JSON 请求体 `{\"model_config\": {...}}` 传入。\n\n**`mode`**：`async`（默认，后台任务）/ `sync`（阻塞返回）/ `stream`（SSE 流）。\n\n**`callback_url`** 仅在 `async` / `sync` 模式生效；`stream` 模式忽略，事件改走 SSE。\n\n**`callback_mode`**：`full`（默认）/ `simple`（跳过 `field_done`/`rule_done`，只发 `stage_done`）。\n\n`stream` 返回的事件序列与 `/file/parse?mode=stream` 完全一致。\n\n**状态码**：200 / 400（无效阶段名）/ 404（文件不存在）。",
         "operationId": "retry_file_file__file_id__retry__stage__post",
         "parameters": [
           {
@@ -667,6 +667,15 @@
             "example": "full"
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_retry_file_file__file_id__retry__stage__post"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -695,7 +704,7 @@
           "file"
         ],
         "summary": "快捷重试：字段提取",
-        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=extracting`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、`callback_mode`（full/simple）。",
+        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=extracting`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、`callback_mode`（full/simple）。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过可选 JSON 请求体 `{\"model_config\": {...}}` 传入。\n\n",
         "operationId": "retry_extracting_file__file_id__retry_extracting_post",
         "parameters": [
           {
@@ -757,6 +766,15 @@
             "example": "full"
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_retry_extracting_file__file_id__retry_extracting_post"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -785,7 +803,7 @@
           "file"
         ],
         "summary": "快捷重试：逻辑分析",
-        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=analyzing`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、`callback_mode`（full/simple）。",
+        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=analyzing`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、`callback_mode`（full/simple）。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过可选 JSON 请求体 `{\"model_config\": {...}}` 传入。\n\n",
         "operationId": "retry_analyzing_file__file_id__retry_analyzing_post",
         "parameters": [
           {
@@ -847,6 +865,15 @@
             "example": "full"
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_retry_analyzing_file__file_id__retry_analyzing_post"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1655,7 +1682,7 @@
           "extraction"
         ],
         "summary": "字段提取调试（同步）",
-        "description": "两种模式（二选一）：传 `field_id` 加载已保存配置，或传 `config`（完整字段配置 dict）用临时配置。\n\n**`search_results` 形态因 `source_type` / `search_type` 不同而异**\n- `source_type=table`：`[{table_name, table_content(截断 500 字)}, ...]`\n- `source_type=text` + `search_type=context`：关键词命中前后上下文片段列表\n- `search_type=section`：章节切片列表\n- `search_type=rule`：关键词起点 + 停止词边界片段列表\n- `search_type=chunk_db`：MySQL 分块命中列表\n- `search_type=vector_db`：Milvus 语义命中列表（含 `score`）\n- `search_type=page`：按 `page_range` 切出的整页 Markdown\n- `source_type=vl`：**单元素**数组 `[{type:\"vl_meta\", method, key_pages, vl_total_tokens, batches_with_info}]`\n\n**`llm_input` / `llm_output`**\n- 普通字段：`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，`extracted_value` / `reason` 是 JSON 解析后的结果\n- VL 字段：`llm_input` 是追加固定 reason-first 约束后的 `vl_extract_prompt`，`llm_output` = `extracted_value`（VL 直出 JSON，不再二次抽取）\n\ntext / table 字段的 prompt 末尾会追加 JSON 输出说明，要求模型额外返回 `pages`（模型自报的参考页码整数数组），解析后落库到 `source_refs._model_pages`（去重升序；模型未返回则为空、不挂键）。\n\n返回 `data=ExtractionTestResponse{search_results, llm_input, llm_output, extracted_value, reason}`。\n\n**状态码**：200 / 400（既未传 `field_id` 也未传 `config`）/ 404（字段或文件内容不存在）/ 500（提取异常）。",
+        "description": "两种模式（二选一）：传 `field_id` 加载已保存配置，或传 `config`（完整字段配置 dict）用临时配置。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n**`search_results` 形态因 `source_type` / `search_type` 不同而异**\n- `source_type=table`：`[{table_name, table_content(截断 500 字)}, ...]`\n- `source_type=text` + `search_type=context`：关键词命中前后上下文片段列表\n- `search_type=section`：章节切片列表\n- `search_type=rule`：关键词起点 + 停止词边界片段列表\n- `search_type=chunk_db`：MySQL 分块命中列表\n- `search_type=vector_db`：Milvus 语义命中列表（含 `score`）\n- `search_type=page`：按 `page_range` 切出的整页 Markdown\n- `source_type=vl`：**单元素**数组 `[{type:\"vl_meta\", method, key_pages, vl_total_tokens, batches_with_info}]`\n\n**`llm_input` / `llm_output`**\n- 普通字段：`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，`extracted_value` / `reason` 是 JSON 解析后的结果\n- VL 字段：`llm_input` 是追加固定 reason-first 约束后的 `vl_extract_prompt`，`llm_output` = `extracted_value`（VL 直出 JSON，不再二次抽取）\n\ntext / table 字段的 prompt 末尾会追加 JSON 输出说明，要求模型额外返回 `pages`（模型自报的参考页码整数数组），解析后落库到 `source_refs._model_pages`（去重升序；模型未返回则为空、不挂键）。\n\n返回 `data=ExtractionTestResponse{search_results, llm_input, llm_output, extracted_value, reason}`。\n\n**状态码**：200 / 400（既未传 `field_id` 也未传 `config`）/ 404（字段或文件内容不存在）/ 500（提取异常）。",
         "operationId": "test_extraction_extraction_test_post",
         "requestBody": {
           "content": {
@@ -1709,7 +1736,7 @@
           "extraction"
         ],
         "summary": "字段提取流式调试（SSE）",
-        "description": "通过 SSE 分步推送检索结果 → prompt → LLM/VL 响应 → 最终结果。入参与 `/extraction/test` 相同（`field_id` 或 `config` 二选一）。\n\n事件类型清单见 `docs/api/sse.md`。VL 字段的进度事件（`pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`）**仅** SSE 推送，不走异步 `callback_url`。\n\n**状态码**：200（SSE 流）/ 400 / 404。",
+        "description": "通过 SSE 分步推送检索结果 → prompt → LLM/VL 响应 → 最终结果。入参与 `/extraction/test` 相同（`field_id` 或 `config` 二选一）。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n事件类型清单见 `docs/api/sse.md`。VL 字段的进度事件（`pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`）**仅** SSE 推送，不走异步 `callback_url`。\n\n**状态码**：200（SSE 流）/ 400 / 404。",
         "operationId": "test_extraction_stream_extraction_test_stream_post",
         "requestBody": {
           "content": {
@@ -1973,7 +2000,7 @@
           "analysis"
         ],
         "summary": "逻辑分析调试（同步）",
-        "description": "两种模式（二选一）：传 `rule_id` 加载已保存规则，或传 `config` 用临时配置。\n\n依赖字段值来自该 `file_id` 已有的 `extraction_result`；`depend_fields` 中缺失提取结果的字段取空串。\n\n**返回字段**（`data=AnalysisTestResponse`）：\n- `input_values`：依赖字段（`depend_fields`）的提取值字典；缺失字段值为空串\n- `expression_resolved`：`<field_result>...</field_result>` 占位符替换后的表达式\n- `result_value`：最终结果\n  - `judge`：调用 LLM 判断（受 `system_prompt` 控制），通常返回 `true` / `false`\n  - `calc`：`numexpr` 计算，按 `analysis.calc_precision`（默认 2 位）保留小数\n  - `custom`：调用 LLM 自由生成，返回 `value`（`is_formatted=1` 时为按 `output_schema` 组织的结构化 JSON 字符串）\n- `reason`：LLM 给出的判断理由（calc 类型为计算说明）\n\n**状态码**：200 / 400（既未传 `rule_id` 也未传 `config`）/ 404（规则不存在）/ 500（分析异常）。",
+        "description": "两种模式（二选一）：传 `rule_id` 加载已保存规则，或传 `config` 用临时配置。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n依赖字段值来自该 `file_id` 已有的 `extraction_result`；`depend_fields` 中缺失提取结果的字段取空串。\n\n**返回字段**（`data=AnalysisTestResponse`）：\n- `input_values`：依赖字段（`depend_fields`）的提取值字典；缺失字段值为空串\n- `expression_resolved`：`<field_result>...</field_result>` 占位符替换后的表达式\n- `result_value`：最终结果\n  - `judge`：调用 LLM 判断（受 `system_prompt` 控制），通常返回 `true` / `false`\n  - `calc`：`numexpr` 计算，按 `analysis.calc_precision`（默认 2 位）保留小数\n  - `custom`：调用 LLM 自由生成，返回 `value`（`is_formatted=1` 时为按 `output_schema` 组织的结构化 JSON 字符串）\n- `reason`：LLM 给出的判断理由（calc 类型为计算说明）\n\n**状态码**：200 / 400（既未传 `rule_id` 也未传 `config`）/ 404（规则不存在）/ 500（分析异常）。",
         "operationId": "test_analysis_analysis_test_post",
         "requestBody": {
           "content": {
@@ -2070,7 +2097,7 @@
           "analysis"
         ],
         "summary": "独立逻辑分析执行",
-        "description": "按 `type_id` 加载启用规则批量执行逻辑判断 / 计算。支持 `sync` / `async` / `stream`，可批量 `items`。\n\n**先理解两层数组：** 请求 `items[]` 是待分析的业务对象列表；响应 `data.items[]` 与请求逐项对应，表示每个业务对象的执行汇总；每个响应 item 内的 `results[]` 才是该业务对象逐条执行规则的结果。即 `请求 items[0] -> 响应 data.items[0] -> data.items[0].results[]`。即使只提交 1 个业务对象或只执行 1 条规则，对应字段仍保持数组；没有规则实际执行时 `results` 为 `[]`。\n\n- 取值来源由请求级 `source` 决定：`values`（默认）用请求里的 `field_values`（不读文件提取结果、不写 `analysis_result`）；`file` 改读各 item `file_id` 已落库的 `extraction_result`，此时 `field_values` 不得传（422）、`type_id` 可省（取 `files.type_id`，传了且不一致该 item 报错）\n- `persist=true`（仅 `source=file` 可用）把结果 upsert 进 `analysis_result`，**不改 `files.progress`**；文件不存在 / 无提取结果等查库才知道的问题记在 item 级 `error` 字段，不影响同批其它 item\n- 规则范围由 item 级 `rule_ids` 决定：不传 / `null` = 该类型全部启用规则，且只执行 `field_values` 覆盖了 `depend_fields` 的那些（其余静默跳过）；`[]` = 不执行任何规则；显式点名 = 只跑指定规则，**不做**覆盖过滤，缺依赖字段的规则产出 `success=false` 结果（`reason` 列出缺失字段）并计入 `total` / `failed`，不会从 `results` 里消失\n- 显式点名时无视 `enabled` 开关；该 `type_id` 下不存在的 rule_id 不报错，收进 `AnalysisRunItemResult.unknown_rule_ids` 回传\n- items 与规则双层并发（闸门在规则层，配置项 `concurrency.independent_analysis`）；`results` 按 `priority, rule_id` 配置序回填、`rule_done` 按完成序推送；`source=file` 的读库集中在并发前、`persist` 写库在并发后（`AsyncSession` 非并发安全）\n- `sync` 的最终结果在 HTTP 响应 `data`；`async` 可通过 `GET /analysis/tasks/{task_id}` 的 `data.result` 查询，提供回调时也在 `task_done.data`；`stream` 的最终结果在 SSE `task_done` 事件的 `data`。三者最终结果均为 `AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`\n- `async` 模式仅在提供 `callback_url` 时用 `task_id` 推送 `rule_done` / `task_done` / `task_failed`",
+        "description": "按 `type_id` 加载启用规则批量执行逻辑判断 / 计算。支持 `sync` / `async` / `stream`，可批量 `items`。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入，同一批次所有 items 共用。\n\n**先理解两层数组：** 请求 `items[]` 是待分析的业务对象列表；响应 `data.items[]` 与请求逐项对应，表示每个业务对象的执行汇总；每个响应 item 内的 `results[]` 才是该业务对象逐条执行规则的结果。即 `请求 items[0] -> 响应 data.items[0] -> data.items[0].results[]`。即使只提交 1 个业务对象或只执行 1 条规则，对应字段仍保持数组；没有规则实际执行时 `results` 为 `[]`。\n\n- 取值来源由请求级 `source` 决定：`values`（默认）用请求里的 `field_values`（不读文件提取结果、不写 `analysis_result`）；`file` 改读各 item `file_id` 已落库的 `extraction_result`，此时 `field_values` 不得传（422）、`type_id` 可省（取 `files.type_id`，传了且不一致该 item 报错）\n- `persist=true`（仅 `source=file` 可用）把结果 upsert 进 `analysis_result`，**不改 `files.progress`**；文件不存在 / 无提取结果等查库才知道的问题记在 item 级 `error` 字段，不影响同批其它 item\n- 规则范围由 item 级 `rule_ids` 决定：不传 / `null` = 该类型全部启用规则，且只执行 `field_values` 覆盖了 `depend_fields` 的那些（其余静默跳过）；`[]` = 不执行任何规则；显式点名 = 只跑指定规则，**不做**覆盖过滤，缺依赖字段的规则产出 `success=false` 结果（`reason` 列出缺失字段）并计入 `total` / `failed`，不会从 `results` 里消失\n- 显式点名时无视 `enabled` 开关；该 `type_id` 下不存在的 rule_id 不报错，收进 `AnalysisRunItemResult.unknown_rule_ids` 回传\n- items 与规则双层并发（闸门在规则层，配置项 `concurrency.independent_analysis`）；`results` 按 `priority, rule_id` 配置序回填、`rule_done` 按完成序推送；`source=file` 的读库集中在并发前、`persist` 写库在并发后（`AsyncSession` 非并发安全）\n- `sync` 的最终结果在 HTTP 响应 `data`；`async` 可通过 `GET /analysis/tasks/{task_id}` 的 `data.result` 查询，提供回调时也在 `task_done.data`；`stream` 的最终结果在 SSE `task_done` 事件的 `data`。三者最终结果均为 `AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`\n- `async` 模式仅在提供 `callback_url` 时用 `task_id` 推送 `rule_done` / `task_done` / `task_failed`",
         "operationId": "run_independent_analysis_analysis_run_post",
         "requestBody": {
           "content": {
@@ -2124,7 +2151,7 @@
           "analysis"
         ],
         "summary": "逻辑分析流式调试（SSE）",
-        "description": "SSE 分步推送：`input_values` → `resolved_expression` → （judge / custom：[启用网络搜索时 `web_search`] → `prompt` → `llm_response`）→ `result` → `done`。calc 类型无 `prompt` / `llm_response` 步骤。入参与 `/analysis/test` 相同。\n\n`web_search` 事件 data 即溯源结构 `{query, results: [{name, url, siteName, datePublished, summary}], error?}`（搜索失败不中断流，error 字段说明原因）。\n\n**状态码**：200（SSE 流）/ 400 / 404。",
+        "description": "SSE 分步推送：`input_values` → `resolved_expression` → （judge / custom：[启用网络搜索时 `web_search`] → `prompt` → `llm_response`）→ `result` → `done`。calc 类型无 `prompt` / `llm_response` 步骤。入参与 `/analysis/test` 相同。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n`web_search` 事件 data 即溯源结构 `{query, results: [{name, url, siteName, datePublished, summary}], error?}`（搜索失败不中断流，error 字段说明原因）。\n\n**状态码**：200（SSE 流）/ 400 / 404。",
         "operationId": "test_analysis_stream_analysis_test_stream_post",
         "requestBody": {
           "content": {
@@ -4087,6 +4114,188 @@
           }
         }
       }
+    },
+    "/invocations": {
+      "get": {
+        "tags": [
+          "invocations"
+        ],
+        "summary": "List Invocations",
+        "operationId": "list_invocations_invocations_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "页码，从 1 开始。"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Page Size"
+            },
+            "description": "每页条数。"
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 512,
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "type_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Type Id"
+            },
+            "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invocations/{log_id}/result.json": {
+      "get": {
+        "tags": [
+          "invocations"
+        ],
+        "summary": "Download Invocation Result",
+        "operationId": "download_invocation_result_invocations__log_id__result_json_get",
+        "parameters": [
+          {
+            "name": "log_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Log Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invocations/{log_id}": {
+      "get": {
+        "tags": [
+          "invocations"
+        ],
+        "summary": "Get Invocation",
+        "operationId": "get_invocation_invocations__log_id__get",
+        "parameters": [
+          {
+            "name": "log_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Log Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4417,6 +4626,22 @@
       },
       "AnalysisRunRequest": {
         "properties": {
+          "model_config": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Config",
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。 同一批次所有 items 共用本配置。"
+          },
           "mode": {
             "$ref": "#/components/schemas/AnalysisRunModeEnum",
             "description": "执行模式：`sync` 同步返回 / `async` 后台执行（可选回调） / `stream` SSE 流式"
@@ -4467,7 +4692,7 @@
           "items"
         ],
         "title": "AnalysisRunRequest",
-        "description": "独立逻辑分析请求。`items[]` 是批量业务输入：一个元素代表一组需要独立分析的字段值或一个文件，不代表规则。响应会为每个请求 item 返回一个同位置的 item 结果。",
+        "description": "独立逻辑分析请求。`items[]` 是批量业务输入：一个元素代表一组需要独立分析的字段值或一个文件，不代表规则。响应会为每个请求 item 返回一个同位置的 item 结果。可选 `model_config`对同一批次所有 items 生效，按字段覆盖五个模型分组，未传字段沿用设置。",
         "examples": [
           {
             "mode": "sync",
@@ -4787,6 +5012,22 @@
       },
       "AnalysisTestRequest": {
         "properties": {
+          "model_config": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Config",
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。"
+          },
           "file_id": {
             "type": "string",
             "title": "File Id",
@@ -4833,7 +5074,7 @@
           "file_id"
         ],
         "title": "AnalysisTestRequest",
-        "description": "逻辑分析调试请求：`rule_id`（用已存规则）或 `config`（临时配置）二选一，均需 `file_id`。",
+        "description": "逻辑分析调试请求：`rule_id`（用已存规则）或 `config`（临时配置）二选一，均需 `file_id`；可选 `model_config` 按字段覆盖本次调试所用模型，完整字段表见请求级模型配置说明。",
         "examples": [
           {
             "file_id": "a1b2c3...",
@@ -4912,6 +5153,18 @@
             "format": "binary",
             "title": "File"
           },
+          "model_config": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Config",
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。 以 JSON 对象字符串传入。"
+          },
           "params": {
             "anyOf": [
               {
@@ -4930,6 +5183,63 @@
           "file"
         ],
         "title": "Body_parse_file_file_parse_post"
+      },
+      "Body_retry_analyzing_file__file_id__retry_analyzing_post": {
+        "properties": {
+          "model_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Config",
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。"
+          }
+        },
+        "type": "object",
+        "title": "Body_retry_analyzing_file__file_id__retry_analyzing_post"
+      },
+      "Body_retry_extracting_file__file_id__retry_extracting_post": {
+        "properties": {
+          "model_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Config",
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。"
+          }
+        },
+        "type": "object",
+        "title": "Body_retry_extracting_file__file_id__retry_extracting_post"
+      },
+      "Body_retry_file_file__file_id__retry__stage__post": {
+        "properties": {
+          "model_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Config",
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。"
+          }
+        },
+        "type": "object",
+        "title": "Body_retry_file_file__file_id__retry__stage__post"
       },
       "CallbackModeEnum": {
         "type": "string",
@@ -5289,7 +5599,7 @@
               }
             ],
             "title": "Search Config",
-            "description": "检索配置（自由 JSON，键随 `search_type` 不同）：\n- `context`：`keywords`[必] / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)\n- `section`：`section_pattern` / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)；`section_match_type=llm` 时另可配 `section_match_prompt`（自定义匹配提示词，空=用系统默认，须含 `{section_list}`）\n- `rule`：`keywords`[必] / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)\n- `chunk_db`：`keywords`[必] / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)\n- `vector_db`：`query_text`（单串或数组，数组=多路检索，每路一个独立占位符标签） / `top_k`（可选，不配则走阈值+相对分差）/ `score_threshold` / `score_ratio`(0.85)\n- `page`：`page_range`（如 `\"1-3\"` / `\"all\"` / `\"2\"`）/ `max_length`(30000，末尾截断)；进阶字段另可配 `page_source_field`（来源普通字段 ID，取其模型自报页码派生区间并覆盖 `page_range`）/ `max_pages`（派生区间最大跨度）"
+            "description": "检索配置（自由 JSON，键随 `search_type` 不同）：\n`context` / `rule` 先补齐窗口边界内的 HTML 表格，再合并同一关键词的重叠或相接窗口；`max_results` 按每个关键词合并后的片段计数，`max_total_results` 控制总条数（缺省等于 `max_results`，0=不限）。合并后长度可超过单次窗口长度，注入模型时仍逐页标注，不同关键词分别保留占位符标签。\n关键词直接按 Python 正则解释；`ignore_whitespace=true` 时忽略行内空格、制表符和全角空格，保留换行并映射回原文坐标（默认 false）。\n- `context`：`keywords`[必] / `ignore_whitespace`(false) / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)\n- `section`：`section_pattern` / `ignore_whitespace`(false) / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)；`section_match_type=llm` 时另可配 `section_match_prompt`（自定义匹配提示词，空=用系统默认，须含 `{section_list}`）\n- `rule`：`keywords`[必] / `ignore_whitespace`(false) / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)\n- `chunk_db`：`keywords`[必] / `ignore_whitespace`(false) / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)\n- `vector_db`：`query_text`（单串或数组，数组=多路检索，每路一个独立占位符标签） / `top_k`（可选，不配则走阈值+相对分差）/ `score_threshold` / `score_ratio`(0.85)\n- `page`：`page_range`（如 `\"1-3\"` / `\"all\"` / `\"2\"`）/ `max_length`(30000，末尾截断)；进阶字段另可配 `page_source_field`（来源普通字段 ID，取其模型自报页码派生区间并覆盖 `page_range`）/ `max_pages`（派生区间最大跨度）"
           },
           "text_system_prompt": {
             "anyOf": [
@@ -5726,7 +6036,7 @@
               }
             ],
             "title": "Search Config",
-            "description": "[text] 检索配置（自由 JSON，键随 `search_type` 不同）：\n- `context`：`keywords`[必] / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)\n- `section`：`section_pattern` / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)；`section_match_type=llm` 时另可配 `section_match_prompt`（自定义匹配提示词，空=用系统默认，须含 `{section_list}`）\n- `rule`：`keywords`[必] / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)\n- `chunk_db`：`keywords`[必] / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)\n- `vector_db`：`query_text`（单串或数组，数组=多路检索，每路一个独立占位符标签） / `top_k`（可选，不配则走阈值+相对分差）/ `score_threshold` / `score_ratio`(0.85)\n- `page`：`page_range`（如 `\"1-3\"` / `\"all\"` / `\"2\"`）/ `max_length`(30000，末尾截断)；进阶字段另可配 `page_source_field`（来源普通字段 ID，取其模型自报页码派生区间并覆盖 `page_range`）/ `max_pages`（派生区间最大跨度）"
+            "description": "[text] 检索配置（自由 JSON，键随 `search_type` 不同）：\n`context` / `rule` 先补齐窗口边界内的 HTML 表格，再合并同一关键词的重叠或相接窗口；`max_results` 按每个关键词合并后的片段计数，`max_total_results` 控制总条数（缺省等于 `max_results`，0=不限）。合并后长度可超过单次窗口长度，注入模型时仍逐页标注，不同关键词分别保留占位符标签。\n关键词直接按 Python 正则解释；`ignore_whitespace=true` 时忽略行内空格、制表符和全角空格，保留换行并映射回原文坐标（默认 false）。\n- `context`：`keywords`[必] / `ignore_whitespace`(false) / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)\n- `section`：`section_pattern` / `ignore_whitespace`(false) / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)；`section_match_type=llm` 时另可配 `section_match_prompt`（自定义匹配提示词，空=用系统默认，须含 `{section_list}`）\n- `rule`：`keywords`[必] / `ignore_whitespace`(false) / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)\n- `chunk_db`：`keywords`[必] / `ignore_whitespace`(false) / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)\n- `vector_db`：`query_text`（单串或数组，数组=多路检索，每路一个独立占位符标签） / `top_k`（可选，不配则走阈值+相对分差）/ `score_threshold` / `score_ratio`(0.85)\n- `page`：`page_range`（如 `\"1-3\"` / `\"all\"` / `\"2\"`）/ `max_length`(30000，末尾截断)；进阶字段另可配 `page_source_field`（来源普通字段 ID，取其模型自报页码派生区间并覆盖 `page_range`）/ `max_pages`（派生区间最大跨度）"
           },
           "text_system_prompt": {
             "anyOf": [
@@ -5881,6 +6191,22 @@
       },
       "ExtractionTestRequest": {
         "properties": {
+          "model_config": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Config",
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。"
+          },
           "file_id": {
             "type": "string",
             "title": "File Id",
@@ -5922,7 +6248,7 @@
           "file_id"
         ],
         "title": "ExtractionTestRequest",
-        "description": "字段提取调试请求：`field_id`（用已存配置）或 `config`（临时完整配置）二选一，均需 `file_id`。",
+        "description": "字段提取调试请求：`field_id`（用已存配置）或 `config`（临时完整配置）二选一，均需 `file_id`；可选 `model_config` 按字段覆盖本次调试所用模型，完整字段表见请求级模型配置说明。",
         "examples": [
           {
             "file_id": "a1b2c3...",

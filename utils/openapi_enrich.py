@@ -22,6 +22,16 @@ import tomllib
 from pathlib import Path
 from typing import Any, Dict
 
+from utils.model_config import MODEL_CONFIG_DESCRIPTION
+
+
+MODEL_CONFIG_LINK = "[请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)"
+MODEL_CONFIG_ENDPOINT_NOTE = (
+    "**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；"
+    "完整字段、类型、约束和继承规则见 " + MODEL_CONFIG_LINK + "。"
+    "未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。"
+)
+
 
 def get_version() -> str:
     """版本单源：读 pyproject.toml 的 [project].version。"""
@@ -324,6 +334,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "- `sync`：阻塞直到全部完成或失败，再返回 `data={file_id}`\n"
                 "- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `docs/api/sse.md`）\n"
                 "- 其它任意值按 `sync` 处理（代码 fallback 分支）\n\n"
+                + MODEL_CONFIG_ENDPOINT_NOTE + " multipart 表单字段名为 `model_config`，值为 JSON 对象字符串。\n\n"
                 "**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 "
                 "`field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时默认 2.5s（`callback.timeout` 可配），失败仅 warning，"
                 "不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n"
@@ -432,6 +443,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "清掉指定阶段及其下游已有数据（依赖 `init_service` 同款清理逻辑），从该阶段重跑。\n\n"
                 "**有效 `stage`**：`tableing` / `chunking` / `embedding` / `extracting` / `analyzing`。\n"
                 "兼容旧别名 `table_name_validating` → `tableing`。其它值返回 **400**。\n\n"
+                + MODEL_CONFIG_ENDPOINT_NOTE + " 通过可选 JSON 请求体 `{\"model_config\": {...}}` 传入。\n\n"
                 "**`mode`**：`async`（默认，后台任务）/ `sync`（阻塞返回）/ `stream`（SSE 流）。\n\n"
                 "**`callback_url`** 仅在 `async` / `sync` 模式生效；`stream` 模式忽略，事件改走 SSE。\n\n"
                 "**`callback_mode`**：`full`（默认）/ `simple`（跳过 `field_done`/`rule_done`，只发 `stage_done`）。\n\n"
@@ -446,7 +458,8 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "description": (
                 "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=extracting`，内部即转发调用。\n\n"
                 "支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、"
-                "`callback_mode`（full/simple）。"
+                "`callback_mode`（full/simple）。\n\n" + MODEL_CONFIG_ENDPOINT_NOTE
+                + " 通过可选 JSON 请求体 `{\"model_config\": {...}}` 传入。\n\n"
             ),
         }
     },
@@ -456,7 +469,8 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "description": (
                 "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=analyzing`，内部即转发调用。\n\n"
                 "支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、"
-                "`callback_mode`（full/simple）。"
+                "`callback_mode`（full/simple）。\n\n" + MODEL_CONFIG_ENDPOINT_NOTE
+                + " 通过可选 JSON 请求体 `{\"model_config\": {...}}` 传入。\n\n"
             ),
         }
     },
@@ -621,6 +635,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "summary": "字段提取调试（同步）",
             "description": (
                 "两种模式（二选一）：传 `field_id` 加载已保存配置，或传 `config`（完整字段配置 dict）用临时配置。\n\n"
+                + MODEL_CONFIG_ENDPOINT_NOTE + " 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n"
                 "**`search_results` 形态因 `source_type` / `search_type` 不同而异**\n"
                 "- `source_type=table`：`[{table_name, table_content(截断 500 字)}, ...]`\n"
                 "- `source_type=text` + `search_type=context`：关键词命中前后上下文片段列表\n"
@@ -650,6 +665,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "description": (
                 "通过 SSE 分步推送检索结果 → prompt → LLM/VL 响应 → 最终结果。入参与 `/extraction/test` 相同"
                 "（`field_id` 或 `config` 二选一）。\n\n"
+                + MODEL_CONFIG_ENDPOINT_NOTE + " 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n"
                 "事件类型清单见 `docs/api/sse.md`。VL 字段的进度事件"
                 "（`pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`）**仅** SSE 推送，"
                 "不走异步 `callback_url`。\n\n"
@@ -709,6 +725,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "summary": "逻辑分析调试（同步）",
             "description": (
                 "两种模式（二选一）：传 `rule_id` 加载已保存规则，或传 `config` 用临时配置。\n\n"
+                + MODEL_CONFIG_ENDPOINT_NOTE + " 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n"
                 "依赖字段值来自该 `file_id` 已有的 `extraction_result`；`depend_fields` 中缺失提取结果的字段取空串。\n\n"
                 "**返回字段**（`data=AnalysisTestResponse`）：\n"
                 "- `input_values`：依赖字段（`depend_fields`）的提取值字典；缺失字段值为空串\n"
@@ -729,6 +746,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
                 "SSE 分步推送：`input_values` → `resolved_expression` → "
                 "（judge / custom：[启用网络搜索时 `web_search`] → `prompt` → `llm_response`）→ `result` → `done`。"
                 "calc 类型无 `prompt` / `llm_response` 步骤。入参与 `/analysis/test` 相同。\n\n"
+                + MODEL_CONFIG_ENDPOINT_NOTE + " 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n"
                 "`web_search` 事件 data 即溯源结构 `{query, results: [{name, url, siteName, "
                 "datePublished, summary}], error?}`（搜索失败不中断流，error 字段说明原因）。\n\n"
                 "**状态码**：200（SSE 流）/ 400 / 404。"
@@ -915,6 +933,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "description": (
                 "按 `type_id` 加载启用规则批量执行逻辑判断 / 计算。支持 `sync` / `async` / `stream`，"
                 "可批量 `items`。\n\n"
+                + MODEL_CONFIG_ENDPOINT_NOTE + " 通过 JSON 请求体顶层字段 `model_config` 传入，同一批次所有 items 共用。\n\n"
                 "**先理解两层数组：** 请求 `items[]` 是待分析的业务对象列表；响应 `data.items[]` "
                 "与请求逐项对应，表示每个业务对象的执行汇总；每个响应 item 内的 `results[]` 才是该"
                 "业务对象逐条执行规则的结果。即 `请求 items[0] -> 响应 data.items[0] -> "
@@ -1302,8 +1321,9 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         ],
     },
     "ExtractionTestRequest": {
-        "description": "字段提取调试请求：`field_id`（用已存配置）或 `config`（临时完整配置）二选一，均需 `file_id`。",
+        "description": "字段提取调试请求：`field_id`（用已存配置）或 `config`（临时完整配置）二选一，均需 `file_id`；可选 `model_config` 按字段覆盖本次调试所用模型，完整字段表见请求级模型配置说明。",
         "properties": {
+            "model_config": MODEL_CONFIG_DESCRIPTION,
             "file_id": "目标文件 ID（须已完成 parsing，文本类需 `file_content`，VL 类需 `uploads/{file_id}.pdf`）。",
             "field_id": "已保存字段配置 ID；与 `config` 二选一。",
             "config": "临时字段配置 dict（结构同 `ExtractionFieldCreate`）；与 `field_id` 二选一。",
@@ -1375,8 +1395,9 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         ],
     },
     "AnalysisTestRequest": {
-        "description": "逻辑分析调试请求：`rule_id`（用已存规则）或 `config`（临时配置）二选一，均需 `file_id`。",
+        "description": "逻辑分析调试请求：`rule_id`（用已存规则）或 `config`（临时配置）二选一，均需 `file_id`；可选 `model_config` 按字段覆盖本次调试所用模型，完整字段表见请求级模型配置说明。",
         "properties": {
+            "model_config": MODEL_CONFIG_DESCRIPTION,
             "file_id": "目标文件 ID（其 `extraction_result` 提供依赖字段值）。",
             "rule_id": "已保存规则 ID；与 `config` 二选一。",
             "config": "临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`；custom 另含 `is_formatted` / `output_schema`）；与 `rule_id` 二选一。",
@@ -1611,9 +1632,11 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
     "AnalysisRunRequest": {
         "description": (
             "独立逻辑分析请求。`items[]` 是批量业务输入：一个元素代表一组需要独立分析的字段值"
-            "或一个文件，不代表规则。响应会为每个请求 item 返回一个同位置的 item 结果。"
+            "或一个文件，不代表规则。响应会为每个请求 item 返回一个同位置的 item 结果。可选 `model_config`"
+            "对同一批次所有 items 生效，按字段覆盖五个模型分组，未传字段沿用设置。"
         ),
         "properties": {
+            "model_config": MODEL_CONFIG_DESCRIPTION + " 同一批次所有 items 共用本配置。",
             "mode": "执行模式：`sync` 同步返回 / `async` 后台执行（可选回调） / `stream` SSE 流式",
             "source": (
                 "字段值来源：`values`（默认）用请求里的 `field_values`；"

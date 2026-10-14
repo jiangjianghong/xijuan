@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Form, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
 from loguru import logger
 from sqlalchemy import case, delete, func, select, text
@@ -65,6 +65,9 @@ from utils.config import get_config
 from utils.file_utils import generate_file_id
 from utils.milvus_client import get_milvus_client
 from utils.page_mapping import build_page_mapping
+from utils.model_config import (
+    MODEL_CONFIG_DESCRIPTION, parse_model_config, redact_model_config, validate_model_config,
+)
 
 router = APIRouter(prefix="/file", tags=["file"])
 
@@ -511,6 +514,7 @@ async def _run_pipeline_background(
     type_id: str = "default",
     callback_mode: str | None = None,
     log_id: str | None = None,
+    model_config: dict | None = None,
 ):
     """后台运行 pipeline。"""
     from model.database import get_session_factory
@@ -524,6 +528,7 @@ async def _run_pipeline_background(
                         await run_pipeline(
                             file_id, file_name, file_content_bytes, session,
                             callback_url=callback_url, callback_mode=callback_mode,
+                            **({"model_config": model_config} if model_config is not None else {}),
                         )
                 except Exception as e:
                     logger.exception("Pipeline 后台执行失败: type={}, repr={}", type(e).__name__, repr(e))
@@ -535,6 +540,7 @@ async def _stream_pipeline_generator(
     file_content_bytes: bytes,
     type_id: str = "default",
     log_id: str | None = None,
+    model_config: dict | None = None,
 ):
     """流式 pipeline 生成器，内部管理数据库会话。"""
     from model.database import get_session_factory
@@ -544,7 +550,7 @@ async def _stream_pipeline_generator(
             session_factory = get_session_factory()
             async with session_factory() as session:
                 async with track_file_call(log_id, file_id, session):
-                    async for event in run_pipeline_stream(file_id, file_name, file_content_bytes, session):
+                    async for event in run_pipeline_stream(file_id, file_name, file_content_bytes, session, **({"model_config": model_config} if model_config is not None else {})):
                         yield event
 
 
@@ -556,6 +562,9 @@ async def parse_file(
     type_id: str = "default",
     callback_url: Optional[str] = None,
     callback_mode: CallbackModeEnum = CallbackModeEnum.full,
+    model_config_json: Optional[str] = Form(
+        None, alias="model_config", description=f"{MODEL_CONFIG_DESCRIPTION} 以 JSON 对象字符串传入。",
+    ),
     params: Optional[str] = Form(
         None,
         description=(
@@ -578,6 +587,11 @@ async def parse_file(
     - callback_mode=simple 时，抽取/分析阶段不发 field_done / rule_done，只发一次 stage_done。
     """
     cfg = get_config().mineru
+
+    try:
+        request_model_config = parse_model_config(model_config_json)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # 检查文件大小
     file_content_bytes = await file.read()
@@ -647,6 +661,7 @@ async def parse_file(
     raw_input = await _raw_file_request(request) if request else {
         "file": "xxx", "mode": mode, "type_id": type_id, "callback_url": callback_url,
         "callback_mode": callback_mode.value, "params": params,
+        "model_config": redact_model_config(model_config_json),
     }
     await db.commit()
     from service.invocation_log_service import create_log
@@ -655,7 +670,8 @@ async def parse_file(
         file_name=file_name, file_size=len(file_content_bytes), type_id=type_id,
         request_input=raw_input, parameters={"mode": mode, "type_id": type_id,
             "callback_url": callback_url, "callback_mode": callback_mode.value,
-            "input_params": input_params}, created_at=datetime.now(),
+            "input_params": input_params,
+            "model_config": redact_model_config(request_model_config)}, created_at=datetime.now(),
     )
 
     background_tasks.add_task(_enforce_retention_background)
@@ -670,6 +686,7 @@ async def parse_file(
             type_id,
             callback_mode.value,
             log_id,
+            request_model_config,
         )
         return ResponseWrapper(
             message="文件已提交处理（异步）",
@@ -677,7 +694,7 @@ async def parse_file(
         )
     elif mode == "stream":
         return StreamingResponse(
-            _stream_pipeline_generator(file_id, file_name, file_content_bytes, type_id, log_id),
+            _stream_pipeline_generator(file_id, file_name, file_content_bytes, type_id, log_id, request_model_config),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -692,6 +709,7 @@ async def parse_file(
                     await run_pipeline(
                         file_id, file_name, file_content_bytes, db,
                         callback_url=callback_url, callback_mode=callback_mode.value,
+                        **({"model_config": request_model_config} if request_model_config is not None else {}),
                     )
         return ResponseWrapper(
             message="文件处理完成",
@@ -818,6 +836,9 @@ async def retry_file(
     mode: str = "async",
     callback_url: Optional[str] = None,
     callback_mode: CallbackModeEnum = CallbackModeEnum.full,
+    model_config_body: Optional[Dict[str, Any]] = Body(
+        None, embed=True, alias="model_config", description=MODEL_CONFIG_DESCRIPTION,
+    ),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
 ):
@@ -828,6 +849,10 @@ async def retry_file(
     {"file_id": "...", "status": "parsing/tableing/chunking/embedding/extracting/analyzing/complete"}
     callback_mode=simple 时，抽取/分析阶段不发 field_done / rule_done，只发一次 stage_done。
     """
+    try:
+        request_model_config = validate_model_config(model_config_body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     # 检查文件是否存在
     stmt = select(FileModel).where(FileModel.file_id == file_id)
     result = await db.execute(stmt)
@@ -855,12 +880,13 @@ async def retry_file(
     from service.invocation_log_service import create_log
     await create_log(
         log_id=log_id, kind="file_retry", status="queued", file_id=file_id,
-        file_name=file_name, file_size=file_record.file_size, type_id=type_id,
+        file_name=file_name, file_size=getattr(file_record, "file_size", 0), type_id=type_id,
         request_input={"path": {"file_id": file_id, "stage": stage},
             "query": list(request.query_params.multi_items()) if request else []},
         parameters={"mode": mode, "type_id": type_id, "stage": stage,
             "callback_url": callback_url, "callback_mode": callback_mode.value,
-            "input_params": file_record.input_params or {}}, created_at=datetime.now(),
+            "input_params": getattr(file_record, "input_params", {}) or {},
+            "model_config": redact_model_config(model_config_body)}, created_at=datetime.now(),
     )
 
     if mode == "stream":
@@ -872,7 +898,7 @@ async def retry_file(
                     session_factory = get_session_factory()
                     async with session_factory() as session:
                         async with track_file_call(log_id, file_id, session):
-                            async for event in run_from_stage_stream(file_id, stage, session):
+                            async for event in run_from_stage_stream(file_id, stage, session, **({"model_config": request_model_config} if request_model_config is not None else {})):
                                 yield event
 
         return StreamingResponse(
@@ -891,6 +917,7 @@ async def retry_file(
                     await run_from_stage(
                         file_id, stage, db, callback_url=callback_url,
                         callback_mode=callback_mode.value,
+                        **({"model_config": request_model_config} if request_model_config is not None else {}),
                     )
         return ResponseWrapper(message=f"已从 {stage} 阶段重试完成")
     else:
@@ -907,6 +934,7 @@ async def retry_file(
                                 await run_from_stage(
                                     file_id, stage, session, callback_url=callback_url,
                                     callback_mode=callback_mode.value,
+                                    **({"model_config": request_model_config} if request_model_config is not None else {}),
                                 )
                         except Exception as e:
                             logger.exception(
@@ -929,10 +957,13 @@ async def retry_extracting(
     callback_mode: CallbackModeEnum = CallbackModeEnum.full,
     db: AsyncSession = Depends(get_db),
     request: Request = None,
+    model_config_body: Optional[Dict[str, Any]] = Body(
+        None, embed=True, alias="model_config", description=MODEL_CONFIG_DESCRIPTION,
+    ),
 ):
     """重试字段提取（支持 async/stream/sync）。"""
     return await retry_file(
-        file_id, "extracting", background_tasks, mode, callback_url, callback_mode, db, request
+        file_id, "extracting", background_tasks, mode, callback_url, callback_mode, model_config_body, db, request
     )
 
 
@@ -945,10 +976,13 @@ async def retry_analyzing(
     callback_mode: CallbackModeEnum = CallbackModeEnum.full,
     db: AsyncSession = Depends(get_db),
     request: Request = None,
+    model_config_body: Optional[Dict[str, Any]] = Body(
+        None, embed=True, alias="model_config", description=MODEL_CONFIG_DESCRIPTION,
+    ),
 ):
     """重试逻辑分析（支持 async/stream/sync）。"""
     return await retry_file(
-        file_id, "analyzing", background_tasks, mode, callback_url, callback_mode, db, request
+        file_id, "analyzing", background_tasks, mode, callback_url, callback_mode, model_config_body, db, request
     )
 
 

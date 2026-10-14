@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.tables import FileTable
 from utils.config import get_config
+from utils.model_config import resolve_model_config
 from utils.concurrency import (
     get_limiter,
     register_task_limiter,
@@ -69,7 +70,7 @@ async def _extract_table_name_with_llm(
     table_content: str = "",
 ) -> str:
     """调用 LLM 提取表名，失败时优先回退到局部上文或表内明确标题。"""
-    app_cfg = get_config()
+    app_cfg = resolve_model_config(get_config())
     extraction_cfg = app_cfg.extraction
     table_name_cfg = app_cfg.table_name_validation
 
@@ -89,7 +90,7 @@ async def _extract_table_name_with_llm(
 
     base_url = table_name_cfg.base_url or extraction_cfg.base_url
     model = table_name_cfg.model or extraction_cfg.model
-    api_key = table_name_cfg.api_key or extraction_cfg.api_key
+    api_key = extraction_cfg.api_key if table_name_cfg.api_key is None else table_name_cfg.api_key
     timeout = table_name_cfg.timeout or extraction_cfg.timeout
     retry_count = table_name_cfg.retry_count or extraction_cfg.retry_count
     extra_body = table_name_cfg.extra_body or None

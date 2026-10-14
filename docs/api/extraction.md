@@ -93,10 +93,12 @@ _data 为数组，每个元素：_
 | table_extract_prompt | string | 否 | — | [table] 抽取 prompt；`source_type=table` 时须含至少一个 `<search_result>标签</search_result>`。 |
 | search_type | SearchTypeEnum | 否 | — | [text] 检索方式：`context` / `section` / `rule` / `chunk_db` / `vector_db` / `page`。 |
 | search_config | object | 否 | — | [text] 检索配置（自由 JSON，键随 `search_type` 不同）：
-- `context`：`keywords`[必] / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)
-- `section`：`section_pattern` / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)；`section_match_type=llm` 时另可配 `section_match_prompt`（自定义匹配提示词，空=用系统默认，须含 `{section_list}`）
-- `rule`：`keywords`[必] / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)
-- `chunk_db`：`keywords`[必] / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)
+`context` / `rule` 先补齐窗口边界内的 HTML 表格，再合并同一关键词的重叠或相接窗口；`max_results` 按每个关键词合并后的片段计数，`max_total_results` 控制总条数（缺省等于 `max_results`，0=不限）。合并后长度可超过单次窗口长度，注入模型时仍逐页标注，不同关键词分别保留占位符标签。
+关键词直接按 Python 正则解释；`ignore_whitespace=true` 时忽略行内空格、制表符和全角空格，保留换行并映射回原文坐标（默认 false）。
+- `context`：`keywords`[必] / `ignore_whitespace`(false) / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)
+- `section`：`section_pattern` / `ignore_whitespace`(false) / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)；`section_match_type=llm` 时另可配 `section_match_prompt`（自定义匹配提示词，空=用系统默认，须含 `{section_list}`）
+- `rule`：`keywords`[必] / `ignore_whitespace`(false) / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)
+- `chunk_db`：`keywords`[必] / `ignore_whitespace`(false) / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)
 - `vector_db`：`query_text`（单串或数组，数组=多路检索，每路一个独立占位符标签） / `top_k`（可选，不配则走阈值+相对分差）/ `score_threshold` / `score_ratio`(0.85)
 - `page`：`page_range`（如 `"1-3"` / `"all"` / `"2"`）/ `max_length`(30000，末尾截断)；进阶字段另可配 `page_source_field`（来源普通字段 ID，取其模型自报页码派生区间并覆盖 `page_range`）/ `max_pages`（派生区间最大跨度）（结构详见 [search_config](../reference/data-model.md#extraction_field)） |
 | text_system_prompt | string | 否 | — | [text] LLM system prompt（可空）。 |
@@ -249,6 +251,7 @@ curl -X POST http://localhost:5019/extraction/fields \
 <!-- AUTOGEN:request-body POST /extraction/test -->
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
+| model_config | object | 否 | — | 可选。按模型分组部分覆盖本次调用；未传字段沿用服务器设置，并发仍由服务器控制。完整字段、类型和约束见 [model_config](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。 |
 | file_id | string | 是 | — | 目标文件 ID（须已完成 parsing，文本类需 `file_content`，VL 类需 `uploads/{file_id}.pdf`）。 |
 | field_id | string | 否 | — | 已保存字段配置 ID；与 `config` 二选一。 |
 | config | object | 否 | — | 临时字段配置 dict（结构同 `ExtractionFieldCreate`）；与 `field_id` 二选一。 |
@@ -300,6 +303,7 @@ SSE 分步推送：检索结果 → prompt → LLM/VL 响应 → 最终结果。
 <!-- AUTOGEN:request-body POST /extraction/test/stream -->
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
+| model_config | object | 否 | — | 可选。按模型分组部分覆盖本次调用；未传字段沿用服务器设置，并发仍由服务器控制。完整字段、类型和约束见 [model_config](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。 |
 | file_id | string | 是 | — | 目标文件 ID（须已完成 parsing，文本类需 `file_content`，VL 类需 `uploads/{file_id}.pdf`）。 |
 | field_id | string | 否 | — | 已保存字段配置 ID；与 `config` 二选一。 |
 | config | object | 否 | — | 临时字段配置 dict（结构同 `ExtractionFieldCreate`）；与 `field_id` 二选一。 |

@@ -40,6 +40,7 @@ PREFIX_MAP = [
 
 # openapi 里为裸 object / Any 的复杂字段 → 只出类型 + 指向唯一权威页链接
 AUTHORITY = {
+    "model_config": "../API_FULL_REFERENCE.md#17-请求级模型配置-model_config",
     "source_refs": "../guides/source-refs.md",
     "vl_config": "../reference/data-model.md#extraction_field",
     "search_config": "../reference/data-model.md#extraction_field",
@@ -110,6 +111,9 @@ def _nullable(schema, name, required) -> bool:
 
 def _desc(name, schema) -> str:
     d = schema.get("description", "") if isinstance(schema, dict) else ""
+    if name == "model_config":
+        return ("可选。按模型分组部分覆盖本次调用；未传字段沿用服务器设置，并发仍由服务器控制。"
+                f"完整字段、类型和约束见 [model_config]({AUTHORITY[name]})。")
     if name in AUTHORITY:
         link = f"[{name}]({AUTHORITY[name]})"
         return f"{d}（结构详见 {link}）" if d else f"结构详见 {link}"

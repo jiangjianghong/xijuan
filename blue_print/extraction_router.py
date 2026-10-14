@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from utils.model_config import with_model_config, model_config_stream
 from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -417,6 +418,7 @@ async def resolve_debug_params(
 
 
 @router.post("/test", response_model=ResponseWrapper)
+@with_model_config
 async def test_extraction(
     req: ExtractionTestRequest, db: AsyncSession = Depends(get_db)
 ):
@@ -601,7 +603,7 @@ async def test_extraction_stream(
     field, _ = render_field_params(field, debug_params)
 
     async def event_generator():
-        async for item in test_field_extraction_stream(file_id, field, db):
+        async for item in model_config_stream(test_field_extraction_stream(file_id, field, db), req.model_overrides):
             yield _sse_event(item["event"], item["data"])
 
     return StreamingResponse(

@@ -189,6 +189,7 @@ _data 为数组，每个元素：_
 <!-- AUTOGEN:request-body POST /analysis/test -->
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
+| model_config | object | 否 | — | 可选。按模型分组部分覆盖本次调用；未传字段沿用服务器设置，并发仍由服务器控制。完整字段、类型和约束见 [model_config](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。 |
 | file_id | string | 是 | — | 目标文件 ID（其 `extraction_result` 提供依赖字段值）。 |
 | rule_id | string | 否 | — | 已保存规则 ID；与 `config` 二选一。 |
 | config | object | 否 | — | 临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`；custom 另含 `is_formatted` / `output_schema`）；与 `rule_id` 二选一。 |
@@ -233,6 +234,7 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 <!-- AUTOGEN:request-body POST /analysis/test/stream -->
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
+| model_config | object | 否 | — | 可选。按模型分组部分覆盖本次调用；未传字段沿用服务器设置，并发仍由服务器控制。完整字段、类型和约束见 [model_config](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。 |
 | file_id | string | 是 | — | 目标文件 ID（其 `extraction_result` 提供依赖字段值）。 |
 | rule_id | string | 否 | — | 已保存规则 ID；与 `config` 二选一。 |
 | config | object | 否 | — | 临时规则配置 dict（`rule_type` / `expression` / `system_prompt` / `depend_fields`；custom 另含 `is_formatted` / `output_schema`）；与 `rule_id` 二选一。 |
@@ -288,6 +290,7 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 <!-- AUTOGEN:request-body POST /analysis/run -->
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
+| model_config | object | 否 | — | 可选。按模型分组部分覆盖本次调用；未传字段沿用服务器设置，并发仍由服务器控制。完整字段、类型和约束见 [model_config](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。 |
 | mode | AnalysisRunModeEnum | 是 | — | 执行模式：`sync` 同步返回 / `async` 后台执行（可选回调） / `stream` SSE 流式 |
 | source | AnalysisRunSourceEnum | 否 | values | 字段值来源：`values`（默认）用请求里的 `field_values`；`file` 读各 item `file_id` 已落库的 `extraction_result` |
 | persist | boolean | 否 | False | 是否把结果 upsert 进 `analysis_result`；仅 `source=file` 可用，**不改 `files.progress`** |

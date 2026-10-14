@@ -29,7 +29,10 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|:--:|---|
 | file | file | 是 | PDF 文件（受 `mineru.max_file_size` 限制，默认 100MB） |
+| model_config | string | 否 | 本次调用的模型配置 JSON 对象字符串；支持 `extraction` / `analysis` / `table_name_validation` / `vl_model` / `embedding` 分组按字段覆盖，未传字段沿用设置，并发仍由服务器控制。 |
 | params | string | 否 | 该类型的入参实参，**JSON 对象字符串**。见下方「入参」小节。 |
+
+完整字段、类型与限制见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。
 
 **入参（`params`）**
 
@@ -408,6 +411,22 @@ _data 为数组，每个元素：_
 | callback_mode | CallbackModeEnum | 否 | full | 回调粒度：`full`（默认）保留逐条 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`。`stream` 模式忽略。（可选: full / simple） |
 <!-- /AUTOGEN:query-params -->
 
+**请求体**（`application/json`，可选）
+
+<!-- AUTOGEN:request-body POST /file/{file_id}/retry/{stage} -->
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| model_config | object | 否 | — | 可选。按模型分组部分覆盖本次调用；未传字段沿用服务器设置，并发仍由服务器控制。完整字段、类型和约束见 [model_config](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。 |
+<!-- /AUTOGEN:request-body -->
+
+完整字段、类型与限制见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。
+
+```json
+{"model_config":{"analysis":{"model":"judge-model","api_key":"your-key"}}}
+```
+
+`model_config` 按字段部分覆盖服务器设置；`api_key` 为空字符串表示本次调用不发送鉴权头。
+
 **状态码 / 错误**
 
 | 状态码 | 触发条件 | 响应体 |
@@ -420,7 +439,7 @@ _data 为数组，每个元素：_
 
 ## 快捷重试：字段提取
 
-等价于 `retry/{stage}` 中 `stage=extracting`，内部转发。
+等价于 `retry/{stage}` 中 `stage=extracting`，内部转发；同样支持可选 JSON 请求体 `{"model_config": {...}}`。
 
 - 方法路径：`POST /file/{file_id}/retry/extracting`
 - 认证：无（内网部署）
@@ -443,6 +462,16 @@ _data 为数组，每个元素：_
 | callback_mode | CallbackModeEnum | 否 | full | 回调粒度：`full`（默认）保留逐条 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`。`stream` 模式忽略。（可选: full / simple） |
 <!-- /AUTOGEN:query-params -->
 
+**请求体**（`application/json`，可选）
+
+<!-- AUTOGEN:request-body POST /file/{file_id}/retry/extracting -->
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| model_config | object | 否 | — | 可选。按模型分组部分覆盖本次调用；未传字段沿用服务器设置，并发仍由服务器控制。完整字段、类型和约束见 [model_config](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。 |
+<!-- /AUTOGEN:request-body -->
+
+完整字段、类型与限制见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。
+
 **状态码 / 错误**
 
 | 状态码 | 触发条件 | 响应体 |
@@ -452,7 +481,7 @@ _data 为数组，每个元素：_
 
 ## 快捷重试：逻辑分析
 
-等价于 `retry/{stage}` 中 `stage=analyzing`，内部转发。
+等价于 `retry/{stage}` 中 `stage=analyzing`，内部转发；同样支持可选 JSON 请求体 `{"model_config": {...}}`。
 
 - 方法路径：`POST /file/{file_id}/retry/analyzing`
 - 认证：无（内网部署）
@@ -474,6 +503,16 @@ _data 为数组，每个元素：_
 | callback_url | string | 否 | — | 可选回调地址；管线每阶段开始 / `field_done` / `rule_done` / `stage_done` 都会向此 URL POST（超时默认 2.5s，由 `callback.timeout` 配置，失败仅 warning）。仅 `async` / `sync` 模式生效，`stream` 模式忽略。 |
 | callback_mode | CallbackModeEnum | 否 | full | 回调粒度：`full`（默认）保留逐条 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`。`stream` 模式忽略。（可选: full / simple） |
 <!-- /AUTOGEN:query-params -->
+
+**请求体**（`application/json`，可选）
+
+<!-- AUTOGEN:request-body POST /file/{file_id}/retry/analyzing -->
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| model_config | object | 否 | — | 可选。按模型分组部分覆盖本次调用；未传字段沿用服务器设置，并发仍由服务器控制。完整字段、类型和约束见 [model_config](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。 |
+<!-- /AUTOGEN:request-body -->
+
+完整字段、类型与限制见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。
 
 **状态码 / 错误**
 
