@@ -1,0 +1,23 @@
+## 需要在目录中添加的条目 (插入到第143行之后，3.19之后)
+
+  - [3.20 \GET /file/stats\ 文件处理统计](#320-get-filestats-文件处理统计)
+-- [8. 系统设置接口 \/settings\](#8-系统设置接口-settings)
+  - [8.1 \POST /settings/login\ 管理员登录](#81-post-settingslogin-管理员登录)
+  - [8.2 \GET /settings/session\ 查询会话状态](#82-get-settingssession-查询会话状态)
+  - [8.3 \GET /settings/config\ 读取运行时配置](#83-get-settingsconfig-读取运行时配置)
+  - [8.4 \PATCH /settings/config\ 更新运行时配置](#84-patch-settingsconfig-更新运行时配置)
+  - [8.5 \POST /settings/logout\ 退出登录](#85-post-settingslogout-退出登录)
+-- [9. 运行时监控接口 \/runtime\](#9-运行时监控接口-runtime)
+  - [9.1 \GET /runtime/concurrency\ 查询并发池状态](#91-get-runtimeconcurrency-查询并发池状态)
+-- [10. 调用日志接口 \/invocations\](#10-调用日志接口-invocations)
+  - [10.1 \GET /invocations\ 分页查询调用日志](#101-get-invocations-分页查询调用日志)
+  - [10.2 \GET /invocations/{log_id}\ 查询调用详情](#102-get-invocationslog_id-查询调用详情)
+  - [10.3 \GET /invocations/{log_id}/result.json\ 下载调用结果](#103-get-invocationslog_idresultjson-下载调用结果)
+
+## 需要在目录中更新的条目 (原8-10变为11-13)
+
+-- [11. 日志接口 \/log\](#11-日志接口-log)
+-- [12. 异步回调契约](#12-异步回调契约)
+-- [13. SSE 流式事件契约](#13-sse-流式事件契约)
+-- [14. 枚举与关键结构速查](#14-枚举与关键结构速查)
+-- [15. 附录](#15-附录)

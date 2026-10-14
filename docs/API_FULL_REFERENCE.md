@@ -2,7 +2,7 @@
 
 > 对应服务版本 0.3.0  
 > Base URL 示例：`http://localhost:5019`  
-> 覆盖范围：当前源码注册的全部业务接口，共 51 个。本文档是自包含手册：接口 schema、业务语义、调用示例、参数说明、副作用、错误细节、配置指南、数据模型、枚举、架构说明和 backlog 均在本文内说明。
+> 覆盖范围：当前源码注册的全部业务接口，共 66 个。本文档是自包含手册：接口 schema、业务语义、调用示例、参数说明、副作用、错误细节、配置指南、数据模型、枚举、架构说明和 backlog 均在本文内说明。
 
 ## 0. 系统架构与处理流程
 
@@ -141,6 +141,7 @@ PDF 上传
   - [3.17 `GET /file/{file_id}/extraction` 查询字段提取结果](#317-get-filefile_idextraction-查询字段提取结果)
   - [3.18 `GET /file/{file_id}/analysis` 查询逻辑分析结果](#318-get-filefile_idanalysis-查询逻辑分析结果)
   - [3.19 `GET /file/{file_id}/detail` 查询完整文件详情](#319-get-filefile_iddetail-查询完整文件详情)
+  - [3.20 `GET /file/stats` 文件处理统计](#320-get-filestats-文件处理统计)
 - [4. 字段提取接口 `/extraction`](#4-字段提取接口-extraction)
   - [4.1 `GET /extraction/match-prompt-defaults` 获取提示词模板默认值](#41-get-extractionmatch-prompt-defaults-获取提示词模板默认值)
   - [4.2 `GET /extraction/fields` 查询字段配置](#42-get-extractionfields-查询字段配置)
@@ -157,6 +158,7 @@ PDF 上传
   - [5.5 `POST /analysis/test` 逻辑分析同步调试](#55-post-analysistest-逻辑分析同步调试)
   - [5.6 `POST /analysis/run` 独立逻辑分析执行](#56-post-analysisrun-独立逻辑分析执行)
   - [5.7 `POST /analysis/test/stream` 逻辑分析流式调试](#57-post-analysisteststream-逻辑分析流式调试)
+  - [5.8 `GET /analysis/tasks/{task_id}` 查询独立分析任务](#58-get-analysistaskstask_id-查询独立分析任务)
 - [6. 文档类型接口 `/doctype`](#6-文档类型接口-doctype)
   - [6.1 `GET /doctype/list` 查询文档类型列表](#61-get-doctypelist-查询文档类型列表)
   - [6.2 `POST /doctype` 新增/更新文档类型](#62-post-doctype-新增更新文档类型)
@@ -166,22 +168,38 @@ PDF 上传
   - [6.6 `POST /doctype/{type_id}/copy_from` 从源类型复制配置](#66-post-doctypetype_idcopy_from-从源类型复制配置)
   - [6.7 `GET /doctype/{type_id}/export` 导出类型配置](#67-get-doctypetype_idexport-导出类型配置)
   - [6.8 `POST /doctype/import` 从 JSON 载荷导入配置](#68-post-doctypeimport-从-json-载荷导入配置)
-  - [6.9 `GET /doctype/projects` 查询项目列表](#69-get-doctypeprojects-查询项目列表)
-  - [6.10 `POST /doctype/projects` 新增/更新项目](#610-post-doctypeprojects-新增更新项目)
-  - [6.11 `DELETE /doctype/projects/{project_id}` 删除项目](#611-delete-doctypeprojectsproject_id-删除项目)
-  - [6.12 `POST /doctype/batch_assign_project` 批量归类类型到项目](#612-post-doctypebatch_assign_project-批量归类类型到项目)
-  - [6.13 `POST /doctype/{type_id}/promote` 标记为模板](#613-post-doctypetype_idpromote-标记为模板)
-  - [6.14 `POST /doctype/{type_id}/demote` 取消模板标记](#614-post-doctypetype_iddemote-取消模板标记)
+  - [6.9 `GET /doctype/{type_id}/params` 查询类型入参定义](#69-get-doctypetype_idparams-查询类型入参定义)
+  - [6.10 `POST /doctype/{type_id}/params` 新增/更新类型入参](#610-post-doctypetype_idparams-新增更新类型入参)
+  - [6.11 `DELETE /doctype/{type_id}/params/{param_key}` 删除类型入参](#611-delete-doctypetype_idparamsparam_key-删除类型入参)
+  - [6.12 `GET /doctype/{type_id}/config_version` 查询配置版本](#612-get-doctypetype_idconfig_version-查询配置版本)
+  - [6.13 `GET /doctype/projects` 查询项目列表](#613-get-doctypeprojects-查询项目列表)
+  - [6.14 `POST /doctype/projects` 新增/更新项目](#614-post-doctypeprojects-新增更新项目)
+  - [6.15 `DELETE /doctype/projects/{project_id}` 删除项目](#615-delete-doctypeprojectsproject_id-删除项目)
+  - [6.16 `POST /doctype/batch_assign_project` 批量归类类型到项目](#616-post-doctypebatch_assign_project-批量归类类型到项目)
+  - [6.17 `POST /doctype/{type_id}/promote` 标记为模板](#617-post-doctypetype_idpromote-标记为模板)
+  - [6.18 `POST /doctype/{type_id}/demote` 取消模板标记](#618-post-doctypetype_iddemote-取消模板标记)
 - [7. 向量检索接口 `/search`](#7-向量检索接口-search)
-- [8. 日志接口 `/log`](#8-日志接口-log)
-- [9. 异步回调契约](#9-异步回调契约)
-- [10. SSE 流式事件契约](#10-sse-流式事件契约)
-- [11. 枚举与关键结构速查](#11-枚举与关键结构速查)
-  - [11.1 枚举](#111-枚举)
-  - [11.2 source_refs 结构要点](#112-source_refs-结构要点)
-  - [11.3 pages 与 source_pages](#113-pages-与-source_pages)
-  - [11.4 占位符规则](#114-占位符规则)
-- [12. 附录](#12-附录)
+- [8. 系统设置接口 `/settings`](#8-系统设置接口-settings)
+  - [8.1 `POST /settings/login` 管理员登录](#81-post-settingslogin-管理员登录)
+  - [8.2 `GET /settings/session` 查询会话状态](#82-get-settingssession-查询会话状态)
+  - [8.3 `GET /settings/config` 读取运行时配置](#83-get-settingsconfig-读取运行时配置)
+  - [8.4 `PATCH /settings/config` 更新运行时配置](#84-patch-settingsconfig-更新运行时配置)
+  - [8.5 `POST /settings/logout` 退出登录](#85-post-settingslogout-退出登录)
+- [9. 运行时监控接口 `/runtime`](#9-运行时监控接口-runtime)
+  - [9.1 `GET /runtime/concurrency` 查询并发池状态](#91-get-runtimeconcurrency-查询并发池状态)
+- [10. 调用日志接口 `/invocations`](#10-调用日志接口-invocations)
+  - [10.1 `GET /invocations` 分页查询调用日志](#101-get-invocations-分页查询调用日志)
+  - [10.2 `GET /invocations/{log_id}` 查询调用详情](#102-get-invocationslog_id-查询调用详情)
+  - [10.3 `GET /invocations/{log_id}/result.json` 下载调用结果](#103-get-invocationslog_idresultjson-下载调用结果)
+- [11. 日志接口 `/log`](#11-日志接口-log)
+- [12. 异步回调契约](#12-异步回调契约)
+- [13. SSE 流式事件契约](#13-sse-流式事件契约)
+- [14. 枚举与关键结构速查](#14-枚举与关键结构速查)
+  - [14.1 枚举](#141-枚举)
+  - [14.2 source_refs 结构要点](#142-source_refs-结构要点)
+  - [14.3 pages 与 source_pages](#143-pages-与-source_pages)
+  - [14.4 占位符规则](#144-占位符规则)
+- [15. 附录](#15-附录)
   - [12.1 附录说明](#121-附录说明)
   - [12.2 逻辑分析配置手册](#122-逻辑分析配置手册)
   - [12.3 `config.yaml` 配置手册](#123-configyaml-配置手册)
@@ -392,10 +410,13 @@ curl -X POST 'http://localhost:5019/file/FILE_ID/retry/analyzing?mode=sync' \
 |---|---:|---|
 | `/file` | 19 | 文件上传、处理、重试、内容、结果、删除 |
 | `/extraction` | 7 | 字段配置、默认提示词、同步/流式调试 |
-| `/analysis` | 7 | 分析规则、同步/流式调试、独立分析执行 |
-| `/doctype` | 14 | 文档类型、复制、导入导出、模板、项目归类 |
+| `/analysis` | 8 | 分析规则、同步/流式调试、独立分析执行、任务查询 |
+| `/doctype` | 18 | 文档类型、参数管理、复制、导入导出、模板、项目归类 |
 | `/search` | 1 | 向量检索 |
-| `/log` | 3 | 日志读取和实时流 |
+| `/settings` | 5 | 运行时配置管理、会话认证 |
+| `/runtime` | 1 | 并发池状态监控 |
+| `/invocations` | 3 | 调用日志查询和结果下载 |
+| `/log` | 3 | 应用日志读取和实时流 |
 
 | 方法 | 路径 | 简述 |
 |---|---|---|
@@ -418,6 +439,7 @@ curl -X POST 'http://localhost:5019/file/FILE_ID/retry/analyzing?mode=sync' \
 | GET | `/file/{file_id}/extraction` | 查询字段提取结果 |
 | GET | `/file/{file_id}/analysis` | 查询逻辑分析结果 |
 | GET | `/file/{file_id}/detail` | 查询完整文件详情 |
+| GET | `/file/stats` | 文件处理统计 |
 | GET | `/extraction/match-prompt-defaults` | 获取匹配提示词默认值 |
 | GET | `/extraction/fields` | 查询字段配置 |
 | POST | `/extraction/fields` | 新增/更新字段配置 |
@@ -432,6 +454,7 @@ curl -X POST 'http://localhost:5019/file/FILE_ID/retry/analyzing?mode=sync' \
 | POST | `/analysis/test` | 逻辑分析同步调试 |
 | POST | `/analysis/run` | 独立逻辑分析执行 |
 | POST | `/analysis/test/stream` | 逻辑分析流式调试 |
+| GET | `/analysis/tasks/{task_id}` | 查询独立分析任务 |
 | GET | `/doctype/list` | 查询文档类型列表 |
 | POST | `/doctype` | 新增/更新文档类型 |
 | PUT | `/doctype/{type_id}` | 更新文档类型，可改 ID |
@@ -440,6 +463,10 @@ curl -X POST 'http://localhost:5019/file/FILE_ID/retry/analyzing?mode=sync' \
 | POST | `/doctype/{type_id}/copy_from` | 从源类型复制配置 |
 | GET | `/doctype/{type_id}/export` | 导出类型配置 |
 | POST | `/doctype/import` | 导入类型配置 |
+| GET | `/doctype/{type_id}/params` | 查询类型入参定义 |
+| POST | `/doctype/{type_id}/params` | 新增/更新类型入参 |
+| DELETE | `/doctype/{type_id}/params/{param_key}` | 删除类型入参 |
+| GET | `/doctype/{type_id}/config_version` | 查询配置版本 |
 | GET | `/doctype/projects` | 查询项目列表 |
 | POST | `/doctype/projects` | 新增/更新项目 |
 | DELETE | `/doctype/projects/{project_id}` | 删除项目 |
@@ -447,6 +474,15 @@ curl -X POST 'http://localhost:5019/file/FILE_ID/retry/analyzing?mode=sync' \
 | POST | `/doctype/{type_id}/promote` | 标记为模板 |
 | POST | `/doctype/{type_id}/demote` | 取消模板标记 |
 | POST | `/search` | 向量检索 |
+| POST | `/settings/login` | 管理员登录 |
+| GET | `/settings/session` | 查询会话状态 |
+| GET | `/settings/config` | 读取运行时配置 |
+| PATCH | `/settings/config` | 更新运行时配置 |
+| POST | `/settings/logout` | 退出登录 |
+| GET | `/runtime/concurrency` | 查询并发池状态 |
+| GET | `/invocations` | 分页查询调用日志 |
+| GET | `/invocations/{log_id}` | 查询调用详情 |
+| GET | `/invocations/{log_id}/result.json` | 下载调用结果 |
 | GET | `/log/files` | 查询日志文件 |
 | GET | `/log/recent` | 查询最近日志 |
 | GET | `/log/stream` | 实时日志流 |
@@ -1385,6 +1421,38 @@ curl "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340/detail"
 
 ---
 
+
+### 3.20 `GET /file/stats` 文件处理统计
+
+处理统计（概览 KPI / 状态分布 / 类型排行 / 处理趋势 / 阶段耗时）。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `GET` |
+| 路径 | `/file/stats` |
+| 请求体 | 无 |
+| 响应 | `ResponseWrapper<FileStatsResponse>` |
+| 副作用 | 无 |
+
+查询参数：
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| `range` | string | 否 | `d30` | 时间窗口：`d7`/`d30`/`d90`/`all` |
+
+**说明：**
+
+- 不受顶部项目、文档类型选择器影响（统计全部类型）
+- `range` 时间窗口按 `files.create_time` 过滤，**统一作用于全部 6 组指标**
+- 共 4 条聚合查询（状态分布、类型×项目、趋势、阶段耗时），无 N+1
+
+请求示例：
+
+```bash
+curl "http://localhost:5019/file/stats?range=d30"
+```
+
+---
 ## 4. 字段提取接口 `/extraction`
 
 字段配置决定 extracting 阶段从哪里找资料、是否调用 LLM/VL、如何把模型输出解析为 `{reason, value, pages}`。字段配置按 `type_id` 隔离，但 `field_id` 在当前实现里是全局唯一。
@@ -2399,6 +2467,88 @@ data: {"ok":true}
 
 ---
 
+
+### 5.8 `GET /analysis/tasks/{task_id}` 查询独立分析任务
+
+查询 `/analysis/run` 异步模式创建的分析任务状态和结果。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `GET` |
+| 路径 | `/analysis/tasks/{task_id}` |
+| 请求体 | 无 |
+| 响应 | `AnalysisTaskQueryResponse` |
+| 副作用 | 无 |
+
+路径参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `task_id` | string | 是 | 任务 ID，由 `/analysis/run` 返回 |
+
+**说明：**
+
+- 任务状态：`queued` / `analyzing` / `complete` / `analysis_failed`
+- 所有 async 任务均保存状态及完整结果，与 `callback_url` 和 `persist` 无关
+- 已完成结果在服务重启后保留，中断任务会标记为失败
+- 任务记录暂不自动过期
+- `sync/stream` 模式和功能上线前的任务编号不可查询，返回 404
+
+请求示例：
+
+```bash
+curl "http://localhost:5019/analysis/tasks/task_abc123"
+```
+
+响应示例（进行中）：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "task_id": "task_abc123",
+    "status": "analyzing",
+    "result": null,
+    "error": null,
+    "created_at": "2026-10-14T10:30:00",
+    "updated_at": "2026-10-14T10:30:05"
+  }
+}
+```
+
+响应示例（完成）：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "task_id": "task_abc123",
+    "status": "complete",
+    "result": {
+      "total": 3,
+      "succeeded": 3,
+      "failed": 0,
+      "results": [
+        {
+          "rule_id": "RULE_001",
+          "rule_name": "金额合规性",
+          "result": true,
+          "reason": "金额在允许范围内",
+          "success": true
+        }
+      ]
+    },
+    "error": null,
+    "created_at": "2026-10-14T10:30:00",
+    "updated_at": "2026-10-14T10:30:08"
+  }
+}
+```
+
+---
+
 ## 6. 文档类型接口 `/doctype`
 
 文档类型用于隔离不同格式文件的字段配置和分析规则。每个文件绑定一个 `type_id`；抽取和分析阶段只读取该类型下启用的字段/规则。配置不共享，复制和导入都会产生独立副本。
@@ -2808,7 +2958,195 @@ curl "http://localhost:5019/doctype/financial_report/export"
 | `404` | 目标类型不存在且 `create_type_if_missing=false` |
 | `422` | 导入载荷结构不符合 Pydantic schema |
 
-### 6.9 `GET /doctype/projects` 查询项目列表
+
+### 6.9 `GET /doctype/{type_id}/params` 查询类型入参定义
+
+查询文档类型的入参定义列表。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `GET` |
+| 路径 | `/doctype/{type_id}/params` |
+| 请求体 | 无 |
+| 响应 | `ResponseWrapper<TypeParamItem[]>` |
+| 副作用 | 无 |
+
+路径参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `type_id` | string | 是 | 文档类型 ID |
+
+**说明：**
+
+- 入参定义用于在上传文件时传递动态参数
+- 字段和规则配置中可使用 `<param>参数标识</param>` 占位符引用参数值
+- 按 `priority` 升序、`param_key` 排序返回
+
+请求示例：
+
+```bash
+curl "http://localhost:5019/doctype/contract/params"
+```
+
+响应示例：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "param_key": "contract_type",
+      "param_name": "合同类型",
+      "description": "用于区分采购合同、销售合同等",
+      "default_value": "采购",
+      "required": 1,
+      "priority": 1
+    }
+  ]
+}
+```
+
+---
+
+### 6.10 `POST /doctype/{type_id}/params` 新增/更新类型入参
+
+按 `param_key` 新增或更新一条入参定义。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `POST` |
+| 路径 | `/doctype/{type_id}/params` |
+| 请求体 | `TypeParamUpsert` |
+| 响应 | `ResponseWrapper<TypeParamItem>` |
+| 副作用 | 插入或更新 `type_param` 表记录 |
+
+路径参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `type_id` | string | 是 | 文档类型 ID |
+
+请求体字段：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `param_key` | string | 是 | 参数标识，字母数字下划线，1-64字符 |
+| `param_name` | string | 是 | 参数显示名称 |
+| `description` | string | 否 | 参数说明 |
+| `default_value` | string | 否 | 默认值 |
+| `required` | integer | 否 | 是否必填，0/1，默认0 |
+| `priority` | integer | 否 | 排序优先级，默认0 |
+
+**说明：**
+
+- 如果 `param_key` 已存在，则更新；否则新增
+- `param_key` 只能包含字母、数字、下划线
+- 类型不存在返回 404
+
+请求示例：
+
+```bash
+curl -X POST "http://localhost:5019/doctype/contract/params"   -H "Content-Type: application/json"   -d '{
+    "param_key": "supplier_name",
+    "param_name": "供应商名称",
+    "required": 0,
+    "priority": 3
+  }'
+```
+
+---
+
+### 6.11 `DELETE /doctype/{type_id}/params/{param_key}` 删除类型入参
+
+删除一条入参定义。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `DELETE` |
+| 路径 | `/doctype/{type_id}/params/{param_key}` |
+| 请求体 | 无 |
+| 响应 | `ResponseWrapper` |
+| 副作用 | 删除 `type_param` 表记录 |
+
+路径参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `type_id` | string | 是 | 文档类型 ID |
+| `param_key` | string | 是 | 参数标识 |
+
+查询参数：
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| `force` | boolean | 否 | `false` | 是否强制删除（即使被引用） |
+
+**说明：**
+
+- 如果参数仍被字段或规则引用，且 `force=false`，返回 409
+- `force=true` 强制删除，引用处的占位符会渲染为空字符串
+- 入参不存在返回 404
+
+请求示例：
+
+```bash
+curl -X DELETE "http://localhost:5019/doctype/contract/params/supplier_name?force=true"
+```
+
+---
+
+### 6.12 `GET /doctype/{type_id}/config_version` 查询配置版本
+
+查询类型配置的当前版本标识（基于字段和规则的最后更新时间生成）。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `GET` |
+| 路径 | `/doctype/{type_id}/config_version` |
+| 请求体 | 无 |
+| 响应 | `ResponseWrapper<ConfigVersionResponse>` |
+| 副作用 | 无 |
+
+路径参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `type_id` | string | 是 | 文档类型 ID |
+
+**说明：**
+
+- 版本标识由字段和规则的最后更新时间戳生成（Unix毫秒）
+- 用于前端判断配置是否变更，决定是否重新加载
+- 类型不存在返回 404
+
+请求示例：
+
+```bash
+curl "http://localhost:5019/doctype/contract/config_version"
+```
+
+响应示例：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "type_id": "contract",
+    "version": "1728892345678",
+    "field_count": 15,
+    "rule_count": 8,
+    "last_updated": "2026-10-14T15:32:25"
+  }
+}
+```
+
+---
+
+
+### 6.13 `GET /doctype/projects` 查询项目列表
 
 列出所有项目，并附带每个项目下的类型数量。
 
@@ -2837,7 +3175,7 @@ curl "http://localhost:5019/doctype/projects"
 }
 ```
 
-### 6.10 `POST /doctype/projects` 新增/更新项目
+### 6.14 `POST /doctype/projects` 新增/更新项目
 
 按 `project_id` upsert 项目。更新项目只改名称和描述，不影响成员类型。
 
@@ -2863,7 +3201,7 @@ curl -X POST http://localhost:5019/doctype/projects \
 {"code": 200, "message": "项目已创建", "data": {"project_id": "finance_project"}}
 ```
 
-### 6.11 `DELETE /doctype/projects/{project_id}` 删除项目
+### 6.15 `DELETE /doctype/projects/{project_id}` 删除项目
 
 删除项目本身，并把成员类型的 `project_id` 置空。不会删除任何文档类型、文件或配置。
 
@@ -2881,7 +3219,7 @@ curl -X DELETE "http://localhost:5019/doctype/projects/finance_project"
 
 错误：`404` 表示项目不存在。
 
-### 6.12 `POST /doctype/batch_assign_project` 批量归类类型到项目
+### 6.16 `POST /doctype/batch_assign_project` 批量归类类型到项目
 
 把一批类型归入某项目，或传 `project_id=null` 移出项目。归类会沿 `parent_type_id` 级联血缘后代；默认类型会被跳过。
 
@@ -2910,7 +3248,7 @@ curl -X DELETE "http://localhost:5019/doctype/projects/finance_project"
 
 错误：`404` 表示 `project_id` 非空但项目不存在。
 
-### 6.13 `POST /doctype/{type_id}/promote` 标记为模板
+### 6.17 `POST /doctype/{type_id}/promote` 标记为模板
 
 把普通类型或副本类型标记为模板，设置 `is_template=1`。保留 `parent_type_id`。
 
@@ -2933,7 +3271,7 @@ curl -X POST "http://localhost:5019/doctype/financial_report/promote"
 | `400` | 默认类型无需标记 |
 | `404` | 类型不存在 |
 
-### 6.14 `POST /doctype/{type_id}/demote` 取消模板标记
+### 6.18 `POST /doctype/{type_id}/demote` 取消模板标记
 
 把类型的 `is_template` 设置为 0，不影响血缘和配置。
 
@@ -3016,13 +3354,430 @@ curl -X POST http://localhost:5019/search \
 
 ---
 
-## 8. 日志接口 `/log`
+
+## 8. 系统设置接口 `/settings`
+
+运行时配置管理和会话认证接口。
+
+### 8.1 `POST /settings/login` 管理员登录
+
+使用密码进行管理员认证。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `POST` |
+| 路径 | `/settings/login` |
+| 请求体 | `LoginRequest` |
+| 响应 | `ResponseWrapper` |
+| 副作用 | 创建会话并设置 Cookie |
+
+请求体字段：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `password` | string | 是 | 管理员密码 |
+
+**说明：**
+
+- 密码在 `configs/config.yaml` 的 `settings.password` 中配置（明文）
+- 配置为空字符串时禁用登录保护
+- 会话默认 30 分钟，使用 HttpOnly + SameSite=Strict Cookie
+- 会话存储在单进程内存中，重启后失效
+- 密码错误返回 401
+
+请求示例：
+
+```bash
+curl -X POST "http://localhost:5019/settings/login"   -H "Content-Type: application/json"   -d '{"password": "your_admin_password"}'
+```
+
+---
+
+### 8.2 `GET /settings/session` 查询会话状态
+
+检查当前会话是否有效。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `GET` |
+| 路径 | `/settings/session` |
+| 请求体 | 无 |
+| 响应 | `ResponseWrapper<SessionStatus>` |
+| 副作用 | 无 |
+
+**说明：**
+
+- 未认证或会话过期返回 `{"authenticated": false}`
+- 有效会话返回过期时间
+
+请求示例：
+
+```bash
+curl "http://localhost:5019/settings/session"   --cookie "session=<session_token>"
+```
+
+响应示例：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "authenticated": true,
+    "expires_at": "2026-10-14T16:30:00"
+  }
+}
+```
+
+---
+
+### 8.3 `GET /settings/config` 读取运行时配置
+
+读取当前运行时配置，敏感字段（如 API key）只返回是否已配置。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `GET` |
+| 路径 | `/settings/config` |
+| 请求体 | 无 |
+| 响应 | `ResponseWrapper<ConfigSnapshot>` |
+| 副作用 | 无 |
+| 权限 | 需要登录 |
+
+查询参数：
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| `sections` | string | 否 | 全部 | 逗号分隔的配置节列表 |
+
+**说明：**
+
+- 允许读取的节：`mineru`, `chunking`, `embedding`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`, `storage`
+- 敏感字段（`api_key`, `password` 等）返回 `{"configured": true/false}`
+- `embedding` 只返回 `base_url`, `api_key`, `model_name`
+- 未登录返回 401
+
+请求示例：
+
+```bash
+curl "http://localhost:5019/settings/config?sections=embedding,vl_model"   --cookie "session=<session_token>"
+```
+
+响应示例：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "embedding": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key": {"configured": true},
+      "model_name": "text-embedding-v4"
+    },
+    "vl_model": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key": {"configured": true},
+      "model_name": "qwen-vl-max-latest",
+      "global_max_concurrency": 8
+    }
+  }
+}
+```
+
+---
+
+### 8.4 `PATCH /settings/config` 更新运行时配置
+
+热更新运行时配置，原子性写入 YAML 文件并重载内存配置。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `PATCH` |
+| 路径 | `/settings/config` |
+| 请求体 | `ConfigUpdate` |
+| 响应 | `ResponseWrapper<ConfigSnapshot>` |
+| 副作用 | 更新配置文件和内存配置，重建 VL 并发信号量 |
+| 权限 | 需要登录 |
+
+请求体字段：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `updates` | object | 是 | 配置节更新字典 |
+
+**说明：**
+
+- 允许更新的节同 `GET /settings/config`
+- 敏感字段支持三种操作：
+  - `{"keep": true}` - 保持原值
+  - `{"value": "new_secret"}` - 替换为新值
+  - `{"clear": true}` - 清空
+- 使用 `ruamel.yaml` 保留 YAML 注释和顺序
+- 先验证完整配置（Pydantic），再原子替换文件
+- 更新后立即生效，正在执行的任务不受影响
+- 配置错误返回 400，未登录返回 401
+
+请求示例：
+
+```bash
+curl -X PATCH "http://localhost:5019/settings/config"   -H "Content-Type: application/json"   --cookie "session=<session_token>"   -d '{
+    "updates": {
+      "vl_model": {
+        "api_key": {"value": "sk-new-key"},
+        "global_max_concurrency": 12
+      },
+      "embedding": {
+        "api_key": {"keep": true},
+        "model_name": "text-embedding-v5"
+      }
+    }
+  }'
+```
+
+---
+
+### 8.5 `POST /settings/logout` 退出登录
+
+注销当前会话。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `POST` |
+| 路径 | `/settings/logout` |
+| 请求体 | 无 |
+| 响应 | `ResponseWrapper` |
+| 副作用 | 删除会话并清除 Cookie |
+
+**说明：**
+
+- 清除服务端会话记录
+- 设置过期 Cookie 通知客户端清除
+- 未登录时调用也返回成功
+
+请求示例：
+
+```bash
+curl -X POST "http://localhost:5019/settings/logout"   --cookie "session=<session_token>"
+```
+
+---
+
+## 9. 运行时监控接口 `/runtime`
+
+查询系统运行时状态。
+
+### 9.1 `GET /runtime/concurrency` 查询并发池状态
+
+查询 VL 模型全局并发池的当前状态。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `GET` |
+| 路径 | `/runtime/concurrency` |
+| 请求体 | 无 |
+| 响应 | `ResponseWrapper<ConcurrencyStatus>` |
+| 副作用 | 无 |
+
+**说明：**
+
+- 返回 VL 模型调用的并发上限、当前活跃数、等待队列长度
+- 上限由 `vl_model.global_max_concurrency` 配置（默认 8）
+- 通过 `utils/vl_client.py` 的 `asyncio.Semaphore` 控制
+
+请求示例：
+
+```bash
+curl "http://localhost:5019/runtime/concurrency"
+```
+
+响应示例：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "max_concurrency": 8,
+    "active_count": 3,
+    "waiting_count": 0,
+    "timestamp": "2026-10-14T15:45:30"
+  }
+}
+```
+
+---
+
+## 10. 调用日志接口 `/invocations`
+
+LLM 和 VL 模型调用日志查询接口。
+
+### 10.1 `GET /invocations` 分页查询调用日志
+
+分页查询 LLM/VL 调用历史记录。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `GET` |
+| 路径 | `/invocations` |
+| 请求体 | 无 |
+| 响应 | `ResponseWrapper<InvocationLogPage>` |
+| 副作用 | 无 |
+
+查询参数：
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| `page` | integer | 否 | 1 | 页码（从 1 开始） |
+| `page_size` | integer | 否 | 20 | 每页条数（1-100） |
+| `file_id` | string | 否 | - | 按文件 ID 过滤 |
+| `model_type` | string | 否 | - | 按模型类型过滤（`llm`/`vl`/`embedding`） |
+| `status` | string | 否 | - | 按状态过滤（`success`/`error`） |
+| `start_time` | string | 否 | - | 起始时间（ISO 8601） |
+| `end_time` | string | 否 | - | 结束时间（ISO 8601） |
+
+**说明：**
+
+- 按调用时间倒序返回
+- 每条记录包含：调用 ID、文件 ID、模型类型、状态、tokens、耗时、创建时间
+- 不包含完整请求/响应内容（使用 `GET /invocations/{log_id}` 查看详情）
+
+请求示例：
+
+```bash
+curl "http://localhost:5019/invocations?page=1&page_size=20&model_type=llm&status=success"
+```
+
+响应示例：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "items": [
+      {
+        "log_id": "inv_abc123",
+        "file_id": "file_xyz",
+        "model_type": "llm",
+        "model_name": "qwen-max",
+        "status": "success",
+        "prompt_tokens": 1500,
+        "completion_tokens": 300,
+        "total_tokens": 1800,
+        "duration_ms": 2345,
+        "created_at": "2026-10-14T15:30:00"
+      }
+    ],
+    "total": 156,
+    "page": 1,
+    "page_size": 20
+  }
+}
+```
+
+---
+
+### 10.2 `GET /invocations/{log_id}` 查询调用详情
+
+查询单条调用记录的完整信息（包含请求和响应内容）。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `GET` |
+| 路径 | `/invocations/{log_id}` |
+| 请求体 | 无 |
+| 响应 | `ResponseWrapper<InvocationDetail>` |
+| 副作用 | 无 |
+
+路径参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `log_id` | string | 是 | 调用记录 ID |
+
+**说明：**
+
+- 返回完整的请求参数和响应内容
+- 对于 VL 调用，包含 base64 图片（可能很大）
+- 错误调用包含错误信息和堆栈
+- 记录不存在返回 404
+
+请求示例：
+
+```bash
+curl "http://localhost:5019/invocations/inv_abc123"
+```
+
+响应示例：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "log_id": "inv_abc123",
+    "file_id": "file_xyz",
+    "model_type": "llm",
+    "model_name": "qwen-max",
+    "status": "success",
+    "request": {
+      "messages": [{"role": "user", "content": "..."}],
+      "temperature": 0.1
+    },
+    "response": {
+      "choices": [{"message": {"content": "..."}}]
+    },
+    "prompt_tokens": 1500,
+    "completion_tokens": 300,
+    "duration_ms": 2345,
+    "created_at": "2026-10-14T15:30:00"
+  }
+}
+```
+
+---
+
+### 10.3 `GET /invocations/{log_id}/result.json` 下载调用结果
+
+以 JSON 文件形式下载调用记录（用于存档或分析）。
+
+| 项 | 说明 |
+|---|---|
+| 方法 | `GET` |
+| 路径 | `/invocations/{log_id}/result.json` |
+| 请求体 | 无 |
+| 响应 | `application/json` 文件流 |
+| 副作用 | 无 |
+
+路径参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|:--:|---|
+| `log_id` | string | 是 | 调用记录 ID |
+
+**说明：**
+
+- 直接返回 JSON 文件，浏览器会触发下载
+- 文件名格式：`invocation_{log_id}.json`
+- 内容与 `GET /invocations/{log_id}` 相同
+- 记录不存在返回 404
+
+请求示例：
+
+```bash
+curl "http://localhost:5019/invocations/inv_abc123/result.json" -O
+```
+
+---
+
+## 11. 日志接口 `/log`
 
 日志接口读取 `logs/app_*.log` 文件，供前端日志页和运维排障。全部为只读接口。
 
 日志等级合法值：`TRACE`、`DEBUG`、`INFO`、`SUCCESS`、`WARNING`、`ERROR`、`CRITICAL`。
 
-### 8.1 `GET /log/files` 查询日志文件列表
+### 11.1 `GET /log/files` 查询日志文件列表
 
 列出 `logs/` 目录下的 `app_*.log` 文件，按修改时间倒序。
 
@@ -3057,7 +3812,7 @@ curl "http://localhost:5019/log/files"
 
 注意事项：无日志文件时 `current=null`、`items=[]`。
 
-### 8.2 `GET /log/recent` 查询最近日志
+### 11.2 `GET /log/recent` 查询最近日志
 
 读取指定日志文件末尾若干行，并可按日志等级过滤。
 
@@ -3114,7 +3869,7 @@ curl "http://localhost:5019/log/recent?lines=100&level=ERROR"
 | `400` | 文件名不合法、日志等级不合法 |
 | `404` | 指定日志文件不存在 |
 
-### 8.3 `GET /log/stream` 实时日志流
+### 11.3 `GET /log/stream` 实时日志流
 
 以 SSE 实时推送日志。连接建立后先回放末尾 `tail` 行，然后持续读取追加内容。未指定 `file` 时会跟随最新日志文件，日志轮转时自动切换。
 
@@ -3164,7 +3919,7 @@ data: {"file":"app_2026-08-07.log","ts":1786087200.123}
 
 ---
 
-## 9. 异步回调契约
+## 12. 异步回调契约
 
 以下接口在 `async` 或 `sync` 模式传入 `callback_url` 时会回调：
 
@@ -3271,7 +4026,7 @@ data: {"file":"app_2026-08-07.log","ts":1786087200.123}
 
 ---
 
-## 10. SSE 流式事件契约
+## 13. SSE 流式事件契约
 
 SSE 响应统一为：
 
@@ -3318,9 +4073,9 @@ parsing -> tableing -> chunking -> embedding -> extracting -> field_extracted*N 
 
 ---
 
-## 11. 枚举与关键结构速查
+## 14. 枚举与关键结构速查
 
-### 11.1 枚举
+### 14.1 枚举
 
 | 枚举 | 取值 | 使用位置 |
 |---|---|---|
@@ -3387,7 +4142,7 @@ VL 示例：
 | `pages` | 模型自报页码，落库为 `extraction_result.model_pages` | 是 | text/table 的 LLM 可返回；VL、`use_llm=0`、模型未返回时为 `[]` |
 | `source_pages` | 输出时根据 `pages` 和 `source_refs` 派生 | 否 | 优先 `pages`，无则从程序命中页兜底；恒为 int 数组，范围会展开 |
 
-### 11.4 占位符规则
+### 14.4 占位符规则
 
 | 占位符 | 使用位置 | 说明 |
 |---|---|---|
@@ -3398,7 +4153,7 @@ VL 示例：
 | `{section_list}` | section LLM 匹配模板 | 自定义章节匹配模板必须包含 |
 ---
 
-## 12. 附录
+## 15. 附录
 
 本节收录的是接口正文之外、但仍需要一站式保留的补充材料：配置手册、字段提取规则、`source_refs`、库表结构、枚举状态机、MinerU 集成和优化 backlog。这里不再重复第 3-8 节已经完整展开的接口参考。
 

@@ -1,0 +1,66 @@
+389:## 2. 接口总览
+390-
+391-| 分组 | 数量 | 说明 |
+392-|---|---:|---|
+393-| `/file` | 19 | 文件上传、处理、重试、内容、结果、删除 |
+394-| `/extraction` | 7 | 字段配置、默认提示词、同步/流式调试 |
+395-| `/analysis` | 7 | 分析规则、同步/流式调试、独立分析执行 |
+396-| `/doctype` | 14 | 文档类型、复制、导入导出、模板、项目归类 |
+397-| `/search` | 1 | 向量检索 |
+398-| `/log` | 3 | 日志读取和实时流 |
+399-
+400-| 方法 | 路径 | 简述 |
+401-|---|---|---|
+402-| GET | `/file/list` | 分页查询文件列表 |
+403-| GET | `/file/processing` | 查询处理中队列 |
+404-| POST | `/file/context_query` | 文件片段上下文查询 |
+405-| DELETE | `/file/batch` | 批量删除文件 |
+406-| POST | `/file/parse` | 上传 PDF 并启动管线 |
+407-| GET | `/file/{file_id}/status` | 查询文件处理状态 |
+408-| GET | `/file/{file_id}/pdf` | 下载/预览原始 PDF |
+409-| DELETE | `/file/{file_id}` | 删除单个文件 |
+410-| POST | `/file/{file_id}/retry/{stage}` | 从指定阶段重试 |
+411-| POST | `/file/{file_id}/retry/extracting` | 快捷重试字段提取 |
+412-| POST | `/file/{file_id}/retry/analyzing` | 快捷重试逻辑分析 |
+413-| GET | `/file/{file_id}/tables` | 查询表格列表 |
+414-| GET | `/file/{file_id}/chunks` | 查询分块列表 |
+415-| POST | `/file/{file_id}/recompute_page_mapping` | 重算页码映射 |
+416-| GET | `/file/{file_id}/outline` | 查询章节大纲 |
+417-| GET | `/file/{file_id}/content` | 按页返回 Markdown 内容 |
+418-| GET | `/file/{file_id}/extraction` | 查询字段提取结果 |
+419-| GET | `/file/{file_id}/analysis` | 查询逻辑分析结果 |
+420-| GET | `/file/{file_id}/detail` | 查询完整文件详情 |
+421-| GET | `/extraction/match-prompt-defaults` | 获取匹配提示词默认值 |
+422-| GET | `/extraction/fields` | 查询字段配置 |
+423-| POST | `/extraction/fields` | 新增/更新字段配置 |
+424-| DELETE | `/extraction/fields/{field_id}` | 删除字段配置 |
+425-| GET | `/extraction/fields/{field_id}/check` | 检查字段 ID 是否存在 |
+426-| POST | `/extraction/test` | 字段提取同步调试 |
+427-| POST | `/extraction/test/stream` | 字段提取流式调试 |
+428-| GET | `/analysis/rules` | 查询分析规则 |
+429-| POST | `/analysis/rules` | 新增/更新分析规则 |
+430-| DELETE | `/analysis/rules/{rule_id}` | 删除分析规则 |
+431-| GET | `/analysis/rules/{rule_id}/check` | 检查规则 ID 是否存在 |
+432-| POST | `/analysis/test` | 逻辑分析同步调试 |
+433-| POST | `/analysis/run` | 独立逻辑分析执行 |
+434-| POST | `/analysis/test/stream` | 逻辑分析流式调试 |
+435-| GET | `/doctype/list` | 查询文档类型列表 |
+436-| POST | `/doctype` | 新增/更新文档类型 |
+437-| PUT | `/doctype/{type_id}` | 更新文档类型，可改 ID |
+438-| DELETE | `/doctype/{type_id}` | 删除文档类型 |
+439-| POST | `/doctype/batch_delete` | 批量删除文档类型 |
+440-| POST | `/doctype/{type_id}/copy_from` | 从源类型复制配置 |
+441-| GET | `/doctype/{type_id}/export` | 导出类型配置 |
+442-| POST | `/doctype/import` | 导入类型配置 |
+443-| GET | `/doctype/projects` | 查询项目列表 |
+444-| POST | `/doctype/projects` | 新增/更新项目 |
+445-| DELETE | `/doctype/projects/{project_id}` | 删除项目 |
+446-| POST | `/doctype/batch_assign_project` | 批量归类类型到项目 |
+447-| POST | `/doctype/{type_id}/promote` | 标记为模板 |
+448-| POST | `/doctype/{type_id}/demote` | 取消模板标记 |
+449-| POST | `/search` | 向量检索 |
+450-| GET | `/log/files` | 查询日志文件 |
+451-| GET | `/log/recent` | 查询最近日志 |
+452-| GET | `/log/stream` | 实时日志流 |
+453-
+454----

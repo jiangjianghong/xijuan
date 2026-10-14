@@ -1,0 +1,33 @@
+# 需要添加的接口清单
+
+## 1. 文件统计接口
+- GET /file/stats
+
+## 2. 系统设置接口 (4个)
+- POST /settings/login
+- GET /settings/session
+- GET /settings/config
+- PATCH /settings/config
+- POST /settings/logout
+
+## 3. 运行时监控接口 (1个)
+- GET /runtime/concurrency
+
+## 4. 调用日志接口 (3个)
+- GET /invocations
+- GET /invocations/{log_id}
+- GET /invocations/{log_id}/result.json
+
+## 5. 文档类型参数管理 (3个)
+- GET /doctype/{type_id}/params
+- POST /doctype/{type_id}/params
+- DELETE /doctype/{type_id}/params/{param_key}
+
+## 6. 文档类型配置版本 (1个)
+- GET /doctype/{type_id}/config_version
+
+## 7. 分析任务查询 (1个)
+- GET /analysis/tasks/{task_id}
+
+总计: 1 + 5 + 1 + 3 + 3 + 1 + 1 = 15个新增接口
+加上原有51个 = 66个 (接近实际的67个，差1个可能是内部接口或已废弃)
