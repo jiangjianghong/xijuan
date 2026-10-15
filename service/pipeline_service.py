@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List
@@ -397,6 +398,11 @@ async def run_pipeline_stream(
 
         logger.info("流式处理管线完成: {}", file_id)
 
+    except asyncio.CancelledError as e:
+        await mark_file_failed_with_retry(
+            session, file_id, f"{current_stage}_failed", e
+        )
+        raise
     except Exception as e:
         logger.error("流式处理管线失败: {}, error={}", file_id, _format_exception(e))
         await mark_file_failed_with_retry(
@@ -630,6 +636,11 @@ async def run_pipeline(
         await notify_callback(callback_url, file_id, "complete")
         logger.info("处理管线完成: {}", file_id)
 
+    except asyncio.CancelledError as e:
+        await mark_file_failed_with_retry(
+            session, file_id, f"{current_stage}_failed", e
+        )
+        raise
     except Exception as e:
         logger.error("处理管线失败: {}, error={}", file_id, _format_exception(e))
         await mark_file_failed_with_retry(
@@ -1091,6 +1102,11 @@ async def run_from_stage_stream(
 
         logger.info("从 {} 阶段流式重新开始完成: {}", stage, file_id)
 
+    except asyncio.CancelledError as e:
+        await mark_file_failed_with_retry(
+            session, file_id, f"{current_stage}_failed", e
+        )
+        raise
     except Exception as e:
         logger.error("从 {} 阶段流式重新开始失败: {}, error={}", stage, file_id, _format_exception(e))
         await mark_file_failed_with_retry(
@@ -1417,6 +1433,11 @@ async def run_from_stage(
 
         await notify_callback(callback_url, file_id, "complete")
         logger.info("从 {} 阶段重新开始完成: {}", stage, file_id)
+    except asyncio.CancelledError as e:
+        await mark_file_failed_with_retry(
+            session, file_id, f"{current_stage}_failed", e
+        )
+        raise
     except Exception as e:
         logger.error(
             "从阶段重试失败: {}, stage={}, error={}",

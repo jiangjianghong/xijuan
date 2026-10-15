@@ -64,21 +64,22 @@ async def mark_file_failed(
 
 
 async def mark_file_failed_with_retry(
-    session: AsyncSession,
+    session: AsyncSession | None,
     file_id: str,
     progress: str,
     exc: BaseException,
     **extra: Any,
 ) -> bool:
     """使用独立会话写失败状态；首次失败后按 1/2/4 秒间隔最多重试三次。"""
-    try:
-        await session.rollback()
-    except Exception as rollback_exc:
-        logger.warning(
-            "失败状态写入前回滚原会话失败: file_id={}, error={}",
-            file_id,
-            format_exception(rollback_exc),
-        )
+    if session is not None:
+        try:
+            await session.rollback()
+        except Exception as rollback_exc:
+            logger.warning(
+                "失败状态写入前回滚原会话失败: file_id={}, error={}",
+                file_id,
+                format_exception(rollback_exc),
+            )
 
     failure_message = format_exception(exc)
     for attempt in range(len(_FAILURE_STATUS_RETRY_DELAYS) + 1):

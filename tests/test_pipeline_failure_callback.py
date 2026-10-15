@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
+from importlib import import_module
 from unittest.mock import AsyncMock
 
 import pytest
@@ -120,6 +123,53 @@ async def test_run_pipeline_content_save_failure_persists_parsing_failed(monkeyp
     failed = [call for call in recorder.calls if call["event"] == "stage_failed"]
     assert len(failed) == 1
     assert failed[0]["status"] == "parsing_failed"
+
+
+@pytest.mark.anyio
+async def test_run_pipeline_cancellation_marks_current_stage_failed(monkeypatch):
+    recorder = CallbackRecorder()
+    mark_failed = AsyncMock(return_value=True)
+    entered_parse = asyncio.Event()
+    monkeypatch.setattr(pipeline_service, "notify_callback", recorder)
+    monkeypatch.setattr(pipeline_service, "mark_file_failed_with_retry", mark_failed)
+
+    async def _wait_for_cancel(*args, **kwargs):
+        entered_parse.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(pipeline_service, "parse_file", _wait_for_cancel)
+    task = asyncio.create_task(
+        pipeline_service.run_pipeline("f_cancel", "a.pdf", b"%PDF", FakeSession())
+    )
+    await entered_parse.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    mark_failed.assert_awaited_once()
+    assert mark_failed.await_args.args[1:3] == ("f_cancel", "parsing_failed")
+
+
+@pytest.mark.anyio
+async def test_background_pipeline_setup_failure_marks_parsing_failed(monkeypatch):
+    file_router = import_module("blue_print.file_router")
+    mark_failed = AsyncMock(return_value=True)
+    monkeypatch.setattr(file_router, "mark_file_failed_with_retry", mark_failed)
+
+    @asynccontextmanager
+    async def _broken_pipeline_slot(*args, **kwargs):
+        raise RuntimeError("pipeline setup failed")
+        yield
+
+    monkeypatch.setattr(file_router, "pipeline_slot", _broken_pipeline_slot)
+    await file_router._run_pipeline_background(
+        "f_setup_fail", "a.pdf", b"%PDF"
+    )
+
+    mark_failed.assert_awaited_once()
+    assert mark_failed.await_args.args[0] is None
+    assert mark_failed.await_args.args[1:3] == ("f_setup_fail", "parsing_failed")
 
 
 @pytest.mark.anyio

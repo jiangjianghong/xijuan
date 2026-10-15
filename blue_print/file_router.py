@@ -54,6 +54,7 @@ from service.invocation_log_service import new_log_id, track_file_call
 from service.file_context_service import query_file_context
 from service.pipeline_service import run_from_stage, run_from_stage_stream, run_pipeline, run_pipeline_stream
 from service.pipeline_gate import pipeline_slot
+from service.stage_status import mark_file_failed_with_retry
 from service.extraction_service import (
     derive_source_pages,
     parse_sections,
@@ -519,19 +520,31 @@ async def _run_pipeline_background(
     """后台运行 pipeline。"""
     from model.database import get_session_factory
 
-    with log_context(file_id=file_id, type_id=type_id):
-        async with pipeline_slot(file_id, file_name=file_name):
-            session_factory = get_session_factory()
-            async with session_factory() as session:
-                try:
+    pipeline_started = False
+    try:
+        with log_context(file_id=file_id, type_id=type_id):
+            async with pipeline_slot(file_id, file_name=file_name):
+                session_factory = get_session_factory()
+                async with session_factory() as session:
                     async with track_file_call(log_id, file_id, session):
+                        pipeline_started = True
                         await run_pipeline(
                             file_id, file_name, file_content_bytes, session,
                             callback_url=callback_url, callback_mode=callback_mode,
                             **({"model_config": model_config} if model_config is not None else {}),
                         )
-                except Exception as e:
-                    logger.exception("Pipeline 后台执行失败: type={}, repr={}", type(e).__name__, repr(e))
+    except asyncio.CancelledError as e:
+        if not pipeline_started:
+            await mark_file_failed_with_retry(
+                None, file_id, "parsing_failed", e
+            )
+        raise
+    except Exception as e:
+        logger.exception("Pipeline 后台执行失败: type={}, repr={}", type(e).__name__, repr(e))
+        if not pipeline_started:
+            await mark_file_failed_with_retry(
+                None, file_id, "parsing_failed", e
+            )
 
 
 async def _stream_pipeline_generator(
@@ -545,13 +558,28 @@ async def _stream_pipeline_generator(
     """流式 pipeline 生成器，内部管理数据库会话。"""
     from model.database import get_session_factory
 
-    with log_context(file_id=file_id, type_id=type_id):
-        async with pipeline_slot(file_id, file_name=file_name):
-            session_factory = get_session_factory()
-            async with session_factory() as session:
-                async with track_file_call(log_id, file_id, session):
-                    async for event in run_pipeline_stream(file_id, file_name, file_content_bytes, session, **({"model_config": model_config} if model_config is not None else {})):
-                        yield event
+    pipeline_started = False
+    try:
+        with log_context(file_id=file_id, type_id=type_id):
+            async with pipeline_slot(file_id, file_name=file_name):
+                session_factory = get_session_factory()
+                async with session_factory() as session:
+                    async with track_file_call(log_id, file_id, session):
+                        pipeline_started = True
+                        async for event in run_pipeline_stream(file_id, file_name, file_content_bytes, session, **({"model_config": model_config} if model_config is not None else {})):
+                            yield event
+    except asyncio.CancelledError as e:
+        if not pipeline_started:
+            await mark_file_failed_with_retry(
+                None, file_id, "parsing_failed", e
+            )
+        raise
+    except Exception as e:
+        if not pipeline_started:
+            await mark_file_failed_with_retry(
+                None, file_id, "parsing_failed", e
+            )
+        raise
 
 
 @router.post("/parse")
@@ -925,24 +953,36 @@ async def retry_file(
         async def _run_from_stage_background():
             from model.database import get_session_factory
 
-            with log_context(file_id=file_id, type_id=type_id):
-                async with pipeline_slot(file_id, file_name=file_name):
-                    session_factory = get_session_factory()
-                    async with session_factory() as session:
-                        try:
+            pipeline_started = False
+            try:
+                with log_context(file_id=file_id, type_id=type_id):
+                    async with pipeline_slot(file_id, file_name=file_name):
+                        session_factory = get_session_factory()
+                        async with session_factory() as session:
                             async with track_file_call(log_id, file_id, session):
+                                pipeline_started = True
                                 await run_from_stage(
                                     file_id, stage, session, callback_url=callback_url,
                                     callback_mode=callback_mode.value,
                                     **({"model_config": request_model_config} if request_model_config is not None else {}),
                                 )
-                        except Exception as e:
-                            logger.exception(
-                                "从 {} 阶段重试失败: type={}, repr={}",
-                                stage,
-                                type(e).__name__,
-                                repr(e),
-                            )
+            except asyncio.CancelledError as e:
+                if not pipeline_started:
+                    await mark_file_failed_with_retry(
+                        None, file_id, f"{stage}_failed", e
+                    )
+                raise
+            except Exception as e:
+                logger.exception(
+                    "从 {} 阶段重试失败: type={}, repr={}",
+                    stage,
+                    type(e).__name__,
+                    repr(e),
+                )
+                if not pipeline_started:
+                    await mark_file_failed_with_retry(
+                        None, file_id, f"{stage}_failed", e
+                    )
 
         background_tasks.add_task(_run_from_stage_background)
         return ResponseWrapper(message=f"已从 {stage} 阶段开始重试")
