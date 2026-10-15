@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 import service.pipeline_service as pipeline_service
+
+
+@pytest.fixture(autouse=True)
+def _skip_failure_status_database_writes(monkeypatch):
+    monkeypatch.setattr(
+        pipeline_service,
+        "mark_file_failed_with_retry",
+        AsyncMock(return_value=True),
+    )
 
 
 class CallbackRecorder:
@@ -81,6 +92,34 @@ async def test_run_pipeline_parsing_failure_pushes_stage_failed(monkeypatch):
     assert "TimeoutError" in last["data"]["error"]
     assert "MinerU 连接超时" in last["data"]["error"]
     assert _stage_failed_count(recorder) == 1
+
+
+@pytest.mark.anyio
+async def test_run_pipeline_content_save_failure_persists_parsing_failed(monkeypatch):
+    """MinerU 返回后解析内容落库失败，也必须记录为 parsing_failed。"""
+    recorder = CallbackRecorder()
+    mark_failed = AsyncMock(return_value=True)
+    monkeypatch.setattr(pipeline_service, "notify_callback", recorder)
+    monkeypatch.setattr(pipeline_service, "mark_file_failed_with_retry", mark_failed)
+    monkeypatch.setattr(
+        pipeline_service, "parse_file", AsyncMock(return_value=("# md", "{}"))
+    )
+    save_error = RuntimeError("file_content 写入失败")
+    monkeypatch.setattr(
+        pipeline_service, "save_file_content", AsyncMock(side_effect=save_error)
+    )
+
+    with pytest.raises(RuntimeError, match="file_content 写入失败"):
+        await pipeline_service.run_pipeline(
+            "f_content_save_fail", "a.pdf", b"%PDF", FakeSession(), callback_url="http://cb"
+        )
+
+    mark_failed.assert_awaited_once()
+    assert mark_failed.await_args.args[1:3] == ("f_content_save_fail", "parsing_failed")
+    assert mark_failed.await_args.args[3] is save_error
+    failed = [call for call in recorder.calls if call["event"] == "stage_failed"]
+    assert len(failed) == 1
+    assert failed[0]["status"] == "parsing_failed"
 
 
 @pytest.mark.anyio

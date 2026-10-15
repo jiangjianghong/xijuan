@@ -10,6 +10,8 @@ PendingRollbackError，直到显式 rollback。没有这组测试，rollback 被
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from sqlalchemy.exc import DataError, PendingRollbackError
 
@@ -120,6 +122,11 @@ def _patched(monkeypatch):
     recorder = CallbackRecorder()
     monkeypatch.setattr(pipeline_service, "notify_callback", recorder)
     monkeypatch.setattr(pipeline_service, "MilvusClient", FakeMilvusClient)
+    monkeypatch.setattr(
+        pipeline_service,
+        "mark_file_failed_with_retry",
+        AsyncMock(return_value=True),
+    )
     return recorder
 
 

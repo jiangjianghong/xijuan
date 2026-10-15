@@ -8,15 +8,19 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from loguru import logger
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from model.database import rollback_if_broken
+from model.database import get_session_factory, rollback_if_broken
 from model.tables import File
 from utils.errors import format_exception
+
+
+_FAILURE_STATUS_RETRY_DELAYS = (1, 2, 4)
 
 
 async def mark_file_failed(
@@ -57,3 +61,62 @@ async def mark_file_failed(
             progress,
             format_exception(mark_exc),
         )
+
+
+async def mark_file_failed_with_retry(
+    session: AsyncSession,
+    file_id: str,
+    progress: str,
+    exc: BaseException,
+    **extra: Any,
+) -> bool:
+    """使用独立会话写失败状态；首次失败后按 1/2/4 秒间隔最多重试三次。"""
+    try:
+        await session.rollback()
+    except Exception as rollback_exc:
+        logger.warning(
+            "失败状态写入前回滚原会话失败: file_id={}, error={}",
+            file_id,
+            format_exception(rollback_exc),
+        )
+
+    failure_message = format_exception(exc)
+    for attempt in range(len(_FAILURE_STATUS_RETRY_DELAYS) + 1):
+        try:
+            async with get_session_factory()() as retry_session:
+                await retry_session.execute(
+                    update(File)
+                    .where(File.file_id == file_id)
+                    .values(progress=progress, error=failure_message, **extra)
+                )
+                await retry_session.commit()
+            if attempt:
+                logger.info(
+                    "失败状态重试写入成功: file_id={}, progress={}, attempt={}",
+                    file_id,
+                    progress,
+                    attempt + 1,
+                )
+            return True
+        except Exception as mark_exc:
+            if attempt < len(_FAILURE_STATUS_RETRY_DELAYS):
+                delay = _FAILURE_STATUS_RETRY_DELAYS[attempt]
+                logger.warning(
+                    "写入失败状态失败，{} 秒后重试: file_id={}, progress={}, attempt={}/{}, error={}",
+                    delay,
+                    file_id,
+                    progress,
+                    attempt + 1,
+                    len(_FAILURE_STATUS_RETRY_DELAYS) + 1,
+                    format_exception(mark_exc),
+                )
+                await asyncio.sleep(delay)
+            else:
+                logger.error(
+                    "失败状态写入重试耗尽: file_id={}, progress={}, original_error={}, mark_error={}",
+                    file_id,
+                    progress,
+                    failure_message,
+                    format_exception(mark_exc),
+                )
+    return False

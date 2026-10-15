@@ -23,7 +23,7 @@ from service.chunk_service import chunk_content, save_chunks
 from service.embedding_service import embed_chunks, submit_to_milvus
 from service.extraction_service import run_extraction, run_extraction_stream
 from service.parse_service import parse_file, save_file_content
-from service.stage_status import mark_file_failed
+from service.stage_status import mark_file_failed, mark_file_failed_with_retry
 from service.table_service import parse_tables, save_tables
 from service.type_config_service import get_file_type_runtime_config
 from utils.callback import notify_callback
@@ -78,6 +78,7 @@ async def run_pipeline_stream(
     - error: 发生错误
     """
     logger.info("开始流式处理管线: {}", file_id)
+    current_stage = "parsing"
 
     try:
         # ── 阶段 1: MinerU 解析 ──────────────────────────────────────
@@ -113,6 +114,7 @@ async def run_pipeline_stream(
         })
 
         # ── 阶段 2: AI 校验表格名称 ───────────────────────────────
+        current_stage = "tableing"
         yield _sse_event("tableing_start", {
             "file_id": file_id,
             "stage": "tableing_start",
@@ -150,6 +152,7 @@ async def run_pipeline_stream(
             raise
 
         # ── 阶段 3: 分块 ──────────────────────────────────────────
+        current_stage = "chunking"
         yield _sse_event("chunking_start", {
             "file_id": file_id,
             "stage": "chunking_start",
@@ -198,6 +201,7 @@ async def run_pipeline_stream(
             raise
 
         # ── 阶段 4: 向量化 ────────────────────────────────────────
+        current_stage = "embedding"
         yield _sse_event("embedding_start", {
             "file_id": file_id,
             "stage": "embedding_start",
@@ -272,6 +276,7 @@ async def run_pipeline_stream(
                 raise
 
         # ── 阶段 5: 字段提取 ──────────────────────────────────────
+        current_stage = "extracting"
         yield _sse_event("tasks_loading", {
             "file_id": file_id,
             "stage": "tasks_loading",
@@ -333,6 +338,7 @@ async def run_pipeline_stream(
             raise
 
         # ── 阶段 6: 逻辑分析 ──────────────────────────────────────
+        current_stage = "analyzing"
         yield _sse_event("analysis_start", {
             "file_id": file_id,
             "stage": "analysis_start",
@@ -393,6 +399,9 @@ async def run_pipeline_stream(
 
     except Exception as e:
         logger.error("流式处理管线失败: {}, error={}", file_id, _format_exception(e))
+        await mark_file_failed_with_retry(
+            session, file_id, f"{current_stage}_failed", e
+        )
         yield _sse_event("error", {
             "file_id": file_id,
             "stage": "error",
@@ -623,6 +632,9 @@ async def run_pipeline(
 
     except Exception as e:
         logger.error("处理管线失败: {}, error={}", file_id, _format_exception(e))
+        await mark_file_failed_with_retry(
+            session, file_id, f"{current_stage}_failed", e
+        )
         await notify_callback(
             callback_url,
             file_id,
@@ -689,6 +701,7 @@ async def run_from_stage_stream(
 
     milvus_client = MilvusClient()
     milvus_client.connect()
+    current_stage = stage
 
     try:
         # 根据阶段清理数据
@@ -1080,6 +1093,9 @@ async def run_from_stage_stream(
 
     except Exception as e:
         logger.error("从 {} 阶段流式重新开始失败: {}, error={}", stage, file_id, _format_exception(e))
+        await mark_file_failed_with_retry(
+            session, file_id, f"{current_stage}_failed", e
+        )
         yield _sse_event("error", {
             "file_id": file_id,
             "stage": "error",
@@ -1405,6 +1421,9 @@ async def run_from_stage(
         logger.error(
             "从阶段重试失败: {}, stage={}, error={}",
             file_id, current_stage, _format_exception(e),
+        )
+        await mark_file_failed_with_retry(
+            session, file_id, f"{current_stage}_failed", e
         )
         await notify_callback(
             callback_url,
