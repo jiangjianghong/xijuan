@@ -1123,6 +1123,11 @@ const RuleConfig = {
                         <div class="form-hint">列表顺序决定回退优先级、合并顺序和去重优先级；VL 仅允许在回退模式。</div>
                     </div>
                     <div class="form-group">
+                        <label class="form-label">最大字符数</label>
+                        <input class="form-input" id="fm-hybrid-max-length" type="number" value="${config.max_length ?? 100000}" min="0">
+                        <div class="form-hint">所有通道合并后的总字符数上限，0 表示不限制（注意 LLM 成本）</div>
+                    </div>
+                    <div class="form-group">
                         <div class="form-label-row"><label class="form-label">检索配置</label><button type="button" class="btn btn-secondary" onclick="RuleConfig.addHybridItem()">＋ 添加配置</button></div>
                         <div id="fm-hybrid-tabs" class="hybrid-tabs">${items.map((_, i) => `<button type="button" class="hybrid-tab ${i === 0 ? 'active' : ''}" draggable="true" data-index="${i}" onclick="RuleConfig.showHybridItem(${i})" ondragstart="RuleConfig.onHybridTabDragStart(event)" ondragover="RuleConfig.onHybridDragOver(event)" ondrop="RuleConfig.onHybridTabDrop(event)">配置 ${i + 1}</button>`).join('')}</div>
                         <div id="fm-hybrid-items">${this.renderHybridItems(items, strategy)}</div>
@@ -2359,6 +2364,7 @@ const RuleConfig = {
         switch (searchType) {
             case 'hybrid':
                 config.strategy = (this.formElement(root, 'fm-hybrid-strategy') || {}).value || 'union';
+                config.max_length = getInt('fm-hybrid-max-length', 100000);
                 config.items = this.getHybridItemsFromDom();
                 break;
             case 'context':

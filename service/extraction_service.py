@@ -2835,10 +2835,7 @@ def _hybrid_evidence(
                 continue
             has_text_refs = True
             dedupe_key = _hybrid_ref_key(ref)
-            keys = {dedupe_key}
-            if isinstance(ref.get("start_pos"), int) and isinstance(ref.get("end_pos"), int):
-                keys.add(("span", ref["start_pos"], ref["end_pos"]))
-            if keys & seen:
+            if dedupe_key in seen:
                 continue
             annotated = _page_annotated_text(
                 str(ref["text"]), page_mapping, ref.get("start_pos"),
@@ -2850,11 +2847,11 @@ def _hybrid_evidence(
                 if len(annotated) > max_length:
                     annotated = annotated[:max_length]
                     # 只消费实际保留的片段；较长的后续通道仍可补充本页剩余证据。
-                    keys = {("partial", dedupe_key, annotated)}
-                if keys & seen:
+                    dedupe_key = ("partial", dedupe_key, annotated)
+                if dedupe_key in seen:
                     continue
                 max_length -= len(annotated) + len("\n---\n")
-            seen.update(keys)
+            seen.add(dedupe_key)
             pieces.append((annotated, key, ref))
     # 某些自定义检索器只返回 value；保留它作为回退证据。
     if not has_text_refs and value and str(value).strip():
@@ -2981,9 +2978,9 @@ async def _iter_hybrid_extraction(
     if strategy == "fallback" and sum(i.get("source_type") == "vl" for i in items) > 1:
         raise ValueError("fallback 模式最多允许一个 VL 通道")
     try:
-        max_length = max(1, int(cfg.get("max_length", cfg.get("max_total_length", 30000))))
+        max_length = max(1, int(cfg.get("max_length", cfg.get("max_total_length", 100000))))
     except (TypeError, ValueError):
-        max_length = 30000
+        max_length = 100000
 
     entries = [{
         "id": item["id"], "index": index, "source_type": item.get("source_type"),
