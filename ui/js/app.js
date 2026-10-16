@@ -717,12 +717,18 @@ const App = {
             const startTime = detail[stage.start] || prevEndTime;
             const endTime = stage.end ? detail[stage.end] : null;
 
-            if (endTime) {
+            // 失败状态优先于结束时间：解析结果可能已写入 end_*_time，随后
+            // 在同一阶段的落库/提交过程中断开数据库连接并被标记为 *_failed。
+            if (isFailed && currentStage === stage.key) {
+                status = 'failed';
+                if (endTime) {
+                    duration = Utils.calcDuration(startTime, endTime);
+                    prevEndTime = endTime;
+                }
+            } else if (endTime) {
                 status = 'completed';
                 duration = Utils.calcDuration(startTime, endTime);
                 prevEndTime = endTime;
-            } else if (isFailed && currentStage === stage.key) {
-                status = isFailed ? 'failed' : 'processing';
             } else if (!isFailed && currentStage === stage.key) {
                 status = 'processing';
             } else if (currentStageIndex !== -1 && index < currentStageIndex) {

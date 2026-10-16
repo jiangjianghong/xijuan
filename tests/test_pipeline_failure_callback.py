@@ -293,3 +293,65 @@ async def test_run_from_stage_mid_stage_failure_attribution(monkeypatch):
     assert last["status"] == "chunking_failed"
     assert last["data"]["stage"] == "chunking"
     assert _stage_failed_count(recorder) == 1
+
+
+@pytest.mark.anyio
+async def test_run_from_stage_milvus_connect_failure_marks_stage_failed(monkeypatch):
+    """重试初始化 Milvus 失败时也必须写失败态并发送 stage_failed。"""
+    recorder = CallbackRecorder()
+    mark_failed = AsyncMock(return_value=True)
+    monkeypatch.setattr(pipeline_service, "notify_callback", recorder)
+    monkeypatch.setattr(pipeline_service, "mark_file_failed_with_retry", mark_failed)
+
+    class _BrokenMilvusClient:
+        def connect(self):
+            raise RuntimeError("Milvus 连接失败")
+
+    monkeypatch.setattr(pipeline_service, "MilvusClient", _BrokenMilvusClient)
+
+    with pytest.raises(RuntimeError, match="Milvus 连接失败"):
+        await pipeline_service.run_from_stage(
+            "f_milvus_connect_fail", "tableing", FakeSession(), callback_url="http://cb"
+        )
+
+    mark_failed.assert_awaited_once()
+    assert mark_failed.await_args.args[1:3] == (
+        "f_milvus_connect_fail",
+        "tableing_failed",
+    )
+    last = recorder.calls[-1]
+    assert last["status"] == "tableing_failed"
+    assert last["event"] == "stage_failed"
+    assert last["data"]["stage"] == "tableing"
+    assert "Milvus 连接失败" in last["data"]["error"]
+
+
+@pytest.mark.anyio
+async def test_run_from_stage_stream_milvus_connect_failure_marks_stage_failed(monkeypatch):
+    """流式重试初始化 Milvus 失败时也必须写失败态并发 error。"""
+    recorder = CallbackRecorder()
+    mark_failed = AsyncMock(return_value=True)
+    monkeypatch.setattr(pipeline_service, "notify_callback", recorder)
+    monkeypatch.setattr(pipeline_service, "mark_file_failed_with_retry", mark_failed)
+
+    class _BrokenMilvusClient:
+        def connect(self):
+            raise RuntimeError("Milvus 连接失败")
+
+    monkeypatch.setattr(pipeline_service, "MilvusClient", _BrokenMilvusClient)
+
+    events = []
+    async for event in pipeline_service.run_from_stage_stream(
+        "f_milvus_connect_fail_stream", "tableing", FakeSession()
+    ):
+        events.append(event)
+
+    mark_failed.assert_awaited_once()
+    assert mark_failed.await_args.args[1:3] == (
+        "f_milvus_connect_fail_stream",
+        "tableing_failed",
+    )
+    assert any('"stage": "error"' in event for event in events)
+    # 流式重试接口没有 callback_url，失败通过 SSE error 事件返回；
+    # 失败态仍由 mark_file_failed_with_retry 持久化。
+    assert recorder.calls == []

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List
 
@@ -34,6 +35,28 @@ from utils.page_mapping import build_page_mapping
 from utils.model_config import with_model_config
 
 EMBEDDING_DISABLED_MESSAGE = "配置已关闭此文件的向量化，直接进行下一步"
+
+
+def _build_page_mapping_with_metrics(
+    file_id: str, content: str, middle_json: str | None
+) -> list:
+    """构建页码映射并记录耗时，帮助区分 CPU 计算与数据库写入耗时。"""
+    started = time.perf_counter()
+    page_mapping = build_page_mapping(content, middle_json)
+    elapsed = time.perf_counter() - started
+    middle_json_bytes = (
+        len(middle_json.encode("utf-8")) if isinstance(middle_json, str) else 0
+    )
+    logger.info(
+        "页码映射构建完成: file_id={}, elapsed_seconds={:.3f}, mapping_items={}, "
+        "content_bytes={}, middle_json_bytes={}",
+        file_id,
+        elapsed,
+        len(page_mapping),
+        len(content.encode("utf-8")),
+        middle_json_bytes,
+    )
+    return page_mapping
 
 
 def _sse_event(event: str, data: Dict[str, Any]) -> str:
@@ -90,7 +113,9 @@ async def run_pipeline_stream(
         })
 
         content, middle_json_str = await parse_file(file_path, file_content_bytes, file_id, session)
-        page_mapping = build_page_mapping(content, middle_json_str)
+        page_mapping = _build_page_mapping_with_metrics(
+            file_id, content, middle_json_str
+        )
         yield _sse_event("parsing", {
             "file_id": file_id,
             "stage": "parsing",
@@ -451,7 +476,9 @@ async def run_pipeline(
         # ── 阶段 1: 解析 ──────────────────────────────────────────
         await notify_callback(callback_url, file_id, "parsing")
         content, middle_json_str = await parse_file(file_path, file_content_bytes, file_id, session)
-        page_mapping = build_page_mapping(content, middle_json_str)
+        page_mapping = _build_page_mapping_with_metrics(
+            file_id, content, middle_json_str
+        )
         await save_file_content(file_id, content, session, middle_json=middle_json_str, page_mapping=page_mapping)
 
         await notify_callback(
@@ -710,11 +737,15 @@ async def run_from_stage_stream(
             "resume_stage": stage,
         })
 
-    milvus_client = MilvusClient()
-    milvus_client.connect()
     current_stage = stage
 
     try:
+        # Milvus 初始化也属于本次重试的执行阶段。必须放进统一异常保护，
+        # 否则连接失败会在 try 之前直接冒泡，既不写 *_failed 状态，也不输出
+        # 流式 error 事件，文件会继续停留在旧的失败/进行中状态。
+        milvus_client = MilvusClient()
+        milvus_client.connect()
+
         # 根据阶段清理数据
         if stage == "tableing":
             await session.execute(delete(FileTable).where(FileTable.file_id == file_id))
@@ -1138,9 +1169,6 @@ async def run_from_stage(
     if stage == "table_name_validating":
         stage = "tableing"
 
-    milvus_client = MilvusClient()
-    milvus_client.connect()
-
     # parsing 阶段需要原始文件，无法在此重试
     if stage == "parsing":
         raise ValueError("parsing 阶段需要原始文件内容，请使用 /file/parse 重新提交文件")
@@ -1151,6 +1179,11 @@ async def run_from_stage(
     # 失败回调归因用的阶段跟踪,新增阶段时同步更新
     current_stage = stage
     try:
+        # 连接 Milvus 也要纳入阶段异常处理；否则初始化失败时不会执行
+        # mark_file_failed_with_retry，也不会发送 stage_failed 回调。
+        milvus_client = MilvusClient()
+        milvus_client.connect()
+
         # 根据阶段清理数据
         if stage == "tableing":
             # 清理表格及后续数据
