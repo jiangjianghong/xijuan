@@ -405,6 +405,86 @@ async def test_search_rule_forward_stops_at_adjacent_stopword():
     assert results[0]["extracted_text"] == "金额"
 
 
+async def test_search_rule_ignore_whitespace_applies_to_stop_words():
+    """ignore_whitespace=true 时，停用词也应容忍原文中的横向空白。"""
+    from service.extraction_service import search_rule
+
+    content = "金额是100终 止后续内容"
+    results = await search_rule(
+        content,
+        {"keywords": ["金额"], "stop_words": ["终止"],
+         "ignore_whitespace": True, "direction": "forward", "max_length": 200},
+    )
+    assert results[0]["extracted_text"] == "金额是100"
+
+
+async def test_search_rule_backward_ignore_whitespace_applies_to_stop_words():
+    """backward 方向同样应按空白容忍后的停止词截取。"""
+    from service.extraction_service import search_rule
+
+    content = "前文终 止金额是100"
+    results = await search_rule(
+        content,
+        {"keywords": ["金额"], "stop_words": ["终止"],
+         "ignore_whitespace": True, "direction": "backward", "max_length": 200},
+    )
+    assert results[0]["extracted_text"] == "金额"
+
+
+async def test_search_rule_preserves_whitespace_only_stopword():
+    """空白停止词在开启容忍时仍保留原有的字面量边界语义。"""
+    from service.extraction_service import search_rule
+
+    results = await search_rule(
+        "金额是100 后续内容",
+        {"keywords": ["金额"], "stop_words": [" "],
+         "ignore_whitespace": True, "direction": "forward", "max_length": 200},
+    )
+    assert results[0]["extracted_text"] == "金额是100"
+
+
+async def test_search_rule_preserves_empty_stopword_boundary():
+    """空停止词应保持 str.find/rfind 的立即边界语义。"""
+    from service.extraction_service import search_rule
+
+    forward = await search_rule(
+        "金额是100后续内容",
+        {"keywords": ["金额"], "stop_words": [""],
+         "direction": "forward", "max_length": 200},
+    )
+    backward = await search_rule(
+        "前文金额是100后续内容",
+        {"keywords": ["金额"], "stop_words": [""],
+         "direction": "backward", "max_length": 200},
+    )
+    assert forward[0]["extracted_text"] == "金额"
+    assert backward[0]["extracted_text"] == "金额"
+
+
+async def test_search_rule_backward_uses_overlapping_stopword_occurrence():
+    """backward 应保留停止词的重叠命中，取最靠近关键词的边界。"""
+    from service.extraction_service import search_rule
+
+    results = await search_rule(
+        "aaa金额",
+        {"keywords": ["金额"], "stop_words": ["aa"],
+         "direction": "backward", "max_length": 200},
+    )
+    assert results[0]["extracted_text"] == "金额"
+
+
+async def test_search_rule_forward_stops_when_stopword_starts_in_window():
+    """停止词起点落在 max_length 窗口内时，即使末端越过窗口也应截断。"""
+    from service.extraction_service import search_rule
+
+    results = await search_rule(
+        "金额123ABCDE",
+        {"keywords": ["金额"], "stop_words": ["ABCDE"],
+         "direction": "forward", "max_length": 5},
+    )
+    assert results[0]["extracted_text"] == "金额123"
+
+
 async def test_search_rule_forward_adjacent_stopword_no_overexpand():
     """forward 紧邻停用词为唯一停用词时，不应被误判为未命中而扩展到 max_length。"""
     from service.extraction_service import search_rule

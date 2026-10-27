@@ -1,6 +1,7 @@
 """文本检索共用正则匹配与原文坐标投影。"""
 
 from array import array
+from bisect import bisect_left
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from functools import lru_cache
@@ -83,6 +84,63 @@ class TextProjection:
                 if match.start() != match.end():
                     spans.add(match.span())
             yield from sorted(spans)
+
+    def literal_spans(self, literal: str, start: int = 0, end: int | None = None,
+                      require_end: bool = True, from_end: bool = False):
+        """按字面量查找指定原文窗口，并在启用空白容忍时忽略横向空白。
+
+        ``require_end=False`` 用于前向边界：停止词起点落入窗口即可截断，
+        即使停止词末端越过窗口也不能漏掉。``from_end=True`` 只返回窗口内
+        最靠近末端的一次命中，适合反向边界判断。
+        """
+        use_projection = self.ignore_whitespace
+        if use_projection:
+            compact_literal = strip_horizontal_space(literal)
+            if compact_literal:
+                literal = compact_literal
+            else:
+                # 全是横向空白时保留停止词的字面量语义，避免配置项静默失效。
+                use_projection = False
+        if end is None:
+            end = len(self.original)
+        if end < start:
+            return
+        if not literal:
+            boundary = end if from_end else start
+            yield boundary, boundary
+            return
+        if end == start:
+            return
+
+        if use_projection:
+            search_start = bisect_left(self.offsets, start)
+            projected_end = bisect_left(self.offsets, end)
+            search_text = self.text
+        else:
+            search_start = start
+            projected_end = end
+            search_text = self.original
+
+        while search_start < projected_end:
+            if from_end:
+                match_start = search_text.rfind(literal, search_start, projected_end)
+            else:
+                # require_end=False 允许停止词末端越出窗口，但起点必须落在窗口内，
+                # 因此把 find 上界放宽一个字面量长度而不是扫描到全文末尾。
+                find_end = projected_end if require_end else projected_end + len(literal) - 1
+                match_start = search_text.find(literal, search_start, find_end)
+            if match_start == -1 or match_start >= projected_end:
+                return
+            match_end = match_start + len(literal)
+            if not require_end or match_end <= projected_end:
+                if use_projection:
+                    yield self.offsets[match_start], self.offsets[match_end - 1] + 1
+                else:
+                    yield match_start, match_end
+            if from_end:
+                return
+            # 停止词需要保留重叠命中，才能复现 rfind 的最近字面量边界。
+            search_start = match_start + 1
 
 
 def matches_text(text: str, keyword: str, *, match_type: str = "contains",

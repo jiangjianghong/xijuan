@@ -23,6 +23,14 @@ def test_projection_regex_captures_variable_length_and_preserves_newlines():
     assert list(projection.spans("年限为20年")) == []
 
 
+def test_literal_spans_preserves_overlaps_and_window_boundary_rules():
+    content = "aaa金额123ABCDE"
+    projection = TextProjection.build(content, ignore_whitespace=True)
+    assert list(projection.literal_spans("aa", 0, 3)) == [(0, 2), (1, 3)]
+    assert list(projection.literal_spans("ABCDE", 5, 10, require_end=False)) == [(8, 13)]
+    assert list(projection.literal_spans("ABCDE", 5, 10, require_end=True)) == []
+
+
 def test_default_projection_does_not_tolerate_whitespace():
     assert list(TextProjection.build("项目 名称").spans("项目名称")) == []
     assert list(TextProjection.build("project  name", True).spans("project name"))

@@ -1653,10 +1653,16 @@ async def search_rule(
                 search_start = max(0, pos - max_length)
                 start = search_start  # 无停用词时扩展到最大范围
                 for stop_word in stop_words:
-                    idx = content.rfind(stop_word, search_start, pos)
-                    if idx != -1:
-                        # 保留最靠近关键词的停用词边界（最大的 idx）
-                        start = max(start, idx + len(stop_word))
+                    stop_span = next(
+                        projection.literal_spans(
+                            stop_word, search_start, pos,
+                            require_end=True, from_end=True
+                        ),
+                        None,
+                    )
+                    if stop_span:
+                        # 保留最靠近关键词的停用词边界（最大的结束位置）
+                        start = max(start, stop_span[1])
 
             # 向【后文】方向扩展（direction=forward）：从关键词结尾 end_pos 向右，
             # 止于最近停用词之前；无停用词时扩展到 max_length。
@@ -1666,10 +1672,17 @@ async def search_rule(
                 search_end = min(len(content), end_pos + max_length)
                 end = search_end  # 无停用词时扩展到最大范围
                 for stop_word in stop_words:
-                    idx = content.find(stop_word, end_pos, search_end)
-                    if idx != -1:
-                        # 保留最靠近关键词的停用词（最小的 idx）
-                        end = min(end, idx)
+                    stop_span = next(
+                        projection.literal_spans(
+                            stop_word, end_pos, search_end,
+                            require_end=False
+                        ),
+                        None,
+                    )
+                    if stop_span:
+                        # 保留最靠近关键词的停用词（最小的开始位置）；停止词末端
+                        # 可越过窗口，但其起点已落入本次扩展范围。
+                        end = min(end, stop_span[0])
 
             raw_text = content[start:end]
             extracted_text = raw_text.strip()
