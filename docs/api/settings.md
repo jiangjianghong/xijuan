@@ -222,7 +222,7 @@ curl -X PATCH http://localhost:5019/settings/config \
 吊销会话令牌并清除 Cookie。
 
 - 方法路径：`POST /settings/logout`
-- 认证：管理员会话；无有效 Cookie 时返回 401
+- 认证：管理员会话、有效 API Key 或 IP 白名单；未认证时返回 401
 
 **响应体**
 

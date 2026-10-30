@@ -13,7 +13,6 @@ from typing import Any, Mapping
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from utils.config import AppConfig, get_config
-from utils.auth_context import request_identity
 
 GROUPS = ("extraction", "analysis", "table_name_validation", "vl_model", "embedding")
 MODEL_CONFIG_DESCRIPTION = (
@@ -41,7 +40,7 @@ MODEL_CONFIG_DESCRIPTION = (
     "timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。"
     "extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。"
     "不支持 concurrency 或其它并发字段，仍使用服务器并发限制。"
-    "API Key/IP 白名单调用者不得覆盖 base_url/api_key（含别名），防止服务端密钥被发送至其他地址；仅管理员可覆盖。"
+    "管理员会话、API Key 和 IP 白名单调用者均可按相同字段规则覆盖模型连接与参数。"
 )
 _overrides: ContextVar[dict[str, dict[str, Any]] | None] = ContextVar("request_model_config", default=None)
 _ALIASES = {
@@ -73,8 +72,6 @@ def validate_model_config(raw: Any) -> dict[str, dict[str, Any]] | None:
         values = {}
         for key, value in fields.items():
             canonical = aliases.get(key, key)
-            if request_identity.get() not in {None, "admin"} and canonical in {"base_url", "api_key"}:
-                raise ValueError(f"仅管理员允许覆盖模型连接配置: {group}.{canonical}")
             if canonical not in allowed:
                 raise ValueError(f"model_config 不支持配置字段: {group}.{key}")
             if canonical in values and values[canonical] != value:

@@ -14,7 +14,7 @@ from starlette.responses import StreamingResponse
 from starlette.staticfiles import StaticFiles
 
 from blue_print.access_control_router import get_access_service, router as access_router
-from blue_print.settings_router import auth_router, get_settings_auth, router as settings_router
+from blue_print.settings_router import auth_router, get_settings_auth, get_settings_service, router as settings_router
 from service.access_control_service import AccessControlService
 from service.settings_auth_service import SettingsAuthService
 from service.settings_service import ConfigWriteError
@@ -41,7 +41,11 @@ def environment(tmp_path, monkeypatch):
     app.include_router(access_router)
     app.dependency_overrides[get_settings_auth] = lambda: auth
     app.dependency_overrides[get_access_service] = lambda: service
+    app.dependency_overrides[get_settings_service] = lambda: service
 
+    @app.get("/analysis/rules")
+    @app.post("/analysis/rules")
+    @app.delete("/analysis/rules/test")
     @app.get("/file/list")
     @app.get("/file/abc/pdf")
     @app.get("/ui/")
@@ -158,7 +162,7 @@ async def test_login_rejects_wrong_username_and_rotates_session(http, environmen
     assert not environment[1].validate(old)
 
 
-async def test_keys_are_one_time_only_and_do_not_grant_admin(http, environment):
+async def test_keys_are_one_time_only_and_grant_all_api_access(http, environment):
     await login(http)
     response = await create_key(http)
     assert response.status_code == 200
@@ -175,8 +179,72 @@ async def test_keys_are_one_time_only_and_do_not_grant_admin(http, environment):
     assert (await http.get("/file/abc/pdf", headers=headers)).status_code == 200
     for method, path in (("GET", "/settings/access"), ("GET", "/logs/recent"), ("DELETE", "/file/abc"),
                          ("POST", "/doctype"), ("POST", "/new-admin-operation")):
-        assert (await http.request(method, path, headers=headers)).status_code == 403
-    assert (await http.get("/ui/", headers=headers)).status_code == 303
+        assert (await http.request(method, path, headers=headers)).status_code == 200
+    assert (await http.get("/ui/", headers=headers)).status_code == 200
+
+
+@pytest.mark.parametrize("credential", ["key", "ip"])
+async def test_all_api_permissions_include_rules_settings_and_key_management(http, environment, credential):
+    await login(http)
+    key = (await create_key(http)).json()["data"]["key"]
+    headers = {"Authorization": f"Bearer {key}"} if credential == "key" else {}
+    service = environment[2]
+    if credential == "ip":
+        service.mutate(version=service.read()["version"], kind="ip_allowlist", operation="create",
+                       values={"name": "全接口调用", "network": "10.20.30.40"})
+    http.cookies.clear()
+    for method, path in (("GET", "/analysis/rules?type_id=yigongdaizhen"),
+                         ("POST", "/analysis/rules"), ("DELETE", "/analysis/rules/test"),
+                         ("DELETE", "/file/abc"), ("GET", "/logs/recent"),
+                         ("POST", "/new-admin-operation"), ("GET", "/openapi.json")):
+        assert (await http.request(method, path, headers=headers)).status_code == 200
+    # 未登记的新路径直接进入路由匹配，不再受旧业务路由白名单限制。
+    assert (await http.get("/future-api", headers=headers)).status_code == 404
+    settings = (await http.get("/settings/config", headers=headers)).json()["data"]
+    updated = await http.patch("/settings/config", headers=headers,
+        json={"base_version": settings["version"], "changes": {"mineru": {"queue_width": 2}}})
+    assert updated.status_code == 200
+    assert updated.json()["data"]["config"]["mineru"]["queue_width"] == 2
+    version = service.read()["version"]
+    created = await http.post("/settings/access/keys", headers=headers,
+        json={"base_version": version, "name": "程序创建的新密钥"})
+    assert created.status_code == 200
+    data = created.json()["data"]
+    assert data["key"].startswith("xj_")
+    entry_id = data["api_keys"][-1]["id"]
+    revoked = await http.patch(f"/settings/access/keys/{entry_id}", headers=headers,
+        json={"base_version": data["version"], "enabled": False})
+    assert revoked.status_code == 200
+    removed = await http.request("DELETE", f"/settings/access/keys/{entry_id}", headers=headers,
+        json={"base_version": revoked.json()["data"]["version"]})
+    assert removed.status_code == 200
+    # 开放所有接口不跳过浏览器来源校验。
+    denied = await http.get("/analysis/rules", headers={**headers, "Origin": "https://evil.test"})
+    assert denied.status_code == 403
+
+
+async def test_revoked_program_credentials_no_longer_access_management(http, environment):
+    await login(http)
+    data = (await create_key(http)).json()["data"]
+    key = data["key"]
+    entry_id = data["api_keys"][0]["id"]
+    http.cookies.clear()
+    headers = {"Authorization": f"Bearer {key}"}
+    assert (await http.get("/analysis/rules", headers=headers)).status_code == 200
+    config_module.get_config().access_control.api_keys[0].expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    assert (await http.get("/analysis/rules", headers=headers)).status_code == 401
+    config_module.get_config().access_control.api_keys[0].expires_at = None
+    result = await http.patch(f"/settings/access/keys/{entry_id}", headers=headers,
+        json={"base_version": data["version"], "enabled": False})
+    assert result.status_code == 200
+    assert (await http.get("/settings/access", headers=headers)).status_code == 401
+    service = environment[2]
+    allowed = service.mutate(version=service.read()["version"], kind="ip_allowlist", operation="create",
+                            values={"name": "测试来源", "network": "10.20.30.40"})
+    assert (await http.get("/analysis/rules")).status_code == 200
+    service.mutate(version=allowed["version"], kind="ip_allowlist", operation="delete",
+                   entry_id=allowed["ip_allowlist"][0]["id"])
+    assert (await http.get("/analysis/rules")).status_code == 401
 
 
 async def test_rotation_disable_and_delete_take_effect_immediately(http, environment):
@@ -203,7 +271,7 @@ async def test_rotation_disable_and_delete_take_effect_immediately(http, environ
 
 
 @pytest.mark.parametrize("network", ["10.20.30.40", "10.20.30.0/24", "::ffff:10.20.30.40"])
-async def test_ip_allowlist_all_ports_business_only(http, environment, network):
+async def test_ip_allowlist_all_ports_all_apis(http, environment, network):
     await login(http)
     version = environment[2].read()["version"]
     response = await http.post("/settings/access/allowlist", headers=SAFE_HEADERS,
@@ -211,7 +279,7 @@ async def test_ip_allowlist_all_ports_business_only(http, environment, network):
     assert response.status_code == 200
     http.cookies.clear()
     assert (await http.get("/file/list")).status_code == 200
-    assert (await http.get("/settings/access")).status_code == 403
+    assert (await http.get("/settings/access")).status_code == 200
     async with AsyncClient(transport=ASGITransport(app=environment[0], client=("10.20.30.40", 53100)), base_url="http://test") as other:
         assert (await other.get("/file/list")).status_code == 200
 
@@ -468,14 +536,15 @@ def test_failed_write_does_not_change_runtime_or_file(environment, monkeypatch):
 @pytest.mark.parametrize("group,field", [("extraction", "base_url"), ("extraction", "llm_base_url"),
     ("analysis", "base_url"), ("embedding", "base_url"), ("vl_model", "base_url"),
     ("table_name_validation", "base_url"), ("table_name_validation", "llm_api_key"), ("analysis", "api_key")])
-async def test_program_cannot_redirect_server_credentials(http, environment, group, field):
+async def test_program_can_override_model_connections(http, environment, group, field):
     await login(http)
     key = (await create_key(http)).json()["data"]["key"]
     http.cookies.clear()
     response = await http.post("/file/test/retry/parsing", headers={"Authorization": f"Bearer {key}"},
                                json={"model_config": {group: {field: "https://caller.invalid/v1"}}})
-    assert response.status_code == 422
-    assert "仅管理员" in response.text
+    assert response.status_code == 200
+    canonical = {"llm_base_url": "base_url", "llm_api_key": "api_key"}.get(field, field)
+    assert response.json()["config"][group][canonical] == "https://caller.invalid/v1"
 
 
 async def test_safe_model_overrides_and_admin_connection_override(http):
@@ -508,6 +577,57 @@ async def test_infinite_log_stream_ends_after_logout(environment, monkeypatch):
     assert 'event: auth_required' in await anext(response.body_iterator)
     with pytest.raises(StopAsyncIteration):
         await anext(response.body_iterator)
+
+
+@pytest.mark.parametrize("credential", ["key", "ip"])
+async def test_log_stream_ends_after_program_credential_revocation(environment, monkeypatch, credential):
+    import importlib
+    log_router = importlib.import_module("blue_print.log_router")
+    monkeypatch.setattr(log_router, "_resolve_log_file", lambda _: None)
+    service = environment[2]
+    if credential == "key":
+        data = service.mutate(version=service.read()["version"], kind="api_keys", operation="create",
+                              values={"name": "日志程序"})
+        identity = f"key:{data['api_keys'][0]['id']}"
+        headers = [(b"authorization", f"Bearer {data['key']}".encode())]
+    else:
+        service.mutate(version=service.read()["version"], kind="ip_allowlist", operation="create",
+                       values={"name": "日志来源", "network": "10.20.30.40"})
+        identity = "ip:10.20.30.40"
+        headers = []
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    request = Request({"type": "http", "headers": headers, "client": ("10.20.30.40", 43000),
+                       "state": {"auth_identity": identity}}, receive)
+    response = await log_router.stream_logs(request, tail=0)
+    assert 'event: ready' in await anext(response.body_iterator)
+    config = config_module.get_config().access_control
+    if credential == "key":
+        config.api_keys[0].enabled = False
+    else:
+        config.ip_allowlist.clear()
+    assert 'event: auth_required' in await anext(response.body_iterator)
+    with pytest.raises(StopAsyncIteration):
+        await anext(response.body_iterator)
+
+
+def test_openapi_exposes_all_protected_operations_to_programs():
+    from scripts.gen_openapi import build_app
+    from utils.openapi_enrich import enrich
+    spec = enrich(build_app().openapi())
+    public = {("/auth/login", "post"), ("/settings/login", "post"),
+              ("/auth/session", "get"), ("/settings/session", "get")}
+    for path, methods in spec["paths"].items():
+        for method, operation in methods.items():
+            if method not in {"get", "post", "put", "patch", "delete", "head"}:
+                continue
+            expected = [] if (path, method) in public else [{"AdminSession": []}, {"APIKey": []}]
+            assert operation["security"] == expected, (method, path)
+    rules = spec["paths"]["/analysis/rules"]["get"]
+    assert "IP 白名单" in rules["description"]
+    patch = spec["paths"]["/settings/config"]["patch"]
+    header = next(item for item in patch["parameters"] if item["name"] == "X-Requested-With")
+    assert header["required"] is False
 
 
 def test_native_yaml_timestamps_are_supported(environment):

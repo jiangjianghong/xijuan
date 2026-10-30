@@ -71,7 +71,7 @@ python app.py
 
 后台访问需管理员登录。账号固定在 `config.yaml` 的 `settings` 中；旧设置密码会在启动时转换为 Argon2id 哈希，默认账号 `admin`，原密码不变。首次使用或忘记密码时，先停止服务，再运行上面的改密命令，最后启动服务，避免两个进程同时写配置。
 
-登录后，在「设置 → 接口访问控制」创建程序 API Key 或添加 IP/CIDR 白名单。Key 通过 `Authorization: Bearer <key>` 传递；白名单来源可免密调用业务接口。配置修改、文件删除和日志查看只允许管理员。详见 [登录与接口访问控制](docs/api/auth.md)。
+登录后，在「设置 → 接口访问控制」创建程序 API Key 或添加 IP/CIDR 白名单。Key 通过 `Authorization: Bearer <key>` 传递；有效 Key 和白名单来源可访问所有接口，包括规则配置、文件删除、日志、系统设置和密钥管理；其他来源仍需登录或提供有效 Key。详见 [登录与接口访问控制](docs/api/auth.md)。
 
 ### Docker 部署与代码更新
 

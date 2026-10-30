@@ -1,4 +1,4 @@
-"""受管理员短期会话保护的运行时设置 API。"""
+"""受统一鉴权保护的运行时设置 API。"""
 
 from __future__ import annotations
 
@@ -61,9 +61,14 @@ def _client_ip(request: Request) -> str:
 
 
 def require_settings_session(
+    request: Request,
     settings_session: str | None = Cookie(default=None, alias=COOKIE_NAME),
     auth: SettingsAuthService = Depends(get_settings_auth),
 ) -> str:
+    # 身份只取自统一中间件，不接受调用方请求头自行声明身份。
+    identity = getattr(request.state, "auth_identity", None)
+    if isinstance(identity, str) and identity.startswith(("key:", "ip:")):
+        return identity
     if not auth.validate(settings_session):
         raise HTTPException(status_code=401, detail="设置会话已过期，请重新登录")
     return settings_session or ""

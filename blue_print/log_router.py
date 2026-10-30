@@ -191,12 +191,22 @@ async def stream_logs(
 
     async def event_generator():
         from service.settings_auth_service import settings_auth
-        from utils.auth_middleware import COOKIE_NAME
+        from utils.auth_middleware import COOKIE_NAME, api_key_identity, client_ip, in_networks
+        from utils.config import get_config
 
         def session_valid():
-            # 主应用统一鉴权后，持续的管理员日志流也须跟随会话失效。
-            return (getattr(request.state, "auth_identity", None) != "admin"
-                    or settings_auth.validate(request.cookies.get(COOKIE_NAME)))
+            # 持续连接跟随会话、Key 禁用/过期或来源白名单撤销而失效。
+            identity = getattr(request.state, "auth_identity", None)
+            if identity == "admin":
+                return settings_auth.validate(request.cookies.get(COOKIE_NAME))
+            if identity and identity.startswith("key:"):
+                return identity == f"key:{api_key_identity(request.headers.get('authorization'))}"
+            if identity and identity.startswith("ip:"):
+                address = client_ip(request)
+                return identity == f"ip:{address}" and in_networks(address, (
+                    entry.network for entry in get_config().access_control.ip_allowlist if entry.enabled
+                ))
+            return True
 
         path = initial_path
         position = 0

@@ -1,8 +1,6 @@
 """让在线与导出的 OpenAPI 同时声明真实鉴权要求。"""
 
-import re
-
-from utils.auth_middleware import BUSINESS_ROUTES, COOKIE_NAME
+from utils.auth_middleware import COOKIE_NAME
 
 
 def apply_auth_schema(schema: dict) -> set[tuple[str, str]]:
@@ -10,7 +8,7 @@ def apply_auth_schema(schema: dict) -> set[tuple[str, str]]:
         "AdminSession": {"type": "apiKey", "in": "cookie", "name": COOKIE_NAME,
                          "description": "通过 /auth/login 获取管理员会话；写请求附加 X-Requested-With: XMLHttpRequest。"},
         "APIKey": {"type": "http", "scheme": "bearer",
-                   "description": "设置 → 接口访问控制创建的 xj_ 密钥，仅允许业务接口。"},
+                   "description": "设置 → 接口访问控制创建的 xj_ 密钥，可访问全部接口，包括配置、删除和密钥管理。"},
     })
     summaries = {
         ("/auth/login", "post"): "管理员登录",
@@ -31,18 +29,14 @@ def apply_auth_schema(schema: dict) -> set[tuple[str, str]]:
                 operation["summary"] = summaries[path, method]
             public = (path in {"/auth/login", "/settings/login"} and method == "post") or (
                 path in {"/auth/session", "/settings/session"} and method == "get")
-            business = any(method.upper() == verb and re.fullmatch(pattern, path.replace("{stage}", "parsing"))
-                           for verb, pattern in BUSINESS_ROUTES)
-            operation["security"] = [] if public else ([{"AdminSession": []}, {"APIKey": []}] if business else [{"AdminSession": []}])
+            operation["security"] = [] if public else [{"AdminSession": []}, {"APIKey": []}]
             note = ""
-            if business:
+            if not public:
                 note = "**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。"
-            elif not public:
-                note = "**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。"
             if method in {"post", "put", "patch", "delete"}:
                 note += " 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。"
                 operation.setdefault("parameters", []).append({
-                    "name": "X-Requested-With", "in": "header", "required": not business,
+                    "name": "X-Requested-With", "in": "header", "required": public,
                     "schema": {"type": "string", "default": "XMLHttpRequest"},
                     "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。",
                 })

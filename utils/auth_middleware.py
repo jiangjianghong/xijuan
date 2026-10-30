@@ -1,10 +1,9 @@
-"""统一鉴权：后台只允许会话，业务路由允许会话、API Key 或 IP 白名单。"""
+"""统一鉴权：所有接口接受管理员会话、有效 API Key 或 IP 白名单。"""
 
 from __future__ import annotations
 
 import hashlib
 import ipaddress
-import re
 import secrets
 from datetime import datetime, timezone
 
@@ -19,20 +18,6 @@ from utils.auth_config import normalize_origin
 
 COOKIE_NAME = "xijuan_session"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-
-# 显式匹配方法和路径；新增接口默认只允许管理员，避免扩大程序权限。
-BUSINESS_ROUTES = (
-    ("POST", r"/file/parse"),
-    ("POST", r"/file/context_query"),
-    ("GET", r"/file/(list|processing|stats)"),
-    ("GET", r"/file/[^/]+/(status|pdf|tables|chunks|outline|content|extraction|analysis|detail)"),
-    ("POST", r"/file/[^/]+/retry/(parsing|tableing|chunking|embedding|extracting|analyzing)"),
-    ("POST", r"/analysis/run"),
-    ("GET", r"/analysis/tasks/[^/]+"),
-    ("POST", r"/search"),
-    ("GET", r"/doctype/list"),
-)
-
 
 def _address(value: str):
     try:
@@ -194,22 +179,19 @@ class AuthMiddleware:
                     await respond(JSONResponse({"detail": "请求缺少安全请求头，请刷新页面"}, status_code=403))
                     return
             else:
-                business = any(method == verb and re.fullmatch(pattern, canonical)
-                               for verb, pattern in BUSINESS_ROUTES)
                 key_id = api_key_identity(request.headers.get("authorization"))
                 allowed_ip = in_networks(client_ip(request), (
                     entry.network for entry in get_config().access_control.ip_allowlist if entry.enabled
                 ))
-                if business and (key_id or allowed_ip):
+                if key_id or allowed_ip:
                     identity = f"key:{key_id}" if key_id else f"ip:{client_ip(request)}"
                 else:
                     if path == "/" or path.startswith("/ui"):
                         await respond(RedirectResponse("/ui/login", status_code=303))
                     else:
-                        status = 403 if key_id or allowed_ip else 401
                         await respond(JSONResponse(
-                            {"detail": "此操作需要管理员登录" if status == 403 else "请登录或提供有效 API Key"},
-                            status_code=status, headers={"WWW-Authenticate": "Bearer"} if status == 401 else None,
+                            {"detail": "请登录或提供有效 API Key"},
+                            status_code=401, headers={"WWW-Authenticate": "Bearer"},
                         ))
                     return
         scope.setdefault("state", {})["auth_identity"] = identity

@@ -1,4 +1,4 @@
-"""请求身份上下文，用于服务内部限制低权限调用者的连接配置覆盖。"""
+"""请求身份上下文，记录会话、API Key 或来源 IP 的认证身份。"""
 
 from contextvars import ContextVar
 
