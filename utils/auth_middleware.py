@@ -8,12 +8,14 @@ import re
 import secrets
 from datetime import datetime, timezone
 
+from loguru import logger
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 
 from service.settings_auth_service import settings_auth
 from utils.config import get_config
 from utils.auth_context import request_identity
+from utils.auth_config import normalize_origin
 
 COOKIE_NAME = "xijuan_session"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -71,13 +73,50 @@ def same_origin(request: Request) -> bool:
         return False
     if origin is None:
         return True
+    try:
+        origin = normalize_origin(origin)
+    except ValueError:
+        return False
+    # 外部入口只通过来源检查；后续登录、CSRF 请求头和接口权限仍照常验证。
+    if origin in get_config().access_control.allowed_origins:
+        return True
     scheme = request.url.scheme
     peer = request.client.host if request.client else "unknown"
     if in_networks(peer, get_config().access_control.trusted_proxies):
         forwarded = request.headers.get("x-forwarded-proto")
         if forwarded in {"http", "https"}:
             scheme = forwarded
-    return origin.rstrip("/") == f"{scheme}://{request.headers.get('host', '')}"
+    try:
+        expected_origin = normalize_origin(f"{scheme}://{request.headers.get('host', '')}")
+    except ValueError:
+        return False
+    return origin == expected_origin
+
+
+def _log_login_origin_rejection(request: Request) -> None:
+    """只记录排查代理所需的来源信息，不记录凭证、请求体或完整请求头。"""
+    def endpoint(value: str | None) -> str:
+        if value is None:
+            return "<缺失>"
+        try:
+            return normalize_origin(value)[:256]
+        except ValueError:
+            return "<无效来源>"
+
+    peer = request.client.host if request.client else "unknown"
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    fetch_site = request.headers.get("sec-fetch-site")
+    logger.warning(
+        "登录来源校验拒绝 origin={} host_origin={} transport_scheme={} "
+        "forwarded_proto={} fetch_site={} peer={} trusted_proxy={}",
+        endpoint(request.headers.get("origin")),
+        endpoint(f"{request.url.scheme}://{request.headers.get('host', '')}"),
+        request.url.scheme,
+        forwarded_proto if forwarded_proto in {None, "http", "https"} else "<无效协议>",
+        fetch_site if fetch_site in {None, "same-origin", "same-site", "cross-site", "none"} else "<无效标记>",
+        str(_address(peer) or "unknown"),
+        in_networks(peer, get_config().access_control.trusted_proxies),
+    )
 
 
 def api_key_identity(header: str | None) -> str | None:
@@ -122,13 +161,16 @@ class AuthMiddleware:
             await respond(JSONResponse({"detail": "代理配置冲突，请使用 --no-proxy-headers 启动服务"}, status_code=503))
             return
 
+        origin_allowed = same_origin(request)
         cross_site_entry = (method == "GET" and canonical in {"/", "/ui", "/ui/index.html", "/ui/login", "/ui/login.html"}
                             and request.headers.get("sec-fetch-mode") == "navigate"
                             and request.headers.get("sec-fetch-dest") == "document")
-        if not same_origin(request) and cross_site_entry and canonical != "/ui/login":
+        if not origin_allowed and cross_site_entry and canonical != "/ui/login":
             await respond(RedirectResponse("/ui/login", status_code=303))
             return
-        if not same_origin(request) and not cross_site_entry:
+        if not origin_allowed and not cross_site_entry:
+            if method == "POST" and canonical in {"/auth/login", "/settings/login"}:
+                _log_login_origin_rejection(request)
             await respond(JSONResponse({"detail": "不允许跨站访问"}, status_code=403))
             return
 

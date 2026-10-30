@@ -218,3 +218,5 @@ API Key 只显示“已配置/未配置”，旧值不会返回浏览器。管�
 ## access_control — 调用端访问控制
 
 `api_keys` 和 `ip_allowlist` 由「设置 → 接口访问控制」维护，写入后即时生效。Key 仅保存哈希，IP 白名单支持 IPv4/IPv6/CIDR，不限定来源端口。两者只授予业务接口权限，不能改设置或删除文件。`trusted_proxies` 仅在 YAML 设置可信代理的 IP/CIDR，默认空；CLI 启动须加 `--no-proxy-headers`。完整说明见 [登录与接口访问控制](../api/auth.md)。
+
+反向代理改写 Host 时，可在 `access_control.allowed_origins` 显式配置外部来源，例如 `["https://docs.example.com"]`。默认空，仅接受 HTTP(S) 协议、主机和端口，不允许通配符或路径；只通过来源检查，不免登录。手工修改后重启服务。

@@ -164,3 +164,4 @@ access_control:
   api_keys: []
   ip_allowlist: []                                      # 支持 IPv4/IPv6/CIDR，覆盖所有来源端口
   trusted_proxies: []                                   # 只配置实际代理 IP/CIDR；切勿信任所有来源
+  allowed_origins: []                                  # 代理改写 Host 时填写浏览器访问来源，如 ["https://docs.example.com"]；不免登录

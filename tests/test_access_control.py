@@ -258,6 +258,141 @@ async def test_cookie_mutation_and_login_require_custom_header(http):
     assert result.text == 'data: {"stream":true}\n\n'
 
 
+async def test_reverse_proxy_origin_with_rewritten_host(http, environment):
+    """模拟浏览器访问外部端口，而代理向 Docker 转发内网 Host。"""
+    origin = "http://59.203.14.205:8121"
+    headers = {**SAFE_HEADERS, "Origin": origin, "Host": "10.5.0.103:5019"}
+    credentials = {"username": "admin", "password": PASSWORD}
+    response = await http.post("/auth/login", json=credentials, headers=headers)
+    assert response.status_code == 403
+    assert response.json()["detail"] == "不允许跨站访问"
+
+    from utils.auth_config import AccessControlConfig
+    config_module.get_config().access_control = AccessControlConfig(allowed_origins=[origin])
+    assert (await http.get("/file/list", headers=headers)).status_code == 401
+    response = await http.post("/auth/login", json=credentials, headers=headers)
+    assert response.status_code == 200
+    assert http.cookies.get(COOKIE_NAME)
+    assert (await http.get("/settings/access", headers=headers)).status_code == 200
+    assert (await http.post("/new-admin-operation", headers=headers)).status_code == 200
+    assert (await http.post("/auth/logout", headers=headers)).status_code == 200
+    assert (await http.get("/settings/access", headers=headers)).status_code == 401
+
+
+async def test_external_origin_survives_access_settings_save(http, environment):
+    """YAML 配置可加载，保存白名单不会丢掉外部入口或将其设为免密 IP。"""
+    _, _, service, path = environment
+    origin = "http://59.203.14.205:8121"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["access_control"] = {"allowed_origins": [origin]}
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    config_module.replace_config(load_config(path))
+    service.mutate(version=service.read()["version"], kind="ip_allowlist", operation="create",
+                   values={"name": "测试业务来源", "network": "192.0.2.1"})
+    assert config_module.get_config().access_control.allowed_origins == [origin]
+    assert yaml.safe_load(path.read_text(encoding="utf-8"))["access_control"]["allowed_origins"] == [origin]
+    headers = {**SAFE_HEADERS, "Origin": origin, "Host": "10.5.0.103:5019"}
+    assert (await http.get("/file/list", headers=headers)).status_code == 401
+    assert (await http.post("/auth/login", json={"username": "admin", "password": PASSWORD}, headers=headers)).status_code == 200
+
+
+async def test_external_origin_keeps_csrf_and_password_checks(http, environment):
+    origin = "http://59.203.14.205:8121"
+    config_module.get_config().access_control.allowed_origins = [origin]
+    headers = {"Origin": origin, "Host": "10.5.0.103:5019"}
+    credentials = {"username": "admin", "password": PASSWORD}
+    assert (await http.post("/auth/login", json=credentials, headers=headers)).status_code == 403
+    secure = {**headers, **SAFE_HEADERS}
+    assert (await http.post("/auth/login", json={**credentials, "password": "wrong"}, headers=secure)).status_code == 401
+    assert (await http.post("/auth/login", json=credentials, headers=secure)).status_code == 200
+    assert (await http.post("/new-admin-operation", headers=headers)).status_code == 403
+    assert (await http.post("/new-admin-operation", headers={**secure, "Sec-Fetch-Site": "cross-site"})).status_code == 403
+    for untrusted in ("http://59.203.14.205:8122", "https://59.203.14.205:8121", "https://evil.test", "null"):
+        response = await http.post("/new-admin-operation", headers={**secure, "Origin": untrusted})
+        assert response.status_code == 403
+    # 不能通过客户端自填的转发 Host 或协议绕过来源检查。
+    spoofed = {**secure, "Origin": "https://evil.test", "X-Forwarded-Host": "evil.test", "X-Forwarded-Proto": "https"}
+    assert (await http.post("/new-admin-operation", headers=spoofed)).status_code == 403
+
+
+async def test_preserved_host_login_needs_no_external_origin_config(http):
+    headers = {**SAFE_HEADERS, "Origin": "http://59.203.14.205:8121", "Host": "59.203.14.205:8121"}
+    response = await http.post("/auth/login", json={"username": "admin", "password": PASSWORD}, headers=headers)
+    assert response.status_code == 200
+
+
+async def test_trusted_proxy_https_origin_still_supported(http, environment):
+    headers = {**SAFE_HEADERS, "Origin": "https://docs.example.com", "Host": "docs.example.com",
+               "X-Forwarded-Proto": "https", "X-Forwarded-For": "192.0.2.9"}
+    credentials = {"username": "admin", "password": PASSWORD}
+    assert (await http.post("/auth/login", json=credentials, headers=headers)).status_code == 403
+    config_module.get_config().access_control.trusted_proxies = ["10.20.30.40/32"]
+    assert (await http.post("/auth/login", json=credentials, headers=headers)).status_code == 200
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("http://59.203.14.205:8121/", "http://59.203.14.205:8121"),
+    ("HTTPS://Docs.Example.COM:443", "https://docs.example.com"),
+    ("http://localhost:80", "http://localhost"),
+    ("https://[::1]:8121", "https://[::1]:8121"),
+])
+def test_external_origin_config_normalizes_explicit_origins(value, expected):
+    from utils.auth_config import AccessControlConfig
+    config = AccessControlConfig(allowed_origins=[value, expected])
+    assert config.allowed_origins == [expected]
+
+
+@pytest.mark.parametrize("value", [
+    "*", "http://*.example.com", "//example.com", "example.com", "null", "ftp://example.com",
+    "http://name:secret@example.com", "http://example.com/ui/", "http://example.com?x=1",
+    "http://example.com#", "http://example.com:", "http://example.com:0", "http://example.com:65536",
+    "http://example.com,http://evil.test", "http://example.com\\evil.test", "http://example.com ",
+])
+def test_external_origin_config_rejects_ambiguous_sources(value):
+    from utils.auth_config import AccessControlConfig
+    with pytest.raises(ValueError):
+        AccessControlConfig(allowed_origins=[value])
+
+
+@pytest.mark.parametrize("origin,host,scheme,allowed", [
+    ("http://59.203.14.205:8121", "59.203.14.205:8121", "http", True),
+    ("http://59.203.14.205:8121", "10.5.0.103:5019", "http", False),
+    ("http://59.203.14.205:8121", "59.203.14.205", "http", False),
+    ("http://docs.example.com", "DOCS.example.com:80", "http", True),
+    ("https://docs.example.com:443", "docs.example.com", "https", True),
+    ("http://docs.example.com", "docs.example.com", "https", False),
+])
+def test_same_origin_compares_normalized_endpoint(environment, origin, host, scheme, allowed):
+    from utils.auth_middleware import same_origin
+    request = Request({"type": "http", "method": "POST", "path": "/auth/login",
+                       "scheme": scheme, "query_string": b"", "client": ("192.0.2.9", 50000),
+                       "headers": [(b"origin", origin.encode()), (b"host", host.encode())]})
+    assert same_origin(request) is allowed
+
+
+@pytest.mark.parametrize("origin,shown", [
+    ("http://59.203.14.205:8121", "http://59.203.14.205:8121"),
+    ("http://name:secret-in-origin@evil.test", "<无效来源>"),
+])
+async def test_rejected_login_logs_proxy_evidence_without_secrets(http, environment, monkeypatch, origin, shown):
+    from utils import auth_middleware as middleware
+    messages = []
+    monkeypatch.setattr(middleware.logger, "warning", lambda message, *args: messages.append(message.format(*args)))
+    headers = {**SAFE_HEADERS, "Origin": origin, "Host": "10.5.0.103:5019",
+               "X-Forwarded-Proto": "http", "Sec-Fetch-Site": "same-origin",
+               "Authorization": "Bearer secret-api-token", "Cookie": "xijuan_session=secret-cookie"}
+    result = await http.post("/auth/login", json={"username": "admin", "password": PASSWORD}, headers=headers)
+    assert result.status_code == 403
+    assert result.json() == {"detail": "不允许跨站访问"}
+    assert len(messages) == 1
+    message = messages[0]
+    for part in (f"origin={shown}", "host_origin=http://10.5.0.103:5019", "transport_scheme=http",
+                 "forwarded_proto=http", "fetch_site=same-origin", "peer=10.20.30.40", "trusted_proxy=False"):
+        assert part in message
+    for secret in (PASSWORD, "secret-api-token", "secret-cookie", "secret-in-origin"):
+        assert secret not in message
+
+
 async def test_spoofed_forwarded_header_cannot_bypass_allowlist(http, environment):
     service = environment[2]
     service.mutate(version=service.read()["version"], kind="ip_allowlist", operation="create",

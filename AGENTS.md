@@ -174,6 +174,7 @@ Two rule types:
 Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`, `storage`, `settings`. Each maps to a Pydantic model in `utils/config.py`. `storage`（`max_total_bytes` / `max_retention_minutes` / `cleanup_interval_minutes`，默认 `0/0/10`，0=关闭）治理 `uploads` 下 PDF：启动时 + 每 `cleanup_interval_minutes` 分钟 + 每次上传后触发 `service/retention_service.py:enforce_pdf_retention`，只删物理 PDF（按 `create_time` 最旧优先淘汰 / 超时删除），不动数据库；被清文件的 PDF 预览与 VL 抽取返回 404。
 
 ### Runtime Settings (`blue_print/settings_router.py`)
+- 登录页面公开地址为 `/ui/login`，旧 `.html` 地址自动跳转；接口访问控制及一次性密钥展示嵌入设置分组。反向代理改写 Host 时用 `access_control.allowed_origins` 配置精确的外部 HTTP(S) 来源，默认空；它只通过来源检查，不授予登录或业务权限，也不信任转发头。
 - 全站管理员登录：`POST /auth/login`（`username/password`），`GET /auth/session`，`POST /auth/logout`；旧 `/settings/login|session|logout` 是兼容路径。账号固定在 `settings.username/password_hash`，启动时旧 `settings.password` 自动迁移为 Argon2id 哈希。无凭证时拒绝登录，绝不匿名放行。Cookie `xijuan_session`，Path=/，HttpOnly/SameSite=Strict，默认 30 分钟，单进程内存保存；登录轮换、退出、过期及凭证变更均使旧会话失效。
 - `utils/auth_middleware.py` 统一保护后台及全部 API；业务方法/路径显式列在 `BUSINESS_ROUTES`，允许管理员会话/API Key/IP 白名单，新增路由默认管理员。登录及携带 Cookie 的写请求必须带 `X-Requested-With: XMLHttpRequest`，跨站 Origin/Fetch-Site 拒绝。前端 fetch 包装器及 XHR 上传均添加该头；SSE/请求体不被中间件缓存。
 - `utils/auth_context.py` 将请求身份传至模型配置校验：Key/IP 调用方不能覆盖 `model_config` 的 `base_url/api_key`（含别名），避免继承的服务器密钥被转发；其余模型/采样参数保留。无限 `/log/stream` 在会话失效后发送 `auth_required` 并结束。

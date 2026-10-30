@@ -52,6 +52,37 @@ curl -X POST http://localhost:5019/file/parse \
 
 默认忽略不可信来源提供的 `X-Forwarded-For`。经过 Nginx 等代理时，只在 YAML 的 `access_control.trusted_proxies` 配置实际代理的 IP/CIDR，代理应正确覆写/追加 X-Forwarded-For，保留原 Host，并设置 X-Forwarded-Proto。系统从直连代理向外逐跳剥离，取第一个不可信地址为客户端地址。不要设置 `0.0.0.0/0` 或 `::/0` 为可信代理。必须禁用 Uvicorn 自带代理解析，原始对端已被它覆写时返回 503。
 
+
+### Docker 反向代理登录报「不允许跨站访问」
+
+此提示表示浏览器来源检查未通过，与密码错误不同。代理若把浏览器的外部 `Host` 改成内网服务地址，会造成 `Origin` 与后端收到的协议/主机/端口不一致。优先保留原始 Host，非标准端口也必须保留。例如 Nginx 的代理 location：
+
+```nginx
+location / {
+    proxy_pass http://10.5.0.103:5019;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+来源比较会规范化主机名大小写与默认端口（HTTP 80、HTTPS 443），但外部非标准端口必须一致。前端使用相对路径 `/auth/login`；HTTP→HTTP 且 Host 正确时无需配置可信代理。Cookie 或密码问题不会产生这个来源检查错误。
+
+更新代码后重试一次登录，查看 `docker compose logs --tail=100 wanz-prase2` 中的「登录来源校验拒绝」。日志包含 `origin`、`host_origin`、连接协议、`forwarded_proto`、`fetch_site`、直连对端与可信代理判定，不记录密码、Cookie、API Key 或请求体。应先用实际日志核对代理行为，再决定是否需要外部入口配置；客户端填写的转发 Host/Port 不被盲目信任。
+
+若无法调整代理，更新应用代码后，在 `configs/config.yaml` 的现有 `access_control` 分组添加实际的外部入口：
+
+```yaml
+access_control:
+  # 保留原有 api_keys、ip_allowlist 和 trusted_proxies 配置
+  allowed_origins:
+    - "http://59.203.14.205:8121"
+```
+
+`allowed_origins` 默认空，只在 YAML 配置；精确匹配协议、主机和端口，不允许通配符、路径或账号密码。它仅通过来源检查，仍需管理员登录和安全请求头，不授予 IP 白名单权限，也不会信任转发头。明确标为 `Sec-Fetch-Site: cross-site` 的请求仍然拒绝。
+
+上述 IP 是部署示例，请替换为实际入口。配置写入后在服务器项目目录执行 `docker compose restart wanz-prase2`，再从外部 `/ui/login` 重新登录。仓库 Compose 挂载宿主机代码和配置；若自定义部署只使用镜像内代码，则需重新构建镜像并重建容器。HTTPS 入口请使用 `https://` 并启用 `settings.secure_cookie`。
+
 ## 管理接口
 
 所有 `/settings/access` 接口需要管理员会话。写操作携带最近读取的 `base_version`，与普通设置共享 YAML 版本锁；冲突返回 409，重新获取列表后再提交。写入失败不改变正在运行的访问权限。`access_control` 不能通过普通 `PATCH /settings/config` 修改。
