@@ -65,7 +65,7 @@ async def settings_client(router_dependencies):
 
 
 async def login(client: AsyncClient, password: str = "admin-password"):
-    return await client.post("/settings/login", json={"password": password})
+    return await client.post("/settings/login", json={"username": "admin", "password": password})
 
 
 async def test_login_sets_protected_session_cookie(settings_client: AsyncClient):
@@ -73,10 +73,10 @@ async def test_login_sets_protected_session_cookie(settings_client: AsyncClient)
 
     assert response.status_code == 200
     cookie = response.headers["set-cookie"].lower()
-    assert "settings_session=" in cookie
+    assert "xijuan_session=" in cookie
     assert "httponly" in cookie
     assert "samesite=strict" in cookie
-    assert "path=/settings" in cookie
+    assert "path=/;" in cookie
     assert "max-age=1800" in cookie
 
 
@@ -170,7 +170,7 @@ async def test_logout_revokes_session_and_clears_cookie(settings_client: AsyncCl
     config = await settings_client.get("/settings/config")
 
     assert logout.status_code == 200
-    assert "settings_session=" in logout.headers["set-cookie"].lower()
+    assert "xijuan_session=" in logout.headers["set-cookie"].lower()
     assert config.status_code == 401
 
 

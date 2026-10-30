@@ -165,10 +165,10 @@ const Utils = {
      * HTML 转义
      */
     escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        // 文本与属性共用，单双引号必须编码，防止上传文件名/模型输出逃逸属性。
+        return String(text ?? '').replace(/[&<>"']/g, char => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        })[char]);
     },
 
     /**

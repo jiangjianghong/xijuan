@@ -9,7 +9,7 @@
 按 `priority` 升序返回规则。`type_id` 为空返回全量，非空按精确匹配过滤。
 
 - 方法路径：`GET /analysis/rules`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **查询参数**
 
@@ -53,7 +53,7 @@ _data 为数组，每个元素：_
 按 `rule_id`（**全局唯一**）upsert。
 
 - 方法路径：`POST /analysis/rules`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**
@@ -130,7 +130,7 @@ _data 为数组，每个元素：_
 **硬删除**规则本身；历史 `analysis_result` **不级联清理**。
 
 - 方法路径：`DELETE /analysis/rules/{rule_id}`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -152,7 +152,7 @@ _data 为数组，每个元素：_
 只读探测 `rule_id` 是否已被占用（保存前查重）。**全局**查存在性。
 
 - 方法路径：`GET /analysis/rules/{rule_id}/check`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -181,7 +181,7 @@ _data 为数组，每个元素：_
 传 `rule_id`（用已存规则）或 `config`（临时配置）二选一，均需 `file_id`。依赖字段值取自该 `file_id` 已有的 `extraction_result`。
 
 - 方法路径：`POST /analysis/test`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**
@@ -226,7 +226,7 @@ _data 为数组，每个元素：_
 SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom：[`web_search`] → `prompt` → `llm_response`）→ `result` → `done`。入参与 `/analysis/test` 相同。
 
 - 方法路径：`POST /analysis/test/stream`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**
@@ -282,7 +282,7 @@ SSE 分步推送：`input_values` → `resolved_expression` →（judge / custom
 即使只提交一个业务对象，请求仍写成 `items: [{...}]`；即使某个对象只执行一条规则，其结果仍写成 `results: [{...}]`。没有规则实际执行时，`results` 为 `[]`。
 
 - 方法路径：`POST /analysis/run`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**

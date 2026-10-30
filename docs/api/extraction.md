@@ -9,7 +9,7 @@
 按 `priority` 升序返回字段配置。`type_id` 为空返回全量，非空按精确匹配过滤。
 
 - 方法路径：`GET /extraction/fields`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **查询参数**
 
@@ -67,7 +67,7 @@ _data 为数组，每个元素：_
 按 `field_id`（**全局唯一**）upsert。
 
 - 方法路径：`POST /extraction/fields`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**
@@ -165,7 +165,7 @@ curl -X POST http://localhost:5019/extraction/fields \
 **硬删除**字段配置本身；该字段历史写入的 `extraction_result` **不级联清理**。
 
 - 方法路径：`DELETE /extraction/fields/{field_id}`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -187,7 +187,7 @@ curl -X POST http://localhost:5019/extraction/fields \
 只读探测 `field_id` 是否已被占用（保存前查重）。**全局**查存在性，故 `exists=true` 也可能是被其它类型占用。
 
 - 方法路径：`GET /extraction/fields/{field_id}/check`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -216,7 +216,7 @@ curl -X POST http://localhost:5019/extraction/fields \
 下发各类提示词模板的**系统默认值**，无参数、只读常量，不查库。供前端渲染「LLM 匹配高级设置」、提供「恢复默认」、做「是否改过」比对，避免前端硬编码模板副本落后于后端。
 
 - 方法路径：`GET /extraction/match-prompt-defaults`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **响应体**
 
@@ -243,7 +243,7 @@ curl -X POST http://localhost:5019/extraction/fields \
 传 `field_id`（用已存配置）或 `config`（临时配置）二选一，均需 `file_id`。返回检索结果、渲染后 prompt、LLM/VL 输出、解析后的值。
 
 - 方法路径：`POST /extraction/test`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**
@@ -295,7 +295,7 @@ curl -X POST http://localhost:5019/extraction/fields \
 SSE 分步推送：检索结果 → prompt → LLM/VL 响应 → 最终结果。入参与 `/extraction/test` 相同。
 
 - 方法路径：`POST /extraction/test/stream`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**

@@ -9,7 +9,7 @@
 上传文件并启动 6 阶段管线。`mode` = `async`（默认，立即返回）/ `sync`（阻塞至完成）/ `stream`（SSE）。
 
 - 方法路径：`POST /file/parse`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`multipart/form-data`
 - 幂等/并发：每次上传生成新 `file_id`，不去重；PDF 同步落 `uploads/{file_id}.pdf`（供 VL）
 
@@ -87,7 +87,7 @@ curl -X POST "http://localhost:5019/file/parse?type_id=default&mode=async" \
 按 `create_time DESC` 分页。`status`（即 `progress`）与 `type_id` 精确匹配，空串不过滤。
 
 - 方法路径：`GET /file/list`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **查询参数**
 
@@ -123,7 +123,7 @@ curl -X POST "http://localhost:5019/file/parse?type_id=default&mode=async" \
 返回所有「处理中」（非 complete、非 `*_failed`）的文件，前端处理队列的唯一数据源（JOIN 出 `type_name` / `project_id`）。
 
 - 方法路径：`GET /file/processing`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **响应体**
 
@@ -161,7 +161,7 @@ _data 为数组，每个元素：_
 `trend` 只返回**有数据的日期**，空白日期需消费方自行补零（前端 `Statistics.fillTrend` 即做此事）。
 
 - 方法路径：`GET /file/stats`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **查询参数**
 
@@ -199,7 +199,7 @@ _data 为数组，每个元素：_
 按请求体 `file_id` + `query`（关键词或 Markdown 文本片段）在整篇 Markdown 精确查找，返回命中上下文窗口、页码，并可选返回全部分块。**`file_id` 在请求体，不在 URL。**
 
 - 方法路径：`POST /file/context_query`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**
@@ -248,7 +248,7 @@ _data 为数组，每个元素：_
 删除所有 `file_id` 关联的 MySQL 记录、Milvus 向量、`uploads/{file_id}.pdf`。不存在的 ID 进 `failed_ids`。
 
 - 方法路径：`DELETE /file/batch`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**
@@ -279,7 +279,7 @@ _data 为数组，每个元素：_
 返回当前 `progress` 与最近 `error`。每阶段起止时间戳请走 `/detail`。
 
 - 方法路径：`GET /file/{file_id}/status`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -316,7 +316,7 @@ _data 为数组，每个元素：_
 在 `/status` 基础上额外返回六阶段全套起止时间戳，可算每阶段耗时。
 
 - 方法路径：`GET /file/{file_id}/detail`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -366,7 +366,7 @@ _data 为数组，每个元素：_
 级联删除 `files` / `file_content` / `file_table` / `file_chunk` / 结果（MySQL 立即提交），Milvus 与 PDF 后台清理。
 
 - 方法路径：`DELETE /file/{file_id}`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -388,7 +388,7 @@ _data 为数组，每个元素：_
 清掉指定阶段及下游数据后从该阶段重跑。有效 `stage`：`tableing` / `chunking` / `embedding` / `extracting` / `analyzing`（兼容旧别名 `table_name_validating`→`tableing`）。
 
 - 方法路径：`POST /file/{file_id}/retry/{stage}`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 `mode=async` 时 `callback_url` 可省略；提供地址才发送回调。不传地址时，使用原 `file_id` 轮询 `GET /file/{file_id}/status`，再通过 `/file/{file_id}/extraction`、`/file/{file_id}/analysis` 获取结果。
 
@@ -442,7 +442,7 @@ _data 为数组，每个元素：_
 等价于 `retry/{stage}` 中 `stage=extracting`，内部转发；同样支持可选 JSON 请求体 `{"model_config": {...}}`。
 
 - 方法路径：`POST /file/{file_id}/retry/extracting`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -484,7 +484,7 @@ _data 为数组，每个元素：_
 等价于 `retry/{stage}` 中 `stage=analyzing`，内部转发；同样支持可选 JSON 请求体 `{"model_config": {...}}`。
 
 - 方法路径：`POST /file/{file_id}/retry/analyzing`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -526,7 +526,7 @@ _data 为数组，每个元素：_
 用已落库的 md + middle_json 重建 `page_mapping` 写回，供存量文件免重传刷新逐页锚点 / bbox。
 
 - 方法路径：`POST /file/{file_id}/recompute_page_mapping`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -548,7 +548,7 @@ _data 为数组，每个元素：_
 返回 `file_table` 按 `table_index` 升序的全部表格（`table_name` 由 tableing 阶段 LLM 识别）。
 
 - 方法路径：`GET /file/{file_id}/tables`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -584,7 +584,7 @@ _data 为数组，每个元素：_
 返回 `file_chunk` 按 `chunk_index` 升序的全部分块（表格作为独立 chunk 不拆分）。
 
 - 方法路径：`GET /file/{file_id}/chunks`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -624,7 +624,7 @@ _data 为数组，每个元素：_
 目录命中会优先映射到同编号同标题的正文。详见 [章节树计算与检索](../SECTION_HIERARCHY.md)。
 
 - 方法路径：`GET /file/{file_id}/outline`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -660,7 +660,7 @@ _data 为数组，每个元素：_
 基于 `page_mapping` 把整篇 Markdown 逐页切分，按页码升序返回。
 
 - 方法路径：`GET /file/{file_id}/content`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -692,7 +692,7 @@ _data 为数组，每个元素：_
 返回 `extraction_result` 全表行（JOIN 字段名）。`source_refs` 含检索原文 / bbox / 模型自报页码等，结构详见 [source-refs](../guides/source-refs.md)。
 
 - 方法路径：`GET /file/{file_id}/extraction`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -730,7 +730,7 @@ _data 为数组，每个元素：_
 返回 `analysis_result` 全表行（JOIN 规则名，含 `input_values`）。judge 启用网络搜索时 `source_refs` 含 `_web_search`。
 
 - 方法路径：`GET /file/{file_id}/analysis`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -768,7 +768,7 @@ _data 为数组，每个元素：_
 下发 `uploads/{file_id}.pdf` 原始字节，供前端定位预览。
 
 - 方法路径：`GET /file/{file_id}/pdf`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 

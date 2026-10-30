@@ -11,7 +11,8 @@ from blue_print.search_router import router as search_router
 from blue_print.doctype_router import router as doctype_router
 from blue_print.log_router import router as log_router
 from blue_print.api_reference_router import router as api_reference_router
-from blue_print.settings_router import router as settings_router
+from blue_print.settings_router import router as settings_router, auth_router
+from blue_print.access_control_router import router as access_control_router
 from blue_print.runtime_router import router as runtime_router
 from blue_print.invocation_router import router as invocation_router
 
@@ -26,5 +27,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(log_router)
     app.include_router(api_reference_router)
     app.include_router(settings_router)
+    app.include_router(auth_router)
+    app.include_router(access_control_router)
     app.include_router(runtime_router)
     app.include_router(invocation_router)

@@ -12,7 +12,7 @@
           "file"
         ],
         "summary": "分页查询文件列表",
-        "description": "按 `create_time DESC` 分页。`status` 与 `type_id` 均为**精确匹配**，空字符串表示不过滤。\n\n**`status` 合法值**（即 `progress` 字段）：`parsing` / `tableing` / `chunking` / `embedding` / `extracting` / `analyzing` / `complete`，以及对应的 `*_failed` 失败态。\n\n返回 `data=FileListResponse{items:[FileListItem], total, page, page_size, total_pages}`；`FileListItem = {file_id, file_name, file_size, progress, type_id, error, create_time}`。",
+        "description": "按 `create_time DESC` 分页。`status` 与 `type_id` 均为**精确匹配**，空字符串表示不过滤。\n\n**`status` 合法值**（即 `progress` 字段）：`parsing` / `tableing` / `chunking` / `embedding` / `extracting` / `analyzing` / `complete`，以及对应的 `*_failed` 失败态。\n\n返回 `data=FileListResponse{items:[FileListItem], total, page, page_size, total_pages}`；`FileListItem = {file_id, file_name, file_size, progress, type_id, error, create_time}`。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "list_files_file_list_get",
         "parameters": [
           {
@@ -93,7 +93,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/processing": {
@@ -102,7 +110,7 @@
           "file"
         ],
         "summary": "处理中文件队列",
-        "description": "返回所有处于「处理中」（非 complete、非 `*_failed`）的文件，是前端处理队列的唯一数据源。LEFT JOIN `doc_type` 带出 `type_name` / `project_id`。\n\n返回 `data=[ProcessingItem{file_id, file_name, progress, type_id, type_name, project_id, create_time}]`。",
+        "description": "返回所有处于「处理中」（非 complete、非 `*_failed`）的文件，是前端处理队列的唯一数据源。LEFT JOIN `doc_type` 带出 `type_name` / `project_id`。\n\n返回 `data=[ProcessingItem{file_id, file_name, progress, type_id, type_name, project_id, create_time}]`。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "list_processing_file_processing_get",
         "parameters": [
           {
@@ -153,7 +161,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/stats": {
@@ -162,7 +178,7 @@
           "file"
         ],
         "summary": "全局处理统计",
-        "description": "统计页（前端点击左上角标题进入）的唯一数据源，一次返回 6 组聚合结果。\n\n**口径：全局**——不接受 `type_id` / `project_id` 过滤，统计库中全部文件；与顶部项目 / 文档类型选择器无关。\n\n**返回结构**\n- `overview`：总数 / 已完成 / 失败 / 处理中 / 总体积 / 成功率 / 平均全流程耗时\n- `status_distribution`：按 `progress` 分组（数量降序）\n- `by_project`：按项目分组（数量降序），未归类的类型合并到 `__ungrouped__`\n- `by_type`：按文档类型分组（数量降序）\n- `trend`：近 `days` 天按 `create_time` 落日的每日上传 / 完成 / 失败数，**只含有数据的日期**（消费方需自行补零）\n- `stage_durations`：六阶段耗时，恒按管线顺序返回 6 项\n\n**两个易误读的口径**\n1. `overview.avg_total_seconds` 是 `start_parsing_time → end_analyzing_time` 的墙钟时长，**包含阶段之间的排队等待**，因此通常远大于 `stage_durations` 各阶段均值之和。\n2. `stage_durations[].samples` 只计该阶段起止时间**双端非空**的文件；重试会把目标阶段及下游时间戳重置为 NULL，这些文件在重跑完成前不计入。\n\n**性能**：固定 4 条聚合查询（状态分布、类型×项目、按天趋势、阶段耗时），无 N+1。",
+        "description": "统计页（前端点击左上角标题进入）的唯一数据源，一次返回 6 组聚合结果。\n\n**口径：全局**——不接受 `type_id` / `project_id` 过滤，统计库中全部文件；与顶部项目 / 文档类型选择器无关。\n\n**返回结构**\n- `overview`：总数 / 已完成 / 失败 / 处理中 / 总体积 / 成功率 / 平均全流程耗时\n- `status_distribution`：按 `progress` 分组（数量降序）\n- `by_project`：按项目分组（数量降序），未归类的类型合并到 `__ungrouped__`\n- `by_type`：按文档类型分组（数量降序）\n- `trend`：近 `days` 天按 `create_time` 落日的每日上传 / 完成 / 失败数，**只含有数据的日期**（消费方需自行补零）\n- `stage_durations`：六阶段耗时，恒按管线顺序返回 6 项\n\n**两个易误读的口径**\n1. `overview.avg_total_seconds` 是 `start_parsing_time → end_analyzing_time` 的墙钟时长，**包含阶段之间的排队等待**，因此通常远大于 `stage_durations` 各阶段均值之和。\n2. `stage_durations[].samples` 只计该阶段起止时间**双端非空**的文件；重试会把目标阶段及下游时间戳重置为 NULL，这些文件在重跑完成前不计入。\n\n**性能**：固定 4 条聚合查询（状态分布、类型×项目、按天趋势、阶段耗时），无 N+1。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "file_stats_file_stats_get",
         "parameters": [
           {
@@ -208,7 +224,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/context_query": {
@@ -217,7 +241,7 @@
           "file"
         ],
         "summary": "文件片段上下文查询",
-        "description": "按请求体 `file_id` + `query`（关键词或 MinerU Markdown 文本片段）在整篇 Markdown 中精确查找，返回每处命中的上下文窗口、页码，并可选返回该文件全部分块。**`file_id` 放在请求体**（不在 URL）。\n\n`context_before` / `context_after` 控制命中位置前后返回的字符数；`page_num` 按命中片段自身位置计算（非上下文窗口）；`include_all_chunks=true` 时 `chunks` 返回全部分块并用 `hit`/`hit_count` 标记命中。\n\n文件内容不存在或尚未解析完成时返回 **404**。\n\n返回 `data=FileContextQueryResponse{file_id, query, query_type, matched, match_count, matches:[{match_index, keyword, position, match_start_pos, match_end_pos, context_start_pos, context_end_pos, context, page_num, bboxes}], chunks:[...]}`。",
+        "description": "按请求体 `file_id` + `query`（关键词或 MinerU Markdown 文本片段）在整篇 Markdown 中精确查找，返回每处命中的上下文窗口、页码，并可选返回该文件全部分块。**`file_id` 放在请求体**（不在 URL）。\n\n`context_before` / `context_after` 控制命中位置前后返回的字符数；`page_num` 按命中片段自身位置计算（非上下文窗口）；`include_all_chunks=true` 时 `chunks` 返回全部分块并用 `hit`/`hit_count` 标记命中。\n\n文件内容不存在或尚未解析完成时返回 **404**。\n\n返回 `data=FileContextQueryResponse{file_id, query, query_type, matched, match_count, matches:[{match_index, keyword, position, match_start_pos, match_end_pos, context_start_pos, context_end_pos, context, page_num, bboxes}], chunks:[...]}`。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "query_context_file_context_query_post",
         "requestBody": {
           "content": {
@@ -262,7 +286,27 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/file/batch": {
@@ -271,7 +315,7 @@
           "file"
         ],
         "summary": "批量删除文件",
-        "description": "删除请求体中所有 `file_id` 关联的 MySQL 记录、Milvus 向量、`uploads/{file_id}.pdf`。\n\n不存在的 `file_id` 不报错，会出现在响应 `failed_ids` 中。Milvus / PDF 清理走后台任务，失败仅记 warning，不影响 MySQL 删除。\n\n返回 `data=BatchDeleteResponse{deleted_count, failed_ids}`。",
+        "description": "删除请求体中所有 `file_id` 关联的 MySQL 记录、Milvus 向量、`uploads/{file_id}.pdf`。\n\n不存在的 `file_id` 不报错，会出现在响应 `failed_ids` 中。Milvus / PDF 清理走后台任务，失败仅记 warning，不影响 MySQL 删除。\n\n返回 `data=BatchDeleteResponse{deleted_count, failed_ids}`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "batch_delete_files_file_batch_delete",
         "requestBody": {
           "content": {
@@ -316,7 +360,24 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/file/parse": {
@@ -325,7 +386,7 @@
           "file"
         ],
         "summary": "提交文件解析",
-        "description": "上传文件并启动 6 阶段处理管线（parsing → tableing → chunking → embedding → extracting → analyzing → complete）。`Content-Type` 必须为 `multipart/form-data`。\n\n**`mode` 行为差异**\n- `async`（默认）：后台任务，立即返回 `data={file_id}`，`message=\"文件已提交处理（异步）\"`\n- `sync`：阻塞直到全部完成或失败，再返回 `data={file_id}`\n- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `docs/api/sse.md`）\n- 其它任意值按 `sync` 处理（代码 fallback 分支）\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 multipart 表单字段名为 `model_config`，值为 JSON 对象字符串。\n\n**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 `field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时默认 2.5s（`callback.timeout` 可配），失败仅 warning，不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n**`callback_mode`**：回调粒度。`full`（默认）保留 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`（results 仍完整）。\n\n**`params` 文档类型入参**：可选的 multipart form 字段，内容必须是 JSON 对象字符串。对象值仅支持字符串、数字、布尔值或 `null`（统一转成字符串，`null` 转为空字符串）；字段与规则配置中的 `<param>参数标识</param>` 会使用合并后的值渲染。\n\n服务端按 `type_id` 的参数定义执行 `默认值 <- 传入值覆盖`，并把完整快照写入 `files.input_params`，因此后续 retry 沿用上传时的值。非法 JSON、顶层非对象、对象/数组值、未知 key，或缺少无默认值的必填参数，均返回 **HTTP 400**；校验发生在建档和写 PDF 之前。\n\n**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— 每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`，**不要**重新上传（会产生新记录）。\n\n原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n**文件大小限制**：受 `mineru.max_file_size` 控制（默认 100MB / 104857600 字节），超限返回 `ResponseWrapper{code:400, message:\"文件大小超过限制 (100MB)\"}`（不抛 HTTP 错误）。\n\n**`type_id` 校验**：类型必须已存在于 `doc_type`，否则返回 **HTTP 400** `{detail:\"文档类型不存在: xxx\"}`（区别于文件大小超限的 body 内 `code`——这里抛真正的 HTTP 错误，且不建档、不写盘）。只校验存在性，**不校验 `enabled`**——禁用类型仍可上传。`default` 由启动流程保证存在。",
+        "description": "上传文件并启动 6 阶段处理管线（parsing → tableing → chunking → embedding → extracting → analyzing → complete）。`Content-Type` 必须为 `multipart/form-data`。\n\n**`mode` 行为差异**\n- `async`（默认）：后台任务，立即返回 `data={file_id}`，`message=\"文件已提交处理（异步）\"`\n- `sync`：阻塞直到全部完成或失败，再返回 `data={file_id}`\n- `stream`：返回 `text/event-stream`，逐阶段推送事件（事件序列见 `docs/api/sse.md`）\n- 其它任意值按 `sync` 处理（代码 fallback 分支）\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 multipart 表单字段名为 `model_config`，值为 JSON 对象字符串。\n\n**`callback_url`** 在 `async` 与 `sync` 模式下都会被使用（每阶段开始、每条 `field_done`/`rule_done`、每阶段 `stage_done` 都 POST 通知；超时默认 2.5s（`callback.timeout` 可配），失败仅 warning，不阻断主流程）。`stream` 模式忽略 `callback_url`，事件改走 SSE。\n\n**`callback_mode`**：回调粒度。`full`（默认）保留 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`（results 仍完整）。\n\n**`params` 文档类型入参**：可选的 multipart form 字段，内容必须是 JSON 对象字符串。对象值仅支持字符串、数字、布尔值或 `null`（统一转成字符串，`null` 转为空字符串）；字段与规则配置中的 `<param>参数标识</param>` 会使用合并后的值渲染。\n\n服务端按 `type_id` 的参数定义执行 `默认值 <- 传入值覆盖`，并把完整快照写入 `files.input_params`，因此后续 retry 沿用上传时的值。非法 JSON、顶层非对象、对象/数组值、未知 key，或缺少无默认值的必填参数，均返回 **HTTP 400**；校验发生在建档和写 PDF 之前。\n\n**`file_id` 生成**：`SHA256[:32]((type_id, file_name, time.time_ns(), token_hex(8)))` —— 每次上传都是新 ID，**不做去重**。失败重试请用 `POST /file/{file_id}/retry/{stage}`，**不要**重新上传（会产生新记录）。\n\n原始 PDF 字节会同步写到 `uploads/{file_id}.pdf`（供 VL 抽取使用），写盘失败不阻断主管线。\n\n**文件大小限制**：受 `mineru.max_file_size` 控制（默认 100MB / 104857600 字节），超限返回 `ResponseWrapper{code:400, message:\"文件大小超过限制 (100MB)\"}`（不抛 HTTP 错误）。\n\n**`type_id` 校验**：类型必须已存在于 `doc_type`，否则返回 **HTTP 400** `{detail:\"文档类型不存在: xxx\"}`（区别于文件大小超限的 body 内 `code`——这里抛真正的 HTTP 错误，且不建档、不写盘）。只校验存在性，**不校验 `enabled`**——禁用类型仍可上传。`default` 由启动流程保证存在。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "parse_file_file_parse_post",
         "parameters": [
           {
@@ -386,6 +447,16 @@
             },
             "description": "回调粒度：`full`（默认）保留逐条 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`。`stream` 模式忽略。",
             "example": "full"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "requestBody": {
@@ -437,7 +508,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/{file_id}/status": {
@@ -446,7 +525,7 @@
           "file"
         ],
         "summary": "查询文件处理进度",
-        "description": "返回当前 `progress` 与最近的 `error`，含 `create_time` / `updated_at` 两个时间戳。\n\n`progress` 取值：`parsing` / `tableing` / `chunking` / `embedding` / `extracting` / `analyzing` / `complete`，以及对应的 `*_failed` 失败态。\n\n如需每阶段的开始/结束时间戳（计算阶段耗时），请走 `GET /file/{file_id}/detail`。\n\n**状态码**：200 / 404（文件不存在）。",
+        "description": "返回当前 `progress` 与最近的 `error`，含 `create_time` / `updated_at` 两个时间戳。\n\n`progress` 取值：`parsing` / `tableing` / `chunking` / `embedding` / `extracting` / `analyzing` / `complete`，以及对应的 `*_failed` 失败态。\n\n如需每阶段的开始/结束时间戳（计算阶段耗时），请走 `GET /file/{file_id}/detail`。\n\n**状态码**：200 / 404（文件不存在）。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "get_file_status_file__file_id__status_get",
         "parameters": [
           {
@@ -493,7 +572,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/{file_id}/pdf": {
@@ -502,7 +589,7 @@
           "file"
         ],
         "summary": "下载原始 PDF",
-        "description": "下发 `uploads/{file_id}.pdf` 原始字节（`application/pdf`，Content-Disposition inline），供前端 PDF 定位预览。`file_id` 仅允许 `[\\w-]` 字符。\n\n历史文件（vl 持久化机制上线前上传）可能无落盘 PDF，此时 404。",
+        "description": "下发 `uploads/{file_id}.pdf` 原始字节（`application/pdf`，Content-Disposition inline），供前端 PDF 定位预览。`file_id` 仅允许 `[\\w-]` 字符。\n\n历史文件（vl 持久化机制上线前上传）可能无落盘 PDF，此时 404。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "get_file_pdf_file__file_id__pdf_get",
         "parameters": [
           {
@@ -535,7 +622,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/{file_id}": {
@@ -544,7 +639,7 @@
           "file"
         ],
         "summary": "删除文件",
-        "description": "级联删除：`files` / `file_content` / `file_table` / `file_chunk` / `extraction_result` / `analysis_result`（MySQL 立即提交），Milvus 向量与 `uploads/{file_id}.pdf` 走后台清理（失败仅 warning），接口立即返回。\n\n**状态码**：200 / 404（文件不存在）。",
+        "description": "级联删除：`files` / `file_content` / `file_table` / `file_chunk` / `extraction_result` / `analysis_result`（MySQL 立即提交），Milvus 向量与 `uploads/{file_id}.pdf` 走后台清理（失败仅 warning），接口立即返回。\n\n**状态码**：200 / 404（文件不存在）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "delete_file_file__file_id__delete",
         "parameters": [
           {
@@ -556,6 +651,16 @@
               "title": "File Id"
             },
             "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "responses": {
@@ -579,7 +684,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/file/{file_id}/retry/{stage}": {
@@ -588,7 +698,7 @@
           "file"
         ],
         "summary": "从指定阶段重试",
-        "description": "清掉指定阶段及其下游已有数据（依赖 `init_service` 同款清理逻辑），从该阶段重跑。\n\n**有效 `stage`**：`tableing` / `chunking` / `embedding` / `extracting` / `analyzing`。\n兼容旧别名 `table_name_validating` → `tableing`。其它值返回 **400**。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过可选 JSON 请求体 `{\"model_config\": {...}}` 传入。\n\n**`mode`**：`async`（默认，后台任务）/ `sync`（阻塞返回）/ `stream`（SSE 流）。\n\n**`callback_url`** 仅在 `async` / `sync` 模式生效；`stream` 模式忽略，事件改走 SSE。\n\n**`callback_mode`**：`full`（默认）/ `simple`（跳过 `field_done`/`rule_done`，只发 `stage_done`）。\n\n`stream` 返回的事件序列与 `/file/parse?mode=stream` 完全一致。\n\n**状态码**：200 / 400（无效阶段名）/ 404（文件不存在）。",
+        "description": "清掉指定阶段及其下游已有数据（依赖 `init_service` 同款清理逻辑），从该阶段重跑。\n\n**有效 `stage`**：`tableing` / `chunking` / `embedding` / `extracting` / `analyzing`。\n兼容旧别名 `table_name_validating` → `tableing`。其它值返回 **400**。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过可选 JSON 请求体 `{\"model_config\": {...}}` 传入。\n\n**`mode`**：`async`（默认，后台任务）/ `sync`（阻塞返回）/ `stream`（SSE 流）。\n\n**`callback_url`** 仅在 `async` / `sync` 模式生效；`stream` 模式忽略，事件改走 SSE。\n\n**`callback_mode`**：`full`（默认）/ `simple`（跳过 `field_done`/`rule_done`，只发 `stage_done`）。\n\n`stream` 返回的事件序列与 `/file/parse?mode=stream` 完全一致。\n\n**状态码**：200 / 400（无效阶段名）/ 404（文件不存在）。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "retry_file_file__file_id__retry__stage__post",
         "parameters": [
           {
@@ -665,6 +775,16 @@
             },
             "description": "回调粒度：`full`（默认）保留逐条 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`。`stream` 模式忽略。",
             "example": "full"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "requestBody": {
@@ -695,7 +815,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/{file_id}/retry/extracting": {
@@ -704,7 +832,7 @@
           "file"
         ],
         "summary": "快捷重试：字段提取",
-        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=extracting`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、`callback_mode`（full/simple）。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过可选 JSON 请求体 `{\"model_config\": {...}}` 传入。\n\n",
+        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=extracting`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、`callback_mode`（full/simple）。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过可选 JSON 请求体 `{\"model_config\": {...}}` 传入。\n\n\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "retry_extracting_file__file_id__retry_extracting_post",
         "parameters": [
           {
@@ -764,6 +892,16 @@
             },
             "description": "回调粒度：`full`（默认）保留逐条 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`。`stream` 模式忽略。",
             "example": "full"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "requestBody": {
@@ -794,7 +932,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/{file_id}/retry/analyzing": {
@@ -803,7 +949,7 @@
           "file"
         ],
         "summary": "快捷重试：逻辑分析",
-        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=analyzing`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、`callback_mode`（full/simple）。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过可选 JSON 请求体 `{\"model_config\": {...}}` 传入。\n\n",
+        "description": "语义等价于 `POST /file/{file_id}/retry/{stage}` 中 `stage=analyzing`，内部即转发调用。\n\n支持参数：`mode`（async/sync/stream）、`callback_url`（async/sync 生效）、`callback_mode`（full/simple）。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过可选 JSON 请求体 `{\"model_config\": {...}}` 传入。\n\n\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "retry_analyzing_file__file_id__retry_analyzing_post",
         "parameters": [
           {
@@ -863,6 +1009,16 @@
             },
             "description": "回调粒度：`full`（默认）保留逐条 `field_done`/`rule_done`；`simple` 跳过逐条事件，抽取/分析阶段只发一次 `stage_done`。`stream` 模式忽略。",
             "example": "full"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "requestBody": {
@@ -893,7 +1049,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/{file_id}/tables": {
@@ -902,7 +1066,7 @@
           "file"
         ],
         "summary": "文件表格列表",
-        "description": "返回 `file_table` 中按 `table_index` 升序的全部表格。\n\n`table_name` 由 LLM 在 `tableing` 阶段从表前文本识别得出（截断 30 字），`page_num` 是该表格在 PDF 中的页号（可能是范围如 `\"3-4\"`）。\n\n返回 `data=[FileTableItem{file_id, table_index, total_table, table_name, table_content, page_num}]`（文件不存在/无表格时为 `[]`，非 404）。",
+        "description": "返回 `file_table` 中按 `table_index` 升序的全部表格。\n\n`table_name` 由 LLM 在 `tableing` 阶段从表前文本识别得出（截断 30 字），`page_num` 是该表格在 PDF 中的页号（可能是范围如 `\"3-4\"`）。\n\n返回 `data=[FileTableItem{file_id, table_index, total_table, table_name, table_content, page_num}]`（文件不存在/无表格时为 `[]`，非 404）。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "get_file_tables_file__file_id__tables_get",
         "parameters": [
           {
@@ -952,7 +1116,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/{file_id}/chunks": {
@@ -961,7 +1133,7 @@
           "file"
         ],
         "summary": "文件分块列表",
-        "description": "返回 `file_chunk` 按 `chunk_index` 升序的全部分块（表格作为独立 chunk 不拆分）。\n\n返回 `data=[FileChunkItem{file_id, chunk_id, chunk_index, total_chunks, chunk_content, page_num}]`（文件不存在/无分块时为 `[]`）。",
+        "description": "返回 `file_chunk` 按 `chunk_index` 升序的全部分块（表格作为独立 chunk 不拆分）。\n\n返回 `data=[FileChunkItem{file_id, chunk_id, chunk_index, total_chunks, chunk_content, page_num}]`（文件不存在/无分块时为 `[]`）。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "get_file_chunks_file__file_id__chunks_get",
         "parameters": [
           {
@@ -1011,7 +1183,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/{file_id}/recompute_page_mapping": {
@@ -1020,7 +1200,7 @@
           "file"
         ],
         "summary": "重算页码映射",
-        "description": "用已落库的 markdown + middle_json 重新构建 `page_mapping` 并写回 `file_content`，供存量文件免重传刷新逐页锚点 / bbox。文件内容不存在时返回 404。",
+        "description": "用已落库的 markdown + middle_json 重新构建 `page_mapping` 并写回 `file_content`，供存量文件免重传刷新逐页锚点 / bbox。文件内容不存在时返回 404。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "recompute_page_mapping_file__file_id__recompute_page_mapping_post",
         "parameters": [
           {
@@ -1032,6 +1212,16 @@
               "title": "File Id"
             },
             "description": "目标文件 ID（`POST /file/parse` 返回的 32 位 SHA256 摘要）。"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "responses": {
@@ -1055,7 +1245,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/file/{file_id}/outline": {
@@ -1064,7 +1259,7 @@
           "file"
         ],
         "summary": "文件章节大纲",
-        "description": "正则解析 Markdown 章节标题（`parse_sections`），与 `extraction.search_type=section` 使用同一套切片口径 —— 前端看到什么 = 抽取时能匹配到什么。\n\n返回 `data=[{index, number, title, content, start_pos, end_pos}]`，`content` 是该章节切片正文。文件不存在或内容为空返回 `[]`（不返回 404），与 `/tables`、`/chunks` 一致。",
+        "description": "正则解析 Markdown 章节标题（`parse_sections`），与 `extraction.search_type=section` 使用同一套切片口径 —— 前端看到什么 = 抽取时能匹配到什么。\n\n返回 `data=[{index, number, title, content, start_pos, end_pos}]`，`content` 是该章节切片正文。文件不存在或内容为空返回 `[]`（不返回 404），与 `/tables`、`/chunks` 一致。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "get_file_outline_file__file_id__outline_get",
         "parameters": [
           {
@@ -1140,7 +1335,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/{file_id}/content": {
@@ -1149,7 +1352,7 @@
           "file"
         ],
         "summary": "按页返回 Markdown 内容",
-        "description": "基于 `parsing` 阶段落库的 `page_mapping` 把整篇 Markdown 逐页切分，按页码升序返回：`data=[{page_num, content}]`。\n\n首页并入首个块锚点前的前导内容，末页切到文末，纯空白页跳过。\n\n文件不存在 / 内容为空 / 无 `page_mapping`（存量老文件重解析前无逐页锚点）返回 `[]`（非 404），与 `/tables`、`/chunks`、`/outline` 一致。",
+        "description": "基于 `parsing` 阶段落库的 `page_mapping` 把整篇 Markdown 逐页切分，按页码升序返回：`data=[{page_num, content}]`。\n\n首页并入首个块锚点前的前导内容，末页切到文末，纯空白页跳过。\n\n文件不存在 / 内容为空 / 无 `page_mapping`（存量老文件重解析前无逐页锚点）返回 `[]`（非 404），与 `/tables`、`/chunks`、`/outline` 一致。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "get_file_content_by_page_file__file_id__content_get",
         "parameters": [
           {
@@ -1209,7 +1412,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/{file_id}/extraction": {
@@ -1218,7 +1429,7 @@
           "file"
         ],
         "summary": "字段提取结果",
-        "description": "返回 `extraction_result` 全表行（LEFT JOIN `extraction_field` 获取字段名称）：\n`data=[{file_id, field_id, field_name, extracted_value, reason, source_refs}]`。\n\n`field_name` 来自字段配置表，若配置已被删除则为 `null`。\n\n`source_refs` 为参考块字典：每条 ref 含 `text`（该条命中注入 prompt 的原始片段），text/table 类 ref 另含 `bboxes`（`[{page_num, bbox, page_size}]` 块级 PDF 框，供前端高亮定位）；顶层 `_texts` 键为 `{label: 拼接后实际注入占位符的完整文本}`；顶层 `_model_pages` 键为 `int[]`（模型自报的参考页码，去重升序，1-indexed；text/table 类由 LLM 输出的 `pages` 字段落库，前端定位优先跳这些页；模型未返回 / vl 类 / use_llm=0 时无此键）；vl 类为 `{_vl: {...}}` 元数据（无检索文本，页码在 `_vl.key_pages`）。存量老数据无 `text`/`_texts`/`bboxes`/`_model_pages`，消费方需容错。\n\n如需调试细节请走 `/extraction/test` 或 `/extraction/test/stream`。",
+        "description": "返回 `extraction_result` 全表行（LEFT JOIN `extraction_field` 获取字段名称）：\n`data=[{file_id, field_id, field_name, extracted_value, reason, source_refs}]`。\n\n`field_name` 来自字段配置表，若配置已被删除则为 `null`。\n\n`source_refs` 为参考块字典：每条 ref 含 `text`（该条命中注入 prompt 的原始片段），text/table 类 ref 另含 `bboxes`（`[{page_num, bbox, page_size}]` 块级 PDF 框，供前端高亮定位）；顶层 `_texts` 键为 `{label: 拼接后实际注入占位符的完整文本}`；顶层 `_model_pages` 键为 `int[]`（模型自报的参考页码，去重升序，1-indexed；text/table 类由 LLM 输出的 `pages` 字段落库，前端定位优先跳这些页；模型未返回 / vl 类 / use_llm=0 时无此键）；vl 类为 `{_vl: {...}}` 元数据（无检索文本，页码在 `_vl.key_pages`）。存量老数据无 `text`/`_texts`/`bboxes`/`_model_pages`，消费方需容错。\n\n如需调试细节请走 `/extraction/test` 或 `/extraction/test/stream`。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "get_extraction_results_file__file_id__extraction_get",
         "parameters": [
           {
@@ -1268,7 +1479,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/{file_id}/analysis": {
@@ -1277,7 +1496,7 @@
           "file"
         ],
         "summary": "逻辑分析结果",
-        "description": "返回 `analysis_result` 全表行（LEFT JOIN `analysis_rule` 获取规则名称）：\n`data=[{file_id, rule_id, rule_name, result_value, input_values, reason, source_refs}]`（含 `input_values` 字典）。\n\n`rule_name` 来自规则配置表，若配置已被删除则为 `null`。\n\n`source_refs` 目前仅 judge / custom 规则启用网络搜索时携带 `_web_search` 键：`{query, results: [{name, url, siteName, datePublished, summary}], error?}`；未启用搜索的规则与存量老数据为 `null`，消费方需容错。",
+        "description": "返回 `analysis_result` 全表行（LEFT JOIN `analysis_rule` 获取规则名称）：\n`data=[{file_id, rule_id, rule_name, result_value, input_values, reason, source_refs}]`（含 `input_values` 字典）。\n\n`rule_name` 来自规则配置表，若配置已被删除则为 `null`。\n\n`source_refs` 目前仅 judge / custom 规则启用网络搜索时携带 `_web_search` 键：`{query, results: [{name, url, siteName, datePublished, summary}], error?}`；未启用搜索的规则与存量老数据为 `null`，消费方需容错。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "get_analysis_results_file__file_id__analysis_get",
         "parameters": [
           {
@@ -1327,7 +1546,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/file/{file_id}/detail": {
@@ -1336,7 +1563,7 @@
           "file"
         ],
         "summary": "文件完整详情",
-        "description": "在 `/status` 字段基础上额外返回全套阶段时间戳：`start_parsing_time` / `end_parsing_time` / `start_tableing_time` / `end_tableing_time` / `start_chunking_time` / `end_chunking_time` / `start_embedding_time` / `end_embedding_time` / `start_extracting_time` / `end_extracting_time` / `start_analyzing_time` / `end_analyzing_time`（六个阶段各有 start+end；存量老数据的 extracting / analyzing start 可能为 null），可据此计算每阶段耗时。\n\n**状态码**：200 / 404（文件不存在）。",
+        "description": "在 `/status` 字段基础上额外返回全套阶段时间戳：`start_parsing_time` / `end_parsing_time` / `start_tableing_time` / `end_tableing_time` / `start_chunking_time` / `end_chunking_time` / `start_embedding_time` / `end_embedding_time` / `start_extracting_time` / `end_extracting_time` / `start_analyzing_time` / `end_analyzing_time`（六个阶段各有 start+end；存量老数据的 extracting / analyzing start 可能为 null），可据此计算每阶段耗时。\n\n**状态码**：200 / 404（文件不存在）。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "get_file_detail_file__file_id__detail_get",
         "parameters": [
           {
@@ -1383,7 +1610,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/extraction/match-prompt-defaults": {
@@ -1392,7 +1627,7 @@
           "extraction"
         ],
         "summary": "获取提示词模板默认值",
-        "description": "下发各类提示词模板的**系统默认值**，无参数、只读常量，不查库。\n\n返回 `data={section, table, output_instruction, vl_batch, vl_locate}`：\n- `section` / `table`：章节 / 表格 LLM 匹配的默认模板（对应 `search_config.section_match_prompt` 与 `table_match_prompt` 留空时实际使用的内容）\n- `output_instruction`：匹配模板末尾由系统**恒定追加**的输出格式段，用户不可编辑，仅供前端只读展示\n- `vl_batch` / `vl_locate`：`vl_progressive` 的 `batch_prompt_template` 与 `vl_locate` 的 `locate_prompt_template` 默认值\n\n**用途**：前端据此渲染「LLM 匹配高级设置」文本框、提供「恢复默认」、并做「是否改过」比对，从而不必在前端硬编码模板副本——副本一旦落后于后端，用户保存时会把旧模板固化进库。",
+        "description": "下发各类提示词模板的**系统默认值**，无参数、只读常量，不查库。\n\n返回 `data={section, table, output_instruction, vl_batch, vl_locate}`：\n- `section` / `table`：章节 / 表格 LLM 匹配的默认模板（对应 `search_config.section_match_prompt` 与 `table_match_prompt` 留空时实际使用的内容）\n- `output_instruction`：匹配模板末尾由系统**恒定追加**的输出格式段，用户不可编辑，仅供前端只读展示\n- `vl_batch` / `vl_locate`：`vl_progressive` 的 `batch_prompt_template` 与 `vl_locate` 的 `locate_prompt_template` 默认值\n\n**用途**：前端据此渲染「LLM 匹配高级设置」文本框、提供「恢复默认」、并做「是否改过」比对，从而不必在前端硬编码模板副本——副本一旦落后于后端，用户保存时会把旧模板固化进库。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "get_match_prompt_defaults_extraction_match_prompt_defaults_get",
         "responses": {
           "200": {
@@ -1439,7 +1674,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/extraction/fields": {
@@ -1448,7 +1688,7 @@
           "extraction"
         ],
         "summary": "列出字段配置",
-        "description": "按 `priority` 升序返回字段配置。`type_id` 为空时返回全量；非空时按精确匹配过滤。\n\n返回 `data=[ExtractionFieldResponse]`（即 `ExtractionFieldCreate` 各字段 + `created_at` / `updated_at`）。",
+        "description": "按 `priority` 升序返回字段配置。`type_id` 为空时返回全量；非空时按精确匹配过滤。\n\n返回 `data=[ExtractionFieldResponse]`（即 `ExtractionFieldCreate` 各字段 + `created_at` / `updated_at`）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "list_fields_extraction_fields_get",
         "parameters": [
           {
@@ -1499,14 +1739,19 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       },
       "post": {
         "tags": [
           "extraction"
         ],
         "summary": "新增/更新字段配置（upsert）",
-        "description": "按 `field_id` **全局唯一** upsert。\n\n**冲突处理**：若 `field_id` 已存在但归属其它 `type_id`，返回 **409**，提示换 ID 或先删除原记录。\n\n**Prompt / 配置校验（Pydantic 层，违反返回 422）**\n- `source_type=text` 时 `text_extract_prompt` 必须含至少一个 `<search_result>标签</search_result>`\n- `source_type=table` 时 `table_extract_prompt` 同上\n- `source_type=vl` 时 `vl_method` 与 `vl_extract_prompt` 必填，且 prompt 必须含 `reason` 和 `value` 关键字（大小写不敏感；最终要求 VL 先输出 reason，再输出 value，并返回 `{reason, value}` JSON）\n- `vl_progressive` 的自定义 `batch_prompt_template` 必含 `{field_hints}` `{page_label}` `{total_pages}` `{history}`\n- `vl_locate` 的自定义 `locate_prompt_template` 必含 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`\n- `table_match_type=llm` 时非空的 `table_match_prompt` 必含 `{table_list}`；`section_match_type=llm` 时非空的 `search_config.section_match_prompt` 必含 `{section_list}`（缺了模型看不到候选列表）\n- 模板里的字面 `{` `}` 需写成 `{{` `}}` 转义（`str.format()` 渲染）\n\n返回 `data={field_id}`，`message` 区分「已创建 / 已更新」。",
+        "description": "按 `field_id` **全局唯一** upsert。\n\n**冲突处理**：若 `field_id` 已存在但归属其它 `type_id`，返回 **409**，提示换 ID 或先删除原记录。\n\n**Prompt / 配置校验（Pydantic 层，违反返回 422）**\n- `source_type=text` 时 `text_extract_prompt` 必须含至少一个 `<search_result>标签</search_result>`\n- `source_type=table` 时 `table_extract_prompt` 同上\n- `source_type=vl` 时 `vl_method` 与 `vl_extract_prompt` 必填，且 prompt 必须含 `reason` 和 `value` 关键字（大小写不敏感；最终要求 VL 先输出 reason，再输出 value，并返回 `{reason, value}` JSON）\n- `vl_progressive` 的自定义 `batch_prompt_template` 必含 `{field_hints}` `{page_label}` `{total_pages}` `{history}`\n- `vl_locate` 的自定义 `locate_prompt_template` 必含 `{field_hints}` `{page_labels}` `{position_map}` `{grid_rows}` `{grid_cols}`\n- `table_match_type=llm` 时非空的 `table_match_prompt` 必含 `{table_list}`；`section_match_type=llm` 时非空的 `search_config.section_match_prompt` 必含 `{section_list}`（缺了模型看不到候选列表）\n- 模板里的字面 `{` `}` 需写成 `{{` `}}` 转义（`str.format()` 渲染）\n\n返回 `data={field_id}`，`message` 区分「已创建 / 已更新」。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "upsert_field_extraction_fields_post",
         "requestBody": {
           "required": true,
@@ -1557,7 +1802,24 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/extraction/fields/{field_id}": {
@@ -1566,7 +1828,7 @@
           "extraction"
         ],
         "summary": "删除字段配置",
-        "description": "**硬删除**（直接 `DELETE` 整行，不走 `enabled=0` 软删除），仅删除字段配置本身——该字段历史已写入的 `extraction_result` 行**不会级联清理**。\n\n字段不存在 → **404**。成功返回 `message=\"字段配置已删除\"`，`data=null`。",
+        "description": "**硬删除**（直接 `DELETE` 整行，不走 `enabled=0` 软删除），仅删除字段配置本身——该字段历史已写入的 `extraction_result` 行**不会级联清理**。\n\n字段不存在 → **404**。成功返回 `message=\"字段配置已删除\"`，`data=null`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "delete_field_extraction_fields__field_id__delete",
         "parameters": [
           {
@@ -1588,6 +1850,16 @@
               "default": false,
               "title": "Force"
             }
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "responses": {
@@ -1611,7 +1883,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/extraction/fields/{field_id}/check": {
@@ -1620,7 +1897,7 @@
           "extraction"
         ],
         "summary": "检查字段 ID 是否存在",
-        "description": "只读探测 `field_id` 是否已被占用（前端保存前查重用）。\n\n**全局**查存在性（不按 `type_id` 过滤），因此 `exists=true` 也可能是该 ID 被**其它类型**占用——与 upsert 的跨类型 409 冲突一致。无论是否存在都返回 **200** + `data={exists: bool}`（不会 404）。",
+        "description": "只读探测 `field_id` 是否已被占用（前端保存前查重用）。\n\n**全局**查存在性（不按 `type_id` 过滤），因此 `exists=true` 也可能是该 ID 被**其它类型**占用——与 upsert 的跨类型 409 冲突一致。无论是否存在都返回 **200** + `data={exists: bool}`（不会 404）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "check_field_extraction_fields__field_id__check_get",
         "parameters": [
           {
@@ -1673,7 +1950,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/extraction/test": {
@@ -1682,7 +1964,7 @@
           "extraction"
         ],
         "summary": "字段提取调试（同步）",
-        "description": "两种模式（二选一）：传 `field_id` 加载已保存配置，或传 `config`（完整字段配置 dict）用临时配置。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n**`search_results` 形态因 `source_type` / `search_type` 不同而异**\n- `source_type=table`：`[{table_name, table_content(截断 500 字)}, ...]`\n- `source_type=text` + `search_type=context`：关键词命中前后上下文片段列表\n- `search_type=section`：章节切片列表\n- `search_type=rule`：关键词起点 + 停止词边界片段列表\n- `search_type=chunk_db`：MySQL 分块命中列表\n- `search_type=vector_db`：Milvus 语义命中列表（含 `score`）\n- `search_type=page`：按 `page_range` 切出的整页 Markdown\n- `source_type=vl`：**单元素**数组 `[{type:\"vl_meta\", method, key_pages, vl_total_tokens, batches_with_info}]`\n\n**`llm_input` / `llm_output`**\n- 普通字段：`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，`extracted_value` / `reason` 是 JSON 解析后的结果\n- VL 字段：`llm_input` 是追加固定 reason-first 约束后的 `vl_extract_prompt`，`llm_output` = `extracted_value`（VL 直出 JSON，不再二次抽取）\n\ntext / table 字段的 prompt 末尾会追加 JSON 输出说明，要求模型额外返回 `pages`（模型自报的参考页码整数数组），解析后落库到 `source_refs._model_pages`（去重升序；模型未返回则为空、不挂键）。\n\n返回 `data=ExtractionTestResponse{search_results, llm_input, llm_output, extracted_value, reason}`。\n\n**状态码**：200 / 400（既未传 `field_id` 也未传 `config`）/ 404（字段或文件内容不存在）/ 500（提取异常）。",
+        "description": "两种模式（二选一）：传 `field_id` 加载已保存配置，或传 `config`（完整字段配置 dict）用临时配置。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n**`search_results` 形态因 `source_type` / `search_type` 不同而异**\n- `source_type=table`：`[{table_name, table_content(截断 500 字)}, ...]`\n- `source_type=text` + `search_type=context`：关键词命中前后上下文片段列表\n- `search_type=section`：章节切片列表\n- `search_type=rule`：关键词起点 + 停止词边界片段列表\n- `search_type=chunk_db`：MySQL 分块命中列表\n- `search_type=vector_db`：Milvus 语义命中列表（含 `score`）\n- `search_type=page`：按 `page_range` 切出的整页 Markdown\n- `source_type=vl`：**单元素**数组 `[{type:\"vl_meta\", method, key_pages, vl_total_tokens, batches_with_info}]`\n\n**`llm_input` / `llm_output`**\n- 普通字段：`llm_input` 是渲染后的 prompt，`llm_output` 是 LLM 原始响应，`extracted_value` / `reason` 是 JSON 解析后的结果\n- VL 字段：`llm_input` 是追加固定 reason-first 约束后的 `vl_extract_prompt`，`llm_output` = `extracted_value`（VL 直出 JSON，不再二次抽取）\n\ntext / table 字段的 prompt 末尾会追加 JSON 输出说明，要求模型额外返回 `pages`（模型自报的参考页码整数数组），解析后落库到 `source_refs._model_pages`（去重升序；模型未返回则为空、不挂键）。\n\n返回 `data=ExtractionTestResponse{search_results, llm_input, llm_output, extracted_value, reason}`。\n\n**状态码**：200 / 400（既未传 `field_id` 也未传 `config`）/ 404（字段或文件内容不存在）/ 500（提取异常）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "test_extraction_extraction_test_post",
         "requestBody": {
           "content": {
@@ -1727,7 +2009,24 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/extraction/test/stream": {
@@ -1736,7 +2035,7 @@
           "extraction"
         ],
         "summary": "字段提取流式调试（SSE）",
-        "description": "通过 SSE 分步推送检索结果 → prompt → LLM/VL 响应 → 最终结果。入参与 `/extraction/test` 相同（`field_id` 或 `config` 二选一）。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n事件类型清单见 `docs/api/sse.md`。VL 字段的进度事件（`pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`）**仅** SSE 推送，不走异步 `callback_url`。\n\n**状态码**：200（SSE 流）/ 400 / 404。",
+        "description": "通过 SSE 分步推送检索结果 → prompt → LLM/VL 响应 → 最终结果。入参与 `/extraction/test` 相同（`field_id` 或 `config` 二选一）。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n事件类型清单见 `docs/api/sse.md`。VL 字段的进度事件（`pdf_loaded` / `progressive_batch` / `locate_locate` / `locate_extract`）**仅** SSE 推送，不走异步 `callback_url`。\n\n**状态码**：200（SSE 流）/ 400 / 404。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "test_extraction_stream_extraction_test_stream_post",
         "requestBody": {
           "content": {
@@ -1767,7 +2066,24 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/analysis/rules": {
@@ -1776,7 +2092,7 @@
           "analysis"
         ],
         "summary": "列出分析规则",
-        "description": "按 `priority` 升序返回规则。`type_id` 为空时返回全量；非空时按精确匹配过滤。\n\n返回 `data=[AnalysisRuleResponse]`（即 `AnalysisRuleCreate` 各字段 + `created_at` / `updated_at`）。",
+        "description": "按 `priority` 升序返回规则。`type_id` 为空时返回全量；非空时按精确匹配过滤。\n\n返回 `data=[AnalysisRuleResponse]`（即 `AnalysisRuleCreate` 各字段 + `created_at` / `updated_at`）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "list_rules_analysis_rules_get",
         "parameters": [
           {
@@ -1827,14 +2143,19 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       },
       "post": {
         "tags": [
           "analysis"
         ],
         "summary": "新增/更新分析规则（upsert）",
-        "description": "按 `rule_id` **全局唯一** upsert。`rule_id` 已被其它 `type_id` 占用时返回 **409**。\n\n**校验（Pydantic 层，违反返回 422）**\n- `expression` 必须包含至少一个 `<field_result>字段ID</field_result>` 占位符\n- `web_search.enabled=true` 时：仅 `judge` / `custom` 类型可启用、`web_search.query` 不能为空、`expression` 必须包含 `<web_search_result/>` 占位符\n- `custom` 类型 `is_formatted=1` 时：`output_schema` 不能为空且结构须合法（每个节点含非空 `key`，`object` / `array` 须有非空 `children`）\n\n`system_prompt` 对 `judge` / `custom` 生效；`calc` 类型直接用 `numexpr` 计算，结果按 `analysis.calc_precision`（默认 2 位）保留小数。`custom` 类型走 LLM 自由生成，要求先输出 reason 再输出 value，返回 `{reason, value}`（`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串）。返回 `data={rule_id}`。",
+        "description": "按 `rule_id` **全局唯一** upsert。`rule_id` 已被其它 `type_id` 占用时返回 **409**。\n\n**校验（Pydantic 层，违反返回 422）**\n- `expression` 必须包含至少一个 `<field_result>字段ID</field_result>` 占位符\n- `web_search.enabled=true` 时：仅 `judge` / `custom` 类型可启用、`web_search.query` 不能为空、`expression` 必须包含 `<web_search_result/>` 占位符\n- `custom` 类型 `is_formatted=1` 时：`output_schema` 不能为空且结构须合法（每个节点含非空 `key`，`object` / `array` 须有非空 `children`）\n\n`system_prompt` 对 `judge` / `custom` 生效；`calc` 类型直接用 `numexpr` 计算，结果按 `analysis.calc_precision`（默认 2 位）保留小数。`custom` 类型走 LLM 自由生成，要求先输出 reason 再输出 value，返回 `{reason, value}`（`is_formatted=1` 时 `value` 为按 `output_schema` 组织的结构化 JSON 字符串）。返回 `data={rule_id}`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "upsert_rule_analysis_rules_post",
         "requestBody": {
           "required": true,
@@ -1885,7 +2206,24 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/analysis/rules/{rule_id}": {
@@ -1894,7 +2232,7 @@
           "analysis"
         ],
         "summary": "删除分析规则",
-        "description": "**硬删除**（直接 `DELETE` 整行，不走 `enabled=0` 软删除），仅删除规则配置本身——该规则历史已写入的 `analysis_result` 行**不会级联清理**。\n\n规则不存在 → **404**。成功返回 `message=\"规则配置已删除\"`，`data=null`。",
+        "description": "**硬删除**（直接 `DELETE` 整行，不走 `enabled=0` 软删除），仅删除规则配置本身——该规则历史已写入的 `analysis_result` 行**不会级联清理**。\n\n规则不存在 → **404**。成功返回 `message=\"规则配置已删除\"`，`data=null`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "delete_rule_analysis_rules__rule_id__delete",
         "parameters": [
           {
@@ -1906,6 +2244,16 @@
               "title": "Rule Id"
             },
             "description": "分析规则 ID（全局唯一，匹配 `^[a-zA-Z0-9_]+$`，最长 100）。"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "responses": {
@@ -1929,7 +2277,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/analysis/rules/{rule_id}/check": {
@@ -1938,7 +2291,7 @@
           "analysis"
         ],
         "summary": "检查规则 ID 是否存在",
-        "description": "只读探测 `rule_id` 是否已被占用（前端保存前查重用）。\n\n**全局**查存在性（不按 `type_id` 过滤），因此 `exists=true` 也可能是该 ID 被**其它类型**占用——与 upsert 的跨类型 409 冲突一致。无论是否存在都返回 **200** + `data={exists: bool}`（不会 404）。",
+        "description": "只读探测 `rule_id` 是否已被占用（前端保存前查重用）。\n\n**全局**查存在性（不按 `type_id` 过滤），因此 `exists=true` 也可能是该 ID 被**其它类型**占用——与 upsert 的跨类型 409 冲突一致。无论是否存在都返回 **200** + `data={exists: bool}`（不会 404）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "check_rule_analysis_rules__rule_id__check_get",
         "parameters": [
           {
@@ -1991,7 +2344,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/analysis/test": {
@@ -2000,7 +2358,7 @@
           "analysis"
         ],
         "summary": "逻辑分析调试（同步）",
-        "description": "两种模式（二选一）：传 `rule_id` 加载已保存规则，或传 `config` 用临时配置。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n依赖字段值来自该 `file_id` 已有的 `extraction_result`；`depend_fields` 中缺失提取结果的字段取空串。\n\n**返回字段**（`data=AnalysisTestResponse`）：\n- `input_values`：依赖字段（`depend_fields`）的提取值字典；缺失字段值为空串\n- `expression_resolved`：`<field_result>...</field_result>` 占位符替换后的表达式\n- `result_value`：最终结果\n  - `judge`：调用 LLM 判断（受 `system_prompt` 控制），通常返回 `true` / `false`\n  - `calc`：`numexpr` 计算，按 `analysis.calc_precision`（默认 2 位）保留小数\n  - `custom`：调用 LLM 自由生成，返回 `value`（`is_formatted=1` 时为按 `output_schema` 组织的结构化 JSON 字符串）\n- `reason`：LLM 给出的判断理由（calc 类型为计算说明）\n\n**状态码**：200 / 400（既未传 `rule_id` 也未传 `config`）/ 404（规则不存在）/ 500（分析异常）。",
+        "description": "两种模式（二选一）：传 `rule_id` 加载已保存规则，或传 `config` 用临时配置。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n依赖字段值来自该 `file_id` 已有的 `extraction_result`；`depend_fields` 中缺失提取结果的字段取空串。\n\n**返回字段**（`data=AnalysisTestResponse`）：\n- `input_values`：依赖字段（`depend_fields`）的提取值字典；缺失字段值为空串\n- `expression_resolved`：`<field_result>...</field_result>` 占位符替换后的表达式\n- `result_value`：最终结果\n  - `judge`：调用 LLM 判断（受 `system_prompt` 控制），通常返回 `true` / `false`\n  - `calc`：`numexpr` 计算，按 `analysis.calc_precision`（默认 2 位）保留小数\n  - `custom`：调用 LLM 自由生成，返回 `value`（`is_formatted=1` 时为按 `output_schema` 组织的结构化 JSON 字符串）\n- `reason`：LLM 给出的判断理由（calc 类型为计算说明）\n\n**状态码**：200 / 400（既未传 `rule_id` 也未传 `config`）/ 404（规则不存在）/ 500（分析异常）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "test_analysis_analysis_test_post",
         "requestBody": {
           "content": {
@@ -2045,7 +2403,24 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/analysis/tasks/{task_id}": {
@@ -2054,7 +2429,7 @@
           "analysis"
         ],
         "summary": "查询独立分析异步任务",
-        "description": "使用 POST /analysis/run 的 async 响应 task_id 查询任务。状态为 queued / analyzing / complete / analysis_failed；完成时 result 为完整批次结果，失败时 error 为错误说明。不存在返回 HTTP 404。所有 async 任务均保存查询结果，与 callback_url 和 persist 无关；persist 仍只控制文件级 analysis_result 写入。重启后已完成结果保留，中断任务标记为失败（当前单 worker 模式）。sync/stream 及功能上线前的 task_id 无查询记录。任务记录暂不自动过期。",
+        "description": "使用 POST /analysis/run 的 async 响应 task_id 查询任务。状态为 queued / analyzing / complete / analysis_failed；完成时 result 为完整批次结果，失败时 error 为错误说明。不存在返回 HTTP 404。所有 async 任务均保存查询结果，与 callback_url 和 persist 无关；persist 仍只控制文件级 analysis_result 写入。重启后已完成结果保留，中断任务标记为失败（当前单 worker 模式）。sync/stream 及功能上线前的 task_id 无查询记录。任务记录暂不自动过期。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "get_independent_analysis_task_analysis_tasks__task_id__get",
         "parameters": [
           {
@@ -2088,7 +2463,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/analysis/run": {
@@ -2097,7 +2480,7 @@
           "analysis"
         ],
         "summary": "独立逻辑分析执行",
-        "description": "按 `type_id` 加载启用规则批量执行逻辑判断 / 计算。支持 `sync` / `async` / `stream`，可批量 `items`。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入，同一批次所有 items 共用。\n\n**先理解两层数组：** 请求 `items[]` 是待分析的业务对象列表；响应 `data.items[]` 与请求逐项对应，表示每个业务对象的执行汇总；每个响应 item 内的 `results[]` 才是该业务对象逐条执行规则的结果。即 `请求 items[0] -> 响应 data.items[0] -> data.items[0].results[]`。即使只提交 1 个业务对象或只执行 1 条规则，对应字段仍保持数组；没有规则实际执行时 `results` 为 `[]`。\n\n- 取值来源由请求级 `source` 决定：`values`（默认）用请求里的 `field_values`（不读文件提取结果、不写 `analysis_result`）；`file` 改读各 item `file_id` 已落库的 `extraction_result`，此时 `field_values` 不得传（422）、`type_id` 可省（取 `files.type_id`，传了且不一致该 item 报错）\n- `persist=true`（仅 `source=file` 可用）把结果 upsert 进 `analysis_result`，**不改 `files.progress`**；文件不存在 / 无提取结果等查库才知道的问题记在 item 级 `error` 字段，不影响同批其它 item\n- 规则范围由 item 级 `rule_ids` 决定：不传 / `null` = 该类型全部启用规则，且只执行 `field_values` 覆盖了 `depend_fields` 的那些（其余静默跳过）；`[]` = 不执行任何规则；显式点名 = 只跑指定规则，**不做**覆盖过滤，缺依赖字段的规则产出 `success=false` 结果（`reason` 列出缺失字段）并计入 `total` / `failed`，不会从 `results` 里消失\n- 显式点名时无视 `enabled` 开关；该 `type_id` 下不存在的 rule_id 不报错，收进 `AnalysisRunItemResult.unknown_rule_ids` 回传\n- items 与规则双层并发（闸门在规则层，配置项 `concurrency.independent_analysis`）；`results` 按 `priority, rule_id` 配置序回填、`rule_done` 按完成序推送；`source=file` 的读库集中在并发前、`persist` 写库在并发后（`AsyncSession` 非并发安全）\n- `sync` 的最终结果在 HTTP 响应 `data`；`async` 可通过 `GET /analysis/tasks/{task_id}` 的 `data.result` 查询，提供回调时也在 `task_done.data`；`stream` 的最终结果在 SSE `task_done` 事件的 `data`。三者最终结果均为 `AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`\n- `async` 模式仅在提供 `callback_url` 时用 `task_id` 推送 `rule_done` / `task_done` / `task_failed`",
+        "description": "按 `type_id` 加载启用规则批量执行逻辑判断 / 计算。支持 `sync` / `async` / `stream`，可批量 `items`。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入，同一批次所有 items 共用。\n\n**先理解两层数组：** 请求 `items[]` 是待分析的业务对象列表；响应 `data.items[]` 与请求逐项对应，表示每个业务对象的执行汇总；每个响应 item 内的 `results[]` 才是该业务对象逐条执行规则的结果。即 `请求 items[0] -> 响应 data.items[0] -> data.items[0].results[]`。即使只提交 1 个业务对象或只执行 1 条规则，对应字段仍保持数组；没有规则实际执行时 `results` 为 `[]`。\n\n- 取值来源由请求级 `source` 决定：`values`（默认）用请求里的 `field_values`（不读文件提取结果、不写 `analysis_result`）；`file` 改读各 item `file_id` 已落库的 `extraction_result`，此时 `field_values` 不得传（422）、`type_id` 可省（取 `files.type_id`，传了且不一致该 item 报错）\n- `persist=true`（仅 `source=file` 可用）把结果 upsert 进 `analysis_result`，**不改 `files.progress`**；文件不存在 / 无提取结果等查库才知道的问题记在 item 级 `error` 字段，不影响同批其它 item\n- 规则范围由 item 级 `rule_ids` 决定：不传 / `null` = 该类型全部启用规则，且只执行 `field_values` 覆盖了 `depend_fields` 的那些（其余静默跳过）；`[]` = 不执行任何规则；显式点名 = 只跑指定规则，**不做**覆盖过滤，缺依赖字段的规则产出 `success=false` 结果（`reason` 列出缺失字段）并计入 `total` / `failed`，不会从 `results` 里消失\n- 显式点名时无视 `enabled` 开关；该 `type_id` 下不存在的 rule_id 不报错，收进 `AnalysisRunItemResult.unknown_rule_ids` 回传\n- items 与规则双层并发（闸门在规则层，配置项 `concurrency.independent_analysis`）；`results` 按 `priority, rule_id` 配置序回填、`rule_done` 按完成序推送；`source=file` 的读库集中在并发前、`persist` 写库在并发后（`AsyncSession` 非并发安全）\n- `sync` 的最终结果在 HTTP 响应 `data`；`async` 可通过 `GET /analysis/tasks/{task_id}` 的 `data.result` 查询，提供回调时也在 `task_done.data`；`stream` 的最终结果在 SSE `task_done` 事件的 `data`。三者最终结果均为 `AnalysisRunResponse{total_items, items:[AnalysisRunItemResult]}`\n- `async` 模式仅在提供 `callback_url` 时用 `task_id` 推送 `rule_done` / `task_done` / `task_failed`\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "run_independent_analysis_analysis_run_post",
         "requestBody": {
           "content": {
@@ -2142,7 +2525,27 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/analysis/test/stream": {
@@ -2151,7 +2554,7 @@
           "analysis"
         ],
         "summary": "逻辑分析流式调试（SSE）",
-        "description": "SSE 分步推送：`input_values` → `resolved_expression` → （judge / custom：[启用网络搜索时 `web_search`] → `prompt` → `llm_response`）→ `result` → `done`。calc 类型无 `prompt` / `llm_response` 步骤。入参与 `/analysis/test` 相同。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n`web_search` 事件 data 即溯源结构 `{query, results: [{name, url, siteName, datePublished, summary}], error?}`（搜索失败不中断流，error 字段说明原因）。\n\n**状态码**：200（SSE 流）/ 400 / 404。",
+        "description": "SSE 分步推送：`input_values` → `resolved_expression` → （judge / custom：[启用网络搜索时 `web_search`] → `prompt` → `llm_response`）→ `result` → `done`。calc 类型无 `prompt` / `llm_response` 步骤。入参与 `/analysis/test` 相同。\n\n**`model_config`（可选）**：按模型分组对本次请求部分覆盖服务器设置；完整字段、类型、约束和继承规则见 [请求级模型配置](../API_FULL_REFERENCE.md#17-请求级模型配置-model_config)。未传字段沿用设置，并发参数不能覆盖，仍使用服务器并发限制。 通过 JSON 请求体顶层字段 `model_config` 传入。\n\n`web_search` 事件 data 即溯源结构 `{query, results: [{name, url, siteName, datePublished, summary}], error?}`（搜索失败不中断流，error 字段说明原因）。\n\n**状态码**：200（SSE 流）/ 400 / 404。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "test_analysis_stream_analysis_test_stream_post",
         "requestBody": {
           "content": {
@@ -2182,7 +2585,24 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/search": {
@@ -2191,7 +2611,7 @@
           "search"
         ],
         "summary": "向量相似度检索",
-        "description": "将 `query` 通过 embedding 接口向量化后在 Milvus 中检索，返回分块及 COSINE 相似度 `score`（越大越相似，取值约 [-1, 1]）。\n\n**请求字段**\n- `query`：必填，检索文本（空串直接返回空列表）\n- `file_id`：可选，限定检索范围；省略则跨全部已向量化的文件\n- `top_k`：可选，默认 `10`\n- `score_threshold`：可选，相似度下限，低于该值的结果被过滤；省略不过滤\n\n返回 `data=[SearchResultItem{chunk_id, file_id, chunk_index, chunk_content, score, page_num}]`。",
+        "description": "将 `query` 通过 embedding 接口向量化后在 Milvus 中检索，返回分块及 COSINE 相似度 `score`（越大越相似，取值约 [-1, 1]）。\n\n**请求字段**\n- `query`：必填，检索文本（空串直接返回空列表）\n- `file_id`：可选，限定检索范围；省略则跨全部已向量化的文件\n- `top_k`：可选，默认 `10`\n- `score_threshold`：可选，相似度下限，低于该值的结果被过滤；省略不过滤\n\n返回 `data=[SearchResultItem{chunk_id, file_id, chunk_index, chunk_content, score, page_num}]`。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "search_search_post",
         "requestBody": {
           "content": {
@@ -2239,7 +2659,27 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/doctype/list": {
@@ -2248,7 +2688,7 @@
           "doctype"
         ],
         "summary": "列出文档类型（可搜索/过滤/分页）",
-        "description": "列出文档类型，每项附 `file_count` / `field_count` / `rule_count` 计数。\n\n**返回形态（重要）**\n- 传齐 `page` + `page_size` → `data = {items: [...], total: <int>}`（分页）\n- 否则 → `data = [...]`（数组，向后兼容；不传任何参数即旧的全量行为）\n\n**过滤**\n- `q`：对 `type_id` / `type_name` 做 `LIKE %q%` 模糊匹配\n- `scope`：`all`（全部）/ `template`（`is_template=1` 或默认类型）/ `copy`（既非模板也非默认的副本）\n- `project_id`：具体项目只返成员；`__ungrouped__` 只返未分组（含默认类型）\n\n**排序**：默认类型恒置顶（`is_default DESC` 优先），其后按 `sort` —— `created_at`（降序，默认）或 `type_name`（升序）。\n\n**性能**：计数对当前结果集的 `type_id` 用 3 条 `GROUP BY` 聚合，避免 N+1。\n\n**每项字段**：`type_id` / `type_name` / `description` / `is_default` / `enabled` / `is_template` / `parent_type_id` / `project_id` / `project_name` / `created_at` / `updated_at` / `file_count` / `field_count` / `rule_count`。\n\n> 顶部导航两级：先选项目，类型下拉只显示该项目的类型；副本的搜索/管理在「管理」弹窗里用本接口完成。",
+        "description": "列出文档类型，每项附 `file_count` / `field_count` / `rule_count` 计数。\n\n**返回形态（重要）**\n- 传齐 `page` + `page_size` → `data = {items: [...], total: <int>}`（分页）\n- 否则 → `data = [...]`（数组，向后兼容；不传任何参数即旧的全量行为）\n\n**过滤**\n- `q`：对 `type_id` / `type_name` 做 `LIKE %q%` 模糊匹配\n- `scope`：`all`（全部）/ `template`（`is_template=1` 或默认类型）/ `copy`（既非模板也非默认的副本）\n- `project_id`：具体项目只返成员；`__ungrouped__` 只返未分组（含默认类型）\n\n**排序**：默认类型恒置顶（`is_default DESC` 优先），其后按 `sort` —— `created_at`（降序，默认）或 `type_name`（升序）。\n\n**性能**：计数对当前结果集的 `type_id` 用 3 条 `GROUP BY` 聚合，避免 N+1。\n\n**每项字段**：`type_id` / `type_name` / `description` / `is_default` / `enabled` / `is_template` / `parent_type_id` / `project_id` / `project_name` / `created_at` / `updated_at` / `file_count` / `field_count` / `rule_count`。\n\n> 顶部导航两级：先选项目，类型下拉只显示该项目的类型；副本的搜索/管理在「管理」弹窗里用本接口完成。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
         "operationId": "list_doctypes_doctype_list_get",
         "parameters": [
           {
@@ -2394,7 +2834,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ]
       }
     },
     "/doctype": {
@@ -2403,7 +2851,7 @@
           "doctype"
         ],
         "summary": "新增/更新文档类型（upsert）",
-        "description": "按 `type_id` upsert。\n\n- **新建**（`type_id` 不存在）：`is_default` 固定写为 0\n- **更新**（`type_id` 已存在）：只更新 `type_name` / `description` / `enabled`；**`is_default` 保留原值**（默认类型可改名但不会变成非默认，反之亦然）\n\n**不经由本接口设置**的字段：`is_template`（用 `promote`/`demote`）、`parent_type_id`（由 `copy_from`/`import` 自动记录）。\n\n`type_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。返回 `data={type_id}`。",
+        "description": "按 `type_id` upsert。\n\n- **新建**（`type_id` 不存在）：`is_default` 固定写为 0\n- **更新**（`type_id` 已存在）：只更新 `type_name` / `description` / `enabled`；**`is_default` 保留原值**（默认类型可改名但不会变成非默认，反之亦然）\n\n**不经由本接口设置**的字段：`is_template`（用 `promote`/`demote`）、`parent_type_id`（由 `copy_from`/`import` 自动记录）。\n\n`type_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。返回 `data={type_id}`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "upsert_doctype_doctype_post",
         "requestBody": {
           "content": {
@@ -2454,7 +2902,24 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/doctype/{type_id}": {
@@ -2463,7 +2928,7 @@
           "doctype"
         ],
         "summary": "更新文档类型（可改 type_id）",
-        "description": "更新类型基础配置（`type_name` / `description` / `max_parse_pages` / `enable_embedding` / `enabled`）。**`project_id` 更新时忽略**（仅建档时生效），`is_template` / `parent_type_id` 也不经本接口修改。\n\n当请求体 `type_id` 与路径 `type_id` 不同时，视为**改名并级联**：把该类型下的`files` / `extraction_field` / `analysis_rule` 的 `type_id`、以及子类型的 `parent_type_id` 全部改到新值。\n\n**错误码**：400（原 type_id 为空 / 默认类型改名）/ 404（类型不存在）/ 409（新 type_id 已存在）。\n\n返回 `data={old_type_id, type_id, renamed, updated_files, updated_fields, updated_rules, updated_children}`（后四个计数仅改名时非零）。",
+        "description": "更新类型基础配置（`type_name` / `description` / `max_parse_pages` / `enable_embedding` / `enabled`）。**`project_id` 更新时忽略**（仅建档时生效），`is_template` / `parent_type_id` 也不经本接口修改。\n\n当请求体 `type_id` 与路径 `type_id` 不同时，视为**改名并级联**：把该类型下的`files` / `extraction_field` / `analysis_rule` 的 `type_id`、以及子类型的 `parent_type_id` 全部改到新值。\n\n**错误码**：400（原 type_id 为空 / 默认类型改名）/ 404（类型不存在）/ 409（新 type_id 已存在）。\n\n返回 `data={old_type_id, type_id, renamed, updated_files, updated_fields, updated_rules, updated_children}`（后四个计数仅改名时非零）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "update_doctype_doctype__type_id__put",
         "parameters": [
           {
@@ -2475,6 +2940,16 @@
               "title": "Type Id"
             },
             "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "requestBody": {
@@ -2550,14 +3025,19 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       },
       "delete": {
         "tags": [
           "doctype"
         ],
         "summary": "删除文档类型（单个）",
-        "description": "**默认类型不可删除**（返回 400）。非默认类型若有关联数据：\n- 不传 `force` → 返回 **409** + 数量提示（文件 N、字段 N、规则 N）\n- `force=true` → 级联删除该类型下所有文件、`file_content/table/chunk`、`extraction_result/analysis_result`、Milvus 向量、`uploads/{file_id}.pdf`、字段、规则\n\n**错误码**：400（默认类型）/ 404（类型不存在）/ 409（有数据未 force）。\n\n返回 `data={type_id, deleted_files, deleted_fields, deleted_rules}`，三个计数仅在 `force=true` 时非零。",
+        "description": "**默认类型不可删除**（返回 400）。非默认类型若有关联数据：\n- 不传 `force` → 返回 **409** + 数量提示（文件 N、字段 N、规则 N）\n- `force=true` → 级联删除该类型下所有文件、`file_content/table/chunk`、`extraction_result/analysis_result`、Milvus 向量、`uploads/{file_id}.pdf`、字段、规则\n\n**错误码**：400（默认类型）/ 404（类型不存在）/ 409（有数据未 force）。\n\n返回 `data={type_id, deleted_files, deleted_fields, deleted_rules}`，三个计数仅在 `force=true` 时非零。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "delete_doctype_doctype__type_id__delete",
         "parameters": [
           {
@@ -2581,6 +3061,16 @@
               "title": "Force"
             },
             "description": "为 `true` 时级联删除该类型下所有文件、配置、Milvus 向量与 PDF；为 `false`（默认）且有关联数据则返回 409。"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "responses": {
@@ -2634,7 +3124,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/doctype/{type_id}/params": {
@@ -2643,7 +3138,7 @@
           "doctype"
         ],
         "summary": "List Type Params",
-        "description": "列出该类型的入参定义。",
+        "description": "列出该类型的入参定义。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "list_type_params_doctype__type_id__params_get",
         "parameters": [
           {
@@ -2678,14 +3173,19 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       },
       "post": {
         "tags": [
           "doctype"
         ],
         "summary": "Upsert Type Param",
-        "description": "按 param_key 新增或更新一条入参定义。",
+        "description": "按 param_key 新增或更新一条入参定义。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "upsert_type_param_doctype__type_id__params_post",
         "parameters": [
           {
@@ -2697,6 +3197,16 @@
               "title": "Type Id"
             },
             "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "requestBody": {
@@ -2730,7 +3240,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/doctype/{type_id}/params/{param_key}": {
@@ -2739,7 +3254,7 @@
           "doctype"
         ],
         "summary": "Delete Type Param",
-        "description": "删除一条入参定义；仍被字段或规则引用时 409（force=true 强删）。",
+        "description": "删除一条入参定义；仍被字段或规则引用时 409（force=true 强删）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "delete_type_param_doctype__type_id__params__param_key__delete",
         "parameters": [
           {
@@ -2770,6 +3285,16 @@
               "default": false,
               "title": "Force"
             }
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "responses": {
@@ -2793,7 +3318,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/doctype/batch_delete": {
@@ -2802,7 +3332,7 @@
           "doctype"
         ],
         "summary": "批量删除文档类型",
-        "description": "对 `type_ids` 逐条复用单删逻辑，**单条失败不中断**整批，最后一次性提交。\n\n每条会被**跳过**（`ok=false` + `reason`）的情况：类型不存在 / 默认类型 / 有关联数据但未传 `force`。其余执行删除；`force=true` 时级联文件 + Milvus + PDF + 字段 + 规则。\n\n返回 `data={results:[{type_id, ok, reason?, deleted_files, deleted_fields, deleted_rules}], deleted:<成功条数>}`。",
+        "description": "对 `type_ids` 逐条复用单删逻辑，**单条失败不中断**整批，最后一次性提交。\n\n每条会被**跳过**（`ok=false` + `reason`）的情况：类型不存在 / 默认类型 / 有关联数据但未传 `force`。其余执行删除；`force=true` 时级联文件 + Milvus + PDF + 字段 + 规则。\n\n返回 `data={results:[{type_id, ok, reason?, deleted_files, deleted_fields, deleted_rules}], deleted:<成功条数>}`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "batch_delete_types_doctype_batch_delete_post",
         "requestBody": {
           "content": {
@@ -2857,7 +3387,24 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/doctype/{type_id}/copy_from": {
@@ -2866,7 +3413,7 @@
           "doctype"
         ],
         "summary": "同实例跨类型复制配置",
-        "description": "把源类型（`source_type_id`）的字段+规则复制到当前 `type_id`，生成全新 ID 的**独立副本**（复制后两份互不影响）。\n\n- `field_ids` / `rule_ids` 不传或为 `null` 表示该类目全部复制；空数组 `[]` 表示不复制\n- 字段名 / 规则名保持不变；新的 `field_id` / `rule_id` 基于源 ID 自动编号，例如 `amount` → `amount_0002`，再次复制为 `amount_0003`\n- `on_conflict=skip`：目标类型已有同源 `field_id` / `rule_id` 副本时跳过\n- `on_conflict=rename`（默认）：自动取下一个可用 `_000N` 副本 ID\n- 规则的 `depend_fields` 按源 `field_id` 精确重映射到本次复制生成的新 `field_id`；依赖字段未随本次复制一起复制时记入 `missing_dependencies`（格式 `规则名::源field_id`），规则仍照常创建（仅丢失该依赖）\n\n**血缘副作用**（目标非默认类型时）：把目标 `parent_type_id` 记为 `source_type_id`。\n\n**错误码**：400（源=目标）/ 404（源或目标不存在）。\n\n返回 `data=CopyConfigsResponse{copied_fields, skipped_fields, copied_rules, skipped_rules, missing_dependencies}`。",
+        "description": "把源类型（`source_type_id`）的字段+规则复制到当前 `type_id`，生成全新 ID 的**独立副本**（复制后两份互不影响）。\n\n- `field_ids` / `rule_ids` 不传或为 `null` 表示该类目全部复制；空数组 `[]` 表示不复制\n- 字段名 / 规则名保持不变；新的 `field_id` / `rule_id` 基于源 ID 自动编号，例如 `amount` → `amount_0002`，再次复制为 `amount_0003`\n- `on_conflict=skip`：目标类型已有同源 `field_id` / `rule_id` 副本时跳过\n- `on_conflict=rename`（默认）：自动取下一个可用 `_000N` 副本 ID\n- 规则的 `depend_fields` 按源 `field_id` 精确重映射到本次复制生成的新 `field_id`；依赖字段未随本次复制一起复制时记入 `missing_dependencies`（格式 `规则名::源field_id`），规则仍照常创建（仅丢失该依赖）\n\n**血缘副作用**（目标非默认类型时）：把目标 `parent_type_id` 记为 `source_type_id`。\n\n**错误码**：400（源=目标）/ 404（源或目标不存在）。\n\n返回 `data=CopyConfigsResponse{copied_fields, skipped_fields, copied_rules, skipped_rules, missing_dependencies}`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "copy_configs_doctype__type_id__copy_from_post",
         "parameters": [
           {
@@ -2878,6 +3425,16 @@
               "title": "Type Id"
             },
             "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "requestBody": {
@@ -2923,7 +3480,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/doctype/{type_id}/export": {
@@ -2932,7 +3494,7 @@
           "doctype"
         ],
         "summary": "导出配置为 JSON 载荷",
-        "description": "把目标类型的字段+规则序列化为可跨实例迁移的 JSON（字段按 `priority` 升序）。\n\n规则依赖以 **field_name** 列表（`depend_field_names`）序列化，避免依赖原 `field_id`，便于在 `POST /doctype/import` 时按名重映射。\n\n前端「只读查看配置」也复用本接口。返回 `data=ExportPayload`（见组件 schema）。",
+        "description": "把目标类型的字段+规则序列化为可跨实例迁移的 JSON（字段按 `priority` 升序）。\n\n规则依赖以 **field_name** 列表（`depend_field_names`）序列化，避免依赖原 `field_id`，便于在 `POST /doctype/import` 时按名重映射。\n\n前端「只读查看配置」也复用本接口。返回 `data=ExportPayload`（见组件 schema）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "export_configs_doctype__type_id__export_get",
         "parameters": [
           {
@@ -2979,7 +3541,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/doctype/{type_id}/config_version": {
@@ -2988,7 +3555,7 @@
           "doctype"
         ],
         "summary": "配置版本探针",
-        "description": "返回该类型下提取字段与分析规则的 `count` + `MAX(updated_at)`，供前端轮询判断配置是否被他人改动（多人协作时免手动刷新）。\n\n只查两个聚合值，比拉全量配置轻两个数量级，适合被高频轮询。\n\n`count` 与 `latest` 需**一起**比对：只看 `latest` 探测不到删除（删掉最新那条 `MAX` 反而变小或不变），只看 `count` 探测不到原地修改。两者组合可覆盖增/删/改，连「同时删一条加一条」也能抓到。\n\n`latest` 为秒级精度（源列是 `datetime`），同一秒内的多次修改只体现为一个值。\n\n类型不存在或该类型下无任何配置时返回 `count=0` / `latest=null`，不报 404。",
+        "description": "返回该类型下提取字段与分析规则的 `count` + `MAX(updated_at)`，供前端轮询判断配置是否被他人改动（多人协作时免手动刷新）。\n\n只查两个聚合值，比拉全量配置轻两个数量级，适合被高频轮询。\n\n`count` 与 `latest` 需**一起**比对：只看 `latest` 探测不到删除（删掉最新那条 `MAX` 反而变小或不变），只看 `count` 探测不到原地修改。两者组合可覆盖增/删/改，连「同时删一条加一条」也能抓到。\n\n`latest` 为秒级精度（源列是 `datetime`），同一秒内的多次修改只体现为一个值。\n\n类型不存在或该类型下无任何配置时返回 `count=0` / `latest=null`，不报 404。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "get_config_version_doctype__type_id__config_version_get",
         "parameters": [
           {
@@ -3049,7 +3616,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/doctype/import": {
@@ -3058,7 +3630,7 @@
           "doctype"
         ],
         "summary": "从 JSON 载荷导入配置",
-        "description": "把 `GET /doctype/{type_id}/export` 产生的载荷导入到目标类型。\n\n- `target_type_id` 为空时使用 `payload.type_id`（都为空 → 400）\n- 目标类型不存在且 `create_type_if_missing=true` → 自动创建；为 false → 404\n- 字段始终生成**新 `field_id`**，避免与全局唯一约束冲突\n- `on_conflict` 是导入时的同名策略：`rename`（默认，加 ` (副本)` 后缀）或 `skip`\n- 规则按 `depend_field_names` 在目标类型按字段名重映射；缺失依赖进 `missing_dependencies`\n\n返回 `data=ImportConfigsResponse{target_type_id, created_type, copied_fields, skipped_fields, copied_rules, skipped_rules, missing_dependencies}`。",
+        "description": "把 `GET /doctype/{type_id}/export` 产生的载荷导入到目标类型。\n\n- `target_type_id` 为空时使用 `payload.type_id`（都为空 → 400）\n- 目标类型不存在且 `create_type_if_missing=true` → 自动创建；为 false → 404\n- 字段始终生成**新 `field_id`**，避免与全局唯一约束冲突\n- `on_conflict` 是导入时的同名策略：`rename`（默认，加 ` (副本)` 后缀）或 `skip`\n- 规则按 `depend_field_names` 在目标类型按字段名重映射；缺失依赖进 `missing_dependencies`\n\n返回 `data=ImportConfigsResponse{target_type_id, created_type, copied_fields, skipped_fields, copied_rules, skipped_rules, missing_dependencies}`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "import_configs_doctype_import_post",
         "requestBody": {
           "content": {
@@ -3103,7 +3675,24 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/doctype/projects": {
@@ -3112,7 +3701,7 @@
           "doctype"
         ],
         "summary": "列出项目",
-        "description": "列出所有项目，每项附 `type_count`（该项目下类型数）。\n\n返回 `data=[ProjectResponse{project_id, project_name, description, type_count, created_at, updated_at}]`。",
+        "description": "列出所有项目，每项附 `type_count`（该项目下类型数）。\n\n返回 `data=[ProjectResponse{project_id, project_name, description, type_count, created_at, updated_at}]`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "list_projects_doctype_projects_get",
         "responses": {
           "200": {
@@ -3140,14 +3729,19 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       },
       "post": {
         "tags": [
           "doctype"
         ],
         "summary": "新增/改名项目（upsert）",
-        "description": "按 `project_id` upsert。已存在则更新 `project_name` / `description`；不存在则创建。\n\n`project_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。返回 `data={project_id}`。",
+        "description": "按 `project_id` upsert。已存在则更新 `project_name` / `description`；不存在则创建。\n\n`project_id` 必须匹配 `^[a-zA-Z0-9_-]+$`（最长 64）。返回 `data={project_id}`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "upsert_project_doctype_projects_post",
         "requestBody": {
           "content": {
@@ -3198,7 +3792,24 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/doctype/projects/{project_id}": {
@@ -3207,7 +3818,7 @@
           "doctype"
         ],
         "summary": "删除项目",
-        "description": "删除项目：先把成员类型的 `project_id` 置空（变未分组），再删项目本身——**不删除任何类型**。\n\n**错误码**：404（项目不存在）。返回 `data={project_id}`。",
+        "description": "删除项目：先把成员类型的 `project_id` 置空（变未分组），再删项目本身——**不删除任何类型**。\n\n**错误码**：404（项目不存在）。返回 `data={project_id}`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "delete_project_doctype_projects__project_id__delete",
         "parameters": [
           {
@@ -3219,6 +3830,16 @@
               "title": "Project Id"
             },
             "description": "项目 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "responses": {
@@ -3260,7 +3881,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/doctype/batch_assign_project": {
@@ -3269,7 +3895,7 @@
           "doctype"
         ],
         "summary": "批量归类到项目（级联血缘）",
-        "description": "把 `type_ids` 归入 `project_id`（传 `null` 表示移出、变未分组）。\n\n**归类级联血缘**：入参每个类型的所有 `parent_type_id` 传递后代一并归入同一项目（抓模板即整条血缘进组）；**默认类型跳过**（恒未分组）。\n\n**错误码**：404（`project_id` 非空但项目不存在）。\n\n返回 `data={requested:<入参数>, affected:<实际写入数，含级联带入>, project_id}`。",
+        "description": "把 `type_ids` 归入 `project_id`（传 `null` 表示移出、变未分组）。\n\n**归类级联血缘**：入参每个类型的所有 `parent_type_id` 传递后代一并归入同一项目（抓模板即整条血缘进组）；**默认类型跳过**（恒未分组）。\n\n**错误码**：404（`project_id` 非空但项目不存在）。\n\n返回 `data={requested:<入参数>, affected:<实际写入数，含级联带入>, project_id}`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "batch_assign_project_doctype_batch_assign_project_post",
         "requestBody": {
           "content": {
@@ -3328,7 +3954,24 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/doctype/{type_id}/promote": {
@@ -3337,7 +3980,7 @@
           "doctype"
         ],
         "summary": "标记为模板",
-        "description": "把副本/普通类型标记为模板（`is_template=1`），保留 `parent_type_id` 作血缘。\n\n模板会进入顶部选择器，并可用 `GET /doctype/list?scope=template` 过滤出来。\n\n**错误码**：400（默认类型无需标记）/ 404（类型不存在）。返回 `data={type_id}`。",
+        "description": "把副本/普通类型标记为模板（`is_template=1`），保留 `parent_type_id` 作血缘。\n\n模板会进入顶部选择器，并可用 `GET /doctype/list?scope=template` 过滤出来。\n\n**错误码**：400（默认类型无需标记）/ 404（类型不存在）。返回 `data={type_id}`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "promote_type_doctype__type_id__promote_post",
         "parameters": [
           {
@@ -3349,6 +3992,16 @@
               "title": "Type Id"
             },
             "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "responses": {
@@ -3390,7 +4043,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/doctype/{type_id}/demote": {
@@ -3399,7 +4057,7 @@
           "doctype"
         ],
         "summary": "取消模板标记",
-        "description": "取消模板标记（`is_template=0`），不影响 `parent_type_id` 血缘。\n\n**错误码**：400（默认类型不可操作）/ 404（类型不存在）。返回 `data={type_id}`。",
+        "description": "取消模板标记（`is_template=0`），不影响 `parent_type_id` 血缘。\n\n**错误码**：400（默认类型不可操作）/ 404（类型不存在）。返回 `data={type_id}`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
         "operationId": "demote_type_doctype__type_id__demote_post",
         "parameters": [
           {
@@ -3411,6 +4069,16 @@
               "title": "Type Id"
             },
             "description": "文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。"
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "responses": {
@@ -3452,7 +4120,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/log/files": {
@@ -3461,7 +4134,7 @@
           "log"
         ],
         "summary": "应用日志文件列表",
-        "description": "列出 `logs/` 下可查看的 `app_*.log` 文件，按修改时间倒序（最新在前）。\n\n返回 `data={current, items:[{name, size, modified_at}]}`；`current` 为最新文件名（无日志时为 `null`）。",
+        "description": "列出 `logs/` 下可查看的 `app_*.log` 文件，按修改时间倒序（最新在前）。\n\n返回 `data={current, items:[{name, size, modified_at}]}`；`current` 为最新文件名（无日志时为 `null`）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "list_log_files_log_files_get",
         "responses": {
           "200": {
@@ -3496,7 +4169,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/log/recent": {
@@ -3505,7 +4183,7 @@
           "log"
         ],
         "summary": "读取最近日志",
-        "description": "读取指定日志文件末尾若干行。`file` 省略时取最新 `app_*.log`；`lines` 默认 200（`0..1000`）；`level` 按等级精确过滤（`TRACE`/`DEBUG`/`INFO`/`SUCCESS`/`WARNING`/`ERROR`/`CRITICAL`，省略不过滤）。\n\n**错误码**：400（文件名不合法 / 等级不合法）/ 404（日志文件不存在）。\n\n返回 `data={file, lines:[{file, level, line, timestamp, type_id, file_id, message, offset}]}`（无日志文件时 `file=null`、`lines=[]`）。",
+        "description": "读取指定日志文件末尾若干行。`file` 省略时取最新 `app_*.log`；`lines` 默认 200（`0..1000`）；`level` 按等级精确过滤（`TRACE`/`DEBUG`/`INFO`/`SUCCESS`/`WARNING`/`ERROR`/`CRITICAL`，省略不过滤）。\n\n**错误码**：400（文件名不合法 / 等级不合法）/ 404（日志文件不存在）。\n\n返回 `data={file, lines:[{file, level, line, timestamp, type_id, file_id, message, offset}]}`（无日志文件时 `file=null`、`lines=[]`）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "get_recent_logs_log_recent_get",
         "parameters": [
           {
@@ -3596,7 +4274,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/log/stream": {
@@ -3605,7 +4288,7 @@
           "log"
         ],
         "summary": "实时日志流（SSE）",
-        "description": "SSE 实时推送日志。先回放末尾 `tail` 行（默认 200，`0..1000`），再持续跟随追加内容；未指定 `file` 时自动跟随最新 `app_*.log`（轮转时切换）。`level` 同 `/log/recent`。\n\n**SSE 事件**：`ready`（连接建立）/ `line`（单行日志，data 同 `/log/recent` 的行结构）/ `rotated`（已切到新文件）/ `heartbeat`（心跳）。\n\n**错误码**：400（文件名 / 等级不合法）/ 404（指定的日志文件不存在）。",
+        "description": "SSE 实时推送日志。先回放末尾 `tail` 行（默认 200，`0..1000`），再持续跟随追加内容；未指定 `file` 时自动跟随最新 `app_*.log`（轮转时切换）。`level` 同 `/log/recent`。\n\n**SSE 事件**：`ready`（连接建立）/ `line`（单行日志，data 同 `/log/recent` 的行结构）/ `rotated`（已切到新文件）/ `heartbeat`（心跳）。\n\n**错误码**：400（文件名 / 等级不合法）/ 404（指定的日志文件不存在）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "stream_logs_log_stream_get",
         "parameters": [
           {
@@ -3672,7 +4355,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/settings/login": {
@@ -3732,7 +4420,21 @@
             }
           }
         },
-        "description": "校验管理员密码，成功后写入 `settings_session` Cookie（HttpOnly、SameSite=strict、`path=/settings`，有效期 `settings.session_minutes` 分钟）。\n\n**错误码**：401（密码错误）/ 429（登录尝试过于频繁，按客户端 IP 限流）。"
+        "deprecated": true,
+        "description": "兼容登录路径，推荐使用 `/auth/login`。校验管理员账号和密码，成功后写入 `xijuan_session` Cookie（HttpOnly、SameSite=strict、`path=/`，有效期 `settings.session_minutes` 分钟）。\n\n**错误码**：401（密码错误）/ 429（登录尝试过于频繁，按客户端 IP 限流）。\n\n 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
+        "security": [],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ]
       }
     },
     "/settings/session": {
@@ -3742,9 +4444,10 @@
         ],
         "summary": "设置会话状态",
         "operationId": "session_status_settings_session_get",
+        "deprecated": true,
         "parameters": [
           {
-            "name": "settings_session",
+            "name": "xijuan_session",
             "in": "cookie",
             "required": false,
             "schema": {
@@ -3756,7 +4459,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Settings Session"
+              "title": "Xijuan Session"
             }
           }
         ],
@@ -3800,7 +4503,8 @@
             }
           }
         },
-        "description": "查询当前 `settings_session` Cookie 是否仍有效。**不需要**已登录即可调用，未登录或已过期返回 `{authenticated: false}` 而非 401。"
+        "description": "查询当前 `settings_session` Cookie 是否仍有效。**不需要**已登录即可调用，未登录或已过期返回 `{authenticated: false}` 而非 401。\n\n",
+        "security": []
       }
     },
     "/settings/config": {
@@ -3812,7 +4516,7 @@
         "operationId": "read_config_settings_config_get",
         "parameters": [
           {
-            "name": "settings_session",
+            "name": "xijuan_session",
             "in": "cookie",
             "required": false,
             "schema": {
@@ -3824,7 +4528,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Settings Session"
+              "title": "Xijuan Session"
             }
           }
         ],
@@ -3876,7 +4580,12 @@
             }
           }
         },
-        "description": "返回可在设置页编辑的配置分组及当前值。**密钥类字段不返回明文**，统一呈现为 `{configured: true|false}`。\n\n`version` 是配置文档的 HMAC-SHA256 指纹，作为 `PATCH /settings/config` 的乐观锁凭据（`base_version`）。`readonly` 列出不可编辑字段。\n\n**错误码**：401（会话过期）/ 500（配置文件读取失败）。"
+        "description": "返回可在设置页编辑的配置分组及当前值。**密钥类字段不返回明文**，统一呈现为 `{configured: true|false}`。\n\n`version` 是配置文档的 HMAC-SHA256 指纹，作为 `PATCH /settings/config` 的乐观锁凭据（`base_version`）。`readonly` 列出不可编辑字段。\n\n**错误码**：401（会话过期）/ 500（配置文件读取失败）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       },
       "patch": {
         "tags": [
@@ -3886,7 +4595,7 @@
         "operationId": "update_config_settings_config_patch",
         "parameters": [
           {
-            "name": "settings_session",
+            "name": "xijuan_session",
             "in": "cookie",
             "required": false,
             "schema": {
@@ -3898,8 +4607,18 @@
                   "type": "null"
                 }
               ],
-              "title": "Settings Session"
+              "title": "Xijuan Session"
             }
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "requestBody": {
@@ -3960,7 +4679,12 @@
             }
           }
         },
-        "description": "按分组增量更新配置并**立即生效**（并发限额会同步 replace 到 limiter 注册表），同时写回 `configs/config.yaml`。\n\n`base_version` 必须等于最近一次 `GET /settings/config` 返回的 `version`，否则判定为并发修改冲突（409）。`changes` 为 `{分组: {字段: 值}}`；`secrets` 为 `{路径: {action, value}}`，`action` 取 `keep`（保持原值）/ `replace`（写入 `value`）/ `clear`（清空）。\n\n**错误码**：401（会话过期）/ 409（`base_version` 过期）/ 422（分组或字段不允许修改、值校验失败）/ 500（写入失败）。"
+        "description": "按分组增量更新配置并**立即生效**（并发限额会同步 replace 到 limiter 注册表），同时写回 `configs/config.yaml`。\n\n`base_version` 必须等于最近一次 `GET /settings/config` 返回的 `version`，否则判定为并发修改冲突（409）。`changes` 为 `{分组: {字段: 值}}`；`secrets` 为 `{路径: {action, value}}`，`action` 取 `keep`（保持原值）/ `replace`（写入 `value`）/ `clear`（清空）。\n\n**错误码**：401（会话过期）/ 409（`base_version` 过期）/ 422（分组或字段不允许修改、值校验失败）/ 500（写入失败）。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/settings/logout": {
@@ -3970,9 +4694,10 @@
         ],
         "summary": "退出设置页",
         "operationId": "logout_settings_logout_post",
+        "deprecated": true,
         "parameters": [
           {
-            "name": "settings_session",
+            "name": "xijuan_session",
             "in": "cookie",
             "required": false,
             "schema": {
@@ -3984,8 +4709,18 @@
                   "type": "null"
                 }
               ],
-              "title": "Settings Session"
+              "title": "Xijuan Session"
             }
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
         ],
         "responses": {
@@ -4028,7 +4763,664 @@
             }
           }
         },
-        "description": "吊销当前会话令牌并清除 `settings_session` Cookie。重复调用不报错。"
+        "description": "吊销当前会话令牌并清除 `xijuan_session` Cookie；会话已失效时返回 401。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "管理员登录"
+        ],
+        "summary": "管理员登录",
+        "operationId": "login_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ],
+        "description": "\n\n 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。"
+      }
+    },
+    "/auth/session": {
+      "get": {
+        "tags": [
+          "管理员登录"
+        ],
+        "summary": "查询管理员会话",
+        "operationId": "session_status_auth_session_get",
+        "parameters": [
+          {
+            "name": "xijuan_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Xijuan Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "description": "\n\n"
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "管理员登录"
+        ],
+        "summary": "退出管理员登录",
+        "operationId": "logout_auth_logout_post",
+        "parameters": [
+          {
+            "name": "xijuan_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Xijuan Session"
+            }
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "description": "\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。"
+      }
+    },
+    "/settings/access": {
+      "get": {
+        "tags": [
+          "接口访问控制"
+        ],
+        "summary": "查看 API Key 与 IP 白名单",
+        "operationId": "read_access_settings_access_get",
+        "parameters": [
+          {
+            "name": "xijuan_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Xijuan Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "description": "\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。"
+      }
+    },
+    "/settings/access/keys": {
+      "post": {
+        "tags": [
+          "接口访问控制"
+        ],
+        "summary": "创建 API Key（完整密钥仅展示一次）",
+        "operationId": "create_key_settings_access_keys_post",
+        "parameters": [
+          {
+            "name": "xijuan_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Xijuan Session"
+            }
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "description": "\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。"
+      }
+    },
+    "/settings/access/allowlist": {
+      "post": {
+        "tags": [
+          "接口访问控制"
+        ],
+        "summary": "添加 IP/CIDR 白名单",
+        "operationId": "create_allow_settings_access_allowlist_post",
+        "parameters": [
+          {
+            "name": "xijuan_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Xijuan Session"
+            }
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AllowCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "description": "\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。"
+      }
+    },
+    "/settings/access/{kind}/{entry_id}": {
+      "patch": {
+        "tags": [
+          "接口访问控制"
+        ],
+        "summary": "启用或禁用访问条目",
+        "operationId": "enable_entry_settings_access__kind___entry_id__patch",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "keys",
+                "allowlist"
+              ],
+              "type": "string",
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entry Id"
+            }
+          },
+          {
+            "name": "xijuan_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Xijuan Session"
+            }
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnableRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "description": "\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。"
+      },
+      "delete": {
+        "tags": [
+          "接口访问控制"
+        ],
+        "summary": "删除访问条目",
+        "operationId": "delete_entry_settings_access__kind___entry_id__delete",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "keys",
+                "allowlist"
+              ],
+              "type": "string",
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entry Id"
+            }
+          },
+          {
+            "name": "xijuan_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Xijuan Session"
+            }
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "description": "\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。"
+      }
+    },
+    "/settings/access/keys/{entry_id}/rotate": {
+      "post": {
+        "tags": [
+          "接口访问控制"
+        ],
+        "summary": "重新生成 API Key（旧密钥立即失效）",
+        "operationId": "rotate_key_settings_access_keys__entry_id__rotate_post",
+        "parameters": [
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entry Id"
+            }
+          },
+          {
+            "name": "xijuan_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Xijuan Session"
+            }
+          },
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseWrapper"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "description": "\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。"
       }
     },
     "/runtime/concurrency": {
@@ -4037,7 +5429,7 @@
           "runtime"
         ],
         "summary": "并发运行时快照",
-        "description": "返回**当前 worker 进程内**各并发池的实时水位，供监控面板与容量排查使用。多 worker 部署时每个进程独立计数，不聚合。\n\n池分四组：模型通道（`global_llm` / `global_embedding` / `global_vl`）、业务阶段（`global_table_validation` / `global_extraction` / `global_analysis`）、独立接口（`independent_analysis`）、管线调度（`global_pipeline`，同时处理的文件数闸门）。\n\n单文件限流（`task_table_validation` / `task_extraction` / `task_file_analysis`）**仍然生效但不在本接口返回**：其每文件上限与对应全局池同量级时会常年显示饱和、与全局池真实水位相反；被它们吸收的排队改由各池的 `total_wait_p95_ms` 体现。\n\n每个池给出两个等待口径：`gate_wait_p95_ms` 只算在**这一道闸**上排队的时间，`total_wait_p95_ms` 从工作项启动算起、含上游闸门（含未展示的单文件限流）的全部排队。两者差得越大说明背压越靠上游。分位数不可加，故 total 由每个工作项各自实测后单独取分位。\n\n`status` 取值：`idle`（无占用）/ `normal` / `pressure`（占用 >=75% 或排队 >=2）/ `saturated`（占满且有排队）/ `offline`（未接入或快照缺失）。`limit` 来自 `configs/config.yaml` 的 `concurrency` 节。\n\n返回 `data={updated_at, scope, summary, pools, events, history}`；`events` 为最近 20 条获取/等待/释放事件（倒序，已滤掉未展示的单文件池）。\n\n`history` 是进程内按 1 秒采样、保留 30 分钟的压力序列（纯内存，重启清零）：无论 `window` 取 `60s` / `5m` / `30m`，都降采样成固定 60 个桶（桶内取峰值），空桶为 `null`。",
+        "description": "返回**当前 worker 进程内**各并发池的实时水位，供监控面板与容量排查使用。多 worker 部署时每个进程独立计数，不聚合。\n\n池分四组：模型通道（`global_llm` / `global_embedding` / `global_vl`）、业务阶段（`global_table_validation` / `global_extraction` / `global_analysis`）、独立接口（`independent_analysis`）、管线调度（`global_pipeline`，同时处理的文件数闸门）。\n\n单文件限流（`task_table_validation` / `task_extraction` / `task_file_analysis`）**仍然生效但不在本接口返回**：其每文件上限与对应全局池同量级时会常年显示饱和、与全局池真实水位相反；被它们吸收的排队改由各池的 `total_wait_p95_ms` 体现。\n\n每个池给出两个等待口径：`gate_wait_p95_ms` 只算在**这一道闸**上排队的时间，`total_wait_p95_ms` 从工作项启动算起、含上游闸门（含未展示的单文件限流）的全部排队。两者差得越大说明背压越靠上游。分位数不可加，故 total 由每个工作项各自实测后单独取分位。\n\n`status` 取值：`idle`（无占用）/ `normal` / `pressure`（占用 >=75% 或排队 >=2）/ `saturated`（占满且有排队）/ `offline`（未接入或快照缺失）。`limit` 来自 `configs/config.yaml` 的 `concurrency` 节。\n\n返回 `data={updated_at, scope, summary, pools, events, history}`；`events` 为最近 20 条获取/等待/释放事件（倒序，已滤掉未展示的单文件池）。\n\n`history` 是进程内按 1 秒采样、保留 30 分钟的压力序列（纯内存，重启清零）：无论 `window` 取 `60s` / `5m` / `30m`，都降采样成固定 60 个桶（桶内取峰值），空桶为 `null`。\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。",
         "operationId": "get_concurrency_snapshot_runtime_concurrency_get",
         "parameters": [
           {
@@ -4112,7 +5504,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
       }
     },
     "/invocations": {
@@ -4212,7 +5609,13 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "description": "\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。"
       }
     },
     "/invocations/{log_id}/result.json": {
@@ -4252,7 +5655,13 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "description": "\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。"
       }
     },
     "/invocations/{log_id}": {
@@ -4294,12 +5703,47 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "description": "\n\n**访问权限**：仅管理员会话，API Key 与 IP 白名单不授予管理权限。"
       }
     }
   },
   "components": {
     "schemas": {
+      "AllowCreate": {
+        "properties": {
+          "base_version": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Base Version"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "network": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Network"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_version",
+          "name",
+          "network"
+        ],
+        "title": "AllowCreate"
+      },
       "AnalysisRuleCreate": {
         "properties": {
           "rule_id": {
@@ -4640,7 +6084,7 @@
               }
             ],
             "title": "Model Config",
-            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。 同一批次所有 items 共用本配置。"
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。API Key/IP 白名单调用者不得覆盖 base_url/api_key（含别名），防止服务端密钥被发送至其他地址；仅管理员可覆盖。 同一批次所有 items 共用本配置。"
           },
           "mode": {
             "$ref": "#/components/schemas/AnalysisRunModeEnum",
@@ -5026,7 +6470,7 @@
               }
             ],
             "title": "Model Config",
-            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。"
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。API Key/IP 白名单调用者不得覆盖 base_url/api_key（含别名），防止服务端密钥被发送至其他地址；仅管理员可覆盖。"
           },
           "file_id": {
             "type": "string",
@@ -5163,7 +6607,7 @@
               }
             ],
             "title": "Model Config",
-            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。 以 JSON 对象字符串传入。"
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。API Key/IP 白名单调用者不得覆盖 base_url/api_key（含别名），防止服务端密钥被发送至其他地址；仅管理员可覆盖。 以 JSON 对象字符串传入。"
           },
           "params": {
             "anyOf": [
@@ -5197,7 +6641,7 @@
               }
             ],
             "title": "Model Config",
-            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。"
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。API Key/IP 白名单调用者不得覆盖 base_url/api_key（含别名），防止服务端密钥被发送至其他地址；仅管理员可覆盖。"
           }
         },
         "type": "object",
@@ -5216,7 +6660,7 @@
               }
             ],
             "title": "Model Config",
-            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。"
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。API Key/IP 白名单调用者不得覆盖 base_url/api_key（含别名），防止服务端密钥被发送至其他地址；仅管理员可覆盖。"
           }
         },
         "type": "object",
@@ -5235,7 +6679,7 @@
               }
             ],
             "title": "Model Config",
-            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。"
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。API Key/IP 白名单调用者不得覆盖 base_url/api_key（含别名），防止服务端密钥被发送至其他地址；仅管理员可覆盖。"
           }
         },
         "type": "object",
@@ -5423,6 +6867,27 @@
             "enabled": 1
           }
         ]
+      },
+      "EnableRequest": {
+        "properties": {
+          "base_version": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Base Version"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_version",
+          "enabled"
+        ],
+        "title": "EnableRequest"
       },
       "ExportFieldItem": {
         "properties": {
@@ -6205,7 +7670,7 @@
               }
             ],
             "title": "Model Config",
-            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。"
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_body(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。API Key/IP 白名单调用者不得覆盖 base_url/api_key（含别名），防止服务端密钥被发送至其他地址；仅管理员可覆盖。"
           },
           "file_id": {
             "type": "string",
@@ -6357,15 +7822,59 @@
         "title": "ImportConfigsRequest",
         "description": "从 JSON 载荷导入字段+规则到目标类型。"
       },
+      "KeyCreate": {
+        "properties": {
+          "base_version": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Base Version"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_version",
+          "name"
+        ],
+        "title": "KeyCreate"
+      },
       "LoginRequest": {
         "properties": {
+          "username": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Username"
+          },
           "password": {
             "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
             "title": "Password"
           }
         },
         "type": "object",
         "required": [
+          "username",
           "password"
         ],
         "title": "LoginRequest"
@@ -6762,6 +8271,22 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VersionRequest": {
+        "properties": {
+          "base_version": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Base Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_version"
+        ],
+        "title": "VersionRequest"
       },
       "DocTypeResponse": {
         "properties": {
@@ -8981,6 +10506,19 @@
         "title": "SearchResultItem",
         "type": "object",
         "description": "向量检索命中项。"
+      }
+    },
+    "securitySchemes": {
+      "AdminSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "xijuan_session",
+        "description": "通过 /auth/login 获取管理员会话；写请求附加 X-Requested-With: XMLHttpRequest。"
+      },
+      "APIKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "设置 → 接口访问控制创建的 xj_ 密钥，仅允许业务接口。"
       }
     }
   },

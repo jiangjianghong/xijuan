@@ -1,0 +1,117 @@
+# 管理员登录与接口访问控制
+
+> 对应服务版本 0.3.0
+
+管理员账号固定配置在 `configs/config.yaml`，不提供注册。后台和管理接口使用会话；调用程序可使用 API Key，或由来源 IP/CIDR 白名单免密访问业务接口。API Key 是本系统生成的调用凭证，与大模型服务的 API Key 无关。
+
+## 部署与首次登录
+
+登录地址为 `/ui/login`，旧 `/ui/login.html` 地址自动跳转到该入口。
+
+通过改密脚本设置的新密码长度为 **6–15 个字符**（含边界），两次输入必须一致。
+
+```bash
+uv sync
+uv run python scripts/set_admin_password.py --username admin
+python app.py
+# 使用 uvicorn CLI 时必须关闭其代理头解析，由本系统判断可信代理：
+uv run uvicorn app:app --host 0.0.0.0 --port 5019 --no-proxy-headers
+```
+
+打开 `/ui/` 会跳转登录页。账号配置为 `settings.username`，密码保存为 `settings.password_hash`（Argon2id）。旧版已填写的 `settings.password` 会在首次启动时自动转为哈希并删除明文，账号默认为 `admin`，原密码不变。未配置密码时拒绝登录，业务接口仍受保护。忘记密码时先停止服务，再运行上述交互命令，最后启动服务；配置锁仅在进程内生效，不能与运行中的设置页面同时写入。密码不接受命令行参数。
+
+HTTPS 部署设置 `settings.secure_cookie: true`。会话 Cookie 为 `xijuan_session`，`Path=/; HttpOnly; SameSite=Strict`，默认 30 分钟。会话保存在单 worker 内存中，重启、退出、过期后重新登录；登录会轮换当前令牌。账号或密码配置变化后旧会话失效。暂不支持多 worker 共享会话。
+
+登录和携带会话 Cookie 的写请求必须发送 `X-Requested-With: XMLHttpRequest`。前端自动附加；命令行使用 Cookie 调用时也需附加。跨站请求不开放 CORS，不能用 Origin/Referer 充当程序身份。
+
+## 权限边界
+
+| 范围 | 允许的凭证 |
+|---|---|
+| 上传、文件列表/统计/结果/PDF 查询、重试、搜索、独立分析及其任务查询、文档类型列表 | 管理员会话 / API Key / IP 白名单 |
+| 设置、Key 与白名单管理、文件删除、类型/字段/规则配置、调试、日志、运行台、API 文档 | 管理员会话 |
+| 登录页与必要静态资源、登录、会话状态、`/health` | 公开；登录仍有限速及请求来源检查 |
+
+业务权限覆盖所有文档类型，当前不提供每 Key 的文件/类型隔离。程序可覆盖模型与采样参数，但不得通过 `model_config` 覆盖 `base_url/api_key`（含别名），避免服务器密钥被转发至调用方指定地址；这类覆盖仅管理员可用。新增接口默认仅管理员，允许程序访问的方法和路径见 `utils/auth_middleware.py:BUSINESS_ROUTES`。无有效凭证返回 401；仅持程序权限却访问管理操作返回 403。
+
+## 创建与调用 API Key
+
+接口访问控制直接嵌入设置分组，API Key 和 IP 白名单在分组内切换。创建的完整密钥在当前分组内展示，可复制或收起；离开设置或会话过期时清除明文。本分组操作即时生效，无需点击普通设置的「保存修改」。
+
+登录后选择「设置 → 接口访问控制 → API Key」，填写调用方名称及可选有效期（留空为永久），点击创建。系统生成至少 256 bit 随机密钥，完整值仅当次展示。列表只显示名称、尾号、有效期和状态，配置文件只保存 SHA-256 哈希。禁用、删除及重新生成即时生效；重新生成保留有效期和启用状态。过期密钥请创建新条目。
+
+```bash
+curl -X POST http://localhost:5019/file/parse \
+  -H 'Authorization: Bearer xj_你的完整密钥' \
+  -F 'file=@report.pdf'
+```
+
+## IP 白名单与代理
+
+在「IP 白名单」添加名称和单个 IPv4/IPv6 地址或规范 CIDR 网段，例如 `192.168.1.10`、`192.168.1.0/24`、`::1`。不支持 `IP:port`，匹配来源所有端口。同一来源 IP（包括共用 NAT 出口）下所有程序共享免密权限；若需区分程序，使用独立 Key。默认白名单为空。
+
+默认忽略不可信来源提供的 `X-Forwarded-For`。经过 Nginx 等代理时，只在 YAML 的 `access_control.trusted_proxies` 配置实际代理的 IP/CIDR，代理应正确覆写/追加 X-Forwarded-For，保留原 Host，并设置 X-Forwarded-Proto。系统从直连代理向外逐跳剥离，取第一个不可信地址为客户端地址。不要设置 `0.0.0.0/0` 或 `::/0` 为可信代理。必须禁用 Uvicorn 自带代理解析，原始对端已被它覆写时返回 503。
+
+## 管理接口
+
+所有 `/settings/access` 接口需要管理员会话。写操作携带最近读取的 `base_version`，与普通设置共享 YAML 版本锁；冲突返回 409，重新获取列表后再提交。写入失败不改变正在运行的访问权限。`access_control` 不能通过普通 `PATCH /settings/config` 修改。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/auth/login` | `{username,password}`，返回会话 Cookie |
+| GET | `/auth/session` | `{authenticated}` |
+| POST | `/auth/logout` | 吊销当前会话 |
+| GET | `/settings/access` | `{version,api_keys,ip_allowlist}`；永不返回完整 Key 或哈希 |
+| POST | `/settings/access/keys` | `{base_version,name,expires_at?}`；返回列表和一次性 `key` |
+| POST | `/settings/access/allowlist` | `{base_version,name,network}` |
+| PATCH | `/settings/access/{kind}/{entry_id}` | `{base_version,enabled}`，kind 为 keys/allowlist |
+| DELETE | `/settings/access/{kind}/{entry_id}` | JSON body `{base_version}` |
+| POST | `/settings/access/keys/{entry_id}/rotate` | `{base_version}`，返回列表和新 `key` |
+
+`expires_at` 使用带时区的 ISO 8601，例如 `2026-12-31T23:59:59+08:00`；必须晚于当前时间。旧 `/settings/login|session|logout` 保留为兼容路径，登录请求同样需要 username/password 和安全请求头。
+
+<!-- AUTOGEN:request-body POST /auth/login -->
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| username | string | 是 | — |  |
+| password | string | 是 | — |  |
+<!-- /AUTOGEN:request-body -->
+<!-- AUTOGEN:response GET /auth/session status=200 -->
+无结构化字段（见示例 / 权威页）
+<!-- /AUTOGEN:response -->
+<!-- AUTOGEN:response POST /auth/logout status=200 -->
+无结构化字段（见示例 / 权威页）
+<!-- /AUTOGEN:response -->
+<!-- AUTOGEN:response GET /settings/access status=200 -->
+无结构化字段（见示例 / 权威页）
+<!-- /AUTOGEN:response -->
+<!-- AUTOGEN:request-body POST /settings/access/keys -->
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| base_version | string | 是 | — |  |
+| name | string | 是 | — |  |
+| expires_at | string | 否 | — |  |
+<!-- /AUTOGEN:request-body -->
+<!-- AUTOGEN:request-body POST /settings/access/allowlist -->
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| base_version | string | 是 | — |  |
+| name | string | 是 | — |  |
+| network | string | 是 | — |  |
+<!-- /AUTOGEN:request-body -->
+<!-- AUTOGEN:request-body PATCH /settings/access/{kind}/{entry_id} -->
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| base_version | string | 是 | — |  |
+| enabled | boolean | 是 | — |  |
+<!-- /AUTOGEN:request-body -->
+<!-- AUTOGEN:request-body DELETE /settings/access/{kind}/{entry_id} -->
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| base_version | string | 是 | — |  |
+<!-- /AUTOGEN:request-body -->
+<!-- AUTOGEN:request-body POST /settings/access/keys/{entry_id}/rotate -->
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| base_version | string | 是 | — |  |
+<!-- /AUTOGEN:request-body -->

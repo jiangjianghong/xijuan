@@ -151,8 +151,16 @@ storage:
   max_retention_minutes: 0                              # PDF 最长保存时间（分钟）；0=不限，超时删除物理文件
   cleanup_interval_minutes: 10                          # 后台清理扫描周期（分钟）
 
-# 系统设置页面安全配置（不通过设置 API 返回或修改）
+# 管理员登录（仅在此文件设置，不通过页面/API 返回或修改）
 settings:
-  password: ""                                         # 管理员明文密码；留空时关闭设置页密码登录
+  username: admin
+  password_hash: ""                                    # 运行 python scripts/set_admin_password.py 生成 Argon2id 哈希
   session_minutes: 30                                   # 登录会话有效期（分钟）
   secure_cookie: false                                  # HTTPS 部署时设为 true，启用 Secure Cookie
+
+# 设置 → 接口访问控制管理，保存后即时生效。Key 仅保存哈希，完整值仅创建时展示。
+# 默认无免密来源；未配置管理员时登录不可用，但接口不会因此变为公开访问。
+access_control:
+  api_keys: []
+  ip_allowlist: []                                      # 支持 IPv4/IPv6/CIDR，覆盖所有来源端口
+  trusted_proxies: []                                   # 只配置实际代理 IP/CIDR；切勿信任所有来源

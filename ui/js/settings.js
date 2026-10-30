@@ -11,6 +11,7 @@ const SettingsManager = {
     scrollSpyHandler: null,
 
     GROUPS: [
+        { id: 'access_control', label: '接口访问控制', icon: 'shield-check', description: '管理调用程序的密钥与免密访问来源，操作后即时生效' },
         { id: 'mineru', label: 'MinerU', icon: 'file-scan', description: 'PDF 解析服务与上传限制' },
         { id: 'chunking', label: '文本分块', icon: 'split', description: '文本切分长度、重叠与分隔符' },
         { id: 'embedding', label: '向量化', icon: 'binary', description: 'Embedding 服务连接与只读运行参数' },
@@ -138,6 +139,7 @@ const SettingsManager = {
     },
 
     openLogin() {
+        Auth.lock();
         document.getElementById('settings-login-error').textContent = '';
         document.getElementById('settings-login-overlay').classList.add('active');
         const password = document.getElementById('settings-password');
@@ -146,6 +148,7 @@ const SettingsManager = {
     },
 
     closeLogin() {
+        if (Auth.locked) return;
         document.getElementById('settings-login-overlay').classList.remove('active');
         this.pendingOpen = false;
     },
@@ -158,7 +161,8 @@ const SettingsManager = {
         button.disabled = true;
         errorEl.textContent = '';
         try {
-            await API.settingsLogin(input.value);
+            await API.settingsLogin(input.value, document.getElementById('settings-username').value);
+            Auth.unlock();
             document.getElementById('settings-login-overlay').classList.remove('active');
             input.value = '';
             if (this.pendingOpen || this.draftBeforeAuth) await this.loadAndShow(true);
@@ -188,11 +192,13 @@ const SettingsManager = {
 
     close() {
         if (this.dirty && !confirm('有尚未保存的设置，确定关闭吗？')) return;
+        AccessControl.unmount();
         document.getElementById('settings-modal-overlay').classList.remove('active');
         this.setDirty(false);
     },
 
     render() {
+        AccessControl.unmount();
         const nav = document.getElementById('settings-group-nav');
         const body = document.getElementById('settings-form-body');
         nav.innerHTML = this.GROUPS.map((group, index) => `
@@ -201,22 +207,26 @@ const SettingsManager = {
                 <i data-lucide="${group.icon}" class="w-4 h-4"></i><span>${group.label}</span>
             </button>`).join('');
         body.innerHTML = this.GROUPS.map(group => this.renderGroup(group)).join('');
-        body.querySelectorAll('input, select, textarea').forEach(el => {
+        body.querySelectorAll('.settings-fields input, .settings-fields select, .settings-fields textarea').forEach(el => {
             el.addEventListener('input', () => this.setDirty(true));
             el.addEventListener('change', () => this.setDirty(true));
         });
         this.bindScrollSpy();
+        AccessControl.mount();
     },
 
     renderGroup(group) {
         const values = this.payload.config[group.id] || {};
         const fields = (this.FIELDS[group.id] || []).map(field => this.renderField(group.id, field, values[field[0]])).join('');
+        const content = group.id === 'access_control'
+            ? document.getElementById('access-settings-template').innerHTML
+            : `<div class="settings-fields">${fields}</div>`;
         return `<section class="settings-section" id="settings-group-${group.id}" data-settings-group="${group.id}">
             <header class="settings-section-header">
                 <div class="settings-section-icon"><i data-lucide="${group.icon}" class="w-5 h-5"></i></div>
                 <div><h4>${group.label}</h4><p>${group.description}</p></div>
             </header>
-            <div class="settings-fields">${fields}</div>
+            ${content}
         </section>`;
     },
 
@@ -508,13 +518,6 @@ const SettingsManager = {
     },
 
     async logout() {
-        try { await API.settingsLogout(); }
-        catch (error) { console.warn('设置退出失败', error); }
-        document.getElementById('settings-modal-overlay').classList.remove('active');
-        this.payload = null;
-        this.original = {};
-        this.secretState = {};
-        this.setDirty(false);
-        Toast.success('已退出系统设置');
+        await Auth.logout();
     },
 };

@@ -28,6 +28,9 @@ OPENAPI = DOCS / "openapi.json"
 
 # 路径前缀 → (分组名, 文档相对路径)
 PREFIX_MAP = [
+    ("/auth", "管理员登录", "api/auth.md"),
+    ("/settings/access", "接口访问控制", "api/auth.md"),
+    ("/invocations", "调用日志", "api/logs.md"),
     ("/doctype", "文档类型", "api/doctype.md"),
     ("/file", "文件处理", "api/file.md"),
     ("/extraction", "字段提取", "api/extraction.md"),

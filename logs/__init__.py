@@ -23,7 +23,7 @@ _TYPE_ID_RE = re.compile(r"(?:^|[\s,，(（])type_id=([^\s,，:：)）]+)")
 class _PollingFilter(logging.Filter):
     """过滤掉前端轮询产生的 access log。"""
 
-    _QUIET_PATHS = ("/file/list", "/status")
+    _QUIET_PATHS = ("/file/list", "/status", "/auth/session")
 
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()

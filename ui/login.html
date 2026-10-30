@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 · 析卷 AI</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="vendor/fonts/google-fonts.css">
+    <link rel="stylesheet" href="css/auth.css">
+    <script src="js/auth.js" defer></script>
+</head>
+<body class="auth-page">
+    <main class="auth-card">
+        <div class="auth-brand"><img src="favicon.svg" width="32" height="32" alt=""><span>析卷 AI</span></div>
+        <h1>登录工作台</h1>
+        <p class="auth-description">管理文档处理、提取规则与接口访问权限。</p>
+        <form onsubmit="Auth.login(event)" class="auth-form">
+            <label for="username">管理员账号</label>
+            <input id="username" name="username" autocomplete="username" value="admin" maxlength="80" required autofocus>
+            <label for="password">密码</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required>
+            <p class="auth-error" role="alert" aria-live="polite"></p>
+            <button type="submit" class="auth-primary">登录</button>
+        </form>
+        <p class="auth-footnote">请使用管理员配置的账号登录。</p>
+    </main>
+</body>
+</html>

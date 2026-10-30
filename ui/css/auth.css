@@ -1,0 +1,54 @@
+/* 沿用析卷的纸色与深绿；登录单列，访问管理弹窗在窄屏改为纵向表单。 */
+.auth-page { margin: 0; min-height: 100dvh; display: grid; place-items: center; background: #F5F2EB; color: #2C4C3B; font-family: Nunito, system-ui, sans-serif; }
+.auth-card { width: min(400px, calc(100vw - 64px)); padding: 40px 32px; background: #fff; border-radius: 16px; }
+.auth-brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; }
+.auth-card h1 { font-size: 26px; line-height: 1.3; margin: 32px 0 10px; font-weight: 700; }
+.auth-description, .auth-footnote { color: #59675e; font-size: 14px; line-height: 1.65; }
+.auth-form { display: flex; flex-direction: column; margin-top: 28px; }
+.auth-form label { font-size: 14px; margin-bottom: 8px; }
+.auth-form input { box-sizing: border-box; width: 100%; border: 1px solid #bac7bf; border-radius: 8px; background: #fff; padding: 11px 12px; font: inherit; color: #253d30; margin-bottom: 20px; }
+.auth-form input:focus-visible, .access-settings input:focus-visible, .access-settings button:focus-visible { outline: 2px solid #4F775D; outline-offset: 3px; }
+.auth-primary { background: #2C4C3B; border: 0; color: white; border-radius: 8px; padding: 12px 18px; cursor: pointer; font: inherit; font-weight: 700; }
+.auth-primary:hover { background: #3d624a; }
+.auth-primary:focus-visible { outline: 2px solid #4F775D; outline-offset: 3px; }
+.auth-primary:active { transform: translateY(1px); }
+.auth-primary:disabled { opacity: .55; cursor: wait; }
+.auth-error { color: #a62e29; font-size: 14px; min-height: 20px; margin: 0 0 12px; }
+.auth-footnote { text-align: center; margin: 24px 0 0; }
+.auth-locked > :not(#settings-login-overlay):not(script) { visibility: hidden !important; }
+.auth-locked #settings-login-overlay { display: flex; visibility: visible; background: #F5F2EB; z-index: 99999; }
+.auth-locked #settings-login-overlay .rule-modal { width: min(440px, calc(100vw - 32px)); }
+.auth-locked #settings-login-overlay .rule-modal-close { display: none; }
+#settings-login-overlay .settings-login-form > input { width: 100%; margin: 8px 0 16px; }
+.access-settings { min-width: 0; color: #2C4C3B; font: 14px/1.5 Nunito, system-ui, sans-serif; }
+.access-tabs { display: flex; gap: 8px; margin: 0 0 12px; }
+.access-tabs button { padding: 8px 16px; border: 0; background: transparent; border-radius: 6px; color: #59675e; cursor: pointer; font: inherit; }
+.access-tabs button[aria-pressed="true"] { background: #e8efe6; color: #2C4C3B; font-weight: 700; }
+.access-settings > .access-note { margin: 12px 0 20px; }
+.access-create { display: grid; grid-template-columns: 1fr 1fr auto; gap: 16px; align-items: end; margin-bottom: 20px; }
+.access-create label { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.access-create input { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid #bac7bf; padding: 10px; border-radius: 6px; font: inherit; }
+.access-create button { min-height: 42px; }
+.access-table-wrap { overflow-x: auto; }
+.access-table { width: 100%; border-collapse: collapse; text-align: left; }
+.access-table th { color: #59675e; font-weight: 400; font-size: 13px; }
+.access-table td, .access-table th { padding: 12px 8px; border-bottom: 1px solid #e3e9e4; overflow-wrap: anywhere; }
+.access-table td:first-child { font-weight: 700; max-width: 180px; }
+.access-table td:last-child { white-space: nowrap; }
+.access-row-action { border: 0; background: transparent; cursor: pointer; padding: 6px; color: #2C4C3B; font: inherit; }
+.access-row-action:hover { background: #e8efe6; }
+.access-row-action.danger { color: #a62e29; }
+.access-empty { text-align: center; padding: 32px 16px; color: #59675e; background: #f5f7f4; border-radius: 8px; }
+.access-note { color: #59675e; font-size: 13px; margin: 20px 0 0; }
+.access-key-panel { padding: 20px; margin: 20px 0; border: 1px solid #bac7bf; border-radius: 8px; background: #f5f7f4; }
+.access-key-panel h5 { margin: 0; font-size: 16px; font-weight: 700; }
+.access-key-panel p { color: #59675e; margin: 8px 0 16px; }
+.access-key-panel input { box-sizing: border-box; width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #bac7bf; border-radius: 6px; font: 14px/1.5 monospace; }
+.access-key-actions { display: flex; justify-content: flex-end; gap: 12px; }
+@media (max-width: 640px) {
+    .auth-card { padding: 32px 24px; width: calc(100vw - 80px); }
+    .access-create { grid-template-columns: 1fr; gap: 12px; }
+    .access-table { min-width: 560px; }
+    .access-key-actions { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) { .auth-primary:active { transform: none; } }

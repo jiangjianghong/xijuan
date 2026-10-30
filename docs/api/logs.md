@@ -9,7 +9,7 @@
 列出 `logs/` 下可查看的 `app_*.log`，按修改时间倒序（最新在前）。
 
 - 方法路径：`GET /log/files`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **响应体**
 
@@ -42,7 +42,7 @@
 读取指定日志文件末尾若干行。
 
 - 方法路径：`GET /log/recent`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **查询参数**
 
@@ -96,7 +96,7 @@ curl "http://localhost:5019/log/recent?lines=100&level=ERROR"
 SSE 实时推送日志：先回放末尾 `tail` 行，再持续跟随追加内容；未指定 `file` 时自动跟随最新 `app_*.log`（轮转时切换）。
 
 - 方法路径：`GET /log/stream`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **查询参数**
 
@@ -113,6 +113,7 @@ SSE 实时推送日志：先回放末尾 `tail` 行，再持续跟随追加内�
 - `line` — 单行日志，`data` 同 `/log/recent` 的行结构
 - `rotated` — 已切到新文件
 - `heartbeat` — 心跳
+- `auth_required` — 管理员会话失效，流随即关闭，请重新登录
 
 **状态码 / 错误**
 
@@ -121,3 +122,32 @@ SSE 实时推送日志：先回放末尾 `tail` 行，再持续跟随追加内�
 | 200 | SSE 流 | text/event-stream |
 | 400 | 文件名 / 等级不合法 | `{"detail": "..."}` |
 | 404 | 指定的日志文件不存在 | `{"detail": "..."}` |
+
+## 业务调用日志 /invocations
+
+以下接口同样只允许管理员会话，Key 和 IP 白名单不授予日志权限。
+
+`GET /invocations` 按 `page/page_size/kind/status/q/type_id` 查询正式业务调用摘要，返回 `{items,total,page,page_size}`。列表不包含输入原文与完整结果。
+
+<!-- AUTOGEN:query-params GET /invocations -->
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---|---|:--:|---|---|
+| page | integer | 否 | 1 | 页码，从 1 开始。 |
+| page_size | integer | 否 | 20 | 每页条数。 |
+| kind | string | 否 |  |  |
+| status | string | 否 |  |  |
+| q | string | 否 |  |  |
+| type_id | string | 否 |  | 文档类型 ID（匹配 `^[a-zA-Z0-9_-]+$`，最长 64）。 |
+<!-- /AUTOGEN:query-params -->
+
+`GET /invocations/{log_id}` 返回调用详情，包含脱敏参数、阶段时间与结果。不存在返回 404。
+
+<!-- AUTOGEN:response GET /invocations/{log_id} status=200 -->
+无结构化字段（见示例 / 权威页）
+<!-- /AUTOGEN:response -->
+
+`GET /invocations/{log_id}/result.json` 下载抽取与分析结果 JSON；不包含原始输入与解析中间产物。调用不存在返回 404，尚无结果返回 409。
+
+<!-- AUTOGEN:response GET /invocations/{log_id}/result.json status=200 -->
+无（该接口 data 为空 / 见备注）
+<!-- /AUTOGEN:response -->

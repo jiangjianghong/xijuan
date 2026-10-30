@@ -14,7 +14,7 @@ The system is written in Chinese (comments, logs, API responses, database fields
 # Run the server (development with hot reload)
 python app.py
 # OR
-uv run uvicorn app:app --host 0.0.0.0 --port 5019 --reload
+uv run uvicorn app:app --host 0.0.0.0 --port 5019 --reload --no-proxy-headers
 
 # Run all tests
 uv run pytest
@@ -174,7 +174,11 @@ Two rule types:
 Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`, `embedding`, `milvus`, `mysql`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`, `storage`, `settings`. Each maps to a Pydantic model in `utils/config.py`. `storage`（`max_total_bytes` / `max_retention_minutes` / `cleanup_interval_minutes`，默认 `0/0/10`，0=关闭）治理 `uploads` 下 PDF：启动时 + 每 `cleanup_interval_minutes` 分钟 + 每次上传后触发 `service/retention_service.py:enforce_pdf_retention`，只删物理 PDF（按 `create_time` 最旧优先淘汰 / 超时删除），不动数据库；被清文件的 PDF 预览与 VL 抽取返回 404。
 
 ### Runtime Settings (`blue_print/settings_router.py`)
-- Header button “设置” sits immediately right of “管理”; a password gate protects the modal. The plaintext password is only configured in `settings.password`; empty disables login. Sessions default to 30 minutes, use an HttpOnly SameSite=Strict cookie, and live in single-process memory.
+- 全站管理员登录：`POST /auth/login`（`username/password`），`GET /auth/session`，`POST /auth/logout`；旧 `/settings/login|session|logout` 是兼容路径。账号固定在 `settings.username/password_hash`，启动时旧 `settings.password` 自动迁移为 Argon2id 哈希。无凭证时拒绝登录，绝不匿名放行。Cookie `xijuan_session`，Path=/，HttpOnly/SameSite=Strict，默认 30 分钟，单进程内存保存；登录轮换、退出、过期及凭证变更均使旧会话失效。
+- `utils/auth_middleware.py` 统一保护后台及全部 API；业务方法/路径显式列在 `BUSINESS_ROUTES`，允许管理员会话/API Key/IP 白名单，新增路由默认管理员。登录及携带 Cookie 的写请求必须带 `X-Requested-With: XMLHttpRequest`，跨站 Origin/Fetch-Site 拒绝。前端 fetch 包装器及 XHR 上传均添加该头；SSE/请求体不被中间件缓存。
+- `utils/auth_context.py` 将请求身份传至模型配置校验：Key/IP 调用方不能覆盖 `model_config` 的 `base_url/api_key`（含别名），避免继承的服务器密钥被转发；其余模型/采样参数保留。无限 `/log/stream` 在会话失效后发送 `auth_required` 并结束。
+- 设置中的「接口访问控制」对应 `/settings/access`，仅管理员可管理 API Key（随机生成、完整值只展示一次、仅 SHA256 哈希落 YAML、禁用/重生成/删除/有效期）和 IPv4/IPv6/CIDR 白名单（不限来源端口）。`access_control` 不在普通配置 API 开放组中；管理服务共用 SettingsService 的版本锁与原子写入。
+- 可信代理仅在 `access_control.trusted_proxies` 配置，逐跳剥离 X-Forwarded-For；Uvicorn 必须禁用自身 proxy headers（`python app.py` 已关闭，CLI 带 `--no-proxy-headers`）。`/health` 公开且仅返回存活状态，Docker 健康检查不再访问受保护的 `/docs`。
 - The UI/API allowlists `mineru`, `chunking`, `embedding`, `extraction`, `table_name_validation`, `analysis`, `vl_model`, `web_search`, and `storage`. `embedding` only permits `base_url`, `api_key`, and `model_name`; MySQL, Milvus, server, settings, unknown and read-only fields are rejected.
 - Secrets are write-only: reads return only `{configured: bool}` and updates use explicit keep/replace/clear operations. `service/settings_service.py` validates the complete Pydantic config, preserves YAML comments/order with ruamel.yaml, atomically replaces the single config file, then swaps the in-memory config snapshot and VL semaphore. New calls see the new config; in-flight work is not forced to switch.
 - Runtime sessions/config swaps assume the current single-worker deployment. Manual YAML edits are loaded on restart, not watched automatically.

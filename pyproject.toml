@@ -23,6 +23,7 @@ dependencies = [
     "pymupdf>=1.24.0",
     "pillow>=10.0.0",
     "ruamel-yaml>=0.18,<0.19",
+    "argon2-cffi>=25.1.0",
 ]
 
 [dependency-groups]

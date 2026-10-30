@@ -222,7 +222,7 @@ PDF 上传
 | Swagger UI | `GET /docs` |
 | OpenAPI JSON | 运行服务可暴露 FastAPI OpenAPI schema；本文档已把当前接口结构和业务说明写入正文 |
 | 前端页面 | `GET /ui` |
-| 鉴权 | 当前源码未实现应用层鉴权，默认面向内网部署；外网暴露需在网关层补鉴权、限流、审计 |
+| 鉴权 | 后台/管理接口使用管理员会话；业务接口支持会话、API Key 或 IP/CIDR 白名单。完整配置和新接口见 [登录与接口访问控制](api/auth.md) |
 | JSON 编码 | UTF-8，接口消息、字段名、日志和错误文本大量使用中文 |
 
 ### 1.2 通用响应信封
@@ -3361,7 +3361,7 @@ curl -X POST http://localhost:5019/search \
 
 ### 8.1 `POST /settings/login` 管理员登录
 
-使用密码进行管理员认证。
+兼容登录路径，推荐 `/auth/login`；使用账号和密码进行管理员认证，须携带 `X-Requested-With: XMLHttpRequest`。
 
 | 项 | 说明 |
 |---|---|
@@ -3376,11 +3376,12 @@ curl -X POST http://localhost:5019/search \
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|:--:|---|
 | `password` | string | 是 | 管理员密码 |
+| `username` | string | 是 | 管理员账号，默认 admin |
 
 **说明：**
 
-- 密码在 `configs/config.yaml` 的 `settings.password` 中配置（明文）
-- 配置为空字符串时禁用登录保护
+- 账号与密码哈希在 `configs/config.yaml` 的 `settings.username/password_hash` 中配置；旧明文密码启动时自动迁移
+- 未配置密码时禁止登录，接口仍然受保护
 - 会话默认 30 分钟，使用 HttpOnly + SameSite=Strict Cookie
 - 会话存储在单进程内存中，重启后失效
 - 密码错误返回 401
@@ -3388,7 +3389,7 @@ curl -X POST http://localhost:5019/search \
 请求示例：
 
 ```bash
-curl -X POST "http://localhost:5019/settings/login"   -H "Content-Type: application/json"   -d '{"password": "your_admin_password"}'
+curl -X POST "http://localhost:5019/auth/login" -H "Content-Type: application/json" -H "X-Requested-With: XMLHttpRequest" -c cookies.txt -d '{"username": "admin", "password": "your_admin_password"}'
 ```
 
 ---

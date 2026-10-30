@@ -802,8 +802,8 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "post": {
             "summary": "设置页登录",
             "description": (
-                "校验管理员密码，成功后写入 `settings_session` Cookie"
-                "（HttpOnly、SameSite=strict、`path=/settings`，有效期 `settings.session_minutes` 分钟）。\n\n"
+                "兼容登录路径，推荐使用 `/auth/login`。校验管理员账号和密码，成功后写入 `xijuan_session` Cookie"
+                "（HttpOnly、SameSite=strict、`path=/`，有效期 `settings.session_minutes` 分钟）。\n\n"
                 "**错误码**：401（密码错误）/ 429（登录尝试过于频繁，按客户端 IP 限流）。"
             ),
         }
@@ -845,7 +845,7 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "/settings/logout": {
         "post": {
             "summary": "退出设置页",
-            "description": "吊销当前会话令牌并清除 `settings_session` Cookie。重复调用不报错。",
+            "description": "吊销当前会话令牌并清除 `xijuan_session` Cookie；会话已失效时返回 401。",
         }
     },
     "/log/files": {
@@ -2075,6 +2075,8 @@ def enrich(schema: Dict[str, Any]) -> Dict[str, Any]:
 
     # schema 级丰富
     _apply_schema_docs(schema)
+    from utils.auth_openapi import apply_auth_schema
+    covered.update(apply_auth_schema(schema))
 
     # 覆盖率自检：列出未被 ENRICHMENTS 覆盖的 operation
     missing = []

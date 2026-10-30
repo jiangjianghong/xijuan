@@ -21,7 +21,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
     healthcheck:
-      test: ["CMD", "/opt/venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5019/docs', timeout=5).close()"]
+      test: ["CMD", "/opt/venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5019/health', timeout=5).close()"]
       interval: 30s
       timeout: 10s
       retries: 3

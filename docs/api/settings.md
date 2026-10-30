@@ -2,7 +2,9 @@
 
 > 对应服务版本 0.3.0
 
-设置页的运行时配置读写接口。受**管理员短期会话**保护：先 `POST /settings/login` 拿到 `settings_session` Cookie，再访问配置接口。
+设置页的运行时配置读写接口。受**管理员短期会话**保护：先 `POST /settings/login` 拿到 `xijuan_session` Cookie，再访问配置接口。
+
+登录及会话写请求必须带 `X-Requested-With: XMLHttpRequest`。Key 与 IP 白名单不能访问本页管理接口，详见 [登录与接口访问控制](auth.md)。
 
 配置项含义见 [guides/configuration.md](../guides/configuration.md)。
 
@@ -10,8 +12,8 @@
 
 | 属性 | 值 |
 |---|---|
-| 名称 | `settings_session` |
-| 作用域 | `path=/settings` |
+| 名称 | `xijuan_session` |
+| 作用域 | `path=/` |
 | 标志 | `HttpOnly`、`SameSite=strict`、`Secure` 由 `settings.secure_cookie` 控制 |
 | 有效期 | `settings.session_minutes` 分钟 |
 
@@ -19,7 +21,7 @@
 
 ## 设置页登录
 
-校验管理员密码并下发会话 Cookie。
+兼容登录路径；推荐使用 `/auth/login`。校验管理员账号和密码并下发会话 Cookie。
 
 - 方法路径：`POST /settings/login`
 - 认证：无（本接口即认证入口）
@@ -29,6 +31,7 @@
 <!-- AUTOGEN:request-body POST /settings/login -->
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
+| username | string | 是 | — |  |
 | password | string | 是 | — |  |
 <!-- /AUTOGEN:request-body -->
 
@@ -37,8 +40,9 @@
 ```bash
 curl -X POST http://localhost:5019/settings/login \
   -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
   -c /tmp/settings_cookie.txt \
-  -d '{"password": "your-admin-password"}'
+  -d '{"username": "admin", "password": "your-admin-password"}'
 ```
 
 **响应体**
@@ -91,7 +95,7 @@ curl -X POST http://localhost:5019/settings/login \
 返回可在设置页编辑的配置分组及当前值。
 
 - 方法路径：`GET /settings/config`
-- 认证：需要 `settings_session` Cookie
+- 认证：需要 `xijuan_session` Cookie
 
 > **密钥不返回明文**：`SECRET_PATHS` 覆盖的字段（各模型与网络搜索的 `api_key`）一律呈现为 `{"configured": true|false}`，只告知是否已配置。
 
@@ -142,7 +146,7 @@ curl -b /tmp/settings_cookie.txt http://localhost:5019/settings/config
 按分组增量更新配置，**立即生效**并写回 `configs/config.yaml`。
 
 - 方法路径：`PATCH /settings/config`
-- 认证：需要 `settings_session` Cookie
+- 认证：需要 `xijuan_session` Cookie
 
 > **乐观锁**：`base_version` 必须等于最近一次 `GET /settings/config` 返回的 `version`。他人在此期间改过配置则返回 409，前端需重新拉取后再提交。
 
@@ -172,6 +176,7 @@ curl -b /tmp/settings_cookie.txt http://localhost:5019/settings/config
 ```bash
 curl -X PATCH http://localhost:5019/settings/config \
   -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
   -b /tmp/settings_cookie.txt \
   -d '{
         "base_version": "9f2c...",
@@ -217,7 +222,7 @@ curl -X PATCH http://localhost:5019/settings/config \
 吊销会话令牌并清除 Cookie。
 
 - 方法路径：`POST /settings/logout`
-- 认证：无（无有效 Cookie 时也返回 200，重复调用不报错）
+- 认证：管理员会话；无有效 Cookie 时返回 401
 
 **响应体**
 

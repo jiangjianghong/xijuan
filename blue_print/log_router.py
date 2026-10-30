@@ -190,20 +190,37 @@ async def stream_logs(
     follow_latest = not file
 
     async def event_generator():
+        from service.settings_auth_service import settings_auth
+        from utils.auth_middleware import COOKIE_NAME
+
+        def session_valid():
+            # 主应用统一鉴权后，持续的管理员日志流也须跟随会话失效。
+            return (getattr(request.state, "auth_identity", None) != "admin"
+                    or settings_auth.validate(request.cookies.get(COOKIE_NAME)))
+
         path = initial_path
         position = 0
         last_heartbeat = time.monotonic()
 
+        if not session_valid():
+            yield _sse_event("auth_required", {"message": "登录已过期"})
+            return
         if path is None:
             yield _sse_event("ready", {"file": None, "message": "暂无日志文件"})
         else:
             yield _sse_event("ready", {"file": path.name, "message": "日志连接已建立"})
             for line in _tail_lines(path, _clamp_tail_lines(tail)):
+                if not session_valid():
+                    yield _sse_event("auth_required", {"message": "登录已过期"})
+                    return
                 if _match_level(line, level_filter):
                     yield _sse_event("line", _line_payload(path, line))
             position = path.stat().st_size
 
         while not await request.is_disconnected():
+            if not session_valid():
+                yield _sse_event("auth_required", {"message": "登录已过期"})
+                return
             if follow_latest:
                 latest = _latest_log_file()
                 if latest != path:
@@ -220,6 +237,9 @@ async def stream_logs(
                 with path.open("r", encoding="utf-8", errors="replace") as fh:
                     fh.seek(position)
                     while True:
+                        if not session_valid():
+                            yield _sse_event("auth_required", {"message": "登录已过期"})
+                            return
                         line = fh.readline()
                         if not line:
                             break

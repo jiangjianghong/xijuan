@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -18,6 +18,8 @@ from service.init_service import run_init
 from service.retention_service import retention_loop
 from service.runtime_monitor_service import sampler_loop
 from utils.config import get_config
+from utils.auth_middleware import AuthMiddleware
+from service.access_control_service import AccessControlService
 from utils.openapi_enrich import enrich, get_version
 
 import logs  # noqa: F401  初始化日志配置
@@ -42,6 +44,7 @@ def _log_startup_banner() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化，关闭时清理。"""
+    await asyncio.to_thread(AccessControlService().migrate_admin_password)
     with log_context(type_id="system", file_id="startup"):
         _log_startup_banner()
         await run_init()
@@ -64,12 +67,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="析卷 AI", version=get_version(), lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(AuthMiddleware)
 
 register_routers(app)
 
@@ -85,8 +83,30 @@ def _custom_openapi():
 
 app.openapi = _custom_openapi
 
+# 登录入口必须先于静态目录注册，公开地址不暴露文件扩展名。
+@app.api_route("/ui/login", methods=["GET", "HEAD"], include_in_schema=False)
+async def login_page():
+    return FileResponse(Path(__file__).resolve().parent / "ui" / "login.html")
+
+
+@app.api_route("/ui/login/", methods=["GET", "HEAD"], include_in_schema=False)
+@app.api_route("/ui/login.html", methods=["GET", "HEAD"], include_in_schema=False)
+async def legacy_login_page():
+    return RedirectResponse("/ui/login", status_code=303)
+
+
 # 挂载静态文件服务
 app.mount("/ui", StaticFiles(directory="ui", html=True), name="ui")
+
+
+@app.get("/health", include_in_schema=False)
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/", include_in_schema=False)
+async def index():
+    return RedirectResponse("/ui/")
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -96,4 +116,5 @@ async def _favicon():
 
 if __name__ == "__main__":
     cfg = get_config().server
-    uvicorn.run("app:app", host=cfg.host, port=cfg.port)
+    # 原始对端地址由鉴权中间件按 trusted_proxies 自行处理。
+    uvicorn.run("app:app", host=cfg.host, port=cfg.port, proxy_headers=False)

@@ -11,6 +11,7 @@ import yaml
 from loguru import logger
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from utils.auth_config import AccessControlConfig
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "configs"
 _DEFAULT_CONFIG_PATH = _CONFIG_DIR / "config.yaml"
@@ -317,6 +318,9 @@ class StorageConfig(BaseModel):
 
 
 class SettingsSecurityConfig(BaseModel):
+    username: str = Field("admin", min_length=1, max_length=80)
+    password_hash: str = ""
+    # 兼容旧配置，启动后自动转为 Argon2id 哈希并清除明文。
     password: str = ""
     session_minutes: int = Field(30, ge=1)
     secure_cookie: bool = False
@@ -344,6 +348,7 @@ class AppConfig(BaseSettings):
     callback: CallbackConfig = CallbackConfig()
     storage: StorageConfig = StorageConfig()
     settings: SettingsSecurityConfig = SettingsSecurityConfig()
+    access_control: AccessControlConfig = AccessControlConfig()
 
     @model_validator(mode="before")
     @classmethod

@@ -479,7 +479,7 @@ const App = {
                         <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="App.toggleSelect('${item.file_id}', this.checked)">
                     </td>
                     <td class="col-name" onclick="App.openDrawer('${item.file_id}')">
-                        <span class="file-name-cell" title="${item.file_name}">${item.file_name}</span>
+                        <span class="file-name-cell" title="${Utils.escapeHtml(item.file_name)}">${Utils.escapeHtml(item.file_name)}</span>
                     </td>
                     <td class="col-size">${Utils.formatFileSize(item.file_size)}</td>
                     <td class="col-time">${Utils.formatDateTime(item.create_time)}</td>

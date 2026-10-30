@@ -21,14 +21,16 @@ from service.settings_service import (
     SettingsService,
 )
 from utils.config import get_config
+from utils.auth_middleware import COOKIE_NAME, client_ip
 
 
 router = APIRouter(prefix="/settings", tags=["系统设置"])
-COOKIE_NAME = "settings_session"
+auth_router = APIRouter(prefix="/auth", tags=["管理员登录"])
 
 
 class LoginRequest(BaseModel):
-    password: str
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=1024)
 
 
 class SecretOperation(BaseModel):
@@ -55,7 +57,7 @@ def get_settings_auth() -> SettingsAuthService:
 
 
 def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    return client_ip(request)
 
 
 def require_settings_session(
@@ -67,21 +69,24 @@ def require_settings_session(
     return settings_session or ""
 
 
-@router.post("/login", response_model=ResponseWrapper)
-async def login(
+@auth_router.post("/login", response_model=ResponseWrapper)
+@router.post("/login", response_model=ResponseWrapper, deprecated=True)
+def login(
     payload: LoginRequest,
     request: Request,
     response: Response,
     auth: SettingsAuthService = Depends(get_settings_auth),
 ):
     try:
-        token = auth.authenticate(payload.password, _client_ip(request))
+        token = auth.authenticate(payload.password, _client_ip(request), payload.username)
     except LoginRateLimitedError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     cfg = get_config().settings
+    auth.revoke(request.cookies.get(COOKIE_NAME))
+    response.headers["Cache-Control"] = "no-store"
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
@@ -89,12 +94,13 @@ async def login(
         httponly=True,
         secure=cfg.secure_cookie,
         samesite="strict",
-        path="/settings",
+        path="/",
     )
     return ResponseWrapper(message="登录成功", data={"authenticated": True})
 
 
-@router.get("/session", response_model=ResponseWrapper)
+@auth_router.get("/session", response_model=ResponseWrapper)
+@router.get("/session", response_model=ResponseWrapper, deprecated=True)
 async def session_status(
     settings_session: str | None = Cookie(default=None, alias=COOKIE_NAME),
     auth: SettingsAuthService = Depends(get_settings_auth),
@@ -138,12 +144,14 @@ async def update_config(
     return ResponseWrapper(message="配置已保存并即时生效", data=data)
 
 
-@router.post("/logout", response_model=ResponseWrapper)
+@auth_router.post("/logout", response_model=ResponseWrapper)
+@router.post("/logout", response_model=ResponseWrapper, deprecated=True)
 async def logout(
     response: Response,
     settings_session: str | None = Cookie(default=None, alias=COOKIE_NAME),
     auth: SettingsAuthService = Depends(get_settings_auth),
 ):
     auth.revoke(settings_session)
-    response.delete_cookie(key=COOKIE_NAME, path="/settings", samesite="strict")
-    return ResponseWrapper(message="已退出设置", data={"authenticated": False})
+    response.delete_cookie(key=COOKIE_NAME, path="/", samesite="strict")
+    response.delete_cookie(key="settings_session", path="/settings", samesite="strict")
+    return ResponseWrapper(message="已退出登录", data={"authenticated": False})

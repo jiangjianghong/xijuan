@@ -8,6 +8,7 @@ import json
 import os
 import secrets
 import tempfile
+from datetime import date, datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any, Mapping, MutableMapping
@@ -86,6 +87,8 @@ class ConfigWriteError(SettingsError):
 
 
 def _to_plain(value: Any) -> Any:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
     if isinstance(value, Mapping):
         return {str(key): _to_plain(item) for key, item in value.items()}
     if isinstance(value, list):

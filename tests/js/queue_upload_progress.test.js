@@ -97,6 +97,9 @@ test('uploadFileAsync reports real XHR upload progress and resolves JSON', async
             this.method = method;
             this.url = url;
         }
+        setRequestHeader(name, value) {
+            this.headers = { ...this.headers, [name]: value };
+        }
         send(body) {
             this.body = body;
             this.upload.onprogress({ lengthComputable: true, loaded: 25, total: 100 });
@@ -134,6 +137,7 @@ test('uploadFileAsync reports real XHR upload progress and resolves JSON', async
     assert.deepEqual(progress, [25, 100]);
     assert.equal(result.data.file_id, 'file-1');
     assert.equal(instances[0].method, 'POST');
+    assert.equal(instances[0].headers['X-Requested-With'], 'XMLHttpRequest');
     assert.equal(instances[0].url, '/file/parse?mode=async&type_id=contract%20type');
     assert.equal(instances[0].body.entry[0], 'file');
 });
@@ -142,6 +146,7 @@ test('uploadFileAsync surfaces backend detail from failed XHR response', async (
     class FailedXHR {
         constructor() { this.upload = {}; }
         open() {}
+        setRequestHeader() {}
         send() {
             this.status = 413;
             this.responseText = JSON.stringify({ detail: '文件过大' });

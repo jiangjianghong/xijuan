@@ -9,7 +9,7 @@
 列出文档类型，每项附 `file_count` / `field_count` / `rule_count` 计数。
 
 - 方法路径：`GET /doctype/list`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **查询参数**
 
@@ -59,7 +59,7 @@ _data 为数组，每个元素：_
 按 `type_id` upsert。新建时 `is_default` 固定 0；更新时只改 `type_name` / `description` / `enabled`，保留 `is_default`。`is_template` / `parent_type_id` 不经本接口设置。
 
 - 方法路径：`POST /doctype`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**
@@ -107,7 +107,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 更新基础配置（`type_name` / `description` / `max_parse_pages` / `enable_embedding` / `enabled`）。`project_id` 更新时忽略。请求体 `type_id` 与路径不同即**改名并级联**（把该类型下 `files` / `extraction_field` / `analysis_rule` 的 `type_id`、子类型的 `parent_type_id` 全部改到新值）。
 
 - 方法路径：`PUT /doctype/{type_id}`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **路径参数**
@@ -160,7 +160,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 **默认类型不可删**。非默认类型有关联数据时：不传 `force` → 409 + 数量提示；`force=true` → 级联删除文件、`file_content/table/chunk`、结果、Milvus 向量、PDF、字段、规则。
 
 - 方法路径：`DELETE /doctype/{type_id}`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -203,7 +203,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 对 `type_ids` 逐条复用单删逻辑，**单条失败不中断**，最后一次性提交。
 
 - 方法路径：`POST /doctype/batch_delete`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**
@@ -235,7 +235,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 把源类型字段 + 规则复制到当前 `type_id`，生成全新 ID 的**独立副本**。规则 `depend_fields` 按源 `field_id` 重映射到新副本 ID；未一起复制的依赖记入 `missing_dependencies`。
 
 - 方法路径：`POST /doctype/{type_id}/copy_from`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **路径参数**
@@ -283,7 +283,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 把目标类型字段 + 规则序列化为可跨实例迁移的 JSON（规则依赖以 `field_name` 列表表达）。前端「只读查看配置」也复用本接口。
 
 - 方法路径：`GET /doctype/{type_id}/export`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -321,7 +321,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 返回该类型下提取字段与分析规则的条数与最近更新时间，供前端轮询判断配置是否被他人改动——多人协作时无需手动刷新页面。只查两个聚合值，比拉全量配置轻两个数量级，适合被高频轮询（前端默认 8 秒一次）。
 
 - 方法路径：`GET /doctype/{type_id}/config_version`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -369,7 +369,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 把 export 载荷导入目标类型。字段始终生成**新 `field_id`**；规则按 `depend_field_names` 在目标类型按字段名重映射。
 
 - 方法路径：`POST /doctype/import`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**
@@ -410,7 +410,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 把副本 / 普通类型标记为模板（`is_template=1`），保留 `parent_type_id` 血缘。
 
 - 方法路径：`POST /doctype/{type_id}/promote`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -441,7 +441,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 取消模板标记（`is_template=0`），不影响 `parent_type_id`。
 
 - 方法路径：`POST /doctype/{type_id}/demote`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -472,7 +472,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 列出该类型的入参清单。入参由调用方在提交解析时传入，在字段与规则配置里用 `<param>参数标识</param>` 引用 —— 这是继 `<search_result>`（文档内检索原文）、`<field_result>`（其它字段抽取结果）之后的第三类占位符，承载文档里没有、只有外部系统知道的信息（当前日期、申报年度等）。
 
 - 方法路径：`GET /doctype/{type_id}/params`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -501,7 +501,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 没有 `enabled` 开关 —— 参数不「执行」，定义了就用、不要了就删，不设中间态。
 
 - 方法路径：`POST /doctype/{type_id}/params`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -545,7 +545,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 引用关系是**现算**的（扫该类型全部字段与规则的占位符），没有落 `depend_params` 派生列 —— 派生列要在保存 / 复制 / 导入三处同步维护，而参数没有「决定执行顺序」那种刚需。
 
 - 方法路径：`DELETE /doctype/{type_id}/params/{param_key}`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -583,7 +583,7 @@ curl -X POST http://localhost:5019/doctype -H "Content-Type: application/json" \
 列出所有项目，每项附 `type_count`（该项目下类型数）。项目对「模板 + 其血缘下游」分类。
 
 - 方法路径：`GET /doctype/projects`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **响应体**
 
@@ -611,7 +611,7 @@ _data 为数组，每个元素：_
 按 `project_id` upsert。
 
 - 方法路径：`POST /doctype/projects`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**
@@ -644,7 +644,7 @@ _data 为数组，每个元素：_
 先把成员类型的 `project_id` 置空（变未分组），再删项目本身——**不删除任何类型**。
 
 - 方法路径：`DELETE /doctype/projects/{project_id}`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 
 **路径参数**
 
@@ -674,7 +674,7 @@ _data 为数组，每个元素：_
 把 `type_ids` 归入 `project_id`（`null` 表示移出）。**级联血缘**：每个类型的所有 `parent_type_id` 传递后代一并归入同一项目；默认类型跳过。
 
 - 方法路径：`POST /doctype/batch_assign_project`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**

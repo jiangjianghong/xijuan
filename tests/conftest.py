@@ -74,12 +74,22 @@ async def _dispose_engine_between_tests():
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
-    """异步 HTTP 测试客户端。"""
+async def client(monkeypatch) -> AsyncGenerator[AsyncClient, None]:
+    """既有业务回归使用真实管理员会话；匿名/程序权限由独立鉴权用例验证。"""
     from app import app
+    from service.settings_auth_service import settings_auth
+    from utils.auth_middleware import COOKIE_NAME
+
+    monkeypatch.setattr(settings_auth, "_password_provider", lambda: "test-session-password")
+    monkeypatch.setattr(settings_auth, "_password_hash_provider", lambda: "")
+    monkeypatch.setattr(settings_auth, "_username_provider", lambda: "test-admin")
+    token = settings_auth.authenticate("test-session-password", "test-client", "test-admin")
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers={"X-Requested-With": "XMLHttpRequest"},
+        cookies={COOKIE_NAME: token},
     ) as ac:
         yield ac
+    settings_auth.revoke(token)

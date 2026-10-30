@@ -54,6 +54,8 @@
     </script>
     <!-- Custom Styles (loaded after Tailwind for higher specificity) -->
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/auth.css">
+    <script src="js/auth.js"></script>
 </head>
 <body class="antialiased font-sans bg-sand text-bio-dark">
     <!-- Background Decorations -->
@@ -106,6 +108,7 @@
             <button class="btn btn-secondary settings-entry-btn" type="button" onclick="SettingsManager.open()" title="系统设置">
                 <i data-lucide="settings" class="w-4 h-4"></i><span>设置</span>
             </button>
+            <button class="btn btn-secondary" type="button" onclick="Auth.logout()" title="退出管理员登录">退出</button>
         </div>
     </header>
 
@@ -1178,16 +1181,18 @@
         <div class="rule-modal settings-login-modal">
             <div class="rule-modal-header">
                 <div>
-                    <h3 id="settings-login-title">系统设置验证</h3>
-                    <p>请输入管理员密码</p>
+                    <h3 id="settings-login-title">登录析卷 AI</h3>
+                    <p>会话已过期，请重新登录后继续操作</p>
                 </div>
                 <button class="rule-modal-close" type="button" onclick="SettingsManager.closeLogin()" aria-label="关闭">&times;</button>
             </div>
             <form id="settings-login-form" class="settings-login-form" onsubmit="SettingsManager.login(event)">
+                <label for="settings-username">管理员账号</label>
+                <input id="settings-username" class="form-input" name="username" autocomplete="username" value="admin" maxlength="80" required>
                 <label for="settings-password">管理员密码</label>
                 <div class="settings-password-row">
                     <input id="settings-password" class="form-input" type="password" autocomplete="current-password" required>
-                    <button class="btn btn-primary" type="submit" id="settings-login-submit">验证</button>
+                    <button class="btn btn-primary" type="submit" id="settings-login-submit">登录</button>
                 </div>
                 <p id="settings-login-error" class="settings-inline-error" role="alert"></p>
             </form>
@@ -1217,7 +1222,7 @@
                 </div>
                 <div class="settings-save-actions">
                     <button class="btn btn-secondary" type="button" onclick="SettingsManager.logout()">
-                        <i data-lucide="log-out" class="w-4 h-4"></i><span>退出设置</span>
+                        <i data-lucide="log-out" class="w-4 h-4"></i><span>退出登录</span>
                     </button>
                     <button class="btn btn-primary" type="submit" form="settings-form" id="settings-save-btn" disabled>
                         <i data-lucide="save" class="w-4 h-4"></i><span>保存修改</span>
@@ -1226,6 +1231,30 @@
             </div>
         </div>
     </div>
+
+    <template id="access-settings-template">
+        <div id="access-settings" class="access-settings">
+            <div class="access-tabs" role="group" aria-label="访问控制类型">
+                <button type="button" data-access-tab="keys" aria-pressed="true" onclick="AccessControl.select('keys')">API Key</button>
+                <button type="button" data-access-tab="allowlist" aria-pressed="false" onclick="AccessControl.select('allowlist')">IP 白名单</button>
+            </div>
+            <p class="access-note">本分组的创建、启停和删除操作即时生效，无需点击底部「保存修改」。</p>
+            <section id="access-key-panel" class="access-key-panel" aria-labelledby="access-key-title" hidden>
+                <h5 id="access-key-title">保存你的 API Key</h5>
+                <p>完整密钥仅显示这一次。离开设置或收起后无法再次查看，请妥善保存。</p>
+                <label for="access-key-value">完整密钥</label>
+                <input id="access-key-value" form="" readonly autocomplete="off" spellcheck="false">
+                <p id="access-copy-status" role="status"></p>
+                <div class="access-key-actions">
+                    <button type="button" class="access-row-action" onclick="AccessControl.copyKey()">复制密钥</button>
+                    <button type="button" class="auth-primary" onclick="AccessControl.clearKey()">我已保存，收起</button>
+                </div>
+            </section>
+            <p id="access-error" class="auth-error" role="alert" aria-live="polite"></p>
+            <div id="access-body" aria-live="polite"></div>
+            <p class="access-note">仅放行上传、查询、重试、搜索和独立分析等业务接口。系统设置、配置修改、删除和日志查看仍需管理员登录。</p>
+        </div>
+    </template>
 
     <script src="vendor/pdfjs/pdf.min.js"></script>
     <script>
@@ -1239,6 +1268,7 @@
     <script src="js/customSelect.js"></script>
     <script src="js/api.js"></script>
     <script src="js/settings.js"></script>
+    <script src="js/accessControl.js"></script>
     <script src="js/doctype.js"></script>
     <script src="js/schemaBuilder.js"></script>
     <script src="js/typeParams.js"></script>

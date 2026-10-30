@@ -127,6 +127,10 @@ const LogViewer = {
 
         this.setStatus('reconnecting', '连接中');
         this.source = new EventSource(`/log/stream?${params.toString()}`);
+        this.source.addEventListener('auth_required', () => {
+            this.disconnect();
+            if (typeof Auth !== 'undefined') Auth.lock();
+        });
         this.setConnectButton(true);
 
         this.source.addEventListener('ready', event => {

@@ -38,7 +38,7 @@ parsing → tableing → chunking → embedding → extracting → analyzing →
 
 ## 认证
 
-当前**无鉴权**（面向内网部署）。对外暴露时应在网关层加鉴权；外部集成方请与运维确认接入方式。本文档在各接口保留「认证」行以备后续启用。
+后台与管理接口需要管理员登录；业务接口允许会话、API Key 或 IP/CIDR 白名单。使用 `Authorization: Bearer <key>` 传递程序密钥。登录及使用会话的写请求必须带 `X-Requested-With: XMLHttpRequest`。具体范围和配置见 [登录与接口访问控制](auth.md)。
 
 ## 分页约定
 
@@ -60,6 +60,8 @@ parsing → tableing → chunking → embedding → extracting → analyzing →
 |---|---|---|
 | 200 | 成功（业务失败可能体现在 `code`） | ResponseWrapper |
 | 400 | 请求参数非法 / 业务前置校验失败 | ResponseWrapper 或 `{"detail": "..."}` |
+| 401 | 未登录、会话过期或程序凭证无效 | `{"detail": "..."}` |
+| 403 | 跨站请求、缺少安全请求头或无管理权限 | `{"detail": "..."}` |
 | 404 | 资源不存在 | ResponseWrapper 或 `{"detail": "..."}` |
 | 409 | 唯一性冲突（`field_id` / `rule_id` 被其它 `type_id` 占用） | ResponseWrapper |
 | 422 | 请求体 Pydantic 校验失败 | Pydantic 错误体 |

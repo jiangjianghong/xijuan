@@ -16,6 +16,7 @@
 - [API_FULL_REFERENCE](API_FULL_REFERENCE.md) — 当前项目接口与现有文档细节的单文件详尽手册，包含公共约定、参数表、请求示例、响应示例、错误条件、回调与 SSE 契约，并在文末完整汇编 `api/`、`guides/`、`reference/`、`architecture/` 与 backlog 文档。适合外部集成方或需要一次性通读项目文档全貌时使用。
 
 ### 参考层 · 接口参考（`api/`）
+- [auth](api/auth.md) — 管理员登录 · API Key · IP/CIDR 白名单 · 代理配置
 - [overview](api/overview.md) — 基础信息 · 通用响应信封 · 认证 · 分页约定 · 错误码总表 · 版本
 - [doctype](api/doctype.md) — `/doctype` 文档类型 / 项目 / 血缘 / 模板
 - [file](api/file.md) — `/file` 解析 / 列表 / 详情 / 重试 / 内容 / 结果 / PDF
@@ -43,7 +44,7 @@
 
 ## 接口总览
 
-共 59 个接口。下表由 `scripts/gen_doc_tables.py` 从 `docs/openapi.json` 生成，请勿手改。
+下表由 `scripts/gen_doc_tables.py` 从 `docs/openapi.json` 生成，请勿手改。
 
 <!-- AUTOGEN:endpoint-index -->
 | 方法 | 路径 | 分组 | 摘要 | 文档 |
@@ -56,6 +57,9 @@
 | GET | `/analysis/tasks/{task_id}` | 逻辑分析 | 查询独立分析异步任务 | [api/analysis.md](api/analysis.md) |
 | POST | `/analysis/test` | 逻辑分析 | 逻辑分析调试（同步） | [api/analysis.md](api/analysis.md) |
 | POST | `/analysis/test/stream` | 逻辑分析 | 逻辑分析流式调试（SSE） | [api/analysis.md](api/analysis.md) |
+| POST | `/auth/login` | 管理员登录 | 管理员登录 | [api/auth.md](api/auth.md) |
+| POST | `/auth/logout` | 管理员登录 | 退出管理员登录 | [api/auth.md](api/auth.md) |
+| GET | `/auth/session` | 管理员登录 | 查询管理员会话 | [api/auth.md](api/auth.md) |
 | POST | `/doctype` | 文档类型 | 新增/更新文档类型（upsert） | [api/doctype.md](api/doctype.md) |
 | POST | `/doctype/batch_assign_project` | 文档类型 | 批量归类到项目（级联血缘） | [api/doctype.md](api/doctype.md) |
 | POST | `/doctype/batch_delete` | 文档类型 | 批量删除文档类型 | [api/doctype.md](api/doctype.md) |
@@ -101,14 +105,20 @@
 | POST | `/file/{file_id}/retry/{stage}` | 文件处理 | 从指定阶段重试 | [api/file.md](api/file.md) |
 | GET | `/file/{file_id}/status` | 文件处理 | 查询文件处理进度 | [api/file.md](api/file.md) |
 | GET | `/file/{file_id}/tables` | 文件处理 | 文件表格列表 | [api/file.md](api/file.md) |
-| GET | `/invocations` | 其他 | List Invocations | [api/overview.md](api/overview.md) |
-| GET | `/invocations/{log_id}` | 其他 | Get Invocation | [api/overview.md](api/overview.md) |
-| GET | `/invocations/{log_id}/result.json` | 其他 | Download Invocation Result | [api/overview.md](api/overview.md) |
+| GET | `/invocations` | 调用日志 | List Invocations | [api/logs.md](api/logs.md) |
+| GET | `/invocations/{log_id}` | 调用日志 | Get Invocation | [api/logs.md](api/logs.md) |
+| GET | `/invocations/{log_id}/result.json` | 调用日志 | Download Invocation Result | [api/logs.md](api/logs.md) |
 | GET | `/log/files` | 日志 | 应用日志文件列表 | [api/logs.md](api/logs.md) |
 | GET | `/log/recent` | 日志 | 读取最近日志 | [api/logs.md](api/logs.md) |
 | GET | `/log/stream` | 日志 | 实时日志流（SSE） | [api/logs.md](api/logs.md) |
 | GET | `/runtime/concurrency` | 并发监控 | 并发运行时快照 | [api/runtime.md](api/runtime.md) |
 | POST | `/search` | 向量检索 | 向量相似度检索 | [api/search.md](api/search.md) |
+| GET | `/settings/access` | 接口访问控制 | 查看 API Key 与 IP 白名单 | [api/auth.md](api/auth.md) |
+| POST | `/settings/access/allowlist` | 接口访问控制 | 添加 IP/CIDR 白名单 | [api/auth.md](api/auth.md) |
+| POST | `/settings/access/keys` | 接口访问控制 | 创建 API Key（完整密钥仅展示一次） | [api/auth.md](api/auth.md) |
+| POST | `/settings/access/keys/{entry_id}/rotate` | 接口访问控制 | 重新生成 API Key（旧密钥立即失效） | [api/auth.md](api/auth.md) |
+| DELETE | `/settings/access/{kind}/{entry_id}` | 接口访问控制 | 删除访问条目 | [api/auth.md](api/auth.md) |
+| PATCH | `/settings/access/{kind}/{entry_id}` | 接口访问控制 | 启用或禁用访问条目 | [api/auth.md](api/auth.md) |
 | GET | `/settings/config` | 系统设置 | 读取运行时配置 | [api/settings.md](api/settings.md) |
 | PATCH | `/settings/config` | 系统设置 | 更新运行时配置 | [api/settings.md](api/settings.md) |
 | POST | `/settings/login` | 系统设置 | 设置页登录 | [api/settings.md](api/settings.md) |

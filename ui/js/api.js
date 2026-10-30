@@ -56,16 +56,16 @@ const API = {
 
     // ─── 系统运行时设置 ───
 
-    async settingsLogin(password) {
-        const result = await this.request('/settings/login', {
+    async settingsLogin(password, username) {
+        const result = await this.request('/auth/login', {
             method: 'POST',
-            body: JSON.stringify({ password }),
+            body: JSON.stringify({ username, password }),
         });
         return result.data;
     },
 
     async getSettingsSession() {
-        const result = await this.request('/settings/session');
+        const result = await this.request('/auth/session');
         return result.data;
     },
 
@@ -90,7 +90,7 @@ const API = {
     },
 
     async settingsLogout() {
-        const result = await this.request('/settings/logout', { method: 'POST' });
+        const result = await this.request('/auth/logout', { method: 'POST' });
         return result.data;
     },
 
@@ -190,6 +190,7 @@ const API = {
             const tid = encodeURIComponent(typeId || this.getCurrentTypeId());
             const xhr = new XMLHttpRequest();
             xhr.open('POST', `${this.baseUrl}/file/parse?mode=async&type_id=${tid}`);
+            xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
 
             xhr.upload.onprogress = event => {
                 if (typeof onProgress !== 'function') return;
@@ -199,6 +200,7 @@ const API = {
             };
 
             xhr.onload = () => {
+                if (xhr.status === 401 && typeof Auth !== 'undefined') Auth.lock();
                 let payload = {};
                 try {
                     payload = xhr.responseText ? JSON.parse(xhr.responseText) : {};

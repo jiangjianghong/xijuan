@@ -7,7 +7,7 @@
 将 `query` 经 embedding 向量化后在 Milvus 中检索，返回命中分块及 COSINE 相似度 `score`（越大越相似，取值约 [-1, 1]）。
 
 - 方法路径：`POST /search`
-- 认证：无（内网部署）
+- 认证：需要有效凭证；具体权限见 [登录与接口访问控制](auth.md#权限边界)
 - Content-Type：`application/json`
 
 **请求体**
