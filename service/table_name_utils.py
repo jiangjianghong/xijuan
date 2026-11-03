@@ -56,18 +56,8 @@ def _looks_like_invalid_candidate(name: str) -> bool:
     return False
 
 
-# 行首列表 / 章节序号：1、 一、 2. 3.2 （一） (2)
-# 括号形式自成序号，不要求后面再跟标点——「（一）本企业的母公司」这种常见格式
-# 否则抓不到。已知限制：「1.5 万吨/日规模」会被误判为序号，与章节号「3.2 财务测算」
-# 结构相同、纯规则无法区分；实测这类占比极低。
-_LIST_LEAD_RE = re.compile(
-    r"^\s*(?:[（(][0-9一二三四五六七八九十]{1,3}[)）]"
-    r"|(?:[0-9]{1,2}|[一二三四五六七八九十]{1,3})\s*[、.．)）])"
-)
-# 正文句长度阈值：超过它且不含表类型词，视为正文句而非表题
-_BODY_TEXT_MIN_LEN = 20
-# 表类型词。刻意不含单字「式」「单」——「方式」「单位」会误命中；
-# 长词在前只是可读性，判断用 in 与顺序无关。
+# 表题关键词只用于候选优先级，不再据此或按标点、编号、长度判废。
+# 不含单字「式」「单」，避免「方式」「单位」误命中。
 _TABLE_TYPE_WORDS = (
     "计算公式", "明细表", "统计表", "花名册", "一览表", "样表",
     "公式", "账单", "附表", "底册", "台账", "清单",
@@ -85,53 +75,24 @@ def _contains_table_type_word(name: str) -> bool:
     return any(w in (name or "") for w in _TABLE_TYPE_WORDS)
 
 
-def _looks_like_non_caption(name: str) -> bool:
-    """判断候选「不像表题」：纯日期 / 比例尺 / 公司名 / 列表序号 / 正文句。
-
-    刻意不按顿号「、」判废：工程文档表名大量用顿号并列（「构筑物、设备一览表」），
-    按顿号判废会误杀标准表题。全库 4295 条含顿号候选里，垃圾的真实特征是
-    「行首列表序号」（3622 条，如「1、货币资金」），顿号只是巧合同现。
-    """
-    s = (name or "").strip()
-    if not s:
-        return True
-    if re.fullmatch(r"\d{4}\s*年\s*\d{1,2}\s*月(\s*\d{1,2}\s*日)?", s):
-        return True
-    if re.fullmatch(r"\d+\s*[:：]\s*\d+", s):
-        return True
-    if s.endswith("公司"):
-        return True
-    if re.match(r"^第\s*[0-9一二三四五六七八九十百]+\s*章", s) and not _EXPLICIT_CAPTION_END_RE.search(s):
-        return True
-    if _LIST_LEAD_RE.match(s) and not _EXPLICIT_CAPTION_END_RE.search(s):
-        return True
-    if re.search(r"[。，；]", s):
-        return True
-    if len(s) >= _BODY_TEXT_MIN_LEN and not _contains_table_type_word(s):
-        return True
-    return False
-
-
 def _extract_last_line(preceding_text: str) -> str:
-    """回退：从表格上文由近及远找第一条合法行。
-
-    旧实现只取最后一行，而 MinerU 输出里表格紧邻的常常是图片语法或上一个表的
-    HTML 残片，取到就等于整条回退作废。
-    """
+    """优先取最近含表题关键词的文本行，否则取最近非空文本行。"""
     text = (preceding_text or "").rstrip()
     if not text:
         return ""
 
+    nearest_line = ""
     for line in reversed(text.splitlines()):
         candidate = _clean_text_line(line)
         if not candidate:
             continue
         if _looks_like_invalid_candidate(candidate):
             continue
-        if _looks_like_non_caption(candidate):
-            continue
-        return candidate
-    return ""
+        if not nearest_line:
+            nearest_line = candidate
+        if _contains_table_type_word(candidate):
+            return candidate
+    return nearest_line
 
 
 def _build_llm_context_text(preceding_text: str, max_lines: int = 3) -> str:
@@ -182,11 +143,7 @@ def _extract_table_header_name(table_content: str) -> str:
 
 
 def _is_unknown_table_name(name: str) -> bool:
-    """判断模型是否返回了"无法识别/未知"类占位结果。
-
-    除占位词表外，还叠加格式与语义两层硬过滤：公式 / 图片 / HTML 是结构性垃圾，
-    日期 / 比例尺 / 公司名 / 行首序号 / 正文句是语义垃圾，两类都触发回退。
-    """
+    """仅拦截未知占位结果和非文本结构，不按标点、编号或长度否决模型表名。"""
     cleaned = _clean_text_line(name).strip("`\"'[](){}（）【】")
     if not cleaned:
         return True
@@ -200,11 +157,7 @@ def _is_unknown_table_name(name: str) -> bool:
             return True
 
     # 格式硬过滤：对未剥括号的原始候选判断，避免 "![...]" 的括号被剥后漏判
-    if _looks_like_invalid_candidate(_clean_text_line(name)):
-        return True
-    # 语义硬过滤：日期 / 比例尺 / 公司名 / 行首序号 / 正文句
-    # 语义判断保留成对括号，避免破坏编号及表题末尾的人数、单位括注。
-    return _looks_like_non_caption(_clean_text_line(name))
+    return _looks_like_invalid_candidate(_clean_text_line(name))
 
 
 def _gap_has_title(gap_text: str) -> bool:

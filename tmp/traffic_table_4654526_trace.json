@@ -1,0 +1,77 @@
+{
+  "file": {
+    "file_id": "4654526cabd13ff54d83211ff6255473",
+    "file_name": "G9912合肥都市圈环线高速公路巢湖（烔炀）至肥西（丰乐）段项目建议书-报批稿-20261009.pdf",
+    "progress": "complete",
+    "create_time": "2026-11-02 17:49:46",
+    "start_tableing_time": "2026-11-03 10:41:15",
+    "end_tableing_time": "2026-11-03 10:43:26"
+  },
+  "table": {
+    "table_index": 1,
+    "table_name": "图 1.1.1-1 项目地理位置图",
+    "page_num": "12-13",
+    "start_pos": 6825,
+    "end_pos": 9977
+  },
+  "table_head": "<table><tr><td>特征年</td><td>路段</td><td>客车</td><td>货车</td><td>汽车</td></tr><tr><td rowspan=\"7\">2031年</td><td>起点-龙兴大道互通</td><td>11221</td><td>13176</td><td>24397</td></tr><tr><td>龙兴大道互通-桥头集路互通</td><td>10805</td><td>12960</td><td>23766</td></tr><tr><td>桥头",
+  "preceding_tail": "底建成通车。此外与合肥都市圈环线南环段连接的 S30 铜商高速巢湖至肥西段已开工建设。\n\n因此，为全面落实国家、交通运输部和省委省政府关于加快推进高速公路建设的重要政策的精神和合肥市委市政府提出的“1155”大交通计划，尽早实现合肥都市圈环线畅通“闭环”，加快推进本项目的前期工作是必要的也是迫切的。\n\n![](images/86f8abbdbe744a7b37b478a9913cd5ed6dbcdab6bbe608830acfc38be9e72bf8.jpg)\n\n<details>\n<summary>text_image</summary>\n\n长奉县\n市政府\n肥东县\n省政府\n肥西县\n本项目\n乡江县\n集城县\n</details>\n\n图 1.1.1-1 项目地理位置图\n\n# 1.1.2 交通量预测及技术标准\n\n# 1、交通量预测\n\n表 1.1.2-1 交通量预测最终结果（单位:辆/日，小客车）",
+  "llm_context": "# 1、交通量预测\n\n表 1.1.2-1 交通量预测最终结果（单位:辆/日，小客车）",
+  "expected": "表 1.1.2-1 交通量预测最终结果（单位:辆/日，小客车）",
+  "expected_rejected_by_ai_output_filter": true,
+  "local_fallback": "",
+  "header_fallback": "",
+  "full_preceding_fallback": "图 1.1.1-1 项目地理位置图",
+  "reverse_scan_trace": [
+    {
+      "line": "表 1.1.2-1 交通量预测最终结果（单位:辆/日，小客车）",
+      "cleaned": "表 1.1.2-1 交通量预测最终结果（单位:辆/日，小客车）",
+      "decision": "包含中文句读: ，"
+    },
+    {
+      "line": "",
+      "cleaned": "",
+      "decision": "空行"
+    },
+    {
+      "line": "# 1、交通量预测",
+      "cleaned": "1、交通量预测",
+      "decision": "章节/列表序号或其他非表题条件"
+    },
+    {
+      "line": "",
+      "cleaned": "",
+      "decision": "空行"
+    },
+    {
+      "line": "# 1.1.2 交通量预测及技术标准",
+      "cleaned": "1.1.2 交通量预测及技术标准",
+      "decision": "章节/列表序号或其他非表题条件"
+    },
+    {
+      "line": "",
+      "cleaned": "",
+      "decision": "空行"
+    },
+    {
+      "line": "图 1.1.1-1 项目地理位置图",
+      "cleaned": "图 1.1.1-1 项目地理位置图",
+      "decision": "通过，停止扫描"
+    }
+  ],
+  "replayed_with_current_code": [
+    {
+      "scenario": "正确标题",
+      "output": "图 1.1.1-1 项目地理位置图"
+    },
+    {
+      "scenario": "未知",
+      "output": "图 1.1.1-1 项目地理位置图"
+    },
+    {
+      "scenario": "调用异常",
+      "output": "图 1.1.1-1 项目地理位置图"
+    }
+  ],
+  "continuation_override_possible": false
+}

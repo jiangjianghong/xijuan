@@ -69,7 +69,7 @@ async def _extract_table_name_with_llm(
     fallback_name: str,
     table_content: str = "",
 ) -> str:
-    """调用 LLM 提取表名，失败时优先回退到局部上文或表内明确标题。"""
+    """调用 LLM 提取表名，失败时按局部关键词优先、最近文本行兜底。"""
     app_cfg = resolve_model_config(get_config())
     extraction_cfg = app_cfg.extraction
     table_name_cfg = app_cfg.table_name_validation
@@ -81,7 +81,7 @@ async def _extract_table_name_with_llm(
         context_text = context_text[-max_context_length:]
     # 只补充表格开头，供模型检查表内标题，避免大表占用过多上下文。
     table_head = table_content[:4000] or "(无)"
-    # 局部上文优先；没有合法候选时检查表内标题，最后才用旧规则候选。
+    # 局部先取最近含表题关键词的行，否则取最近文本行；无文本才检查表内标题。
     fallback_name = (
         _extract_table_name(context_text if context_text != "(无)" else "")
         or _extract_table_header_name(table_content)

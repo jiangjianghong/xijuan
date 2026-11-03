@@ -8,8 +8,8 @@ import service.table_service as parse_service
 
 
 @pytest.mark.anyio
-async def test_parse_tables_llm_failure_fallback_last_line(monkeypatch):
-    """LLM 失败时，严格回退到表格前最后一行。"""
+async def test_parse_tables_llm_failure_prefers_nearest_keyword_line(monkeypatch):
+    """LLM 失败时，优先表题而非更近的单位说明。"""
 
     async def _mock_chat_completion(*args, **kwargs):
         raise TimeoutError("mock timeout")
@@ -24,7 +24,7 @@ async def test_parse_tables_llm_failure_fallback_last_line(monkeypatch):
     tables = await parse_service.parse_tables(content, "file_x")
 
     assert len(tables) == 1
-    assert tables[0]["table_name"] == "单位：万元"
+    assert tables[0]["table_name"] == "（七）项目投资现金流量表"
 
 
 @pytest.mark.anyio
@@ -50,7 +50,7 @@ async def test_parse_tables_llm_can_override_last_line(monkeypatch):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("invalid_name", ["未知", "未找到明确标题", "无法提取"])
-async def test_parse_tables_llm_unknown_like_output_fallback_last_line(monkeypatch, invalid_name):
+async def test_parse_tables_llm_unknown_like_output_prefers_keyword_line(monkeypatch, invalid_name):
     """LLM 返回未知/失败类文案时，应触发规则回退。"""
 
     async def _mock_chat_completion(*args, **kwargs):
@@ -66,7 +66,7 @@ async def test_parse_tables_llm_unknown_like_output_fallback_last_line(monkeypat
     tables = await parse_service.parse_tables(content, "file_unknown")
 
     assert len(tables) == 1
-    assert tables[0]["table_name"] == "单位：万元"
+    assert tables[0]["table_name"] == "（七）项目投资现金流量表"
 
 
 @pytest.mark.anyio
@@ -89,7 +89,7 @@ async def test_parse_tables_llm_context_is_max_three_lines(monkeypatch):
 
     await parse_service.parse_tables(content, "file_z")
 
-    context = captured["prompt"].split("上文片段:\n", 1)[1]
+    context = captured["prompt"].split("上文片段:\n", 1)[1].split("\n\n表格开头片段", 1)[0]
     assert context == "第2行\n第3行\n第4行"
 
 
@@ -114,7 +114,7 @@ async def test_parse_tables_llm_context_uses_previous_table_end_segment(monkeypa
     await parse_service.parse_tables(content, "file_w")
 
     assert len(prompts) == 2  # 全量调用：每个表都调用一次 LLM
-    second_context = prompts[1].split("上文片段:\n", 1)[1]
+    second_context = prompts[1].split("上文片段:\n", 1)[1].split("\n\n表格开头片段", 1)[0]
     assert second_context == "单位：万元\n项目投资现金流量表"
 
 
@@ -122,9 +122,8 @@ async def test_parse_tables_llm_context_uses_previous_table_end_segment(monkeypa
 async def test_parse_tables_continuation_inherits_previous_name(monkeypatch):
     """相邻两表之间无标题时，第二张表沿用第一张的名字。
 
-    上文刻意只放一行「1、货币资金」（行首序号，会被语义过滤判废），
-    这样第二张表的规则回退取不到任何名字，唯一能让它有名字的路径就是续表继承——
-    否则本测试会因为「向上找合法行」恰好找到第一张表的标题而假绿。
+    上文只放「1、货币资金」，规则回退与第一张表的模型名称不同，
+    验证第二张表最终沿用第一张表的模型名称。
     """
 
     async def _mock_chat_completion(prompt: str, *args, **kwargs):

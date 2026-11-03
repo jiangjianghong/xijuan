@@ -1,6 +1,6 @@
 """表名规则纯函数的 case 表测试。
 
-case 全部来自 30 个真实文档 / 1718 张表的抽样，不是构造出来的。
+覆盖真实文档表题及关键词优先、最近文本行兜底的回归场景。
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from service.table_name_utils import (
     _is_same_page,
     _is_unknown_table_name,
     _looks_like_invalid_candidate,
-    _looks_like_non_caption,
     _resolve_continuation_names,
 )
 
@@ -78,8 +77,9 @@ def test_invalid_candidate_keeps_real_names(name):
         "",
     ],
 )
-def test_non_caption_rejects_semantic_garbage(name):
-    assert _looks_like_non_caption(name) is True
+def test_nearest_text_is_kept_without_semantic_filtering(name):
+    """无其他候选时，不因日期、编号、标点或长度丢弃最近文本。"""
+    assert _extract_table_name(name) == name
 
 
 @pytest.mark.parametrize(
@@ -100,8 +100,8 @@ def test_non_caption_rejects_semantic_garbage(name):
         "表 3-4 本项目特大桥梁、隧道车辆加收通行费标准一览表 单位",
     ],
 )
-def test_non_caption_keeps_real_captions(name):
-    assert _looks_like_non_caption(name) is False
+def test_nearest_caption_is_preserved(name):
+    assert _extract_table_name(name) == name
 
 
 @pytest.mark.parametrize("name", [
@@ -110,15 +110,14 @@ def test_non_caption_keeps_real_captions(name):
     "（一）投资估算表",
 ])
 def test_numbered_table_captions_are_not_discarded(name):
-    """章节编号不应让明确的表题被过滤并回退到远处章节名。"""
-    assert _looks_like_non_caption(name) is False
+    """带章节编号的表题应正常保留。"""
     assert _is_unknown_table_name(name) is False
     assert _extract_table_name("第7章 项目用工需求和劳务报酬测算\n" + name) == name
 
 
 @pytest.mark.parametrize("name", ["1、编制说明", "2. 表明项目可行", "1、请填写调查表。", "第6章 项目投融资与财务方案"])
-def test_numbered_prose_is_still_discarded(name):
-    assert _looks_like_non_caption(name) is True
+def test_model_result_is_not_rejected_for_numbering_or_punctuation(name):
+    assert _is_unknown_table_name(name) is False
 
 
 def test_extract_merged_first_row_caption():
@@ -146,15 +145,21 @@ def test_table_type_word_excludes_ambiguous_single_chars():
 
 @pytest.mark.parametrize(
     "name",
-    ["未知", "unknown", "无法提取", "未找到明确标题", "![](img/a.png)", "1、货币资金", "注：本表数据截止到年底。"],
+    ["未知", "unknown", "无法提取", "未找到明确标题", "![](img/a.png)", "<table></table>", r"\frac{a}{b}"],
 )
-def test_is_unknown_covers_placeholder_and_both_filters(name):
+def test_is_unknown_covers_placeholders_and_non_text_structures(name):
     assert _is_unknown_table_name(name) is True
 
 
 @pytest.mark.parametrize(
     "name",
-    ["表 3-4 一水厂现状构筑物、设备一览表", "投资估算表", "单位：万元"],
+    [
+        "表 3-4 一水厂现状构筑物、设备一览表", "投资估算表", "单位：万元",
+        "表 1.1.2-1 交通量预测最终结果（单位:辆/日，小客车）",
+        "1、货币资金", "注：本表数据截止到年底。", "2025年5月",
+        "编制单位：安徽全柴动力股份有限公司",
+        "甲乙双方根据相关法律法规的规定在平等自愿互利互惠的基础上订立本合同",
+    ],
 )
 def test_is_unknown_keeps_real_names(name):
     assert _is_unknown_table_name(name) is False
@@ -176,9 +181,25 @@ def test_extract_last_line_skips_garbage_and_walks_up():
     assert _extract_last_line(preceding) == "表 3-6 现状供水管道统计表"
 
 
-def test_extract_last_line_skips_list_lead_lines():
+def test_extract_last_line_uses_nearest_text_without_keywords():
     preceding = "涉税基本情况\n1、货币资金"
-    assert _extract_last_line(preceding) == "涉税基本情况"
+    assert _extract_last_line(preceding) == "1、货币资金"
+
+
+def test_extract_last_line_prefers_nearest_keyword_over_nearest_text():
+    preceding = "图 1 项目地理位置图\n# 投资估算表\n单位：万元\n2025年5月"
+    assert _extract_last_line(preceding) == "投资估算表"
+
+
+def test_extract_last_line_preserves_traffic_caption_with_comma():
+    title = "表 1.1.2-1 交通量预测最终结果（单位:辆/日，小客车）"
+    preceding = "图 1.1.1-1 项目地理位置图\n# 1.1.2 交通量预测及技术标准\n# 1、交通量预测\n" + title
+    assert _extract_last_line(preceding) == title
+
+
+def test_extract_last_line_ignores_keywords_inside_html_and_images():
+    preceding = "# 最近文本\n![](images/统计表.png)\n<table><tr><td>投资表</td></tr></table>"
+    assert _extract_last_line(preceding) == "最近文本"
 
 
 def test_extract_last_line_returns_empty_when_nothing_valid():
@@ -192,9 +213,9 @@ def test_extract_table_name_falls_back_to_empty_not_unknown():
     assert _extract_table_name("![](a.png)") == ""
 
 
-def test_extract_table_name_truncates_to_30_chars():
-    long_name = "现状供水管道统计表" * 5
-    assert len(_extract_table_name(long_name)) == 30
+def test_extract_table_name_truncates_to_200_chars():
+    long_name = "现状供水管道统计表" * 30
+    assert _extract_table_name(long_name) == long_name[:200]
 
 
 def test_gap_has_title_ignores_page_numbers_and_garbage():
