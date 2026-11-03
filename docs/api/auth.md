@@ -20,7 +20,7 @@ uv run uvicorn app:app --host 0.0.0.0 --port 5019 --no-proxy-headers
 
 打开 `/ui/` 会跳转登录页。账号配置为 `settings.username`，密码保存为 `settings.password_hash`（Argon2id）。旧版已填写的 `settings.password` 会在首次启动时自动转为哈希并删除明文，账号默认为 `admin`，原密码不变。未配置密码时拒绝登录，业务接口仍受保护。忘记密码时先停止服务，再运行上述交互命令，最后启动服务；配置锁仅在进程内生效，不能与运行中的设置页面同时写入。密码不接受命令行参数。
 
-HTTPS 部署设置 `settings.secure_cookie: true`。会话 Cookie 为 `xijuan_session`，`Path=/; HttpOnly; SameSite=Strict`，默认 30 分钟。会话保存在单 worker 内存中，重启、退出、过期后重新登录；登录会轮换当前令牌。账号或密码配置变化后旧会话失效。暂不支持多 worker 共享会话。
+HTTPS 部署设置 `settings.secure_cookie: true`。会话 Cookie 为 `xijuan_session`，`Path=/; HttpOnly; SameSite=Strict`，默认 300 分钟（5 小时）。通过 `configs/config.yaml` 的 `settings.session_minutes` 修改有效期（最小 1 分钟），重启服务并重新登录后生效；有效期从登录成功起固定计时，不随操作续期。会话保存在单 worker 内存中，重启、退出、过期后重新登录；登录会轮换当前令牌。账号或密码配置变化后旧会话失效。暂不支持多 worker 共享会话。
 
 登录和携带会话 Cookie 的写请求必须发送 `X-Requested-With: XMLHttpRequest`。前端自动附加；命令行使用 Cookie 调用时也需附加。跨站请求不开放 CORS，不能用 Origin/Referer 充当程序身份。
 

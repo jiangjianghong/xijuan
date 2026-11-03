@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from service.settings_auth_service import (
     AuthenticationError,
     LoginRateLimitedError,
     SettingsAuthService,
 )
+from utils.config import SettingsSecurityConfig
 
 
 @dataclass
@@ -50,6 +53,38 @@ def test_session_expires_after_configured_duration():
     assert service.validate(token) is True
     clock.advance(1)
     assert service.validate(token) is False
+
+
+@pytest.mark.parametrize(
+    ("configured_minutes", "expected_minutes"),
+    [(None, 300), (1, 1), (45, 45), (300, 300), (720, 720)],
+)
+def test_session_duration_uses_config_default_and_overrides(
+    monkeypatch, configured_minutes, expected_minutes
+):
+    settings_data = {"username": "admin", "password": "admin-password"}
+    if configured_minutes is not None:
+        settings_data["session_minutes"] = configured_minutes
+    settings = SettingsSecurityConfig(**settings_data)
+    monkeypatch.setattr(
+        "service.settings_auth_service.get_config",
+        lambda: SimpleNamespace(settings=settings),
+    )
+    clock = FakeClock()
+    service = SettingsAuthService(clock=clock)
+    token = service.authenticate("admin-password", "127.0.0.1", "admin")
+
+    assert settings.session_minutes == expected_minutes
+    clock.advance(expected_minutes * 60 - 1)
+    assert service.validate(token) is True
+    clock.advance(1)
+    assert service.validate(token) is False
+
+
+@pytest.mark.parametrize("minutes", [0, -1])
+def test_session_duration_rejects_non_positive_minutes(minutes):
+    with pytest.raises(ValidationError):
+        SettingsSecurityConfig(session_minutes=minutes)
 
 
 def test_revoke_invalidates_session():

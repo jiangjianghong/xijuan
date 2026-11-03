@@ -155,7 +155,7 @@ storage:
 settings:
   username: admin
   password_hash: ""                                    # 运行 python scripts/set_admin_password.py 生成 Argon2id 哈希
-  session_minutes: 30                                   # 登录会话有效期（分钟）
+  session_minutes: 300                                  # 登录会话有效期（分钟），默认 300（5 小时），最小 1
   secure_cookie: false                                  # HTTPS 部署时设为 true，启用 Secure Cookie
 
 # 设置 → 接口访问控制管理，保存后即时生效。Key 仅保存哈希，完整值仅创建时展示。

@@ -322,7 +322,7 @@ class SettingsSecurityConfig(BaseModel):
     password_hash: str = ""
     # 兼容旧配置，启动后自动转为 Argon2id 哈希并清除明文。
     password: str = ""
-    session_minutes: int = Field(30, ge=1)
+    session_minutes: int = Field(300, ge=1)  # 登录会话有效期（分钟），从登录成功起固定计时
     secure_cookie: bool = False
 
 

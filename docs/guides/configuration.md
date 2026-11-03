@@ -206,12 +206,20 @@
 |---|---|---|---|
 | `username` | 字符串 | `admin` | 管理员账号 |
 | `password_hash` | 字符串 | `""` | Argon2id 密码哈希；未配置时无法登录，接口仍然受保护 |
-| `session_minutes` | 整数 | `30` | 登录会话有效期（分钟） |
+| `session_minutes` | 整数 | `300` | 登录会话有效期（分钟），最小为 1；从登录成功起固定计时，不随操作续期 |
 | `secure_cookie` | 布尔 | `false` | HTTPS 部署时设为 `true`，为会话 Cookie 增加 `Secure` |
 
 设置页开放 `mineru`、`chunking`、`embedding`、`extraction`、`table_name_validation`、`analysis`、`vl_model`、`web_search`、`callback`、`storage` 和 `concurrency`。其中向量化只允许修改 `base_url`、`api_key`、`model`，其他参数只读；`server`、`mysql`、`milvus` 完全不返回且不能修改。
 
 API Key 只显示“已配置/未配置”，旧值不会返回浏览器。管理员可以明确选择保留、覆盖或清除密钥。保存使用同目录临时文件和原子替换，保留 YAML 注释、顺序和未开放配置；写盘成功后，新请求和新任务立即使用新配置，已运行任务不强制切换。
+
+登录超时通过 `configs/config.yaml` 的 `settings.session_minutes` 配置，默认 300 分钟（5 小时）；修改后重启服务并重新登录生效。例如：
+
+```yaml
+settings:
+  # 保留现有账号、密码哈希等设置
+  session_minutes: 300
+```
 
 当前会话和热配置引用均为单进程内存状态，因此运行服务必须保持单 worker。进程重启后设置会话失效；直接手工修改 YAML 仍需重启服务才能加载。
 

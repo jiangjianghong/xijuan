@@ -15,7 +15,7 @@
 | 名称 | `xijuan_session` |
 | 作用域 | `path=/` |
 | 标志 | `HttpOnly`、`SameSite=strict`、`Secure` 由 `settings.secure_cookie` 控制 |
-| 有效期 | `settings.session_minutes` 分钟 |
+| 有效期 | `settings.session_minutes` 分钟，默认 300（5 小时）；修改 YAML 后重启并重新登录生效 |
 
 浏览器请求需带 `credentials: 'include'`；curl 需用 `-c` / `-b` 保存并回传 cookie jar。
 

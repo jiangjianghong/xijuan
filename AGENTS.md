@@ -175,7 +175,7 @@ Config file: `configs/config.yaml`. Key sections: `server`, `mineru`, `chunking`
 
 ### Runtime Settings (`blue_print/settings_router.py`)
 - 登录页面公开地址为 `/ui/login`，旧 `.html` 地址自动跳转；接口访问控制及一次性密钥展示嵌入设置分组。反向代理改写 Host 时用 `access_control.allowed_origins` 配置精确的外部 HTTP(S) 来源，默认空；它只通过来源检查，不授予登录或业务权限，也不信任转发头。
-- 全站管理员登录：`POST /auth/login`（`username/password`），`GET /auth/session`，`POST /auth/logout`；旧 `/settings/login|session|logout` 是兼容路径。账号固定在 `settings.username/password_hash`，启动时旧 `settings.password` 自动迁移为 Argon2id 哈希。无凭证时拒绝登录，绝不匿名放行。Cookie `xijuan_session`，Path=/，HttpOnly/SameSite=Strict，默认 30 分钟，单进程内存保存；登录轮换、退出、过期及凭证变更均使旧会话失效。
+- 全站管理员登录：`POST /auth/login`（`username/password`），`GET /auth/session`，`POST /auth/logout`；旧 `/settings/login|session|logout` 是兼容路径。账号固定在 `settings.username/password_hash`，启动时旧 `settings.password` 自动迁移为 Argon2id 哈希。无凭证时拒绝登录，绝不匿名放行。Cookie `xijuan_session`，Path=/，HttpOnly/SameSite=Strict，有效期通过 `settings.session_minutes` 配置，默认 300 分钟（5 小时），从登录成功起固定计时；修改 YAML 后重启并重新登录生效。会话为单进程内存保存；登录轮换、退出、过期及凭证变更均使旧会话失效。
 - `utils/auth_middleware.py` 统一保护后台及全部 API；所有受保护接口统一允许管理员会话/API Key/IP 白名单，包含规则配置、删除、日志、系统设置及 Key 管理；新增路由沿用统一鉴权。登录及携带 Cookie 的写请求必须带 `X-Requested-With: XMLHttpRequest`，跨站 Origin/Fetch-Site 拒绝。前端 fetch 包装器及 XHR 上传均添加该头；SSE/请求体不被中间件缓存。
 - `utils/auth_context.py` 记录请求身份；会话/Key/IP 按相同字段规则覆盖 `model_config`（含 `base_url/api_key` 及别名）。无限 `/log/stream` 在会话失效、Key 撤销/过期或 IP 白名单撤销后发送 `auth_required` 并结束。
 - 设置中的「接口访问控制」对应 `/settings/access`，管理员会话、API Key 或 IP 白名单均可管理 API Key（随机生成、完整值只展示一次、仅 SHA256 哈希落 YAML、禁用/重生成/删除/有效期）和 IPv4/IPv6/CIDR 白名单（不限来源端口）。`access_control` 不在普通配置 API 开放组中；管理服务共用 SettingsService 的版本锁与原子写入。

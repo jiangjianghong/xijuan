@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -13,6 +14,8 @@ from blue_print.settings_router import (
 )
 from service.settings_auth_service import SettingsAuthService
 from service.settings_service import SettingsService
+from utils import config as config_module
+from utils.config import AppConfig
 
 
 ROUTER_CONFIG = """\
@@ -40,13 +43,25 @@ settings:
 
 
 @pytest.fixture
-def router_dependencies(tmp_path: Path):
+def session_minutes():
+    return 30
+
+
+@pytest.fixture
+def router_dependencies(tmp_path: Path, monkeypatch, session_minutes):
+    config_data = yaml.safe_load(ROUTER_CONFIG)
+    if session_minutes is None:
+        config_data["settings"].pop("session_minutes")
+    else:
+        config_data["settings"]["session_minutes"] = session_minutes
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(ROUTER_CONFIG, encoding="utf-8")
+    config_path.write_text(yaml.safe_dump(config_data), encoding="utf-8")
+    config = AppConfig.model_validate(config_data)
+    monkeypatch.setattr(config_module, "_current_config", config)
     settings_service = SettingsService(config_path)
     auth_service = SettingsAuthService(
         password_provider=lambda: "admin-password",
-        session_minutes_provider=lambda: 30,
+        session_minutes_provider=lambda: config.settings.session_minutes,
     )
     return settings_service, auth_service
 
@@ -68,7 +83,8 @@ async def login(client: AsyncClient, password: str = "admin-password"):
     return await client.post("/settings/login", json={"username": "admin", "password": password})
 
 
-async def test_login_sets_protected_session_cookie(settings_client: AsyncClient):
+@pytest.mark.parametrize("session_minutes", [None, 30, 45, 300])
+async def test_login_sets_protected_session_cookie(settings_client: AsyncClient, session_minutes):
     response = await login(settings_client)
 
     assert response.status_code == 200
@@ -77,7 +93,8 @@ async def test_login_sets_protected_session_cookie(settings_client: AsyncClient)
     assert "httponly" in cookie
     assert "samesite=strict" in cookie
     assert "path=/;" in cookie
-    assert "max-age=1800" in cookie
+    expected_minutes = 300 if session_minutes is None else session_minutes
+    assert f"max-age={expected_minutes * 60}" in cookie
 
 
 async def test_config_requires_valid_session(settings_client: AsyncClient):
