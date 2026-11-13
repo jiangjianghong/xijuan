@@ -2861,6 +2861,7 @@ const RuleConfig = {
     exitDebugMode() {
         this.state.debugMode = false;
         this.state.debugTestRunning = false;
+        this.disconnectDebugAutoScroll();
         this.state.ruleExtractionResults = [];
         this.state.debugUserScrolled = false;
         this.state.debugResultTargetId = null;
@@ -3057,6 +3058,7 @@ const RuleConfig = {
 
     setupDebugNavigation() {
         const scroller = document.getElementById('debug-scroll-container');
+        this.disconnectDebugAutoScroll();
         this.resetDebugNavigation();
         if (!scroller) return;
 
@@ -3073,6 +3075,46 @@ const RuleConfig = {
             if (event.clientX >= rect.right - 16) markIntent();
         });
         scroller.addEventListener('scroll', () => this.updateDebugNavigation(), { passive: true });
+
+        if (typeof MutationObserver !== 'undefined') {
+            this._debugScrollObserver = new MutationObserver(() => this.scheduleDebugAutoScroll());
+            this._debugScrollObserver.observe(scroller, {
+                childList: true,
+                subtree: true,
+                characterData: true,
+                attributes: true,
+                attributeFilter: ['style'],
+            });
+        }
+    },
+
+    scheduleDebugAutoScroll() {
+        if (!this.state.debugTestRunning || this.state.debugUserScrolled) return;
+        const scroller = document.getElementById('debug-scroll-container');
+        if (!scroller || this._debugScrollFrame != null) return;
+
+        const followLatest = () => {
+            this._debugScrollFrame = null;
+            if (!this.state.debugTestRunning || this.state.debugUserScrolled) return;
+            if (!scroller.isConnected) return;
+            scroller.scrollTop = scroller.scrollHeight;
+            this.updateDebugNavigation();
+        };
+
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+            this._debugScrollFrame = window.requestAnimationFrame(followLatest);
+        } else {
+            followLatest();
+        }
+    },
+
+    disconnectDebugAutoScroll() {
+        this._debugScrollObserver?.disconnect();
+        this._debugScrollObserver = null;
+        if (this._debugScrollFrame != null && typeof window !== 'undefined') {
+            window.cancelAnimationFrame?.(this._debugScrollFrame);
+        }
+        this._debugScrollFrame = null;
     },
 
     resetDebugNavigation() {

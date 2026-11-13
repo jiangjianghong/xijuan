@@ -7,12 +7,14 @@ const source = fs.readFileSync(path.join(__dirname, '../../ui/js/ruleConfig.js')
 
 function setup() {
   const dom = new JSDOM(`
-    <div id="debug-sec-prompt"><div id="debug-prompt-content"></div></div>
-    <div id="debug-sec-llm">
-      <div id="debug-llm-reasoning-section"><div id="debug-llm-reasoning"></div></div>
-      <div id="debug-llm-response"></div>
+    <div id="debug-scroll-container">
+      <div id="debug-sec-prompt"><div id="debug-prompt-content"></div></div>
+      <div id="debug-sec-llm">
+        <div id="debug-llm-reasoning-section"><div id="debug-llm-reasoning"></div></div>
+        <div id="debug-llm-response"></div>
+      </div>
+      <div id="debug-loading-area"></div>
     </div>
-    <div id="debug-loading-area"></div>
   `, { runScripts: 'dangerously' });
   const w = dom.window;
   w.Utils = {
@@ -51,4 +53,24 @@ test('analysis debug dispatches streamed model deltas', () => {
 
   assert.equal(w.document.getElementById('debug-llm-reasoning').textContent, 'checking');
   assert.equal(w.document.getElementById('debug-llm-response').textContent, '{"result":true}');
+});
+
+test('debug output follows new stages until the user scrolls away', async () => {
+  const { rc, w } = setup();
+  const scroller = w.document.getElementById('debug-scroll-container');
+  Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 900 });
+  Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 400 });
+  rc.state.debugTestRunning = true;
+  rc.setupDebugNavigation();
+
+  rc.handleDebugEvent({ event: 'llm_delta', data: { content: 'first stage' } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(scroller.scrollTop, 900);
+
+  rc.markDebugScrollIntent();
+  scroller.scrollTop = 120;
+  rc.handleDebugEvent({ event: 'llm_delta', data: { content: 'next stage' } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(scroller.scrollTop, 120);
+  rc.disconnectDebugAutoScroll();
 });
