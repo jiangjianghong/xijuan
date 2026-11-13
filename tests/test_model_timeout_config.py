@@ -64,7 +64,12 @@ def _record_chat_completion(monkeypatch, response: str):
         calls.append(kwargs)
         return response
 
+    async def fake_chat_completion_stream(prompt, **kwargs):
+        calls.append(kwargs)
+        yield {"type": "content", "content": response}
+
     monkeypatch.setattr(analysis_service, "chat_completion", fake_chat_completion)
+    monkeypatch.setattr(analysis_service, "chat_completion_stream_events", fake_chat_completion_stream)
     return calls
 
 
@@ -174,7 +179,7 @@ def _chat_completion_calls(module) -> list:
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "chat_completion"
+        and node.func.id in {"chat_completion", "chat_completion_stream_events"}
     ]
 
 

@@ -64,6 +64,9 @@ async def test_advanced_vector_multiline_reference_reaches_llm(monkeypatch, mode
     monkeypatch.setattr(svc, "search_vector_db", search)
     llm = AsyncMock(return_value='{"value":"村集体组织实施","reason":"原文","pages":[3]}')
     monkeypatch.setattr(svc, "chat_completion", llm)
+    async def llm_stream(*args, **kwargs):
+        yield {"type": "content", "content": await llm(*args, **kwargs)}
+    monkeypatch.setattr(svc, "chat_completion_stream_events", llm_stream)
 
     if mode == "stream":
         session = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(

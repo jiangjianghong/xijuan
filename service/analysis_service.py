@@ -29,7 +29,7 @@ from utils.concurrency import (
     unregister_task_limiter,
     work_item,
 )
-from utils.llm_client import chat_completion
+from utils.llm_client import chat_completion, chat_completion_stream_events
 from utils.output_schema import render_schema_prompt
 from utils.prompt_contract import REASON_FIRST_RESULT_CONSTRAINT, REASON_FIRST_VALUE_CONSTRAINT
 from utils.text_utils import normalize_cjk_quotes, salvage_reason, salvage_value_reason
@@ -978,19 +978,26 @@ async def test_rule_analysis_stream(
 
         # Step 4: 调用 LLM
         try:
+            parts = []
             if sys_prompt:
                 messages = [
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user_prompt},
                 ]
-                raw_response = await chat_completion(
-                    "", messages=messages, timeout=cfg.judge_timeout, config_group="analysis"
-                )
             else:
-                raw_response = await chat_completion(
-                    user_prompt, timeout=cfg.judge_timeout, config_group="analysis"
-                )
-            raw_response = raw_response.strip()
+                messages = None
+            async for part in chat_completion_stream_events(
+                "" if messages else user_prompt,
+                messages=messages,
+                timeout=cfg.judge_timeout,
+                config_group="analysis",
+            ):
+                if part["type"] == "reasoning":
+                    yield {"event": "llm_reasoning_delta", "data": {"content": part["content"]}}
+                else:
+                    parts.append(part["content"])
+                    yield {"event": "llm_delta", "data": {"content": part["content"]}}
+            raw_response = "".join(parts).strip()
 
             yield {
                 "event": "llm_response",
@@ -1094,19 +1101,26 @@ async def test_rule_analysis_stream(
 
         # Step 4: 调用 LLM
         try:
+            parts = []
             if sys_prompt:
                 messages = [
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user_prompt},
                 ]
-                raw_response = await chat_completion(
-                    "", messages=messages, timeout=cfg.judge_timeout, config_group="analysis"
-                )
             else:
-                raw_response = await chat_completion(
-                    user_prompt, timeout=cfg.judge_timeout, config_group="analysis"
-                )
-            raw_response = raw_response.strip()
+                messages = None
+            async for part in chat_completion_stream_events(
+                "" if messages else user_prompt,
+                messages=messages,
+                timeout=cfg.judge_timeout,
+                config_group="analysis",
+            ):
+                if part["type"] == "reasoning":
+                    yield {"event": "llm_reasoning_delta", "data": {"content": part["content"]}}
+                else:
+                    parts.append(part["content"])
+                    yield {"event": "llm_delta", "data": {"content": part["content"]}}
+            raw_response = "".join(parts).strip()
             yield {"event": "llm_response", "data": {"raw_response": raw_response}}
         except Exception as e:
             logger.error("规则调试 - custom LLM 调用失败: {}", e)

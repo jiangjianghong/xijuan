@@ -44,7 +44,7 @@ from utils.concurrency import (
     work_item,
 )
 from utils.errors import format_exception
-from utils.llm_client import chat_completion, get_embeddings
+from utils.llm_client import chat_completion, chat_completion_stream_events, get_embeddings
 from utils.empty_retry import retry_empty, retry_empty_stream, mark_retry_failure, retry_failure_boundary
 from utils.milvus_client import get_milvus_client
 from utils.page_mapping import (
@@ -2944,7 +2944,7 @@ def _hybrid_search_event(refs: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def _hybrid_extract_evidence(
-    field: ExtractionField, evidence: str, refs: Dict[str, Any],
+    field: ExtractionField, evidence: str, refs: Dict[str, Any], *, capture_debug: bool = False,
 ) -> AsyncIterator[Dict[str, Any]]:
     """统一证据注入和模型请求，事件中的提示词就是实际请求内容。"""
     refs["_texts"] = {"混合检索结果": evidence} if evidence else {}
@@ -2957,11 +2957,26 @@ async def _hybrid_extract_evidence(
     system_prompt = (field.text_system_prompt or field.table_system_prompt or "").strip()
     yield {"event": "prompt", "data": {"system_prompt": system_prompt, "user_prompt": user_prompt}}
     try:
+        parts = []
         if system_prompt:
-            response = await chat_completion("", messages=[
+            messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
-            ])
+            ]
+        else:
+            messages = None
+        if capture_debug:
+            async for part in chat_completion_stream_events(
+                "" if messages else user_prompt, messages=messages
+            ):
+                if part["type"] == "reasoning":
+                    yield {"event": "llm_reasoning_delta", "data": {"content": part["content"]}}
+                else:
+                    parts.append(part["content"])
+                    yield {"event": "llm_delta", "data": {"content": part["content"]}}
+            response = "".join(parts)
+        elif messages:
+            response = await chat_completion("", messages=messages)
         else:
             response = await chat_completion(user_prompt)
         yield {"event": "llm_response", "data": {"raw_response": response}}
@@ -3124,7 +3139,9 @@ async def _iter_hybrid_extraction(
         evidence = "\n---\n".join(merged_text)
         refs = _hybrid_wrap_refs(merged_refs, metadata)
     # 选定证据后的模型失败由字段级处理，不应再启动检索回退。
-    async with aclosing(_hybrid_extract_evidence(field, evidence, refs)) as extraction:
+    async with aclosing(_hybrid_extract_evidence(
+        field, evidence, refs, capture_debug=capture_debug
+    )) as extraction:
         async for event in extraction:
             yield event
 
@@ -3801,7 +3818,16 @@ async def test_field_extraction_stream(
                         },
                     }
                     try:
-                        resp = await chat_completion(llm_match_prompt)
+                        match_parts = []
+                        async for part in chat_completion_stream_events(llm_match_prompt):
+                            step = "reasoning_delta" if part["type"] == "reasoning" else "delta"
+                            if part["type"] == "content":
+                                match_parts.append(part["content"])
+                            yield {
+                                "event": "match_llm",
+                                "data": {"step": step, "content": part["content"]},
+                            }
+                        resp = "".join(match_parts)
                         indices = [int(x) for x in re.findall(r"\d+", resp)]
                         yield {
                             "event": "match_llm",
@@ -4050,14 +4076,23 @@ async def test_field_extraction_stream(
 
         # ── Step 3: 调用 LLM ──────────────────────────────────
         try:
+            parts = []
             if system_prompt:
                 messages = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ]
-                raw_response = await chat_completion("", messages=messages)
             else:
-                raw_response = await chat_completion(user_prompt)
+                messages = None
+            async for part in chat_completion_stream_events(
+                "" if messages else user_prompt, messages=messages
+            ):
+                if part["type"] == "reasoning":
+                    yield {"event": "llm_reasoning_delta", "data": {"content": part["content"]}}
+                else:
+                    parts.append(part["content"])
+                    yield {"event": "llm_delta", "data": {"content": part["content"]}}
+            raw_response = "".join(parts)
 
             yield {
                 "event": "llm_response",

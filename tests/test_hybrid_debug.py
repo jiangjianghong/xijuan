@@ -34,6 +34,9 @@ def debug_env(monkeypatch):
     monkeypatch.setattr(router, "resolve_debug_params", params)
     monkeypatch.setattr(svc, "load_extraction_snapshot", load)
     monkeypatch.setattr(svc, "chat_completion", chat)
+    async def chat_stream(*args, **kwargs):
+        yield {"type": "content", "content": await chat(*args, **kwargs)}
+    monkeypatch.setattr(svc, "chat_completion_stream_events", chat_stream)
     return snapshot, calls, loads
 
 
@@ -90,11 +93,12 @@ async def test_stream_exposes_actual_evidence_before_llm(debug_env, strategy):
     assert first["data"]["results_by_label"] == {"混合检索结果": "【第7页】\namount 100"}
     assert len(first["data"]["results"]) == 1
     remaining = [event async for event in stream]
-    assert [event["event"] for event in remaining] == ["prompt", "llm_response", "result", "done"]
+    assert [event["event"] for event in remaining] == ["prompt", "llm_delta", "llm_response", "result", "done"]
     assert remaining[0]["data"]["system_prompt"] == "系统规则"
     assert remaining[0]["data"]["user_prompt"] == calls[0][1]["messages"][1]["content"]
-    assert remaining[1]["data"]["raw_response"] == '{"reason":"ok","value":"100","pages":[7]}'
-    assert remaining[2]["data"]["source_pages"] == [7]
+    assert remaining[1]["data"]["content"] == '{"reason":"ok","value":"100","pages":[7]}'
+    assert remaining[2]["data"]["raw_response"] == '{"reason":"ok","value":"100","pages":[7]}'
+    assert remaining[3]["data"]["source_pages"] == [7]
 
 
 async def test_disabled_llm_debug_has_no_fake_prompt(debug_env):

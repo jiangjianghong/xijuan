@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import AsyncExitStack
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, AsyncIterator, Dict, List, Literal, Optional
 
 import httpx
 from loguru import logger
@@ -141,6 +142,8 @@ async def chat_completion(
                     wait_time,
                 )
                 await asyncio.sleep(wait_time)
+
+
             except httpx.RequestError as e:
                 if attempt + 1 == retry_count:
                     raise
@@ -155,6 +158,174 @@ async def chat_completion(
                     wait_time,
                 )
                 await asyncio.sleep(wait_time)
+
+
+async def chat_completion_stream_events(
+    prompt: str,
+    *,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: Optional[int] = None,
+    messages: Optional[List[Dict[str, str]]] = None,
+    max_retries: Optional[int] = None,
+    extra_body: Optional[Dict[str, Any]] = None,
+    config_group: Literal["extraction", "analysis", "table_name_validation"] = "extraction",
+) -> AsyncIterator[Dict[str, str]]:
+    """流式读取 OpenAI 兼容接口的思考与回答增量。"""
+    app_cfg = resolve_model_config(get_config())
+    if config_group not in ("extraction", "analysis", "table_name_validation"):
+        raise ValueError("未知的模型配置分组")
+    cfg = (app_cfg.analysis if config_group == "analysis" else
+           app_cfg.table_name_validation if config_group == "table_name_validation" else
+           app_cfg.extraction)
+    fallback_cfg = app_cfg.extraction
+    temperature = getattr(cfg, "temperature", None)
+    top_p = getattr(cfg, "top_p", None)
+    if config_group == "table_name_validation":
+        temperature = fallback_cfg.temperature if temperature is None else temperature
+        top_p = fallback_cfg.top_p if top_p is None else top_p
+    base_url = base_url if base_url is not None else model_override(config_group, "base_url", cfg.base_url)
+    model = model if model is not None else model_override(config_group, "model", cfg.model)
+    if config_group == "analysis" and (not base_url.strip() or not model.strip()):
+        raise ValueError("分析模型未配置，请在设置中配置逻辑分析的服务地址和模型名称")
+    api_key = api_key if api_key is not None else model_override(config_group, "api_key", cfg.api_key or "EMPTY")
+    timeout = timeout if timeout is not None else model_override(
+        config_group, "judge_timeout" if config_group == "analysis" else "timeout",
+        cfg.judge_timeout if config_group == "analysis" else cfg.timeout,
+    )
+    retry_count = max_retries if max_retries is not None else model_override(
+        config_group, "retry_count", cfg.retry_count or 1
+    )
+
+    if messages is None:
+        messages = [{"role": "user", "content": prompt}]
+
+    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    merged_extra: Dict[str, Any] = dict(model_override(config_group, "extra_body", cfg.extra_body) or {})
+    if extra_body:
+        merged_extra.update(extra_body)
+    merged_extra.pop("temperature", None)
+    merged_extra.pop("top_p", None)
+
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+    }
+    if merged_extra:
+        payload["extra_body"] = merged_extra
+    payload["temperature"] = temperature
+    if top_p is not None:
+        payload["top_p"] = top_p
+    if is_empty_retry_active():
+        payload["temperature"] = retry_temperature(temperature)
+    enable_thinking = model_override(config_group, "enable_thinking", getattr(cfg, "enable_thinking", None))
+    if enable_thinking is None and config_group == "table_name_validation":
+        enable_thinking = fallback_cfg.enable_thinking
+    if enable_thinking is not None:
+        payload["enable_thinking"] = enable_thinking
+
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    limiter = get_limiter("global_llm", app_cfg.concurrency.global_llm)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for attempt in range(retry_count):
+            emitted = False
+            try:
+                async with limiter.context({"stage": "model_request", "model": model}):
+                    async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                        if resp.status_code >= 400:
+                            body = (await resp.aread()).decode("utf-8", errors="replace")[:500]
+                            if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                                raise RuntimeError(
+                                    f"LLM 请求失败: HTTP {resp.status_code} {url}\n{body}"
+                                )
+                            raise httpx.HTTPStatusError(
+                                f"HTTP {resp.status_code}", request=resp.request, response=resp
+                            )
+
+                        async for line in resp.aiter_lines():
+                            if not line.startswith("data:"):
+                                continue
+                            data = line[5:].strip()
+                            if not data or data == "[DONE]":
+                                if data == "[DONE]":
+                                    return
+                                continue
+                            try:
+                                chunk = json.loads(data)
+                            except ValueError:
+                                continue
+                            if chunk.get("error"):
+                                raise RuntimeError(f"LLM 流式响应失败: {chunk['error']}")
+                            choices = chunk.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta") or {}
+                            reasoning = next((
+                                delta.get(key) for key in ("reasoning_content", "reasoning", "thinking")
+                                if isinstance(delta.get(key), str) and delta.get(key)
+                            ), None)
+                            if reasoning:
+                                emitted = True
+                                yield {"type": "reasoning", "content": reasoning}
+                            content = delta.get("content")
+                            if isinstance(content, str) and content:
+                                emitted = True
+                                yield {"type": "content", "content": content}
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code if e.response else None
+                if status_code is not None and 400 <= status_code < 500 and status_code != 429:
+                    raise
+                if emitted or attempt + 1 == retry_count:
+                    raise
+                wait_time = 2 ** attempt
+                logger.warning(
+                    "chat_completion_stream HTTP 请求失败，尝试 {}/{}，status={}，等待 {}s 后重试",
+                    attempt + 1, retry_count, status_code, wait_time,
+                )
+                await asyncio.sleep(wait_time)
+            except httpx.RequestError as e:
+                if emitted or attempt + 1 == retry_count:
+                    raise
+                wait_time = 2 ** attempt
+                logger.warning(
+                    "chat_completion_stream 请求失败，尝试 {}/{}，type={}，等待 {}s 后重试",
+                    attempt + 1, retry_count, type(e).__name__, wait_time,
+                )
+                await asyncio.sleep(wait_time)
+
+
+async def chat_completion_stream(
+    prompt: str,
+    *,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: Optional[int] = None,
+    messages: Optional[List[Dict[str, str]]] = None,
+    max_retries: Optional[int] = None,
+    extra_body: Optional[Dict[str, Any]] = None,
+    config_group: Literal["extraction", "analysis", "table_name_validation"] = "extraction",
+) -> AsyncIterator[str]:
+    """兼容旧调用方，仅流式返回模型最终回答文本。"""
+    async for event in chat_completion_stream_events(
+        prompt,
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        timeout=timeout,
+        messages=messages,
+        max_retries=max_retries,
+        extra_body=extra_body,
+        config_group=config_group,
+    ):
+        if event["type"] == "content":
+            yield event["content"]
 
 
 async def get_embeddings(

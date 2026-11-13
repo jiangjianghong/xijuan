@@ -181,6 +181,9 @@ async def test_official_and_debug_extraction_use_same_merged_pages(monkeypatch, 
             ))
 
     monkeypatch.setattr(es, "chat_completion", fake_chat)
+    async def fake_chat_stream(*args, **kwargs):
+        yield {"type": "content", "content": await fake_chat(*args, **kwargs)}
+    monkeypatch.setattr(es, "chat_completion_stream_events", fake_chat_stream)
     monkeypatch.setattr(es, "load_extraction_snapshot", fake_snapshot)
     value, _, refs, _ = await es.extract_text_field("f1", field, snapshot)
     events = [event async for event in es.test_field_extraction_stream("f1", field, Session())]

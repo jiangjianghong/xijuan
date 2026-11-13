@@ -376,7 +376,12 @@ async def test_rule_debug_judge_runs_with_one_nonempty_dependency(
 
     monkeypatch.setattr(analysis_service, "build_temporary_extraction_plan", fake_build)
     monkeypatch.setattr(analysis_service, "iter_temporary_extraction_results", fake_iter)
+    async def fake_stream(*args, **kwargs):
+        yield {"type": "reasoning", "content": "先检查字段值。"}
+        yield {"type": "content", "content": await fake_chat(*args, **kwargs)}
+
     monkeypatch.setattr(analysis_service, "chat_completion", fake_chat)
+    monkeypatch.setattr(analysis_service, "chat_completion_stream_events", fake_stream)
     session = _QueuedSession([_ScalarResult(rows=[
         SimpleNamespace(field_id=item["field_id"], extracted_value=item["value"])
         for item in items
@@ -390,6 +395,7 @@ async def test_rule_debug_judge_runs_with_one_nonempty_dependency(
 
     assert not [event for event in events if event["event"] == "error"]
     assert len(prompts) == 1
+    assert any(event["event"] == "llm_reasoning_delta" for event in events)
     assert "本次有效内容" in prompts[0]
     assert next(event for event in events if event["event"] == "result")["data"]["result_value"] == "true"
     assert events[-1]["event"] == "done"

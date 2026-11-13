@@ -3036,6 +3036,10 @@ const RuleConfig = {
                 <div class="debug-section" id="debug-sec-llm" style="display:none;">
                     <div class="debug-section-header">LLM 原始响应</div>
                     <div class="debug-section-body">
+                        <div id="debug-llm-reasoning-section" style="display:none;">
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">思考过程</div>
+                            <div class="debug-code-block" id="debug-llm-reasoning"></div>
+                        </div>
                         <div class="debug-code-block" id="debug-llm-response"></div>
                     </div>
                 </div>
@@ -3274,6 +3278,14 @@ const RuleConfig = {
                 this._showDebugLoading('正在调用 LLM...');
                 this.renderDebugPrompt(data);
                 break;
+            case 'llm_delta':
+                this._hideDebugLoading();
+                this.appendDebugLlmDelta(data);
+                break;
+            case 'llm_reasoning_delta':
+                this._hideDebugLoading();
+                this.appendDebugReasoningDelta(data);
+                break;
             case 'llm_response':
                 this._hideDebugLoading();
                 this._showDebugLoading('正在解析结果...');
@@ -3437,10 +3449,27 @@ const RuleConfig = {
             container.innerHTML = `
                 <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">匹配 Prompt：</div>
                 <div class="debug-code-block">${Utils.escapeHtml(data.prompt)}</div>
+                <div data-match-reasoning-section style="display:none;">
+                    <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px; margin-bottom: 4px;">思考过程：</div>
+                    <div class="debug-code-block" data-match-reasoning></div>
+                </div>
+                <div class="debug-code-block" data-match-response></div>
             `;
+        } else if (step === 'reasoning_delta') {
+            this._hideDebugLoading();
+            const reasoningSection = container.querySelector('[data-match-reasoning-section]');
+            const reasoning = container.querySelector('[data-match-reasoning]');
+            if (reasoningSection) reasoningSection.style.display = '';
+            if (reasoning) reasoning.textContent += data.content || '';
+        } else if (step === 'delta') {
+            this._hideDebugLoading();
+            const response = container.querySelector('[data-match-response]');
+            if (response) response.textContent += data.content || '';
         } else if (step === 'response') {
             this._hideDebugLoading();
             const indices = data.matched_indices || [];
+            const response = container.querySelector('[data-match-response]');
+            if (response) response.remove();
             // 在已有内容后追加 LLM 返回和解析结果
             container.innerHTML += `
                 <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; margin-top: 8px;">LLM 返回：</div>
@@ -3506,6 +3535,19 @@ const RuleConfig = {
         const container = document.getElementById('debug-prompt-content');
         if (!section || !container) return;
 
+        const llmResponse = document.getElementById('debug-llm-response');
+        if (llmResponse) {
+            llmResponse.textContent = '';
+            delete llmResponse.dataset.streaming;
+        }
+        const llmReasoning = document.getElementById('debug-llm-reasoning');
+        if (llmReasoning) {
+            llmReasoning.textContent = '';
+            delete llmReasoning.dataset.streaming;
+        }
+        const reasoningSection = document.getElementById('debug-llm-reasoning-section');
+        if (reasoningSection) reasoningSection.style.display = 'none';
+
         let html = '';
 
         if (data.system_prompt) {
@@ -3534,6 +3576,34 @@ const RuleConfig = {
         if (!section || !container) return;
 
         container.textContent = data.raw_response || '(空响应)';
+        section.style.display = '';
+    },
+
+    appendDebugLlmDelta(data) {
+        const section = document.getElementById('debug-sec-llm');
+        const container = document.getElementById('debug-llm-response');
+        if (!section || !container) return;
+
+        if (!container.dataset.streaming) {
+            container.textContent = '';
+            container.dataset.streaming = 'true';
+        }
+        container.textContent += data.content || '';
+        section.style.display = '';
+    },
+
+    appendDebugReasoningDelta(data) {
+        const section = document.getElementById('debug-sec-llm');
+        const container = document.getElementById('debug-llm-reasoning');
+        const reasoningSection = document.getElementById('debug-llm-reasoning-section');
+        if (!section || !container) return;
+
+        if (!container.dataset.streaming) {
+            container.textContent = '';
+            container.dataset.streaming = 'true';
+        }
+        container.textContent += data.content || '';
+        if (reasoningSection) reasoningSection.style.display = '';
         section.style.display = '';
     },
 
@@ -3667,6 +3737,10 @@ const RuleConfig = {
                 <div class="debug-section" id="debug-sec-llm" style="display:none;">
                     <div class="debug-section-header">LLM 原始响应</div>
                     <div class="debug-section-body">
+                        <div id="debug-llm-reasoning-section" style="display:none;">
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">思考过程</div>
+                            <div class="debug-code-block" id="debug-llm-reasoning"></div>
+                        </div>
                         <div class="debug-code-block" id="debug-llm-response"></div>
                     </div>
                 </div>
@@ -3790,6 +3864,14 @@ const RuleConfig = {
                 this._hideDebugLoading();
                 this._showDebugLoading('正在调用 LLM...');
                 this.renderDebugPrompt(data);
+                break;
+            case 'llm_delta':
+                this._hideDebugLoading();
+                this.appendDebugLlmDelta(data);
+                break;
+            case 'llm_reasoning_delta':
+                this._hideDebugLoading();
+                this.appendDebugReasoningDelta(data);
                 break;
             case 'llm_response':
                 this._hideDebugLoading();

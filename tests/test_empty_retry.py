@@ -262,6 +262,9 @@ async def test_table_match_error_does_not_retry(monkeypatch, streaming):
     config = ExtractionField(field_id="f", source_type="table", table_match_type="llm", table_match_keywords=["资产"], use_llm=0, empty_retry_enabled=True, empty_retry_count=2)
     tables = (TableRow(0, "资产", "<table>资产</table>", 0, 20, 1),)
     if streaming:
+        async def chat_stream(*args, **kwargs):
+            yield {"type": "content", "content": await chat(*args, **kwargs)}
+        monkeypatch.setattr(svc, "chat_completion_stream_events", chat_stream)
         db = AsyncMock()
         result = MagicMock()
         result.scalars.return_value.all.return_value = tables
@@ -308,6 +311,10 @@ async def test_hybrid_handled_channel_error_does_not_suppress_retry(monkeypatch,
     monkeypatch.setattr(svc, "_vl_field_extraction_stream", vl_stream)
     monkeypatch.setattr(svc, "_hybrid_run_search_item", search)
     monkeypatch.setattr(svc, "chat_completion", chat)
+    if debug:
+        async def chat_stream(*args, **kwargs):
+            yield {"type": "content", "content": await chat(*args, **kwargs)}
+        monkeypatch.setattr(svc, "chat_completion_stream_events", chat_stream)
     await svc.extract_hybrid_field("doc", config, SimpleNamespace(), debug_events=[] if debug else None)
     assert calls == [0.7, 0.8, 0.8]
 
