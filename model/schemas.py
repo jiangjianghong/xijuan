@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 from enum import Enum
@@ -310,6 +311,7 @@ class SearchTypeEnum(str, Enum):
     section = "section"
     rule = "rule"
     chunk_db = "chunk_db"
+    bm25 = "bm25"
     vector_db = "vector_db"
     page = "page"
     hybrid = "hybrid"

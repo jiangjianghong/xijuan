@@ -93,7 +93,7 @@ _data 为数组，每个元素：_
 | table_extract_prompt | string | 否 | — | [table] 抽取 prompt；`source_type=table` 时须含至少一个 `<search_result>标签</search_result>`。 |
 | search_type | SearchTypeEnum | 否 | — | [text] 检索方式：`context` / `section` / `rule` / `chunk_db` / `vector_db` / `page`。 |
 | search_config | object | 否 | — | [text] 检索配置（自由 JSON，键随 `search_type` 不同）：
-`context` / `rule` 先补齐窗口边界内的 HTML 表格，再合并同一关键词的重叠或相接窗口；`max_results` 按每个关键词合并后的片段计数，`max_total_results` 控制总条数（缺省等于 `max_results`，0=不限）。合并后长度可超过单次窗口长度，注入模型时仍逐页标注，不同关键词分别保留占位符标签。
+`context` / `rule` 先补齐窗口边界内的 HTML 表格，再合并同一关键词的重叠或相接窗口；`max_results` 按每个关键词合并后的片段计数，`max_total_results` 控制总条数（缺省等于 `max_results × 关键词数`，0=不设额外总量上限）。合并后长度可超过单次窗口长度，注入模型时仍逐页标注，不同关键词分别保留占位符标签。
 关键词直接按 Python 正则解释；`ignore_whitespace=true` 时忽略行内空格、制表符和全角空格，保留换行并映射回原文坐标（默认 false）。
 - `context`：`keywords`[必] / `ignore_whitespace`(false) / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)
 - `section`：`section_pattern` / `ignore_whitespace`(false) / `section_match_type`|`match_type`(contains) / `threshold`(0.8) / `max_results`(3) / `sort_order`(asc)；`section_match_type=llm` 时另可配 `section_match_prompt`（自定义匹配提示词，空=用系统默认，须含 `{section_list}`）

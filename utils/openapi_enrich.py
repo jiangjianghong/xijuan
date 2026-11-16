@@ -1074,7 +1074,7 @@ PARAM_OVERRIDES: Dict[tuple, Dict[str, Any]] = {
 _SEARCH_CONFIG_DOC = (
     "检索配置（自由 JSON，键随 `search_type` 不同）：\n"
     "`context` / `rule` 先补齐窗口边界内的 HTML 表格，再合并同一关键词的重叠或相接窗口；"
-    "`max_results` 按每个关键词合并后的片段计数，`max_total_results` 控制总条数（缺省等于 `max_results`，0=不限）。"
+    "`max_results` 按每个关键词合并后的片段计数，`max_total_results` 控制总条数（缺省等于 `max_results × 关键词数`，0=不设额外总量上限）。"
     "合并后长度可超过单次窗口长度，注入模型时仍逐页标注，不同关键词分别保留占位符标签。\n"
     "关键词直接按 Python 正则解释；`ignore_whitespace=true` 时忽略行内空格、制表符和全角空格，保留换行并映射回原文坐标（默认 false）。\n"
     "- `context`：`keywords`[必] / `ignore_whitespace`(false) / `context_before`(200) / `context_after`(200) / `max_results`(5) / `sort_order`(asc)\n"

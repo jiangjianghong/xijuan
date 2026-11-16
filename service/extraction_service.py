@@ -1439,6 +1439,12 @@ def _section_body_aliases(sections: List[SectionInfo]) -> Dict[int, SectionInfo]
 
 # ── 检索方法 ────────────────────────────────────────────────
 
+def _default_max_total_results(max_results: int, keywords: Optional[Sequence[str]]) -> int:
+    """默认总量按每关键词上限乘关键词数；无关键词时保留单组上限。"""
+    keyword_count = len(keywords or ())
+    return max_results * max(keyword_count, 1)
+
+
 async def search_context(
     content: str,
     config: Dict[str, Any],
@@ -1453,7 +1459,7 @@ async def search_context(
             - context_before: 关键词前取的字符数（默认 200）
             - context_after: 关键词后取的字符数（默认 200）
             - max_results: **每个关键词**最大返回条数（默认 5）
-            - max_total_results: 总条数上限（缺省 = max_results，显式 0 = 不限）
+            - max_total_results: 总条数上限（缺省 = max_results × 关键词数；显式 0 = 不限）
             - sort_order: relevance（默认）/ asc / desc
         chunks: 该文件的分块快照，仅用于算 IDF；缺省时相关度退化为覆盖度计数。
 
@@ -1464,11 +1470,10 @@ async def search_context(
     context_before = config.get("context_before", 200)
     context_after = config.get("context_after", 200)
     max_results = config.get("max_results", 5)
-    # 缺省时等于 max_results：总量与「全局截断」时代一致，只是分配方式变成轮转
-    # 公平分配。显式写 0 才表示不限总量。
+    # 留空时允许每个关键词都拿满各自的 max_results；显式写 0 表示不限总量。
     max_total = config.get("max_total_results")
     if max_total is None:
-        max_total = max_results
+        max_total = _default_max_total_results(max_results, keywords)
     sort_order = config.get("sort_order", "relevance")
 
     results = []
@@ -1617,7 +1622,7 @@ async def search_rule(
             - min_length: 最小提取长度（默认 2）
             - max_length: 最大提取长度（默认 200）
             - max_results: **每个关键词**最大返回条数（默认 5）
-            - max_total_results: 总条数上限（缺省 = max_results，显式 0 = 不限）
+            - max_total_results: 总条数上限（缺省 = max_results × 关键词数；显式 0 = 不限）
             - sort_order: relevance（默认）/ asc / desc
         chunks: 该文件的分块快照，仅用于算 IDF；缺省时相关度退化为覆盖度计数。
 
@@ -1632,11 +1637,10 @@ async def search_rule(
     min_length = config.get("min_length", 2)
     max_length = config.get("max_length", 200)
     max_results = config.get("max_results", 5)
-    # 缺省时等于 max_results：总量与「全局截断」时代一致，只是分配方式变成轮转
-    # 公平分配。显式写 0 才表示不限总量。
+    # 留空时允许每个关键词都拿满各自的 max_results；显式写 0 表示不限总量。
     max_total = config.get("max_total_results")
     if max_total is None:
-        max_total = max_results
+        max_total = _default_max_total_results(max_results, keywords)
     sort_order = config.get("sort_order", "relevance")
 
     results = []
@@ -1727,7 +1731,7 @@ async def search_chunk_db(
         config: search_config 配置，包含:
             - keyword_filter 或 keywords: 关键词（单个字符串或列表）
             - max_results 或 top_k: **每个关键词**返回条数（默认 10）
-            - max_total_results: 总条数上限（缺省 = max_results，显式 0 = 不限）
+            - max_total_results: 总条数上限（缺省 = max_results × 关键词数；显式 0 = 不限）
             - sort_order: relevance（默认）/ asc / desc
         chunks: 快照中的分块集合（并发安全的只读快照）。
 
@@ -1742,11 +1746,10 @@ async def search_chunk_db(
             keywords = [k.strip() for k in re.split(r"[,，]", keyword_filter) if k.strip()]
     # 兼容两种字段名：max_results（设计文档）和 top_k
     max_results = config.get("max_results") or config.get("top_k", 10)
-    # 缺省时等于 max_results：总量与「全局截断」时代一致，只是分配方式变成轮转
-    # 公平分配。显式写 0 才表示不限总量。
+    # 留空时允许每个关键词都拿满各自的 max_results；无关键词时按单组上限处理。
     max_total = config.get("max_total_results")
     if max_total is None:
-        max_total = max_results
+        max_total = _default_max_total_results(max_results, keywords)
     sort_order = config.get("sort_order", "relevance")
 
     # 快照是不可变元组，故用 sorted 而非原地 sort。这里恒按 chunk_index 升序，
