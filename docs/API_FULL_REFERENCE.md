@@ -319,16 +319,14 @@ parsing -> tableing -> chunking -> embedding -> extracting -> analyzing -> compl
 |  | `max_context_length` | integer >= 1 | 表名识别未独立配置长度时使用的前文字符上限；不会统一截断所有字段抽取提示词 |
 |  | `temperature` | number >= 0 | 采样温度 |
 |  | `top_p` | number 0..1 或 null | nucleus sampling；`null` 表示不发送该参数 |
-|  | `extra_body` | object | 整体替换设置中的额外请求体，传 `{}` 可清空 |
-|  | `enable_thinking` | boolean 或 null | 是否启用思考模式；`null` 表示不发送该参数 |
+|  | `extra_params` | object | 按键合并到请求顶层；可按供应商要求包含嵌套的 `extra_body` |
 | `analysis` | `base_url` | string | 逻辑分析模型 API 根地址；分析模型不回退到 extraction |
 |  | `model` | string | judge/custom 模型 |
 |  | `api_key` | string | API Key；空字符串不发送鉴权头 |
 |  | `retry_count` | integer >= 1 | 最大请求尝试次数，包含首次调用；`1` 表示不重试 |
 |  | `temperature` | number >= 0 | 采样温度 |
 |  | `top_p` | number 0..1 或 null | nucleus sampling；`null` 表示不发送该参数 |
-|  | `extra_body` | object | 整体替换额外请求体 |
-|  | `enable_thinking` | boolean 或 null | 是否启用思考模式；`null` 表示不发送该参数 |
+|  | `extra_params` | object | 按键合并到请求顶层；可按供应商要求包含嵌套的 `extra_body` |
 |  | `calc_precision` | integer >= 0 | calc 结果小数位数 |
 |  | `judge_timeout` | integer >= 1 | judge/custom 请求超时秒数 |
 | `table_name_validation` | `base_url` / `model` | string 或 null | 表名识别 API 根地址、模型名；空字符串或 `null` 时继承本次调用的 extraction 对应值 |
@@ -339,13 +337,13 @@ parsing -> tableing -> chunking -> embedding -> extracting -> analyzing -> compl
 |  | `max_context_lines` | integer >= 1 或 null | 表名前文行数上限；`null` 时使用 3 行 |
 |  | `temperature` | number >= 0 或 null | `null` 时继承本次调用的 extraction.temperature |
 |  | `top_p` | number 0..1 或 null | `null` 时继承本次调用的 extraction.top_p；继承结果仍为 `null` 时不发送 |
-|  | `extra_body` | object 或 null | 整体替换表名模型的额外请求体；传 `{}` 或 `null` 可清空，不继承 extraction.extra_body |
+|  | `extra_params` | object 或 null | 按键合并到请求顶层；未设置 `enable_thinking` 时仅继承 extraction 中该键，其它参数不继承 |
 | `vl_model` | `base_url` / `api_key` / `model` | string | VL API 根地址、Key、模型名 |
 |  | `temperature` | number >= 0 | VL 采样温度 |
 |  | `max_tokens` | integer >= 1 | VL 最大输出 token 数 |
 |  | `timeout` | integer >= 1 | VL 单次请求超时秒数 |
 |  | `default_max_pixels` | integer >= 1 | VL 默认图片像素上限；字段 vl_config 已指定 max_pixels 时优先使用字段值 |
-|  | `extra_body` | object | 整体替换 VL 额外请求体 |
+|  | `extra_params` | object | 按键合并到请求顶层；可按供应商要求包含嵌套的 `extra_body` |
 | `embedding` | `base_url` / `model` / `api_key` | string | 向量模型配置；兼容 `model_name` 别名。为保证 Milvus 维度一致，不能覆盖 `embedding_dim`、`batch_size`、`timeout`、`retry_count` |
 
 以下设置不会被请求级配置修改：所有 `concurrency.*`、`table_name_validation.max_concurrency`、`vl_model.global_max_concurrency`、`vl_model.pdf_storage_dir`，以及 embedding 的只读字段。这样同一服务的请求级模型切换仍共用服务器并发池和存储策略。
@@ -359,7 +357,6 @@ parsing -> tableing -> chunking -> embedding -> extracting -> analyzing -> compl
 | extraction、table_name_validation | `llm_api_key` | `api_key` |
 | extraction、table_name_validation | `llm_timeout` | `timeout` |
 | extraction、table_name_validation | `llm_retry_count` | `retry_count` |
-| extraction、table_name_validation | `llm_extra_body` | `extra_body` |
 | embedding | `model_name` | `model` |
 
 ```json
@@ -382,7 +379,7 @@ parsing -> tableing -> chunking -> embedding -> extracting -> analyzing -> compl
 | `POST /extraction/test`、`POST /extraction/test/stream` | JSON 请求体顶层 `model_config`，与字段 `config` 并列 |
 | `POST /analysis/test`、`POST /analysis/test/stream` | JSON 请求体顶层 `model_config`；`re_extract=true` 时临时抽取也使用其中的抽取/VL/Embedding 配置 |
 
-覆盖按字段进行：未传分组或字段继续读取服务器设置；`extra_body` 整个对象替换，传 `{}` 可清空。`api_key` 直接传字符串，空字符串表示本次调用不使用密钥，不接受设置读取接口的 `{configured: bool}` 或设置更新的 secrets 操作。兼容 `embedding.model_name` 及 extraction/table_name_validation 的旧 `llm_*` 别名；别名与规范字段值冲突时拒绝请求。
+覆盖按字段进行：未传分组或字段继续读取服务器设置。`extra_params` 是任意 JSON 对象，按键合并到请求顶层，覆盖 `temperature`、`top_p` 等标准参数；`model`、`messages`、`stream` 由系统控制。比如 `{"enable_thinking":true}` 会作为顶层参数发送，`{"extra_body":{"enable_thinking":true}}` 会保留嵌套结构。`api_key` 直接传字符串，空字符串表示本次调用不使用密钥，不接受设置读取接口的 `{configured: bool}` 或设置更新的 secrets 操作。兼容 `embedding.model_name` 及 extraction/table_name_validation 的 `llm_base_url`、`llm_model`、`llm_api_key`、`llm_timeout`、`llm_retry_count` 别名；别名与规范字段值冲突时拒绝请求。
 
 配置仅在本次调用及其子任务中生效，不修改 YAML、进程设置或文件记录；后续重试若要继续使用相同模型，需要再次传入。不同请求独立隔离，仍共用服务器的全局和任务并发限制。`concurrency`、旧模型并发字段及 `vl_model.pdf_storage_dir` 不允许覆盖。Embedding 与设置一样只开放 `base_url`、`model`（或 `model_name`）、`api_key`；所选模型需要与现有 Milvus 向量数据及集合维度匹配。
 
@@ -4797,7 +4794,7 @@ calc 更短：`input_values → resolved_expression → result → done`。事�
 
 - **默认值** 列是代码内置默认（`utils/config.py` 中各 Pydantic 模型的字段默认），即省略该键时实际生效的值。
 - 仓库内 `configs/config.yaml` 是**部署示例**，会用环境实际值（真实主机 / 端口 / 密钥 / 模型名）覆盖默认。示例值与默认不同的，在「含义」列以「示例:」标注。
-- `llm_extra_body` / `extra_body` 等对象会**原样透传**到底层 OpenAI 兼容请求的 `extra_body`，可用于关闭思考等模型私有开关。
+- `extra_params` 是任意 JSON 对象，按键合并到请求顶层；如供应商要求特定嵌套结构，可直接写入 `extra_body` 键。`model`、`messages`、`stream` 由系统控制，其它参数可覆盖标准采样配置。
 
 ---
 
@@ -4878,7 +4875,7 @@ calc 更短：`input_values → resolved_expression → result → done`。事�
 | `llm_timeout` | 整数 | `60` | 请求超时（秒） |
 | `llm_retry_count` | 整数 | `3` | 失败重试次数；指数退避，4xx（除 429）不重试 |
 | `max_context_length` | 整数 | `4096` | 注入 prompt 的检索文本字符上限，超长从末尾截断 |
-| `llm_extra_body` | 对象 | `{}` | 透传到请求 `extra_body` 的额外参数。示例: `{chat_template_kwargs: {enable_thinking: false}}`（关闭思考） |
+| `extra_params` | 对象 | `{}` | 按键合并到请求顶层。示例: `{"enable_thinking":true}`；供应商需要嵌套时可写 `{"extra_body":{"chat_template_kwargs":{"enable_thinking":false}}}` |
 
 #### table_name_validation — 表名校验 LLM（tableing 阶段，独立且可回退）
 
@@ -4894,7 +4891,7 @@ calc 更短：`input_values → resolved_expression → result → done`。事�
 | `max_context_length` | 整数 / null | `null` | 表名上文取样的字符上限；为空回退 `extraction.max_context_length` |
 | `max_context_lines` | 整数 / null | `null` | 表格前用于推断表名的上文行数；为空按 `3` |
 | `max_concurrency` | 整数 / null | `null` | 表名校验的并发上限；为空按 `1` |
-| `llm_extra_body` | 对象 / null | `null` | 透传到请求 `extra_body` 的额外参数 |
+| `extra_params` | 对象 / null | `null` | 按键合并到请求顶层；只有未设置 `enable_thinking` 时会继承 extraction 中该键，其它参数不继承 |
 
 #### analysis — 逻辑分析
 
@@ -4913,7 +4910,7 @@ calc 更短：`input_values → resolved_expression → result → done`。事�
 | `temperature` | 浮点 | `0.1` | 采样温度 |
 | `max_tokens` | 整数 | `4096` | 单次生成的最大 token |
 | `timeout` | 整数 | `180` | 请求超时（秒） |
-| `extra_body` | 对象 | `{}` | 透传到请求 `extra_body` 的额外参数 |
+| `extra_params` | 对象 | `{}` | 按键合并到请求顶层；可包含供应商要求的嵌套 `extra_body` |
 | `global_max_concurrency` | 整数 | `8` | 全局 VL 调用并发信号量上限（跨所有字段/文件） |
 | `default_max_pixels` | 整数 | `4000000` | 单图默认像素上限，可被字段 `vl_config.max_pixels` 覆盖 |
 | `pdf_storage_dir` | 字符串 | `"uploads"` | 上传 PDF 的持久化目录，VL 抽取直接读取原始字节 |

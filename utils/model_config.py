@@ -20,32 +20,33 @@ MODEL_CONFIG_DESCRIPTION = (
     "model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\n"
     "extraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、"
     "max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、"
-    "extra_body(object，整体替换)、enable_thinking(bool 或 null)。\n\n"
+    "extra_params(object，合并到请求顶层；可包含 extra_body 等嵌套参数)。\n\n"
     "analysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、"
-    "top_p(float 0..1 或 null)、extra_body(object，整体替换)、enable_thinking(bool 或 null)、"
+    "top_p(float 0..1 或 null)、extra_params(object，合并到请求顶层)、"
     "calc_precision(int>=0)、judge_timeout(int>=1)。\n\n"
     "table_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/"
     "max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、"
-    "extra_body(object 或 null)；max_concurrency 不允许覆盖。"
+    "extra_params(object 或 null)；max_concurrency 不允许覆盖。"
     "base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。"
     "timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；"
-    "max_context_lines 为 null 时使用 3 行，extra_body 为 null 时不附加额外请求体。\n\n"
+    "max_context_lines 为 null 时使用 3 行；未设置 extra_params.enable_thinking 时继承 extraction 中该键，"
+    "其它附加参数（包括 extra_body）不继承。\n\n"
     "vl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、"
-    "extra_body(object，整体替换)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\n"
+    "extra_params(object，合并到请求顶层)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\n"
     "embedding 仅支持 base_url/model/api_key(str)，兼容 model_name；"
     "embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\n"
     "extraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、"
-    "llm_retry_count、llm_extra_body 别名；别名与规范字段冲突时拒绝请求。"
-    "api_key 空字符串表示不发送鉴权头；extra_body 整体替换，{} 可清空。"
+    "llm_retry_count 别名；别名与规范字段冲突时拒绝请求。"
+    "extra_params 的 JSON 对象按键合并，覆盖 temperature/top_p；model/messages/stream 由系统控制。"
     "timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。"
-    "extraction/analysis 的 top_p 与 enable_thinking 为 null 时不发送相应参数。"
+    "附加参数可按需设置 enable_thinking 等供应商参数；空对象表示不附加参数。"
     "不支持 concurrency 或其它并发字段，仍使用服务器并发限制。"
     "管理员会话、API Key 和 IP 白名单调用者均可按相同字段规则覆盖模型连接与参数。"
 )
 _overrides: ContextVar[dict[str, dict[str, Any]] | None] = ContextVar("request_model_config", default=None)
 _ALIASES = {
     "llm_base_url": "base_url", "llm_model": "model", "llm_api_key": "api_key",
-    "llm_timeout": "timeout", "llm_retry_count": "retry_count", "llm_extra_body": "extra_body",
+    "llm_timeout": "timeout", "llm_retry_count": "retry_count",
 }
 _READONLY = {"table_name_validation": {"max_concurrency"},
              "vl_model": {"global_max_concurrency", "pdf_storage_dir"}}

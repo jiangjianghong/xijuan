@@ -11,11 +11,11 @@ from utils import llm_client
 async def test_analysis_request_uses_only_analysis_config(monkeypatch):
     cfg = AppConfig.model_validate({
         "extraction": {"base_url": "http://extract.test/v1", "model": "extract",
-                       "api_key": "extract-secret", "enable_thinking": True,
-                       "extra_body": {"extract_only": True}},
+                       "api_key": "extract-secret",
+                       "extra_params": {"enable_thinking": True, "extract_only": True}},
         "analysis": {"base_url": "http://analysis.test/v1", "model": "judge",
                      "api_key": "", "judge_timeout": 17, "retry_count": 1,
-                     "extra_body": {"analysis_only": True}},
+                     "extra_params": {"analysis_only": True}},
     })
     monkeypatch.setattr(llm_client, "get_config", lambda: cfg)
     calls = []
@@ -41,7 +41,8 @@ async def test_analysis_request_uses_only_analysis_config(monkeypatch):
     assert url == "http://analysis.test/v1/chat/completions"
     assert request["headers"]["Authorization"] == "Bearer EMPTY"
     assert request["json"]["model"] == "judge"
-    assert request["json"]["extra_body"] == {"analysis_only": True}
+    assert request["json"]["analysis_only"] is True
+    assert "extract_only" not in request["json"]
     assert "enable_thinking" not in request["json"]
 
 

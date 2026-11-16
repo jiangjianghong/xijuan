@@ -14,7 +14,7 @@ from loguru import logger
 from PIL import Image
 
 from utils.concurrency import get_limiter
-from utils.config import get_config
+from utils.config import get_config, merge_extra_params
 from utils.model_config import resolve_model_config
 from utils.empty_retry import is_empty_retry_active, retry_temperature
 
@@ -38,7 +38,7 @@ async def vl_chat(
     messages: list[dict[str, Any]],
     *,
     max_tokens: Optional[int] = None,
-    extra_body: Optional[dict[str, Any]] = None,
+    extra_params: Optional[dict[str, Any]] = None,
     max_retries: int = 3,
 ) -> dict[str, Any]:
     """调用 VL 模型的 OpenAI 兼容 chat/completions 接口。
@@ -50,10 +50,7 @@ async def vl_chat(
     """
     cfg = resolve_model_config(get_config()).vl_model
 
-    # 合并配置的 extra_body 与调用方传入的 extra_body（参数优先）
-    body_extras: dict[str, Any] = dict(cfg.extra_body)
-    if extra_body:
-        body_extras.update(extra_body)
+    params = merge_extra_params(cfg.extra_params, extra_params)
 
     payload: dict[str, Any] = {
         "model": cfg.model,
@@ -61,10 +58,9 @@ async def vl_chat(
         "temperature": cfg.temperature,
         "max_tokens": max_tokens or cfg.max_tokens,
     }
-    if body_extras:
-        payload["extra_body"] = body_extras
+    payload.update(params)
     if is_empty_retry_active():
-        payload["temperature"] = retry_temperature(body_extras.pop("temperature", cfg.temperature))
+        payload["temperature"] = retry_temperature(payload["temperature"])
 
     headers = {"Content-Type": "application/json"}
     if cfg.api_key:

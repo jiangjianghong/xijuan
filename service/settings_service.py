@@ -58,13 +58,18 @@ FIELD_ALIASES = {
     "extraction.llm_api_key": "extraction.api_key",
     "extraction.llm_timeout": "extraction.timeout",
     "extraction.llm_retry_count": "extraction.retry_count",
-    "extraction.llm_extra_body": "extraction.extra_body",
     "table_name_validation.llm_base_url": "table_name_validation.base_url",
     "table_name_validation.llm_model": "table_name_validation.model",
     "table_name_validation.llm_api_key": "table_name_validation.api_key",
     "table_name_validation.llm_timeout": "table_name_validation.timeout",
     "table_name_validation.llm_retry_count": "table_name_validation.retry_count",
-    "table_name_validation.llm_extra_body": "table_name_validation.extra_body",
+}
+
+_RETIRED_MODEL_FIELDS = {
+    "extraction": {"enable_thinking", "extra_body", "llm_extra_body"},
+    "table_name_validation": {"extra_body", "llm_extra_body"},
+    "analysis": {"enable_thinking", "extra_body"},
+    "vl_model": {"extra_body"},
 }
 
 _VERSION_KEY = secrets.token_bytes(32)
@@ -306,6 +311,8 @@ class SettingsService:
             self._validate_changes(document, changes)
             for group, fields in changes.items():
                 self._ensure_open_group(document, group)
+                for field in _RETIRED_MODEL_FIELDS.get(group, ()):
+                    document[group].pop(field, None)
                 for field, value in fields.items():
                     canonical = _canonical_path(f"{group}.{field}").split(".", 1)[1]
                     document[group][canonical] = value

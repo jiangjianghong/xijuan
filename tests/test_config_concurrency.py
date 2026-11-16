@@ -17,7 +17,7 @@ extraction:
   llm_api_key: key
   llm_timeout: 12
   llm_retry_count: 2
-  llm_extra_body: {foo: bar}
+  extra_params: {foo: bar}
 embedding:
   base_url: http://embedding.test/v1
   model_name: embed-old
@@ -40,13 +40,36 @@ concurrency:
     assert cfg.extraction.api_key == "key"
     assert cfg.extraction.timeout == 12
     assert cfg.extraction.retry_count == 2
-    assert cfg.extraction.extra_body == {"foo": "bar"}
+    assert cfg.extraction.extra_params == {"foo": "bar"}
     assert cfg.embedding.model == "embed-old"
     assert cfg.table_name_validation.base_url == "http://table.test/v1"
     assert cfg.table_name_validation.model == "table-model"
     assert cfg.concurrency.global_llm == 3
     assert cfg.concurrency.global_embedding == 2
     assert cfg.concurrency.global_vl == 1
+
+
+def test_retired_model_parameter_fields_are_not_migrated(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+extraction:
+  enable_thinking: true
+  extra_body: {vendor_flag: true}
+analysis:
+  enable_thinking: false
+  extra_body: {analysis_flag: true}
+vl_model:
+  extra_body: {vision_flag: true}
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(path)
+
+    assert cfg.extraction.extra_params == {}
+    assert cfg.analysis.extra_params == {}
+    assert cfg.vl_model.extra_params == {}
 
 
 def test_limiters_are_reused_and_can_be_replaced():

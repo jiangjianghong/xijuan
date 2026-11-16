@@ -71,13 +71,13 @@ async def main() -> None:
     print("配置摘要:")
     print(f"  extraction.base_url   = {ex.llm_base_url}")
     print(f"  extraction.model      = {ex.llm_model}")
-    print(f"  extraction.extra_body = {ex.llm_extra_body}")
+    print(f"  extraction.extra_params = {ex.extra_params}")
     print(f"  table_name.base_url   = {tn.llm_base_url}")
     print(f"  table_name.model      = {tn.llm_model}")
-    print(f"  table_name.extra_body = {tn.llm_extra_body}")
+    print(f"  table_name.extra_params = {tn.extra_params}")
     print(f"  vl_model.base_url     = {vl.base_url}")
     print(f"  vl_model.model        = {vl.model}")
-    print(f"  vl_model.extra_body   = {vl.extra_body}")
+    print(f"  vl_model.extra_params = {vl.extra_params}")
 
     await via_chat_completion("extraction(默认)")
 

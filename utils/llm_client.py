@@ -16,9 +16,34 @@ from utils.concurrency import (
     unregister_task_limiter,
     work_item,
 )
-from utils.config import get_config
+from utils.config import get_config, merge_extra_params
 from utils.model_config import model_override, resolve_model_config
 from utils.empty_retry import is_empty_retry_active, retry_temperature
+
+
+def _resolve_extra_params(config_group, cfg, fallback_cfg, call_extra_params):
+    params = merge_extra_params(
+        model_override(config_group, "extra_params", cfg.extra_params)
+    )
+    if config_group == "table_name_validation" and "enable_thinking" not in params:
+        inherited_thinking = fallback_cfg.extra_params.get("enable_thinking")
+        if inherited_thinking is not None:
+            params["enable_thinking"] = inherited_thinking
+    return merge_extra_params(params, call_extra_params)
+
+
+def _build_chat_payload(model, messages, temperature, top_p, extra_params, *, stream=False):
+    payload: Dict[str, Any] = {"model": model, "messages": messages}
+    if stream:
+        payload["stream"] = True
+    payload["temperature"] = temperature
+    if top_p is not None:
+        payload["top_p"] = top_p
+    payload.update(extra_params)
+    if is_empty_retry_active():
+        # 开启重试时明确首次基准，追加尝试固定加 0.1，最高为 1。
+        payload["temperature"] = retry_temperature(payload["temperature"])
+    return payload
 
 
 async def chat_completion(
@@ -30,7 +55,7 @@ async def chat_completion(
     timeout: Optional[int] = None,
     messages: Optional[List[Dict[str, str]]] = None,
     max_retries: Optional[int] = None,
-    extra_body: Optional[Dict[str, Any]] = None,
+    extra_params: Optional[Dict[str, Any]] = None,
     config_group: Literal["extraction", "analysis", "table_name_validation"] = "extraction",
 ) -> str:
     """调用 OpenAI 兼容 chat/completions 接口。
@@ -43,7 +68,7 @@ async def chat_completion(
         timeout: 超时秒数，默认从配置读取。
         messages: 自定义 messages 列表，优先于 prompt。
         max_retries: 最大重试次数，默认从配置读取。
-        extra_body: 额外请求参数，与配置中的 extra_body 合并（参数优先）。
+        extra_params: 额外请求参数，按键合并到请求顶层（参数优先）。
         config_group: 使用抽取或分析的完整配置，分析不回退到抽取配置。
 
     Returns:
@@ -80,31 +105,10 @@ async def chat_completion(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    # 合并配置的 extra_body 与调用方传入的 extra_body（参数优先）
-    merged_extra: Dict[str, Any] = dict(model_override(config_group, "extra_body", cfg.extra_body) or {})
-    if extra_body:
-        merged_extra.update(extra_body)
-    # 标准采样参数统一放在请求顶层，避免旧 extra_body 配置产生冲突。
-    merged_extra.pop("temperature", None)
-    merged_extra.pop("top_p", None)
-
-    payload: Dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-    }
-    if merged_extra:
-        payload["extra_body"] = merged_extra
-    payload["temperature"] = temperature
-    if top_p is not None:
-        payload["top_p"] = top_p
-    if is_empty_retry_active():
-        # 开启重试时明确首次基准，追加尝试固定加 0.1，最高为 1。
-        payload["temperature"] = retry_temperature(temperature)
-    enable_thinking = model_override(config_group, "enable_thinking", getattr(cfg, "enable_thinking", None))
-    if enable_thinking is None and config_group == "table_name_validation":
-        enable_thinking = fallback_cfg.enable_thinking
-    if enable_thinking is not None:
-        payload["enable_thinking"] = enable_thinking
+    merged_extra = _resolve_extra_params(
+        config_group, cfg, fallback_cfg, extra_params
+    )
+    payload = _build_chat_payload(model, messages, temperature, top_p, merged_extra)
 
     url = f"{base_url.rstrip('/')}/chat/completions"
     limiter = get_limiter("global_llm", app_cfg.concurrency.global_llm)
@@ -169,7 +173,7 @@ async def chat_completion_stream_events(
     timeout: Optional[int] = None,
     messages: Optional[List[Dict[str, str]]] = None,
     max_retries: Optional[int] = None,
-    extra_body: Optional[Dict[str, Any]] = None,
+    extra_params: Optional[Dict[str, Any]] = None,
     config_group: Literal["extraction", "analysis", "table_name_validation"] = "extraction",
 ) -> AsyncIterator[Dict[str, str]]:
     """流式读取 OpenAI 兼容接口的思考与回答增量。"""
@@ -205,29 +209,12 @@ async def chat_completion_stream_events(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    merged_extra: Dict[str, Any] = dict(model_override(config_group, "extra_body", cfg.extra_body) or {})
-    if extra_body:
-        merged_extra.update(extra_body)
-    merged_extra.pop("temperature", None)
-    merged_extra.pop("top_p", None)
-
-    payload: Dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "stream": True,
-    }
-    if merged_extra:
-        payload["extra_body"] = merged_extra
-    payload["temperature"] = temperature
-    if top_p is not None:
-        payload["top_p"] = top_p
-    if is_empty_retry_active():
-        payload["temperature"] = retry_temperature(temperature)
-    enable_thinking = model_override(config_group, "enable_thinking", getattr(cfg, "enable_thinking", None))
-    if enable_thinking is None and config_group == "table_name_validation":
-        enable_thinking = fallback_cfg.enable_thinking
-    if enable_thinking is not None:
-        payload["enable_thinking"] = enable_thinking
+    merged_extra = _resolve_extra_params(
+        config_group, cfg, fallback_cfg, extra_params
+    )
+    payload = _build_chat_payload(
+        model, messages, temperature, top_p, merged_extra, stream=True
+    )
 
     url = f"{base_url.rstrip('/')}/chat/completions"
     limiter = get_limiter("global_llm", app_cfg.concurrency.global_llm)
@@ -309,7 +296,7 @@ async def chat_completion_stream(
     timeout: Optional[int] = None,
     messages: Optional[List[Dict[str, str]]] = None,
     max_retries: Optional[int] = None,
-    extra_body: Optional[Dict[str, Any]] = None,
+    extra_params: Optional[Dict[str, Any]] = None,
     config_group: Literal["extraction", "analysis", "table_name_validation"] = "extraction",
 ) -> AsyncIterator[str]:
     """兼容旧调用方，仅流式返回模型最终回答文本。"""
@@ -321,7 +308,7 @@ async def chat_completion_stream(
         timeout=timeout,
         messages=messages,
         max_retries=max_retries,
-        extra_body=extra_body,
+        extra_params=extra_params,
         config_group=config_group,
     ):
         if event["type"] == "content":

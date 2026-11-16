@@ -54,8 +54,7 @@ const SettingsManager = {
             ['max_context_length', '最大上下文长度', 'number', { min: 1, unit: '字符' }],
             ['temperature', '温度', 'number', { min: 0, step: 0.1 }],
             ['top_p', 'Top P', 'number', { min: 0, max: 1, step: 0.05, nullable: true }],
-            ['enable_thinking', '传入顶层思考参数', 'thinking'],
-            ['extra_body', '额外请求参数', 'json', { rows: 4 }],
+            ['extra_params', '附加参数', 'json', { rows: 6 }],
         ],
         table_name_validation: [
             ['base_url', '服务地址', 'url', { nullable: true }],
@@ -67,7 +66,7 @@ const SettingsManager = {
             ['max_context_lines', '参考行数', 'number', { min: 1, nullable: true }],
             ['temperature', '温度', 'number', { min: 0, step: 0.1, nullable: true }],
             ['top_p', 'Top P', 'number', { min: 0, max: 1, step: 0.05, nullable: true }],
-            ['extra_body', '额外请求参数', 'json', { rows: 4, nullable: true }],
+            ['extra_params', '附加参数', 'json', { rows: 6, nullable: true }],
         ],
         analysis: [
             ['base_url', '服务地址', 'url'], ['model', '模型名称', 'text'],
@@ -75,8 +74,7 @@ const SettingsManager = {
             ['retry_count', '重试次数', 'number', { min: 1 }],
             ['temperature', '温度', 'number', { min: 0, step: 0.1 }],
             ['top_p', 'Top P', 'number', { min: 0, max: 1, step: 0.05, nullable: true }],
-            ['enable_thinking', '传入顶层思考参数', 'thinking'],
-            ['extra_body', '额外请求参数', 'json', { rows: 4 }],
+            ['extra_params', '附加参数', 'json', { rows: 6 }],
             ['calc_precision', '计算精度', 'number', { min: 0, unit: '位小数' }],
             ['judge_timeout', '分析超时', 'number', { min: 1, unit: '秒，judge 与 custom 规则共用' }],
         ],
@@ -88,7 +86,7 @@ const SettingsManager = {
             ['timeout', '请求超时', 'number', { min: 1, unit: '秒' }],
             ['default_max_pixels', '单页最大像素', 'number', { min: 1, unit: '像素' }],
             ['pdf_storage_dir', 'PDF 存储目录', 'text'],
-            ['extra_body', '额外请求参数', 'json', { rows: 4 }],
+            ['extra_params', '附加参数', 'json', { rows: 6 }],
         ],
         web_search: [
             ['base_url', '服务地址', 'url'], ['api_key', 'API Key', 'secret'],
@@ -238,15 +236,7 @@ const SettingsManager = {
         const nullable = options.nullable ? ' data-nullable="true"' : '';
         const inputId = `setting-${group}-${name}`;
         let control;
-        if (type === 'thinking') {
-            control = `<div data-thinking-control>
-                <label class="settings-toggle"><input id="${inputId}" data-path="${path}" data-type="thinking" type="checkbox"${value != null ? ' checked' : ''} onchange="SettingsManager.toggleThinking(this)"><span></span></label>
-                <div data-thinking-value-row${value == null ? ' style="display:none"' : ''}>
-                    <label for="${inputId}-value">思考参数值（开启 true / 关闭 false）</label>
-                    <label class="settings-toggle"><input id="${inputId}-value" data-thinking-value type="checkbox"${value === true ? ' checked' : ''}><span></span></label>
-                </div>
-            </div>`;
-        } else if (type === 'boolean') {
+        if (type === 'boolean') {
             control = `<label class="settings-toggle"><input id="${inputId}" data-path="${path}" type="checkbox"${value ? ' checked' : ''}${readonly}><span></span></label>`;
         } else if (type === 'select') {
             control = `<select id="${inputId}" data-path="${path}" class="form-select"${readonly}>${options.options.map(item => `<option value="${this.escape(item)}"${item === value ? ' selected' : ''}>${this.escape(item)}</option>`).join('')}</select>`;
@@ -353,14 +343,7 @@ const SettingsManager = {
         activeItem?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     },
 
-    toggleThinking(control) {
-        control.closest('[data-thinking-control]').querySelector('[data-thinking-value-row]').style.display = control.checked ? '' : 'none';
-    },
-
     parseControl(control) {
-        if (control.dataset.type === 'thinking') {
-            return control.checked ? control.closest('[data-thinking-control]').querySelector('[data-thinking-value]').checked : null;
-        }
         if (control.type === 'checkbox') return control.checked;
         const raw = control.value.trim();
         if (control.dataset.nullable === 'true' && raw === '') return null;
@@ -479,11 +462,7 @@ const SettingsManager = {
             Object.entries(fields).forEach(([field, value]) => {
                 const control = document.querySelector(`[data-path="${group}.${field}"]`);
                 if (!control || control.disabled) return;
-                if (control.dataset.type === 'thinking') {
-                    control.checked = value != null;
-                    control.closest('[data-thinking-control]').querySelector('[data-thinking-value]').checked = value === true;
-                    this.toggleThinking(control);
-                } else if (control.type === 'checkbox') control.checked = Boolean(value);
+                if (control.type === 'checkbox') control.checked = Boolean(value);
                 else if (control.dataset.type === 'json') control.value = value == null ? '' : JSON.stringify(value, null, 2);
                 else control.value = value == null ? '' : value;
             });

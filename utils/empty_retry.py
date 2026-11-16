@@ -30,7 +30,7 @@ def is_empty_value(value):
 
 def retry_temperature(original):
     """所有追加尝试固定加 0.1，最高为 1，不随尝试次数累加。"""
-    if not _attempt.get():
+    if not _attempt.get() or original is None:
         return original
     return min(1.0, round(float(original) + 0.1, 10))
 

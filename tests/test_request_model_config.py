@@ -24,16 +24,20 @@ from utils.model_config import (
 @pytest.mark.parametrize("value", [[], "bad", {"mysql": {}}, {"analysis": []},
     {"analysis": {"judge_timeout": 0}}, {"concurrency": {"global_llm": 100}},
     {"vl_model": {"global_max_concurrency": 100}},
-    {"embedding": {"embedding_dim": 8}}, {"extraction": {"typo": 1}}])
+    {"embedding": {"embedding_dim": 8}}, {"extraction": {"typo": 1}},
+    {"extraction": {"enable_thinking": True}}, {"extraction": {"extra_body": {}}},
+    {"extraction": {"extra_params": {"model": "override"}}},
+    {"analysis": {"extra_params": {"messages": []}}},
+    {"vl_model": {"extra_params": {"stream": False}}}])
 def test_reject_unknown_or_invalid_model_config(value):
     with pytest.raises(ValueError):
         validate_model_config(value)
 
 
-def test_aliases_partial_overrides_and_replace_extra_body():
+def test_aliases_partial_overrides_and_replace_extra_params():
     base = AppConfig()
-    base.extraction.extra_body = {"old": 1}
-    values = validate_model_config({"extraction": {"llm_model": "new", "extra_body": {}},
+    base.extraction.extra_params = {"old": 1}
+    values = validate_model_config({"extraction": {"llm_model": "new", "extra_params": {}},
                                     "embedding": {"model_name": "embed"}})
     req = AnalysisRunRequest(mode="sync", items=[{"type_id": "t", "biz_id": "b"}], model_config=values)
     assert req.model_dump()["model_config"] == values
@@ -41,10 +45,10 @@ def test_aliases_partial_overrides_and_replace_extra_body():
         cfg = resolve_model_config(base)
         assert cfg.extraction.model == "new"
         assert cfg.extraction.base_url == base.extraction.base_url
-        assert cfg.extraction.extra_body == {}
+        assert cfg.extraction.extra_params == {}
         assert cfg.embedding.model == "embed"
         assert cfg.concurrency is base.concurrency
-    assert base.extraction.extra_body == {"old": 1}
+    assert base.extraction.extra_params == {"old": 1}
     assert resolve_model_config(base) is base
     assert parse_model_config(json.dumps(values)) == values
 
@@ -97,7 +101,7 @@ async def test_stream_does_not_leak_and_closes_under_own_config():
 @pytest.mark.parametrize("group", ["extraction", "analysis", "table_name_validation", "embedding", "vl_model"])
 async def test_actual_model_requests_use_overrides_and_original_limiters(monkeypatch, group):
     base = AppConfig()
-    base.extraction.extra_body = {"old": True}
+    base.extraction.extra_params = {"old": True}
     calls = []
     limits = []
     class Client:
@@ -125,7 +129,12 @@ async def test_actual_model_requests_use_overrides_and_original_limiters(monkeyp
     monkeypatch.setattr(vl_client, "get_limiter", limiter)
     fields = {"base_url": "http://request.test/v1", "model": "request-model", "api_key": ""}
     if group != "embedding":
-        fields.update({"temperature": 0.7, "extra_body": {"request": True},
+        fields.update({"temperature": 0.7, "extra_params": {
+                           "temperature": 0.9,
+                           "top_p": 0.4,
+                           "vendor_flag": True,
+                           "extra_body": {"request": True},
+                       },
                        "judge_timeout" if group == "analysis" else "timeout": 19})
     with model_config_context(validate_model_config({group: fields})):
         if group == "embedding":
@@ -141,8 +150,10 @@ async def test_actual_model_requests_use_overrides_and_original_limiters(monkeyp
     assert "request-secret" not in str(kwargs)
     if group != "embedding":
         assert timeout == 19
-        assert kwargs["json"]["temperature"] == 0.7
+        assert kwargs["json"]["temperature"] == 0.9
+        assert kwargs["json"]["top_p"] == 0.4
         assert kwargs["json"]["extra_body"] == {"request": True}
+        assert kwargs["json"]["vendor_flag"] is True
     pool = "global_vl" if group == "vl_model" else "global_embedding" if group == "embedding" else "global_llm"
     assert limits == [(pool, getattr(base.concurrency, pool))]
 

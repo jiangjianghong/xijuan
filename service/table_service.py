@@ -93,7 +93,6 @@ async def _extract_table_name_with_llm(
     api_key = extraction_cfg.api_key if table_name_cfg.api_key is None else table_name_cfg.api_key
     timeout = table_name_cfg.timeout or extraction_cfg.timeout
     retry_count = table_name_cfg.retry_count or extraction_cfg.retry_count
-    extra_body = table_name_cfg.extra_body or None
 
     prompt = (
         "你是文档表格标题抽取助手。\n"
@@ -122,7 +121,6 @@ async def _extract_table_name_with_llm(
             api_key=api_key,
             timeout=timeout,
             max_retries=retry_count,
-            extra_body=extra_body,
             config_group="table_name_validation",
         )
         data = _extract_json_obj(response)

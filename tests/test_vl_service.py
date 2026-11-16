@@ -137,7 +137,7 @@ async def test_vl_model_extract_success(monkeypatch):
 
     captured = {}
 
-    async def fake_vl_chat(messages, *, max_tokens=None, extra_body=None, max_retries=3):
+    async def fake_vl_chat(messages, *, max_tokens=None, extra_params=None, max_retries=3):
         captured["messages"] = messages
         return {
             "choices": [{"message": {"content": '{"value": "abc", "reason": "ok"}'}}],
@@ -208,7 +208,7 @@ async def test_vl_model_extract_caps_by_max_pages(monkeypatch):
 
     captured = {}
 
-    async def fake_vl_chat(messages, *, max_tokens=None, extra_body=None, max_retries=3):
+    async def fake_vl_chat(messages, *, max_tokens=None, extra_params=None, max_retries=3):
         captured["messages"] = messages
         return {
             "choices": [{"message": {"content": '{"value": "v", "reason": "r"}'}}],
@@ -240,7 +240,7 @@ async def test_vl_model_extract_dedups_duplicate_pages(monkeypatch):
 
     captured = {}
 
-    async def fake_vl_chat(messages, *, max_tokens=None, extra_body=None, max_retries=3):
+    async def fake_vl_chat(messages, *, max_tokens=None, extra_params=None, max_retries=3):
         captured["messages"] = messages
         return {
             "choices": [{"message": {"content": '{"value": "v", "reason": "r"}'}}],
@@ -273,7 +273,7 @@ async def test_vl_progressive_extract_filters_no_info_batches(monkeypatch):
 
     call_log = []
 
-    async def fake_vl_chat(messages, *, max_tokens=None, extra_body=None, max_retries=3):
+    async def fake_vl_chat(messages, *, max_tokens=None, extra_params=None, max_retries=3):
         call_log.append(messages)
         idx = len(call_log)
         if idx == 1:
@@ -671,7 +671,7 @@ async def test_vl_locate_extract_filters_hallucinated_pages(monkeypatch):
     pdf = _make_pdf_bytes(6)
     captured_messages = []
 
-    async def fake_vl_chat(messages, *, max_tokens=None, extra_body=None, max_retries=3):
+    async def fake_vl_chat(messages, *, max_tokens=None, extra_params=None, max_retries=3):
         captured_messages.append(messages)
         if _is_locate_call(messages):
             # 故意返回一个超界页码 99

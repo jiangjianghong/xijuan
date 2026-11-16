@@ -68,13 +68,10 @@ extraction:
   max_context_length: 4096                             # 检索文本注入 prompt 的最大字符数
   temperature: 0.1                                      # 抽取/表格名校验默认温度
   top_p: null                                           # 可选顶层参数；null=不传
-  # 额外请求参数会原样写入 OpenAI 兼容请求的 extra_body 字段
-  # 自部署模型（vLLM / Ollama 等）关闭思考链示例：
-  # extra_body: {chat_template_kwargs: {enable_thinking: false}}
-  # 阿里 DashScope 等托管模型关闭思考链示例：
-  # extra_body: {enable_thinking: false}
-  enable_thinking: null                                  # 顶层传递 enable_thinking；null=不覆盖模型默认值
-  extra_body: {}                                       # 默认不附加额外请求参数
+  # 对象按键合并到请求顶层；可显式嵌套 extra_body 传供应商参数
+  # 顶层参数示例：extra_params: {enable_thinking: true}
+  # 嵌套参数示例：extra_params: {extra_body: {chat_template_kwargs: {enable_thinking: false}}}
+  extra_params: {}
 
 # 表格名校验配置（为空的连接字段会回退到 extraction 对应字段）
 table_name_validation:
@@ -87,7 +84,7 @@ table_name_validation:
   temperature: null                                     # 为空回退 extraction.temperature
   top_p: null                                           # 为空回退 extraction.top_p
   max_context_lines: 3                                  # 表格名提取时参考的最大上文行数
-  extra_body: null                                      # 额外请求参数；为空回退 extraction.extra_body
+  extra_params: null                                    # 仅 enable_thinking 键回退 extraction；其它参数独立
 
 # 逻辑分析配置
 analysis:
@@ -97,8 +94,7 @@ analysis:
   retry_count: 3
   temperature: 0.1                                      # 逻辑分析温度
   top_p: null                                           # 可选顶层参数；null=不传
-  enable_thinking: null
-  extra_body: {}
+  extra_params: {}
   calc_precision: 2                                     # calc 规则结果保留的小数位数
   judge_timeout: 60                                     # 分析单次 LLM 请求超时（秒）；judge 与 custom 规则、正式与调试路径共用
 
@@ -110,7 +106,7 @@ vl_model:
   temperature: 0.1                                      # VL 生成温度
   max_tokens: 4096                                      # 单次 VL 请求最大输出 token 数
   timeout: 180                                           # 单次 VL 请求超时（秒）
-  extra_body: {}                                         # 透传给 OpenAI 兼容接口的额外参数
+  extra_params: {}                                      # 按键合并到请求顶层；extra_body 可作为嵌套参数
   default_max_pixels: 4000000                            # PDF 页面默认最大像素数（4MP）
   pdf_storage_dir: "uploads"                            # 原始 PDF 文件存储目录
 

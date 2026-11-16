@@ -12,7 +12,7 @@ from utils.llm_client import chat_completion
 async def main() -> None:
     cfg = get_config()
     print("analysis.model =", cfg.analysis.model)
-    print("analysis.enable_thinking =", cfg.analysis.enable_thinking)
+    print("analysis.extra_params =", cfg.analysis.extra_params)
     text = await chat_completion("reply with: ok", config_group="analysis")
     print("ANALYSIS RESULT:", text[:200])
 

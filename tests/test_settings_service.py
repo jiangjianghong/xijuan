@@ -55,7 +55,7 @@ extraction:
   llm_timeout: 60
   llm_retry_count: 3
   max_context_length: 4096
-  llm_extra_body: {}
+  extra_params: {}
 table_name_validation:
   llm_base_url: null
   llm_model: null
@@ -65,11 +65,13 @@ table_name_validation:
   max_context_length: null
   max_context_lines: 3
   max_concurrency: 20
-  llm_extra_body: null
+  extra_params: null
 analysis:
   calc_precision: 2
   judge_timeout: 30
   max_concurrency: 10
+  enable_thinking: true
+  extra_body: {legacy: true}
 concurrency:
   task_analysis: 4
 vl_model:
@@ -79,7 +81,7 @@ vl_model:
   temperature: 0.1
   max_tokens: 4096
   timeout: 180
-  extra_body: {}
+  extra_params: {}
   global_max_concurrency: 8
   default_max_pixels: 4000000
   pdf_storage_dir: uploads
@@ -157,17 +159,23 @@ def test_public_config_only_exposes_allowed_groups_and_secret_status(config_path
 def test_analysis_model_settings_and_secret_are_independent(config_path: Path):
     service = SettingsService(config_path)
     before = service.read_public_config()
+    assert before["config"]["analysis"]["extra_params"] == {}
     result = service.update_config(
         base_version=before["version"],
         changes={"analysis": {"base_url": "http://judge.test/v1", "model": "judge",
-                              "retry_count": 2, "enable_thinking": False,
-                              "extra_body": {"temperature": 0.1}}},
+                              "retry_count": 2,
+                              "extra_params": {"enable_thinking": False,
+                                               "temperature": 0.1}}},
         secrets={"analysis.api_key": {"action": "replace", "value": "analysis-secret"}},
     )
     assert result["config"]["analysis"]["api_key"] == {"configured": True}
     assert "analysis-secret" not in repr(result)
     assert get_config().analysis.api_key == "analysis-secret"
     assert get_config().analysis.model == "judge"
+    assert get_config().analysis.extra_params == {
+        "enable_thinking": False,
+        "temperature": 0.1,
+    }
     assert get_config().extraction.api_key == "extraction-secret"
     result = service.update_config(
         base_version=result["version"], changes={},
@@ -176,6 +184,20 @@ def test_analysis_model_settings_and_secret_are_independent(config_path: Path):
     assert get_config().analysis.api_key == ""
     assert get_config().extraction.api_key == "extraction-secret"
     assert result["config"]["analysis"]["api_key"] == {"configured": False}
+    written = YAML().load(config_path.read_text(encoding="utf-8"))
+    assert "enable_thinking" not in written["analysis"]
+    assert "extra_body" not in written["analysis"]
+
+
+def test_retired_model_fields_cannot_be_updated(config_path: Path):
+    service = SettingsService(config_path)
+    before = service.read_public_config()
+    with pytest.raises(ConfigFieldError, match="不允许修改配置字段"):
+        service.update_config(
+            base_version=before["version"],
+            changes={"analysis": {"enable_thinking": False}},
+            secrets={},
+        )
 
 
 def test_update_changes_editable_values_and_preserves_closed_config(config_path: Path):

@@ -9,12 +9,43 @@ from typing import Any, Dict, List, Mapping
 
 import yaml
 from loguru import logger
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from utils.auth_config import AccessControlConfig
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "configs"
 _DEFAULT_CONFIG_PATH = _CONFIG_DIR / "config.yaml"
+
+_RESERVED_EXTRA_PARAM_KEYS = {"model", "messages", "stream"}
+_RETIRED_MODEL_CONFIG_FIELDS = {
+    "extraction": {"enable_thinking", "extra_body", "llm_extra_body"},
+    "table_name_validation": {"extra_body", "llm_extra_body"},
+    "analysis": {"enable_thinking", "extra_body"},
+    "vl_model": {"extra_body"},
+}
+
+
+def _validate_extra_params(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("extra_params 的键必须是字符串")
+        reserved = sorted(_RESERVED_EXTRA_PARAM_KEYS.intersection(value))
+        if reserved:
+            raise ValueError(
+                "extra_params 不允许覆盖请求结构字段: " + ", ".join(reserved)
+            )
+    return value
+
+
+def merge_extra_params(*values: Mapping[str, Any] | None) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    for value in values:
+        if value is None:
+            continue
+        if not isinstance(value, Mapping):
+            raise ValueError("extra_params 必须是 JSON 对象")
+        merged.update(value)
+    return _validate_extra_params(merged)
 
 
 # ── 子配置模型 ──────────────────────────────────────────────
@@ -115,8 +146,12 @@ class ExtractionConfig(BaseModel):
     max_context_length: int = Field(4096, ge=1)
     temperature: float = Field(0.1, ge=0)
     top_p: float | None = Field(None, ge=0, le=1)
-    extra_body: Dict[str, Any] = {}
-    enable_thinking: bool | None = None
+    extra_params: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("extra_params", mode="before")
+    @classmethod
+    def validate_extra_params(cls, value: Any) -> Any:
+        return _validate_extra_params(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -130,7 +165,6 @@ class ExtractionConfig(BaseModel):
             "llm_api_key": "api_key",
             "llm_timeout": "timeout",
             "llm_retry_count": "retry_count",
-            "llm_extra_body": "extra_body",
         }
         for old, new in aliases.items():
             if new not in data and old in data:
@@ -157,10 +191,6 @@ class ExtractionConfig(BaseModel):
     def llm_retry_count(self) -> int:
         return self.retry_count
 
-    @property
-    def llm_extra_body(self) -> Dict[str, Any]:
-        return self.extra_body
-
 
 class TableNameValidationConfig(BaseModel):
     base_url: str | None = None
@@ -173,7 +203,12 @@ class TableNameValidationConfig(BaseModel):
     max_concurrency: int | None = Field(None, ge=1)
     temperature: float | None = Field(None, ge=0)
     top_p: float | None = Field(None, ge=0, le=1)
-    extra_body: Dict[str, Any] | None = None
+    extra_params: Dict[str, Any] | None = None
+
+    @field_validator("extra_params", mode="before")
+    @classmethod
+    def validate_extra_params(cls, value: Any) -> Any:
+        return _validate_extra_params(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -187,7 +222,6 @@ class TableNameValidationConfig(BaseModel):
             "llm_api_key": "api_key",
             "llm_timeout": "timeout",
             "llm_retry_count": "retry_count",
-            "llm_extra_body": "extra_body",
         }
         for old, new in aliases.items():
             if new not in data and old in data:
@@ -214,10 +248,6 @@ class TableNameValidationConfig(BaseModel):
     def llm_retry_count(self) -> int | None:
         return self.retry_count
 
-    @property
-    def llm_extra_body(self) -> Dict[str, Any] | None:
-        return self.extra_body
-
 
 class AnalysisConfig(BaseModel):
     # 分析模型独立配置，空地址或模型在调用时明确报错，不继承抽取配置。
@@ -227,11 +257,15 @@ class AnalysisConfig(BaseModel):
     retry_count: int = Field(3, ge=1)
     temperature: float = Field(0.1, ge=0)
     top_p: float | None = Field(None, ge=0, le=1)
-    extra_body: Dict[str, Any] = Field(default_factory=dict)
-    enable_thinking: bool | None = None
+    extra_params: Dict[str, Any] = Field(default_factory=dict)
     calc_precision: int = Field(2, ge=0)
     # 分析阶段（judge 与 custom，正式与调试）单次 LLM 请求超时。
     judge_timeout: int = Field(60, ge=1)
+
+    @field_validator("extra_params", mode="before")
+    @classmethod
+    def validate_extra_params(cls, value: Any) -> Any:
+        return _validate_extra_params(value)
 
 
 class ConcurrencyConfig(BaseModel):
@@ -286,10 +320,15 @@ class VLModelConfig(BaseModel):
     temperature: float = Field(0.1, ge=0)
     max_tokens: int = Field(4096, ge=1)
     timeout: int = Field(180, ge=1)
-    extra_body: Dict[str, Any] = {}
+    extra_params: Dict[str, Any] = Field(default_factory=dict)
     global_max_concurrency: int = Field(8, ge=1)
     default_max_pixels: int = Field(4_000_000, ge=1)
     pdf_storage_dir: str = "uploads"
+
+    @field_validator("extra_params", mode="before")
+    @classmethod
+    def validate_extra_params(cls, value: Any) -> Any:
+        return _validate_extra_params(value)
 
 
 class WebSearchConfig(BaseModel):
@@ -398,6 +437,18 @@ def load_config(path: Path | None = None) -> AppConfig:
     config_path = path or get_config_path()
     if config_path.exists():
         data = _load_yaml(config_path)
+        for group, retired_fields in _RETIRED_MODEL_CONFIG_FIELDS.items():
+            values = data.get(group)
+            if not isinstance(values, Mapping):
+                continue
+            found = sorted(retired_fields.intersection(values))
+            if found:
+                logger.warning(
+                    "配置 {} 的 {} 使用了已移除字段 {}；这些值未迁移且不会生效，请手动配置 extra_params。",
+                    config_path,
+                    group,
+                    ", ".join(found),
+                )
         return AppConfig(**data)
     return AppConfig()
 

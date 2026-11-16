@@ -15,7 +15,7 @@
 
 - **默认值** 列是代码内置默认（`utils/config.py` 中各 Pydantic 模型的字段默认），即省略该键时实际生效的值。
 - 仓库内 `configs/config.yaml` 是**部署示例**，会用环境实际值（真实主机 / 端口 / 密钥 / 模型名）覆盖默认。示例值与默认不同的，在「含义」列以「示例:」标注。
-- `extra_body` 等对象会**原样透传**到底层 OpenAI 兼容请求的 `extra_body`，可用于关闭思考等模型私有开关。
+- `extra_params` 是任意 JSON 对象，按键合并到请求顶层；供应商要求的嵌套参数可直接写在对象内，例如 `{"extra_body":{"chat_template_kwargs":{"enable_thinking":false}}}`。
 
 ---
 
@@ -100,7 +100,7 @@
 | `max_context_length` | 整数 | `4096` | 注入 prompt 的检索文本字符上限，超长从末尾截断 |
 | `temperature` | 数字 | `0.1` | 文本抽取请求的顶层温度 |
 | `top_p` | 数字 / null | `null` | 可选顶层参数；留空时不传 |
-| `extra_body` | 对象 | `{}` | 透传到请求 `extra_body` 的额外参数。示例: `{chat_template_kwargs: {enable_thinking: false}}`（关闭思考） |
+| `extra_params` | 对象 | `{}` | 按键合并到请求顶层；例如 `{enable_thinking: true}` 会作为顶层参数，`{extra_body: {enable_thinking: true}}` 会保持嵌套 |
 
 ## table_name_validation — 表名校验 LLM（tableing 阶段，独立且可回退）
 
@@ -117,7 +117,7 @@
 | `temperature` | 数字 / null | `null` | 表格名校验温度；为空回退 `extraction.temperature` |
 | `top_p` | 数字 / null | `null` | 表格名校验 Top P；为空回退 `extraction.top_p` |
 | `max_context_lines` | 整数 / null | `null` | 表格前用于推断表名的上文行数；为空按 `3` |
-| `extra_body` | 对象 / null | `null` | 透传到请求 `extra_body` 的额外参数 |
+| `extra_params` | 对象 / null | `null` | 未设置 `enable_thinking` 时仅继承 extraction 中该键；其它附加参数不继承 |
 
 ## analysis — 逻辑分析
 
@@ -125,6 +125,7 @@
 |---|---|---|---|
 | `temperature` | 数字 | `0.1` | 逻辑分析请求的顶层温度 |
 | `top_p` | 数字 / null | `null` | 可选顶层参数；留空时不传 |
+| `extra_params` | 对象 | `{}` | 按键合并到请求顶层；可包含供应商要求的嵌套 `extra_body` |
 | `calc_precision` | 整数 | `2` | `calc` 规则 numexpr 计算结果保留的小数位 |
 | `judge_timeout` | 整数 | `60` | 分析阶段单次 LLM 请求超时（秒）。覆盖 `judge` 与 `custom` 两种规则，正式与调试路径共用；`calc` 走 numexpr 不调模型，不受影响 |
 
@@ -159,7 +160,7 @@
 | `temperature` | 浮点 | `0.1` | 采样温度 |
 | `max_tokens` | 整数 | `4096` | 单次生成的最大 token |
 | `timeout` | 整数 | `180` | 请求超时（秒） |
-| `extra_body` | 对象 | `{}` | 透传到请求 `extra_body` 的额外参数 |
+| `extra_params` | 对象 | `{}` | 按键合并到请求顶层；可显式包含供应商要求的嵌套 `extra_body` |
 | `default_max_pixels` | 整数 | `4000000` | 单图默认像素上限，可被字段 `vl_config.max_pixels` 覆盖 |
 | `pdf_storage_dir` | 字符串 | `"uploads"` | 上传 PDF 的持久化目录，VL 抽取直接读取原始字节 |
 

@@ -17,7 +17,8 @@ async def test_chat_completion_stream_yields_sse_deltas_and_sets_stream_flag(mon
             "model": "debug-model",
             "api_key": "test-key",
             "retry_count": 1,
-            "enable_thinking": True,
+            "extra_params": {"enable_thinking": True,
+                              "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}},
         },
     })
     monkeypatch.setattr(llm_client, "get_config", lambda: config)
@@ -63,3 +64,6 @@ async def test_chat_completion_stream_yields_sse_deltas_and_sets_stream_flag(mon
     assert requests[0].headers["Authorization"] == "Bearer test-key"
     assert json.loads(requests[0].content)["stream"] is True
     assert json.loads(requests[0].content)["enable_thinking"] is True
+    assert json.loads(requests[0].content)["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
