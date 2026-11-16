@@ -27,6 +27,7 @@ from service.extraction_snapshot import (
     FileExtractionSnapshot,
     load_extraction_snapshot,
 )
+from service.bm25_search import search_bm25
 from service.file_vector_index import FileVectorIndex, select_parent_hits
 from service.match_prompts import build_section_match_prompt, build_table_match_prompt
 from service.vl_service._common import append_reason_first_output_instruction
@@ -2324,6 +2325,7 @@ _SEGMENT_TEXT_KEY = {
     "section": "content",
     "rule": "extracted_text",
     "chunk_db": "chunk_content",
+    "bm25": "chunk_content",
     "vector_db": "chunk_content",
 }
 
@@ -2363,7 +2365,7 @@ def _build_text_source_refs(
             ref["chunk_id"] = r["chunk_id"]
             ref["chunk_index"] = r["chunk_index"]
 
-        # 页码：chunk_db/vector_db 结果自带 page_num，其他类型通过 page_mapping 查找
+        # 分块检索结果自带 page_num，其他类型通过 page_mapping 查找
         if "page_num" in r:
             ref["page_num"] = r["page_num"]
         elif r.get("start_pos") is not None and r.get("end_pos") is not None:
@@ -2375,7 +2377,7 @@ def _build_text_source_refs(
             if len(_segs) > 1:
                 ref["page_nums"] = sorted({s["page_num"] for s in _segs})
 
-        # 块级 bbox：所有带全文坐标的结果（含 chunk_db/vector_db）统一查 page_mapping；
+        # 块级 bbox：所有带全文坐标的结果统一查 page_mapping；
         # 存量老 mapping 无 bbox 时返回空，不挂键（消费方容错）
         if r.get("start_pos") is not None and r.get("end_pos") is not None:
             bboxes = lookup_bboxes(page_mapping, r["start_pos"], r["end_pos"])
@@ -2454,6 +2456,8 @@ async def extract_text_field(
         search_results = await search_rule(content, search_config, snapshot.chunks)
     elif search_type == "chunk_db":
         search_results = await search_chunk_db(file_id, search_config, snapshot.chunks)
+    elif search_type == "bm25":
+        search_results = search_bm25(file_id, search_config, snapshot.chunks)
     elif search_type == "vector_db":
         search_results = await search_vector_db(
             file_id, search_config, snapshot.vector_index
@@ -2819,16 +2823,19 @@ def _hybrid_item_field(field: ExtractionField, item: Dict[str, Any]) -> Extracti
     return run
 
 
-def _hybrid_ref_key(ref: Dict[str, Any]) -> Tuple[Any, ...]:
-    """返回跨通道去重键，优先使用稳定块/表 ID，其次使用原文坐标。"""
+def _hybrid_ref_keys(ref: Dict[str, Any]) -> Tuple[Tuple[Any, ...], ...]:
+    """返回 ref 的稳定 ID 与原文坐标别名，用于跨通道去重。"""
+    keys = []
     if ref.get("chunk_id"):
-        return ("chunk", ref["chunk_id"])
+        keys.append(("chunk", ref["chunk_id"]))
     if ref.get("table_index") is not None:
-        return ("table", ref["table_index"])
+        keys.append(("table", ref["table_index"]))
     if ref.get("start_pos") is not None or ref.get("end_pos") is not None:
-        return ("span", ref.get("start_pos"), ref.get("end_pos"))
-    text = str(ref.get("text") or "").strip()
-    return ("text", hash(text))
+        keys.append(("span", ref.get("start_pos"), ref.get("end_pos")))
+    if not keys:
+        text = str(ref.get("text") or "").strip()
+        keys.append(("text", hash(text)))
+    return tuple(keys)
 
 
 def _hybrid_evidence(
@@ -2850,24 +2857,28 @@ def _hybrid_evidence(
             if not text:
                 continue
             has_text_refs = True
-            dedupe_key = _hybrid_ref_key(ref)
-            if dedupe_key in seen:
+            dedupe_keys = _hybrid_ref_keys(ref)
+            if any(key in seen for key in dedupe_keys):
                 continue
             annotated = _page_annotated_text(
                 str(ref["text"]), page_mapping, ref.get("start_pos"),
                 ref.get("end_pos"), ref.get("page_num"),
             )
+            partial_key = None
             if max_length is not None:
                 if max_length <= 0:
                     continue
                 if len(annotated) > max_length:
                     annotated = annotated[:max_length]
                     # 只消费实际保留的片段；较长的后续通道仍可补充本页剩余证据。
-                    dedupe_key = ("partial", dedupe_key, annotated)
-                if dedupe_key in seen:
+                    partial_key = ("partial", dedupe_keys, annotated)
+                if partial_key is not None and partial_key in seen:
                     continue
                 max_length -= len(annotated) + len("\n---\n")
-            seen.add(dedupe_key)
+            if partial_key is not None:
+                seen.add(partial_key)
+            else:
+                seen.update(dedupe_keys)
             pieces.append((annotated, key, ref))
     # 某些自定义检索器只返回 value；保留它作为回退证据。
     if not has_text_refs and value and str(value).strip():
@@ -3987,6 +3998,11 @@ async def test_field_extraction_stream(
                     search_results = await search_chunk_db(
                         file_id, search_config, debug_snapshot.chunks
                     )
+                elif search_type == "bm25":
+                    debug_snapshot = await load_extraction_snapshot(file_id, session)
+                    search_results = search_bm25(
+                        file_id, search_config, debug_snapshot.chunks
+                    )
                 elif search_type == "vector_db":
                     debug_snapshot = await load_extraction_snapshot(
                         file_id, session, need_vectors=True
@@ -4007,7 +4023,7 @@ async def test_field_extraction_stream(
                 # 每段带【第X页】标记（跨页逐页标注），与实际注入 prompt 的文本一致
                 _seg_key = {"context": "context", "section": "content",
                             "rule": "extracted_text", "chunk_db": "chunk_content",
-                            "vector_db": "chunk_content"}.get(search_type)
+                            "bm25": "chunk_content", "vector_db": "chunk_content"}.get(search_type)
                 if _seg_key:
                     for keyword, items in results_by_keyword.items():
                         results_by_label[keyword] = "\n---\n".join(

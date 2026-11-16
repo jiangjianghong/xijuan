@@ -32,6 +32,7 @@ from service.extraction_service import (
     needs_vector_index,
     replace_search_result_placeholders,
     resolve_advanced_field_from_db,
+    search_bm25,
     search_chunk_db,
     search_context,
     search_rule,
@@ -543,6 +544,8 @@ async def test_extraction(
                 search_results = await search_rule(content, search_config)
             elif search_type == "chunk_db":
                 search_results = await search_chunk_db(file_id, search_config, snapshot.chunks)
+            elif search_type == "bm25":
+                search_results = search_bm25(file_id, search_config, snapshot.chunks)
             elif search_type == "vector_db":
                 search_results = await search_vector_db(file_id, search_config)
 

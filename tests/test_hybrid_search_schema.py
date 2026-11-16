@@ -26,6 +26,31 @@ def test_hybrid_union_accepts_text_and_table():
     assert field.search_config["items"][1]["id"] == "b"
 
 
+def test_hybrid_union_accepts_bm25_text_channel():
+    field = ExtractionFieldCreate(**_field({
+        "strategy": "union",
+        "items": [
+            {"id": "bm25", "source_type": "text", "method": "bm25", "config": {
+                "query_text": "投标保证金", "top_k": 5,
+            }},
+        ],
+    }))
+    assert field.search_config["items"][0]["method"] == "bm25"
+
+
+@pytest.mark.parametrize("config", [
+    {"query_text": "金额", "k1": 0},
+    {"query_text": "金额", "b": 2},
+])
+def test_bm25_rejects_invalid_parameters(config):
+    payload = {
+        "field_id": "amount", "field_name": "金额", "source_type": "text",
+        "search_type": "bm25", "search_config": config, "use_llm": 0,
+    }
+    with pytest.raises(ValidationError):
+        ExtractionFieldCreate(**payload)
+
+
 def test_hybrid_fallback_accepts_one_vl():
     field = ExtractionFieldCreate(**_field({
         "strategy": "fallback",

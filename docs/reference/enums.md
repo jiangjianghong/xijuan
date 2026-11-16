@@ -12,7 +12,7 @@
 |---|---|---|
 | [SourceType](#sourcetype) | `extraction_field.source_type` | `table` · `text` · `vl` |
 | [TableMatchType](#tablematchtype) | `table` 来源的 `table_match_type` | `exact` · `fuzzy` · `contains` · `llm` |
-| [SearchType](#searchtype) | `text` 来源的 `search_type` | `context` · `section` · `rule` · `chunk_db` · `vector_db` · `page` |
+| [SearchType](#searchtype) | `text` 来源的 `search_type` | `context` · `section` · `rule` · `chunk_db` · `bm25` · `vector_db` · `page` · `hybrid` |
 | [VLMethod](#vlmethod) | `vl` 来源的 `vl_method` | `vl_model` · `vl_progressive` · `vl_locate` |
 | [RuleType](#ruletype) | `analysis_rule.rule_type` | `judge` · `calc` · `custom` |
 | [progress](#progress) | `files.progress` | 见 [progress 状态机](#progress-状态机) |
@@ -56,8 +56,10 @@
 | `section` | 章节标题匹配 |
 | `rule` | 关键词起点 + 停止词边界 |
 | `chunk_db` | MySQL 内分块检索 |
+| `bm25` | BM25 词项检索，按词频、逆文档频率和分块长度排序 |
 | `vector_db` | Milvus 语义检索 |
 | `page` | 按 `page_range` 直接切 Markdown 喂 LLM；占位符固定为 `<search_result>page_content</search_result>`，可配 `max_length` 末尾截断 |
+| `hybrid` | 按配置组合多个文本、表格或 VL 通道 |
 
 <a id="vlmethod"></a>
 

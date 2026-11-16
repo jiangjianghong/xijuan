@@ -95,6 +95,21 @@ test('普通文本与组合检索切换后占位符菜单使用当前模式的�
     w.close();
 });
 
+test('普通 BM25 配置的占位符菜单按查询文本提供标签', () => {
+    const { w, rc } = setup([]);
+    w.document.getElementById('editor').innerHTML = rc.buildFieldForm({
+        field_id: 'bm25_tags', field_name: '期限', source_type: 'text', search_type: 'bm25',
+        search_config: { query_text: ['投标保证金', '退还期限'] },
+    });
+    const button = w.document.getElementById('fm-text-extract-prompt')
+        .closest('.form-group').querySelector('.insert-tag-btn');
+    button.click();
+    assert.deepEqual([...w.document.querySelectorAll('#_insert-tag-dropdown .dropdown-item')]
+        .map(el => el.textContent), ['投标保证金', '退还期限']);
+    assert.deepEqual(Array.from(rc.collectFieldFormData().search_config.query_text), ['投标保证金', '退还期限']);
+    w.close();
+});
+
 test('文本、表格、三种 VL 复用普通配置控件，不提供 JSON 或复制', () => {
     const { rows } = setup([
         item('t', 'text', 'vector_db', { query_text: '总投资', top_k: 6 }),
@@ -110,6 +125,25 @@ test('文本、表格、三种 VL 复用普通配置控件，不提供 JSON 或�
         assert.equal([...row.querySelectorAll('button')].some(b => b.textContent === '复制'), false);
         assert.equal(row.querySelector('.hybrid-method').tagName, 'SELECT');
     }
+});
+
+test('BM25 可从 hybrid 文本通道选择并保存查询与参数', () => {
+    const { w, rows, data } = setup([
+        item('bm25', 'text', 'bm25', { query_text: ['投标保证金', '退还期限'], top_k: 7, k1: 1.8, b: 0.6 }),
+    ], 'union');
+    const row = rows()[0];
+    assert.ok([...row.querySelector('.hybrid-method').options].some(option => option.value === 'bm25'));
+    assert.equal(control(row, 'fm-sc-query-text').value, '投标保证金\n退还期限');
+    assert.equal(control(row, 'fm-sc-top-k').value, '7');
+    assert.equal(control(row, 'fm-sc-bm25-k1').value, '1.8');
+    assert.equal(control(row, 'fm-sc-bm25-b').value, '0.6');
+    const saved = data().items[0];
+    assert.equal(saved.method, 'bm25');
+    assert.deepEqual(saved.config.query_text, ['投标保证金', '退还期限']);
+    assert.equal(saved.config.top_k, 7);
+    assert.equal(saved.config.k1, 1.8);
+    assert.equal(saved.config.b, 0.6);
+    w.close();
 });
 
 test('新增和排序保留原节点、未添加的关键词、提示词和数值草稿', () => {

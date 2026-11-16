@@ -322,7 +322,7 @@ parsing_   tableing_    chunking_   embedding_    extracting_    analyzing_
 - 复合主键：`file_id` + `chunk_id`
 - 分块参数由 `configs/config.yaml` 的 `chunking` 节决定（默认 `chunk_size: 512`、`chunk_overlap: 50`，递归分隔符 `["\n\n", "\n", "。", " "]`）
 - **表格作为独立 chunk 保留**（不参与递归切分），`chunk_content` 含 `table_name\n<table>...` 前缀；超过 8192 字符的超长表格按 `</tr>` / `</td>` / `\n` 边界拆分
-- `start_pos`/`end_pos` 是 `chunk_db`/`vector_db` 检索结果做 bbox 定位的坐标来源
+- `start_pos`/`end_pos` 是 `chunk_db`/`bm25`/`vector_db` 检索结果做 bbox 定位的坐标来源
 
 #### 示例数据
 
@@ -857,9 +857,9 @@ custom 类规则 `is_formatted=1` 时的输出字段树（`utils/output_schema.p
 字段说明：
 
 - 每条 ref 通用字段：`type`、`start_pos`、`end_pos`、`page_num`（字符串，可能为范围如 `"3-5"`）、`text`（该条命中注入 prompt 的原始片段，table 类含 `表格名称: xxx\n` 前缀）。
-- `chunk_db` / `vector_db` 检索的 ref 另带 `chunk_id` / `chunk_index`；table 类另带 `table_index` / `table_name`；page 检索 ref 为 `{type:"page", page_range, start_pos, end_pos, length, truncated, page_num, text}`。
+- `chunk_db` / `bm25` / `vector_db` 检索的 ref 另带 `chunk_id` / `chunk_index`；table 类另带 `table_index` / `table_name`；page 检索 ref 为 `{type:"page", page_range, start_pos, end_pos, length, truncated, page_num, text}`。
 - 顶层 `_texts` 键 = `{label: 拼接后实际注入 <search_result> 占位符的完整文本}`（多条命中以 `\n---\n` 拼接）。
-- `bboxes` = `[{page_num(int), bbox, page_size}]`，由 `lookup_bboxes` 从 `file_content.page_mapping` 查得，text 5 种检索（context/section/rule/chunk_db/vector_db）与 table 类携带（**非空才挂键**）；page 检索（整页切片）与 vl 类不挂。
+- `bboxes` = `[{page_num(int), bbox, page_size}]`，由 `lookup_bboxes` 从 `file_content.page_mapping` 查得，text 检索（context/section/rule/chunk_db/bm25/vector_db）与 table 类携带（**非空才挂键**）；page 检索（整页切片）与 vl 类不挂。
 - **容错**：提取失败时整个 `source_refs` 为 NULL；存量老数据无 `text` / `_texts` / `bboxes` 键（老文件 page_mapping 无 bbox，重新解析后才有），消费方读取时需容错。
 - **进阶字段专属键**（`is_advanced=1` 才可能出现）：`_resolved_refs` = `{被引用 field_id: 实际填入的值}`；`_page_link` = `{source_field, model_pages, derived_range: [start, end], capped}`（仅 `page` 检索且配了 `page_source_field` 时）。
 
@@ -1086,7 +1086,7 @@ CREATE TABLE IF NOT EXISTS extraction_field (
   table_match_max_results INT NULL,
   table_system_prompt TEXT NULL,
   table_extract_prompt TEXT NULL,
-  search_type ENUM('context', 'section', 'rule', 'chunk_db', 'vector_db', 'page') NULL,
+  search_type ENUM('context', 'section', 'rule', 'chunk_db', 'bm25', 'vector_db', 'page', 'hybrid') NULL,
   search_config JSON NULL,
   text_system_prompt TEXT NULL,
   text_extract_prompt TEXT NULL,

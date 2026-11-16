@@ -204,7 +204,26 @@ JSON 示例和排错清单为主。
 }
 ```
 
-### 3.5 向量检索 `vector_db`
+### 3.5 BM25 检索 `bm25`
+
+按 Okapi BM25 对当前文件的文本分块评分，使用词频、词项在文档中的稀有度和分块长度归一化进行排序。连续汉字按双字词切分，英文和数字按词切分。适合查询词明确、需要优先命中原文术语或编号的场景；与 `vector_db` 相比，它不负责语义相似匹配。
+
+`query_text` 支持单串或数组；数组中的每个查询独立检索并使用自己的占位符标签。`top_k`（默认 10）限制每路返回块数，`k1`（默认 1.5）控制词频饱和，`b`（默认 0.75，范围 0–1）控制长度归一化。
+
+```json
+{
+  "field_id": "guarantee_return_period",
+  "field_name": "保证金退还期限",
+  "source_type": "text",
+  "search_type": "bm25",
+  "search_config": { "query_text": ["投标保证金", "退还期限"], "top_k": 5 },
+  "text_extract_prompt": "依据以下内容提取期限：\n<search_result>投标保证金</search_result>\n<search_result>退还期限</search_result>"
+}
+```
+
+也可以在 `hybrid` 的 `items` 中配置 `{ "source_type": "text", "method": "bm25", "config": { "query_text": "投标保证金" } }`，与 `vector_db` 等通道合并证据。
+
+### 3.6 向量检索 `vector_db`
 
 `query_text` 向量化后在**该文件的全部子块**上做全量打分（不走 ANN——抽取链路恒带 `file_id` 过滤，IVF 先选簇再过滤只探 0.4% 的簇会静默丢召回），命中子块映射回**父块**注入 prompt。`query_text` 可以是单串，也可以是数组做多路检索（如 `["项目名称", "工程名称", "本项目名称为"]`）——**数组的每一项各需一个独立占位符** `<search_result>该查询词</search_result>`，缺了保存时 422。`top_k` 可选，不配则按 `score_threshold`（绝对下限）+ `score_ratio`（相对分差，默认 0.85，只留与最高分同档的）筛选，以 `milvus.max_results`（默认 20）兜底。适合关键词不固定、要「语义找」的抽象字段。
 
@@ -219,7 +238,7 @@ JSON 示例和排错清单为主。
 }
 ```
 
-### 3.6 按页检索 `page`
+### 3.7 按页检索 `page`
 
 不做关键词/语义检索，直接按 `page_range` 把 Markdown 整片切出来喂 LLM。`page_range` 支持 `"all"` / `"1-3"` / `"1-3,5"` / `"2"`；`max_length`（默认 30000）超长时末尾截断。**占位符标签固定为 `page_content`。** 适合「相关信息集中在已知页码」的定点提取。
 
@@ -258,7 +277,7 @@ JSON 示例和排错清单为主。
 
 | 键 | 默认 | 含义 |
 |---|---|---|
-| `page_range` | `"all"` | 纳入视野的页，语法同 3.6（`"1-3,5"`）。重复页会自动去重，不重复渲染 |
+| `page_range` | `"all"` | 纳入视野的页，语法同 3.7（`"1-3,5"`）。重复页会自动去重，不重复渲染 |
 | `max_pages` | 不限 | 候选页上限，超出取**前 N 页** |
 | `max_pixels` | 4000000 | 单图像素上限，超出按比例缩 |
 

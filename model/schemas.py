@@ -323,6 +323,24 @@ class VLMethodEnum(str, Enum):
     vl_locate = "vl_locate"
 
 
+def _validate_bm25_config(config: Dict[str, Any]) -> None:
+    """校验 BM25 的数值参数，避免配置错误在抽取任务中才暴露。"""
+    top_k = config.get("top_k", config.get("max_results"))
+    if top_k is not None and (
+        isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 1
+    ):
+        raise ValueError("BM25 top_k 必须是大于 0 的整数")
+
+    for name, default in (("k1", 1.5), ("b", 0.75)):
+        value = config.get(name, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"BM25 {name} 必须是有限数字")
+        if name == "k1" and value <= 0:
+            raise ValueError("BM25 k1 必须大于 0")
+        if name == "b" and not 0 <= value <= 1:
+            raise ValueError("BM25 b 必须在 0 到 1 之间")
+
+
 class ExtractionFieldCreate(BaseModel):
     field_id: str = Field(..., pattern=r"^[a-zA-Z0-9_]+$", max_length=100)
     type_id: str = Field("default", pattern=r"^[a-zA-Z0-9_-]+$", max_length=64)
@@ -413,6 +431,9 @@ class ExtractionFieldCreate(BaseModel):
             return v
         if cls.__name__ == "ExtractionFieldCreate" and v.get("ignore_whitespace") is not None and not isinstance(v.get("ignore_whitespace"), bool):
             raise ValueError("ignore_whitespace 必须是布尔值")
+        search_type = info.data.get("search_type")
+        if getattr(search_type, "value", search_type) == SearchTypeEnum.bm25.value:
+            _validate_bm25_config(v)
         if cls.__name__ == "ExtractionFieldCreate":
             section_type = v.get("section_match_type") or v.get("match_type")
             if section_type != "llm":
@@ -472,6 +493,8 @@ class ExtractionFieldCreate(BaseModel):
                 raise ValueError("hybrid item.config 必须是对象")
             item_config = item.get("config") or {}
             item_method = item.get("method")
+            if source_type == "text" and item_method == SearchTypeEnum.bm25.value:
+                _validate_bm25_config(item_config)
             should_validate_regex = not (
                 item.get("source_type") == "table"
                 and (item_config.get("table_match_type") or item_config.get("match_type")) == "llm"
@@ -592,7 +615,7 @@ class ExtractionFieldCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_query_text_placeholders(self):
-        """vector_db 多路检索的每个 query 都必须在提取提示词里有对应占位符。
+        """query_text 检索的每个 query 都必须在提取提示词里有对应占位符。
 
         replace_search_result_placeholders 按 label 替换，prompt 里没有的
         label 结果会被**静默丢弃**——用户加了同义词却没改 prompt，那一路
@@ -600,7 +623,7 @@ class ExtractionFieldCreate(BaseModel):
         """
         if self.__class__.__name__ != "ExtractionFieldCreate":
             return self
-        if self.search_type != SearchTypeEnum.vector_db:
+        if self.search_type not in {SearchTypeEnum.vector_db, SearchTypeEnum.bm25}:
             return self
         # use_llm=0 直接返回检索原文，不经占位符替换
         if self.use_llm == 0:

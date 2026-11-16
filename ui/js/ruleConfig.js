@@ -595,7 +595,7 @@ const RuleConfig = {
                 const val = (document.getElementById('fm-sc-section-pattern') || {}).value;
                 if (val && val.trim()) labels = [val.trim()];
                 emptyHint = '请先填写上方「章节模式」';
-            } else if (searchType === 'vector_db') {
+            } else if (searchType === 'vector_db' || searchType === 'bm25') {
                 // 每行一个查询词 = 一个独立占位符标签（多路检索）
                 const val = (document.getElementById('fm-sc-query-text') || {}).value;
                 labels = (val || '').split('\n').map(s => s.trim()).filter(Boolean);
@@ -1041,6 +1041,7 @@ const RuleConfig = {
                         <option value="section" ${searchType === 'section' ? 'selected' : ''}>章节检索</option>
                         <option value="rule" ${searchType === 'rule' ? 'selected' : ''}>规则检索</option>
                         <option value="chunk_db" ${searchType === 'chunk_db' ? 'selected' : ''}>分块数据库</option>
+                        <option value="bm25" ${searchType === 'bm25' ? 'selected' : ''}>BM25 检索</option>
                         <option value="vector_db" ${searchType === 'vector_db' ? 'selected' : ''}>向量数据库</option>
                         <option value="page" ${searchType === 'page' ? 'selected' : ''}>按页码取文</option>
                         <option value="hybrid" ${searchType === 'hybrid' ? 'selected' : ''}>组合检索</option>
@@ -1328,6 +1329,38 @@ const RuleConfig = {
                         <div class="form-group">
                             <label class="form-label">相对分差</label>
                             <input class="form-input" id="fm-sc-score-ratio" type="number" step="0.01" value="${config.score_ratio ?? ''}" min="0" max="1" placeholder="留空=用默认 0.85">
+                        </div>
+                    </div>
+                `;
+                break;
+
+            case 'bm25':
+                html = `
+                    <div class="form-group">
+                        <div class="form-label-row">
+                            <label class="form-label">查询文本</label>
+                            ${this.refBtnsHtml('text', 'fm-sc-query-text')}
+                        </div>
+                        <textarea class="form-input" id="fm-sc-query-text" rows="3"
+                            placeholder="每行一个查询词，多行=多路检索。例：&#10;投标保证金&#10;退还期限">${Utils.escapeHtml(
+                                Array.isArray(config.query_text)
+                                    ? config.query_text.join('\n')
+                                    : (config.query_text || '')
+                            )}</textarea>
+                        <div class="form-hint">每行一个查询词，多行分别检索；每路查询词都需要对应的 &lt;search_result&gt;占位符。</div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Top K</label>
+                            <input class="form-input" id="fm-sc-top-k" type="number" value="${config.top_k ?? config.max_results ?? 10}" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">k1</label>
+                            <input class="form-input" id="fm-sc-bm25-k1" type="number" value="${config.k1 ?? 1.5}" min="0.01" step="0.1">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">b</label>
+                            <input class="form-input" id="fm-sc-bm25-b" type="number" value="${config.b ?? 0.75}" min="0" max="1" step="0.05">
                         </div>
                     </div>
                 `;
@@ -1650,7 +1683,7 @@ const RuleConfig = {
     hybridMethods(source) {
         return source === 'table' ? [['table_match', '表格匹配']]
             : source === 'vl' ? [['vl_model', '全量视觉提取'], ['vl_progressive', '逐批扫描'], ['vl_locate', '定位后提取']]
-            : [['context', '上下文检索'], ['section', '章节检索'], ['rule', '规则检索'], ['chunk_db', '分块数据库'], ['vector_db', '向量数据库'], ['page', '按页码取文']];
+            : [['context', '上下文检索'], ['section', '章节检索'], ['rule', '规则检索'], ['chunk_db', '分块数据库'], ['bm25', 'BM25 检索'], ['vector_db', '向量数据库'], ['page', '按页码取文']];
     },
 
     hybridMethodOptions(source, method) {
@@ -2433,6 +2466,17 @@ const RuleConfig = {
                 if (st !== '') config.score_threshold = parseFloat(st);
                 const sr = getVal('fm-sc-score-ratio');
                 if (sr !== '') config.score_ratio = parseFloat(sr);
+                break;
+            }
+            case 'bm25': {
+                const queryLines = (getVal('fm-sc-query-text') || '')
+                    .split('\n')
+                    .map(s => s.trim())
+                    .filter(Boolean);
+                config.query_text = queryLines.length > 1 ? queryLines : (queryLines[0] || '');
+                config.top_k = getInt('fm-sc-top-k', 10);
+                config.k1 = getFloat('fm-sc-bm25-k1', 1.5);
+                config.b = getFloat('fm-sc-bm25-b', 0.75);
                 break;
             }
             case 'page':

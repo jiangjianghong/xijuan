@@ -1082,6 +1082,7 @@ _SEARCH_CONFIG_DOC = (
     "；`section_match_type=llm` 时另可配 `section_match_prompt`（自定义匹配提示词，空=用系统默认，须含 `{section_list}`）\n"
     "- `rule`：`keywords`[必] / `ignore_whitespace`(false) / `stop_words`(默认中文标点集) / `direction`(forward) / `min_length`(2) / `max_length`(200) / `max_results`(5) / `sort_order`(asc)\n"
     "- `chunk_db`：`keywords`[必] / `ignore_whitespace`(false) / `keyword_filter` / `max_results`|`top_k`(10) / `sort_order`(asc)\n"
+    "- `bm25`：`query_text`（单串或数组，数组=多路检索，每路一个独立占位符标签） / `top_k`(10) / `k1`(1.5) / `b`(0.75)\n"
     "- `vector_db`：`query_text`（单串或数组，数组=多路检索，每路一个独立占位符标签）"
     " / `top_k`（可选，不配则走阈值+相对分差）/ `score_threshold` / `score_ratio`(0.85)\n"
     "- `page`：`page_range`（如 `\"1-3\"` / `\"all\"` / `\"2\"`）/ `max_length`(30000，末尾截断)"
@@ -1123,7 +1124,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         "description": "表名匹配方式：`exact` 精确 / `fuzzy` 模糊（相似度）/ `contains` 包含 / `llm` 由 LLM 判定。",
     },
     "SearchTypeEnum": {
-        "description": "文本检索方式：`context` 关键词上下文 / `section` 章节匹配 / `rule` 关键词+停止词边界 / `chunk_db` MySQL 分块检索 / `vector_db` Milvus 语义检索 / `page` 按页码区间切片。",
+        "description": "文本检索方式：`context` 关键词上下文 / `section` 章节匹配 / `rule` 关键词+停止词边界 / `chunk_db` MySQL 分块检索 / `bm25` BM25 词项相关度 / `vector_db` Milvus 语义检索 / `page` 按页码区间切片 / `hybrid` 多通道组合。",
     },
     "VLMethodEnum": {
         "description": "VL 抽取方法：`vl_model` 指定页一次出 JSON / `vl_progressive` 分批扫描+伪历史累积 / `vl_locate` 缩略图网格定位+关键页高清提取。",
@@ -1193,7 +1194,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "table_system_prompt": "[table] LLM system prompt。",
             "table_match_prompt": "[table] LLM 匹配自定义提示词（可空）。",
             "table_extract_prompt": "[table] 抽取 prompt，须含 `<search_result>标签</search_result>` 占位符。",
-            "search_type": "[text] 检索方式：`context` / `section` / `rule` / `chunk_db` / `vector_db` / `page`。",
+            "search_type": "[text] 检索方式：`context` / `section` / `rule` / `chunk_db` / `bm25` / `vector_db` / `page` / `hybrid`。",
             "search_config": _SEARCH_CONFIG_DOC,
             "text_system_prompt": "[text] LLM system prompt。",
             "text_extract_prompt": "[text] 抽取 prompt，须含 `<search_result>标签</search_result>` 占位符。",
@@ -1275,7 +1276,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
             "table_system_prompt": "[table] LLM system prompt（可空）。",
             "table_match_prompt": "[table] table_match_type=llm 时的自定义匹配提示词；空=用系统默认。须含 {table_list} 占位符，输出格式段由系统固定追加。",
             "table_extract_prompt": "[table] 抽取 prompt；`source_type=table` 时须含至少一个 `<search_result>标签</search_result>`。",
-            "search_type": "[text] 检索方式：`context` / `section` / `rule` / `chunk_db` / `vector_db` / `page`。",
+            "search_type": "[text] 检索方式：`context` / `section` / `rule` / `chunk_db` / `bm25` / `vector_db` / `page` / `hybrid`。",
             "search_config": "[text] " + _SEARCH_CONFIG_DOC,
             "text_system_prompt": "[text] LLM system prompt（可空）。",
             "text_extract_prompt": "[text] 抽取 prompt；`source_type=text` 时须含至少一个 `<search_result>标签</search_result>`。",

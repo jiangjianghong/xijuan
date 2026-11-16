@@ -113,7 +113,7 @@ async def init_database() -> None:
             )
             logger.info("已扩展 extraction_field.source_type 枚举：加入 'vl'")
 
-        # search_type enum 扩展：兼容旧值并加入 page / hybrid
+        # search_type enum 扩展：兼容旧值并加入 bm25 / page / hybrid
         result = await conn.execute(
             text(
                 "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
@@ -122,15 +122,15 @@ async def init_database() -> None:
             )
         )
         col_type = (result.scalar() or "").lower()
-        if col_type and ("'page'" not in col_type or "'hybrid'" not in col_type):
+        if col_type and ("'bm25'" not in col_type or "'page'" not in col_type or "'hybrid'" not in col_type):
             await conn.execute(
                 text(
                     "ALTER TABLE `extraction_field` "
                     "MODIFY COLUMN `search_type` "
-                    "ENUM('context','section','rule','chunk_db','vector_db','page','hybrid') NULL"
+                    "ENUM('context','section','rule','chunk_db','bm25','vector_db','page','hybrid') NULL"
                 )
             )
-            logger.info("已扩展 extraction_field.search_type 枚举：加入 'page'、'hybrid'")
+            logger.info("已扩展 extraction_field.search_type 枚举：加入 'bm25'、'page'、'hybrid'")
 
         # rule_type enum 扩展：('judge','calc') → 加 'custom'
         result = await conn.execute(

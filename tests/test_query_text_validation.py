@@ -6,12 +6,12 @@ from pydantic import ValidationError
 from model.schemas import ExtractionFieldCreate
 
 
-def _payload(query_text, prompt):
+def _payload(query_text, prompt, search_type="vector_db"):
     return {
         "field_id": "F1",
         "field_name": "项目名称",
         "source_type": "text",
-        "search_type": "vector_db",
+        "search_type": search_type,
         "search_config": {"query_text": query_text},
         "text_extract_prompt": prompt,
     }
@@ -54,6 +54,20 @@ def test_use_llm_disabled_skips_check():
         **_payload(["项目名称", "工程名称"], None),
         "use_llm": 0,
     })
+
+
+def test_bm25_queries_also_require_matching_placeholders():
+    ExtractionFieldCreate(**_payload(
+        ["保证金", "退还期限"],
+        "依据 <search_result>保证金</search_result> 和 <search_result>退还期限</search_result>",
+        search_type="bm25",
+    ))
+    with pytest.raises(ValidationError, match="退还期限"):
+        ExtractionFieldCreate(**_payload(
+            ["保证金", "退还期限"],
+            "依据 <search_result>保证金</search_result>",
+            search_type="bm25",
+        ))
 
 
 def test_non_vector_db_search_type_unaffected():
