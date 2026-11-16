@@ -40,6 +40,7 @@ const pools = [
     globalPool('global_llm', '文本 LLM', '模型通道', 16, 7, 0),
     globalPool('global_embedding', 'Embedding', '模型通道', 4, 2, 0),
     globalPool('global_vl', 'VL 视觉', '模型通道', 8, 3, 0),
+    globalPool('global_rerank', 'Rerank', '模型通道', 8, 2, 0),
     globalPool('global_table_validation', '表名校验', '业务阶段', 10, 4, 0, ['global_llm']),
     globalPool('global_extraction', '字段抽取', '业务阶段', 8, 5, 1, ['global_llm', 'global_embedding', 'global_vl']),
     globalPool('global_analysis', '逻辑分析总池', '业务阶段', 8, 6, 1, ['global_llm']),

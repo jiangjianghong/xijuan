@@ -268,10 +268,18 @@ class AnalysisConfig(BaseModel):
         return _validate_extra_params(value)
 
 
+class RerankConfig(BaseModel):
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+    timeout: int = Field(30, ge=1)
+    retry_count: int = Field(2, ge=1)
+
 class ConcurrencyConfig(BaseModel):
     global_llm: int = Field(16, ge=1)
     global_embedding: int = Field(8, ge=1)
     global_vl: int = Field(8, ge=1)
+    global_rerank: int = Field(8, ge=1)
     global_table_validation: int = Field(10, ge=1)
     global_extraction: int = Field(8, ge=1)
     global_analysis: int = Field(8, ge=1)
@@ -381,6 +389,7 @@ class AppConfig(BaseSettings):
     extraction: ExtractionConfig = ExtractionConfig()
     table_name_validation: TableNameValidationConfig = TableNameValidationConfig()
     analysis: AnalysisConfig = AnalysisConfig()
+    rerank: RerankConfig = RerankConfig()
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
     vl_model: VLModelConfig = VLModelConfig()
     web_search: WebSearchConfig = WebSearchConfig()

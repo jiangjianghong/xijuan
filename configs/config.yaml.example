@@ -98,6 +98,14 @@ analysis:
   calc_precision: 2                                     # calc 规则结果保留的小数位数
   judge_timeout: 60                                     # 分析单次 LLM 请求超时（秒）；judge 与 custom 规则、正式与调试路径共用
 
+# 检索结果重排（Cohere-compatible /rerank）
+rerank:
+  base_url: "http://your-rerank-server/v2"             # API 根地址，客户端会追加 /rerank
+  model: "your-rerank-model"                           # Rerank 模型名称
+  api_key: "your-api-key"                              # Rerank API 密钥
+  timeout: 30                                           # 单次请求超时（秒）
+  retry_count: 2                                        # 请求失败后的最大尝试次数
+
 # VL（视觉模型）抽取配置
 vl_model:
   base_url: "http://your-vl-server:8119/v1"            # VL 模型 API 地址
@@ -115,6 +123,7 @@ concurrency:
   global_llm: 16                                        # 全项目普通文本 LLM HTTP 请求并发上限
   global_embedding: 8                                   # 全项目 Embedding HTTP 请求并发上限
   global_vl: 8                                          # 全项目 VL HTTP 请求并发上限
+  global_rerank: 8                                      # 全项目 Rerank HTTP 请求并发上限
   global_table_validation: 10                           # 所有文件表格名校验任务的并发上限
   global_extraction: 8                                  # 所有文件字段抽取任务的并发上限
   global_analysis: 8                                    # 所有文件/请求逻辑分析任务的并发上限

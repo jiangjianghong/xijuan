@@ -27,7 +27,7 @@
 
 | 组 | 池 | 含义 |
 |---|---|---|
-| 模型通道 | `global_llm` / `global_embedding` / `global_vl` | 各模型 API 的全局并发，在 client 层生效 |
+| 模型通道 | `global_llm` / `global_embedding` / `global_vl` / `global_rerank` | 各模型 API 的全局并发，在 client 层生效；Rerank 用于候选超出最终条数上限时的重排 |
 | 业务阶段 | `global_table_validation` / `global_extraction` / `global_analysis` | 跨文件的阶段级并发 |
 | 独立接口 | `independent_analysis` | `POST /analysis/run` 的规则并发 |
 | 管线调度 | `global_pipeline` | 同时处理的文件数闸门，超限文件落 `queued` 排队 |

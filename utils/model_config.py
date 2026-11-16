@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from utils.config import AppConfig, get_config
 
-GROUPS = ("extraction", "analysis", "table_name_validation", "vl_model", "embedding")
+GROUPS = ("extraction", "analysis", "table_name_validation", "rerank", "vl_model", "embedding")
 MODEL_CONFIG_DESCRIPTION = (
     "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。"
     "model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\n"
@@ -24,6 +24,8 @@ MODEL_CONFIG_DESCRIPTION = (
     "analysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、"
     "top_p(float 0..1 或 null)、extra_params(object，合并到请求顶层)、"
     "calc_precision(int>=0)、judge_timeout(int>=1)。\n\n"
+    "rerank：base_url/model/api_key(str)、timeout/retry_count(int>=1)，用于 Cohere-compatible /rerank；"
+    "请求级覆盖仍使用服务器 global_rerank 并发池。\n\n"
     "table_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/"
     "max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、"
     "extra_params(object 或 null)；max_concurrency 不允许覆盖。"

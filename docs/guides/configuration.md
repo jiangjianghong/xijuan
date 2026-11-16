@@ -129,6 +129,18 @@
 | `calc_precision` | 整数 | `2` | `calc` 规则 numexpr 计算结果保留的小数位 |
 | `judge_timeout` | 整数 | `60` | 分析阶段单次 LLM 请求超时（秒）。覆盖 `judge` 与 `custom` 两种规则，正式与调试路径共用；`calc` 走 numexpr 不调模型，不受影响 |
 
+## rerank — 检索结果重排（Cohere-compatible）
+
+| 配置项 | 类型 | 默认值 | 含义 |
+|---|---|---|---|
+| `base_url` | 字符串 | 空字符串 | Rerank API 根地址；调用时在末尾追加 `/rerank`，例如 `https://api.example.com/v2` |
+| `model` | 字符串 | 空字符串 | Rerank 模型名 |
+| `api_key` | 字符串 | 空字符串 | API 密钥；为空时不发送鉴权头 |
+| `timeout` | 整数 | `30` | 单次 Rerank 请求超时（秒） |
+| `retry_count` | 整数 | `2` | 最大尝试次数，包含首次调用 |
+
+只有候选数超过对应检索方式的最终条数上限时才调用 Rerank。未配置服务地址或模型、或请求失败时，会保留原检索顺序并按相同上限截断。设置页面的「Rerank 重排」分组可热更新这些模型连接参数；请求级 `model_config.rerank` 也可为单次抽取覆盖模型配置。
+
 ## concurrency — 并发限制
 
 所有限制均为当前进程内限制；多 worker 部署时每个 worker 各自拥有一套限制器。
@@ -138,13 +150,14 @@
 | `global_llm` | `16` | 全项目普通文本 LLM HTTP 请求并发 |
 | `global_embedding` / `task_embedding` | `8 / 4` | Embedding HTTP 请求全局 / 单文件并发 |
 | `global_vl` | `8` | 全项目 VL HTTP 请求并发 |
+| `global_rerank` | `8` | 全项目 Rerank HTTP 请求并发，运行台显示为独立模型通道 |
 | `global_table_validation` / `task_table_validation` | `10 / 4` | 表格名校验阶段全局 / 单文件并发 |
 | `global_extraction` / `task_extraction` | `8 / 4` | 字段抽取阶段全局 / 单文件并发 |
 | `global_analysis` / `task_file_analysis` | `8 / 4` | 逻辑分析阶段全局 / 单文件并发 |
 | `independent_analysis` | `4` | `POST /analysis/run` 所有请求合计的规则并发 |
 | `global_pipeline` | `4` | 同时处理的文件数闸门，超限文件落 `queued` 排队 |
 
-一次模型请求同时受对应模型通道、业务阶段和单文件限制。旧配置 `table_name_validation.max_concurrency`、`vl_model.global_max_concurrency` 会分别迁移到 `task_table_validation`、`global_vl`。
+一次模型请求同时受对应模型通道、业务阶段和单文件限制；请求级模型覆盖仍使用服务端并发池。旧配置 `table_name_validation.max_concurrency`、`vl_model.global_max_concurrency` 会分别迁移到 `task_table_validation`、`global_vl`。
 
 > **单文件值必须小于对应全局值才起作用。** `task_table_validation=4` 配 `global_table_validation=10` 时，能保证至少 2 个文件并行推进；两者相等则单个文件即可占满全局池，这一层形同虚设——一个几百张表的文件会把后到的小文件连续堵在队尾（head-of-line blocking）。检测到 `task_* >= global_*` 时启动日志会打 WARNING。
 >
@@ -210,7 +223,7 @@
 | `session_minutes` | 整数 | `300` | 登录会话有效期（分钟），最小为 1；从登录成功起固定计时，不随操作续期 |
 | `secure_cookie` | 布尔 | `false` | HTTPS 部署时设为 `true`，为会话 Cookie 增加 `Secure` |
 
-设置页开放 `mineru`、`chunking`、`embedding`、`extraction`、`table_name_validation`、`analysis`、`vl_model`、`web_search`、`callback`、`storage` 和 `concurrency`。其中向量化只允许修改 `base_url`、`api_key`、`model`，其他参数只读；`server`、`mysql`、`milvus` 完全不返回且不能修改。
+设置页开放 `mineru`、`chunking`、`embedding`、`extraction`、`table_name_validation`、`analysis`、`rerank`、`vl_model`、`web_search`、`callback`、`storage` 和 `concurrency`。其中向量化只允许修改 `base_url`、`api_key`、`model`，其他参数只读；`server`、`mysql`、`milvus` 完全不返回且不能修改。
 
 API Key 只显示“已配置/未配置”，旧值不会返回浏览器。管理员可以明确选择保留、覆盖或清除密钥。保存使用同目录临时文件和原子替换，保留 YAML 注释、顺序和未开放配置；写盘成功后，新请求和新任务立即使用新配置，已运行任务不强制切换。
 

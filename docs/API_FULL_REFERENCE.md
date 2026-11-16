@@ -303,7 +303,7 @@ parsing -> tableing -> chunking -> embedding -> extracting -> analyzing -> compl
 
 ### 1.7 请求级模型配置 `model_config`
 
-上传主流程、指定阶段重试、独立逻辑分析、字段提取调试和逻辑分析调试均支持可选 `model_config`，同步、异步和流式模式语义一致。其结构与设置里的模型分组一致：`extraction`、`analysis`、`table_name_validation`、`vl_model`、`embedding`。
+上传主流程、指定阶段重试、独立逻辑分析、字段提取调试和逻辑分析调试均支持可选 `model_config`，同步、异步和流式模式语义一致。其结构与设置里的模型分组一致：`extraction`、`analysis`、`table_name_validation`、`rerank`、`vl_model`、`embedding`。
 
 字段按“只覆盖请求中出现的键”合并；不传的分组/字段继续使用服务器设置。字段值会按与设置相同的 Pydantic 规则校验，未知分组、未知字段、类型错误或数值越界会拒绝请求。
 
@@ -329,6 +329,11 @@ parsing -> tableing -> chunking -> embedding -> extracting -> analyzing -> compl
 |  | `extra_params` | object | 按键合并到请求顶层；可按供应商要求包含嵌套的 `extra_body` |
 |  | `calc_precision` | integer >= 0 | calc 结果小数位数 |
 |  | `judge_timeout` | integer >= 1 | judge/custom 请求超时秒数 |
+| `rerank` | `base_url` | string | Cohere-compatible Rerank API 根地址；客户端追加 `/rerank` |
+|  | `model` | string | Rerank 模型名 |
+|  | `api_key` | string | API Key；空字符串不发送鉴权头 |
+|  | `timeout` | integer >= 1 | 单次 Rerank 请求超时秒数 |
+|  | `retry_count` | integer >= 1 | 最大请求尝试次数，包含首次调用 |
 | `table_name_validation` | `base_url` / `model` | string 或 null | 表名识别 API 根地址、模型名；空字符串或 `null` 时继承本次调用的 extraction 对应值 |
 |  | `api_key` | string 或 null | `null` 时继承本次调用的 extraction 密钥；空字符串表示不发送鉴权头 |
 |  | `timeout` | integer >= 1 或 null | 单次请求超时秒数；`null` 时继承 extraction.timeout |
@@ -961,7 +966,7 @@ curl -X DELETE "http://localhost:5019/file/3f2a7d4b0c2e45a98e0d6a5c1b8f9340"
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|:--:|---|
-| `model_config` | object | 否 | 请求级模型覆盖；支持五个模型分组，字段与约束见 1.7；未传字段沿用服务器设置 |
+| `model_config` | object | 否 | 请求级模型覆盖；支持六个模型分组，字段与约束见 1.7；未传字段沿用服务器设置 |
 
 请求示例：
 
@@ -1788,7 +1793,7 @@ curl "http://localhost:5019/extraction/fields/company_name/check"
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
 | `file_id` | string | 是 | 无 | 目标文件 ID |
-| `model_config` | object | 否 | `null` | 本次调试的请求级模型覆盖；按字段覆盖五个模型分组，未传字段沿用服务器设置，并发仍由服务器控制 |
+| `model_config` | object | 否 | `null` | 本次调试的请求级模型覆盖；按字段覆盖六个模型分组，未传字段沿用服务器设置，并发仍由服务器控制 |
 | `field_id` | string | 条件 | `null` | 已保存字段配置 ID；与 `config` 二选一 |
 | `config` | object | 条件 | `null` | 临时字段配置，字段名同 `POST /extraction/fields`；与 `field_id` 二选一 |
 
@@ -1859,7 +1864,7 @@ curl "http://localhost:5019/extraction/fields/company_name/check"
 
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
-| `model_config` | object | 否 | `null` | 本次流式调试的请求级模型覆盖；支持五个模型分组，字段和约束见 [1.7 请求级模型配置](#17-请求级模型配置-model_config)，未传字段沿用设置，并发仍由服务器控制 |
+| `model_config` | object | 否 | `null` | 本次流式调试的请求级模型覆盖；支持六个模型分组，字段和约束见 [1.7 请求级模型配置](#17-请求级模型配置-model_config)，未传字段沿用设置，并发仍由服务器控制 |
 | `file_id` | string | 是 | 无 | 目标文件 ID；文本类需已完成 parsing，VL 类需保留对应 PDF |
 | `field_id` | string | 条件 | `null` | 已保存字段配置 ID；与 `config` 二选一 |
 | `config` | object | 条件 | `null` | 临时字段配置；结构同 `POST /extraction/fields`，与 `field_id` 二选一 |
@@ -2117,7 +2122,7 @@ curl "http://localhost:5019/analysis/rules/profit_positive/check"
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
 | `file_id` | string | 是 | 无 | 目标文件 ID，依赖字段值来自该文件的 `extraction_result` |
-| `model_config` | object | 否 | `null` | 本次调试的请求级模型覆盖；按字段覆盖五个模型分组，未传字段沿用服务器设置，并发仍由服务器控制 |
+| `model_config` | object | 否 | `null` | 本次调试的请求级模型覆盖；按字段覆盖六个模型分组，未传字段沿用服务器设置，并发仍由服务器控制 |
 | `rule_id` | string | 条件 | `null` | 已保存规则 ID；与 `config` 二选一 |
 | `config` | object | 条件 | `null` | 临时规则配置；与 `rule_id` 二选一 |
 
@@ -2423,7 +2428,7 @@ curl -X POST http://localhost:5019/analysis/run \
 
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|:--:|---|---|
-| `model_config` | object | 否 | `null` | 本次流式调试的请求级模型覆盖；支持五个模型分组，字段和约束见 [1.7 请求级模型配置](#17-请求级模型配置-model_config)，未传字段沿用设置，并发仍由服务器控制 |
+| `model_config` | object | 否 | `null` | 本次流式调试的请求级模型覆盖；支持六个模型分组，字段和约束见 [1.7 请求级模型配置](#17-请求级模型配置-model_config)，未传字段沿用设置，并发仍由服务器控制 |
 | `file_id` | string | 是 | 无 | 目标文件 ID；依赖字段值来自该文件的 `extraction_result` |
 | `rule_id` | string | 条件 | `null` | 已保存规则 ID；与 `config` 二选一 |
 | `config` | object | 条件 | `null` | 临时规则配置；结构同 `POST /analysis/rules`，与 `rule_id` 二选一 |
@@ -4899,6 +4904,16 @@ calc 更短：`input_values → resolved_expression → result → done`。事�
 |---|---|---|---|
 | `calc_precision` | 整数 | `2` | `calc` 规则 numexpr 计算结果保留的小数位 |
 | `judge_timeout` | 整数 | `60` | 分析阶段单次 LLM 请求超时（秒）。覆盖 `judge` 与 `custom` 两种规则，正式与调试路径共用；`calc` 走 numexpr 不调模型，不受影响 |
+
+#### rerank — 检索结果重排（Cohere-compatible）
+
+| 配置项 | 类型 | 默认值 | 含义 |
+|---|---|---|---|
+| `base_url` | 字符串 | 空字符串 | Rerank API 根地址；客户端追加 `/rerank` |
+| `model` | 字符串 | 空字符串 | Rerank 模型名 |
+| `api_key` | 字符串 | 空字符串 | API 密钥 |
+| `timeout` | 整数 | `30` | 单次请求超时秒数 |
+| `retry_count` | 整数 | `2` | 最大尝试次数，包含首次调用 |
 
 #### vl_model — 视觉模型抽取（OpenAI 兼容多模态）
 

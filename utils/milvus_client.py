@@ -27,6 +27,7 @@ INSERT_COLUMNS = [
 
 # 检索结果回填的标量字段（不含 embedding）。
 OUTPUT_FIELDS = [c for c in INSERT_COLUMNS if c != "embedding"]
+SEARCH_CANDIDATE_FIELDS = ["parent_chunk_id"]
 
 # protobuf 每行还有字段标签、长度和列级元数据。这里按行额外预留空间，
 # 再配合默认 32 MiB 预算，共同保证实际请求明显低于 64 MiB 服务端上限。
@@ -308,6 +309,72 @@ class MilvusClient:
                 if score_threshold is not None and score < score_threshold:
                     continue
                 hits.append({name: hit.entity.get(name) for name in OUTPUT_FIELDS} | {"score": score})
+
+        return hits
+
+    def search_candidates(
+        self,
+        query_vector: List[float],
+        file_id: Optional[str] = None,
+        score_threshold: Optional[float] = None,
+        score_ratio: float = 0.0,
+        batch_size: int = 1000,
+    ) -> List[Dict[str, Any]]:
+        """按阈值分批收集 ANN 候选，避免单次 search 的 top-k 上限。"""
+        collection = self._collection
+        if collection is None:
+            collection = self.ensure_collection()
+
+        expr = f'file_id == "{file_id}"' if file_id else None
+        iterator = collection.search_iterator(
+            data=[query_vector],
+            anns_field="embedding",
+            param={
+                "metric_type": self.config.metric_type,
+                "params": {"nprobe": 16},
+            },
+            batch_size=batch_size,
+            limit=-1,
+            expr=expr,
+            output_fields=SEARCH_CANDIDATE_FIELDS,
+        )
+
+        hits: List[Dict[str, Any]] = []
+        best_score: Optional[float] = None
+        minimum_score = score_threshold
+        try:
+            while True:
+                page = iterator.next()
+                if not page:
+                    break
+
+                below_threshold = False
+                for hit in page:
+                    score = float(hit.distance)
+                    if best_score is None:
+                        best_score = score
+                        if score_ratio > 0:
+                            ratio_floor = best_score * score_ratio
+                            minimum_score = (
+                                ratio_floor if minimum_score is None
+                                else max(minimum_score, ratio_floor)
+                            )
+
+                    if minimum_score is not None and score < minimum_score:
+                        below_threshold = True
+                        break
+
+                    hits.append({
+                        "parent_chunk_id": hit.entity.get("parent_chunk_id"),
+                        "score": score,
+                    })
+
+                if below_threshold:
+                    break
+        finally:
+            close = getattr(iterator, "close", None)
+            if close is not None:
+                close()
 
         return hits
 

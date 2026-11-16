@@ -56,7 +56,8 @@ async def test_advanced_vector_multiline_reference_reaches_llm(monkeypatch, mode
     ))
     monkeypatch.setattr(svc, "load_extraction_snapshot", AsyncMock(return_value=snapshot))
 
-    async def search(file_id, config, vector_index):
+    async def search(file_id, config, vector_index, *, candidate_only=False):
+        assert candidate_only is True
         assert config["query_text"] == upstream
         return [{"keyword": upstream, "chunk_content": content, "page_num": "3",
                  "start_pos": 0, "end_pos": len(content), "chunk_id": "c1", "chunk_index": 0}]

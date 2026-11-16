@@ -67,6 +67,8 @@ def search_bm25(
     file_id: str,
     config: Dict[str, Any],
     chunks: Sequence[Any],
+    *,
+    candidate_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """按 BM25 对当前文件的文本分块排序，结果形态兼容 chunk_db。"""
     del file_id  # 保持与其他检索器一致的调用签名。
@@ -122,7 +124,9 @@ def search_bm25(
         ranked = sorted(
             ((i, score) for i, score in enumerate(scores) if score > 0),
             key=lambda item: (-item[1], getattr(documents[item[0]][0], "chunk_index", 0)),
-        )[:top_k]
+        )
+        if not candidate_only:
+            ranked = ranked[:top_k]
         for doc_index, score in ranked:
             chunk = documents[doc_index][0]
             results.append({

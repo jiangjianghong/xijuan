@@ -27,6 +27,7 @@ OPEN_GROUPS = (
     "extraction",
     "table_name_validation",
     "analysis",
+    "rerank",
     "vl_model",
     "web_search",
     "callback",
@@ -43,6 +44,7 @@ SECRET_PATHS = {
     "extraction.api_key",
     "table_name_validation.api_key",
     "vl_model.api_key",
+    "rerank.api_key",
     "web_search.api_key",
 }
 

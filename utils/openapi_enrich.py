@@ -1634,7 +1634,7 @@ SCHEMA_DOCS: Dict[str, Dict[str, Any]] = {
         "description": (
             "独立逻辑分析请求。`items[]` 是批量业务输入：一个元素代表一组需要独立分析的字段值"
             "或一个文件，不代表规则。响应会为每个请求 item 返回一个同位置的 item 结果。可选 `model_config`"
-            "对同一批次所有 items 生效，按字段覆盖五个模型分组，未传字段沿用设置。"
+            "对同一批次所有 items 生效，按字段覆盖六个模型分组，未传字段沿用设置。"
         ),
         "properties": {
             "model_config": MODEL_CONFIG_DESCRIPTION + " 同一批次所有 items 共用本配置。",

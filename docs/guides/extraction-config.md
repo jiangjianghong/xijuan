@@ -93,7 +93,7 @@ JSON 示例和排错清单为主。
 
 ## 3. 文本类（text）
 
-从正文抽取，`search_type` 决定「怎么把相关文字捞出来喂给 LLM」。六选一：
+从正文抽取，`search_type` 决定「怎么把相关文字捞出来喂给 LLM」。按字段需要选择检索方式：
 
 | search_type | 原理 | 占位符标签取值 |
 |---|---|---|
@@ -101,8 +101,10 @@ JSON 示例和排错清单为主。
 | `section` | 匹配 Markdown 章节标题，取整段 | `section_pattern` 的值 |
 | `rule` | 找到关键词后扩展到停用词边界，精确切片 | `keywords` 里的关键词 |
 | `chunk_db` | 从预分块（MySQL）按关键词过滤 | `keywords` 里的关键词 |
+| `bm25` | 按词项匹配度为当前文件的分块评分 | `query_text` 每一项各一个标签 |
 | `vector_db` | 查询文本向量化，子块全量打分后映射回父块 | `query_text` 每一项各一个标签 |
 | `page` | 按页码直接切 Markdown 整片喂 LLM | 固定 `page_content` |
+| `hybrid` | 按配置顺序组合多个检索通道 | 由各通道配置决定 |
 
 > 下面每种只列**常用可调项**；`search_config` 是自由 JSON，全部键与默认值见 [data-model#extraction_field](../reference/data-model.md#extraction_field)。
 
@@ -127,6 +129,8 @@ JSON 示例和排错清单为主。
 > ```
 >
 > `section` 检索不适用本节（它按章节匹配，`sort_order` 仍只有 `asc` / `desc`）。
+
+> **Rerank 重排规则：**候选数超过最终上限时才调用 Cohere-compatible `/rerank`；没有配置 Rerank 或请求失败时保留检索器原顺序，再按相同上限截断。文本检索 query 由 `text_system_prompt` 和移除所有 `<search_result>...</search_result>` 占位符后的 `text_extract_prompt` 拼成；章节用配置的 `section_pattern`，表格用配置的 `table_name_pattern`。关键词检索候选受每关键词 `max_results` 限制，最终总量由 `max_total_results` 控制（缺省为二者乘关键词数）；章节和表格分别由 `max_results`、`table_match_max_results` 控制最终条数；BM25 和向量检索按每路 `top_k` 控制最终条数。向量检索先收集通过相似度筛选的候选，再重排和截断。hybrid 的每个检索通道独立使用自己的候选与最终条数配置。模型设置和并发见 [配置手册](configuration.md)。
 
 ### 3.1 上下文检索 `context`
 
@@ -154,7 +158,7 @@ JSON 示例和排错清单为主。
 
 ### 3.2 章节检索 `section`
 
-匹配 Markdown 标题（如 `# 1.1 经营范围`）并取整段。`section_match_type`（`exact`/`fuzzy`/`contains`/`llm`，默认 `contains`）、`threshold`（fuzzy 阈值 0.8）、`max_results`（默认 3）。选 `llm` 时匹配提示词可按字段自定义（`search_config.section_match_prompt`，留空用系统默认），见 [§7.4](#74-llm-匹配提示词可配置)。**占位符标签用 `section_pattern` 的值。**
+匹配 Markdown 标题（如 `# 1.1 经营范围`）并取整段。`section_match_type`（`exact`/`fuzzy`/`contains`/`llm`，默认 `contains`）、`threshold`（fuzzy 阈值 0.8）、`max_results`（默认 3，亦为 Rerank 后保留的章节数）。选 `llm` 时匹配提示词可按字段自定义（`search_config.section_match_prompt`，留空用系统默认），见 [§7.4](#74-llm-匹配提示词可配置)。**占位符标签用 `section_pattern` 的值。**
 
 ```json
 {
@@ -208,7 +212,7 @@ JSON 示例和排错清单为主。
 
 按 Okapi BM25 对当前文件的文本分块评分，使用词频、词项在文档中的稀有度和分块长度归一化进行排序。连续汉字按双字词切分，英文和数字按词切分。适合查询词明确、需要优先命中原文术语或编号的场景；与 `vector_db` 相比，它不负责语义相似匹配。
 
-`query_text` 支持单串或数组；数组中的每个查询独立检索并使用自己的占位符标签。`top_k`（默认 10）限制每路返回块数，`k1`（默认 1.5）控制词频饱和，`b`（默认 0.75，范围 0–1）控制长度归一化。
+`query_text` 支持单串或数组；数组中的每个查询独立检索并使用自己的占位符标签。`top_k`（默认 10）是每路最终保留的块数；启用 Rerank 且候选超过 `top_k` 时，先对 BM25 候选排序再截断。`k1`（默认 1.5）控制词频饱和，`b`（默认 0.75，范围 0–1）控制长度归一化。
 
 ```json
 {
@@ -225,7 +229,7 @@ JSON 示例和排错清单为主。
 
 ### 3.6 向量检索 `vector_db`
 
-`query_text` 向量化后在**该文件的全部子块**上做全量打分（不走 ANN——抽取链路恒带 `file_id` 过滤，IVF 先选簇再过滤只探 0.4% 的簇会静默丢召回），命中子块映射回**父块**注入 prompt。`query_text` 可以是单串，也可以是数组做多路检索（如 `["项目名称", "工程名称", "本项目名称为"]`）——**数组的每一项各需一个独立占位符** `<search_result>该查询词</search_result>`，缺了保存时 422。`top_k` 可选，不配则按 `score_threshold`（绝对下限）+ `score_ratio`（相对分差，默认 0.85，只留与最高分同档的）筛选，以 `milvus.max_results`（默认 20）兜底。适合关键词不固定、要「语义找」的抽象字段。
+`query_text` 向量化后在**该文件的全部子块**上做全量打分（不走 ANN——抽取链路恒带 `file_id` 过滤，IVF 先选簇再过滤只探 0.4% 的簇会静默丢召回），命中子块映射回**父块**注入 prompt。`query_text` 可以是单串，也可以是数组做多路检索（如 `["项目名称", "工程名称", "本项目名称为"]`）——**数组的每一项各需一个独立占位符** `<search_result>该查询词</search_result>`，缺了保存时 422。先按 `score_threshold`（绝对下限）和 `score_ratio`（相对分差，默认 0.85，只留与最高分同档的）筛出候选；配置 `top_k` 时，每路最终最多保留该数量，候选超限且已配置 Rerank 时会先按 Rerank 排序。未配置 `top_k` 时以 `milvus.max_results`（默认 20）作为每路最终上限。适合关键词不固定、要「语义找」的抽象字段。
 
 ```json
 {

@@ -14,6 +14,7 @@ async def test_runtime_concurrency_snapshot_shape(client):
         "global_llm",
         "global_embedding",
         "global_vl",
+        "global_rerank",
         "global_table_validation",
         "global_extraction",
         "global_analysis",

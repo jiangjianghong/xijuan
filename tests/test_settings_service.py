@@ -72,6 +72,12 @@ analysis:
   max_concurrency: 10
   enable_thinking: true
   extra_body: {legacy: true}
+rerank:
+  base_url: http://rerank.test/v2
+  model: rerank-test
+  api_key: rerank-secret
+  timeout: 30
+  retry_count: 2
 concurrency:
   task_analysis: 4
 vl_model:
@@ -129,6 +135,7 @@ def test_public_config_only_exposes_allowed_groups_and_secret_status(config_path
         "extraction",
         "table_name_validation",
         "analysis",
+        "rerank",
         "vl_model",
         "web_search",
         "callback",
@@ -142,12 +149,14 @@ def test_public_config_only_exposes_allowed_groups_and_secret_status(config_path
         "table-secret",
         "vl-secret",
         "bocha-secret",
+        "rerank-secret",
         "admin-password",
         "mysql-secret",
         "milvus-secret",
     ):
         assert secret not in serialized
     assert payload["config"]["embedding"]["api_key"] == {"configured": True}
+    assert payload["config"]["rerank"]["api_key"] == {"configured": True}
     assert payload["readonly"]["embedding"] == [
         "embedding_dim",
         "batch_size",
@@ -239,6 +248,7 @@ def test_update_can_change_unified_concurrency(config_path: Path):
             "concurrency": {
                 "global_llm": 6,
                 "global_embedding": 3,
+                "global_rerank": 5,
                 "task_extraction": 2,
             }
         },
@@ -247,6 +257,7 @@ def test_update_can_change_unified_concurrency(config_path: Path):
 
     assert result["config"]["concurrency"]["global_llm"] == 6
     assert result["config"]["concurrency"]["global_embedding"] == 3
+    assert result["config"]["concurrency"]["global_rerank"] == 5
     assert result["config"]["concurrency"]["task_extraction"] == 2
 
 

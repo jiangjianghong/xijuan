@@ -92,7 +92,7 @@ curl -X POST http://localhost:5019/settings/login \
 
 ## 读取运行时配置
 
-返回可在设置页编辑的配置分组及当前值。
+返回可在设置页编辑的配置分组及当前值，包括 Rerank 模型连接参数和 `global_rerank` 并发设置。
 
 - 方法路径：`GET /settings/config`
 - 认证：需要 `xijuan_session` Cookie

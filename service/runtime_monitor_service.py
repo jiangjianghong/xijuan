@@ -32,6 +32,7 @@ _GLOBAL_POOLS = (
     ("global_llm", "文本 LLM", "模型通道", "模型通道"),
     ("global_embedding", "Embedding", "模型通道", "模型通道"),
     ("global_vl", "VL 视觉", "模型通道", "模型通道"),
+    ("global_rerank", "Rerank", "模型通道", "模型通道"),
     ("global_table_validation", "表名校验", "业务阶段", "表名校验"),
     ("global_extraction", "字段抽取", "业务阶段", "字段抽取"),
     ("global_analysis", "逻辑分析总池", "业务阶段", "逻辑分析"),

@@ -52,7 +52,7 @@ test('normalizeSnapshot passes backend history through and tolerates its absence
 
 test('orderedPools uses canonical group order regardless of API order', () => {
     const ids = [
-        'independent_analysis', 'global_vl', 'global_analysis',
+        'independent_analysis', 'global_vl', 'global_rerank', 'global_analysis',
         'global_llm', 'global_pipeline', 'global_extraction',
         'global_embedding', 'global_table_validation', 'mineru_parse',
     ];
@@ -61,7 +61,7 @@ test('orderedPools uses canonical group order regardless of API order', () => {
     });
 
     assert.deepEqual(RuntimeMonitor.orderedPools(snapshot).map(pool => pool.id), [
-        'global_llm', 'global_embedding', 'global_vl',
+        'global_llm', 'global_embedding', 'global_vl', 'global_rerank',
         'global_table_validation', 'global_extraction', 'global_analysis',
         'independent_analysis', 'mineru_parse', 'global_pipeline',
     ]);

@@ -48,6 +48,7 @@ from utils.errors import format_exception
 from utils.llm_client import chat_completion, chat_completion_stream_events, get_embeddings
 from utils.empty_retry import retry_empty, retry_empty_stream, mark_retry_failure, retry_failure_boundary
 from utils.milvus_client import get_milvus_client
+from utils.rerank_client import RerankNotConfiguredError, rerank_indices
 from utils.page_mapping import (
     build_page_projection,
     lookup_bboxes,
@@ -1450,6 +1451,8 @@ async def search_context(
     content: str,
     config: Dict[str, Any],
     chunks: Sequence["ChunkRow"] = (),
+    *,
+    candidate_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """上下文检索：定位关键词，补齐表格并合并重叠窗口后排序截断。
 
@@ -1502,13 +1505,13 @@ async def search_context(
         ignore_whitespace=config.get("ignore_whitespace", False),
         order_key="position",
         max_results=max_results,
-        max_total=max_total,
+        max_total=0 if candidate_only else max_total,
         sort_order=sort_order,
     )
 
 
 async def search_section(
-    content: str, config: Dict[str, Any]
+    content: str, config: Dict[str, Any], *, candidate_only: bool = False
 ) -> List[Dict[str, Any]]:
     """章节检索：匹配章节标题并返回章节内容。
 
@@ -1544,7 +1547,7 @@ async def search_section(
         prompt = build_section_match_prompt(
             section_list,
             section_pattern,
-            max_results,
+            len(sections) if candidate_only else max_results,
             config.get("section_match_prompt"),
         )
         try:
@@ -1603,13 +1606,15 @@ async def search_section(
         r["keyword"] = section_pattern
 
     # 限制返回条数
-    return results[:max_results]
+    return results if candidate_only else results[:max_results]
 
 
 async def search_rule(
     content: str,
     config: Dict[str, Any],
     chunks: Sequence["ChunkRow"] = (),
+    *,
+    candidate_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """规则检索：关键词 + 停用词边界扩展。
 
@@ -1717,13 +1722,17 @@ async def search_rule(
         ignore_whitespace=config.get("ignore_whitespace", False),
         order_key="position",
         max_results=max_results,
-        max_total=max_total,
+        max_total=0 if candidate_only else max_total,
         sort_order=sort_order,
     )
 
 
 async def search_chunk_db(
-    file_id: str, config: Dict[str, Any], chunks: Sequence["ChunkRow"]
+    file_id: str,
+    config: Dict[str, Any],
+    chunks: Sequence["ChunkRow"],
+    *,
+    candidate_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """关系数据库检索：从快照的分块集合按关键词过滤。
 
@@ -1793,7 +1802,7 @@ async def search_chunk_db(
         ignore_whitespace=config.get("ignore_whitespace", False),
         order_key="chunk_index",
         max_results=max_results,
-        max_total=max_total,
+        max_total=0 if candidate_only else max_total,
         sort_order=sort_order,
     )
 
@@ -1857,6 +1866,8 @@ async def search_vector_db(
     file_id: str,
     config: Dict[str, Any],
     index: Optional[FileVectorIndex] = None,
+    *,
+    candidate_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """向量检索：多路 query 各自全量打分，命中子块映射回父块。
 
@@ -1905,7 +1916,9 @@ async def search_vector_db(
             "file_id={} 子块数超全量打分上限，本次 vector_db 检索降级为 ANN",
             file_id,
         )
-        return await _search_vector_db_ann(file_id, config, query_texts, index)
+        return await _search_vector_db_ann(
+            file_id, config, query_texts, index, candidate_only=candidate_only
+        )
 
     vectors = await get_embeddings(query_texts)
     if not vectors or len(vectors) != len(query_texts):
@@ -1917,6 +1930,7 @@ async def search_vector_db(
     score_ratio = config.get("score_ratio", milvus_cfg.score_ratio)
     top_k = config.get("top_k")
     max_results = milvus_cfg.max_results
+    candidate_max_results = max(len(index.parents), 1) if candidate_only else max_results
 
     results: List[Dict[str, Any]] = []
     for keyword, vector in zip(query_texts, vectors):
@@ -1925,8 +1939,8 @@ async def search_vector_db(
             np.asarray(vector, dtype=np.float32),
             score_threshold=score_threshold,
             score_ratio=score_ratio,
-            top_k=top_k,
-            max_results=max_results,
+            top_k=None if candidate_only else top_k,
+            max_results=candidate_max_results,
         )
         for parent_id, score in hits:
             parent = index.parents.get(parent_id)
@@ -1943,6 +1957,8 @@ async def _search_vector_db_ann(
     config: Dict[str, Any],
     query_texts: List[str],
     index: FileVectorIndex,
+    *,
+    candidate_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """降级路径：子块数超全量打分上限时走 Milvus ANN。
 
@@ -1952,20 +1968,30 @@ async def _search_vector_db_ann(
     if not vectors or len(vectors) != len(query_texts):
         return []
 
-    top_k = config.get("top_k") or get_config().milvus.max_results
+    milvus_cfg = get_config().milvus
+    top_k = config.get("top_k") or milvus_cfg.max_results
     score_threshold = config.get("score_threshold")
     client = get_milvus_client()
 
     results: List[Dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for keyword, vector in zip(query_texts, vectors):
-        hits = await asyncio.to_thread(
-            client.search,
-            query_vector=vector,
-            top_k=top_k,
-            file_id=file_id,
-            score_threshold=score_threshold,
-        )
+        if candidate_only:
+            hits = await asyncio.to_thread(
+                client.search_candidates,
+                query_vector=vector,
+                file_id=file_id,
+                score_threshold=score_threshold,
+                score_ratio=config.get("score_ratio", milvus_cfg.score_ratio),
+            )
+        else:
+            hits = await asyncio.to_thread(
+                client.search,
+                query_vector=vector,
+                top_k=top_k,
+                file_id=file_id,
+                score_threshold=score_threshold,
+            )
         for hit in hits:
             parent_id = hit.get("parent_chunk_id")
             parent = index.parents.get(parent_id)
@@ -2202,6 +2228,138 @@ def _build_table_source_refs(
     return source_refs, results_text_by_label
 
 
+_SEARCH_RESULT_PLACEHOLDER_RE = re.compile(
+    r"<search_result>.*?</search_result>", re.IGNORECASE | re.DOTALL
+)
+
+
+def _text_rerank_query(field: ExtractionField) -> str:
+    """用字段 system/user prompt 的检索意图构造 query，不注入候选原文。"""
+    system_prompt = (getattr(field, "text_system_prompt", None) or "").strip()
+    user_prompt = _SEARCH_RESULT_PLACEHOLDER_RE.sub(
+        "", getattr(field, "text_extract_prompt", None) or ""
+    ).strip()
+    return "\n\n".join(part for part in (system_prompt, user_prompt) if part)
+
+
+def _table_rerank_query(field: ExtractionField) -> str:
+    title = (getattr(field, "table_name_pattern", None) or "").strip()
+    if title:
+        return title
+    keywords = getattr(field, "table_match_keywords", None) or []
+    return "、".join(str(keyword).strip() for keyword in keywords if str(keyword).strip())
+
+
+async def _rerank_and_truncate(
+    candidates: List[Any],
+    *,
+    query: str,
+    limit: Optional[int],
+    document_of,
+    context: str,
+) -> List[Any]:
+    """候选超过最终上限时重排；未配置或失败时退回检索器原顺序。"""
+    if limit is None:
+        return candidates
+    if limit <= 0:
+        return []
+    if len(candidates) <= limit:
+        return candidates
+
+    documents = [str(document_of(candidate) or "") for candidate in candidates]
+    if not query.strip() or not any(documents):
+        return candidates[:limit]
+    try:
+        indexes = await rerank_indices(query, documents, limit)
+        reordered = [candidates[index] for index in indexes]
+        selected = set(indexes)
+        if len(reordered) < limit:
+            reordered.extend(
+                candidate for index, candidate in enumerate(candidates)
+                if index not in selected
+            )
+        return reordered[:limit]
+    except RerankNotConfiguredError as exc:
+        logger.info("{} 超过上限但 Rerank 未配置，沿用原检索顺序", context)
+        return candidates[:limit]
+    except Exception as exc:
+        logger.warning("{} Rerank 失败，沿用原检索顺序: {}", context, exc)
+        return candidates[:limit]
+
+
+def _keyword_total_limit(config: Dict[str, Any], default_max_results: int) -> Optional[int]:
+    keywords = config.get("keywords") or []
+    if not keywords:
+        raw = config.get("keyword_filter")
+        if isinstance(raw, str):
+            keywords = [item.strip() for item in re.split(r"[,，]", raw) if item.strip()]
+    max_results = config.get("max_results") or config.get("top_k") or default_max_results
+    max_total = config.get("max_total_results")
+    if max_total is None:
+        max_total = _default_max_total_results(max_results, keywords)
+    try:
+        value = int(max_total)
+    except (TypeError, ValueError):
+        return _default_max_total_results(max_results, keywords)
+    return None if value == 0 else max(0, value)
+
+
+async def _rerank_text_candidates(
+    field: ExtractionField,
+    search_type: str,
+    config: Dict[str, Any],
+    candidates: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not candidates:
+        return candidates
+    query = _text_rerank_query(field)
+    text_key = _SEGMENT_TEXT_KEY.get(search_type, "chunk_content")
+
+    if search_type == "section":
+        title = str(config.get("section_pattern") or "").strip()
+        try:
+            limit = max(0, int(config.get("max_results", 3)))
+        except (TypeError, ValueError):
+            limit = 3
+        return await _rerank_and_truncate(
+            candidates,
+            query=title,
+            limit=limit,
+            document_of=lambda item: item.get("section_title", ""),
+            context=f"字段 {field.field_id} 章节候选",
+        )
+
+    if search_type in {"bm25", "vector_db"}:
+        fallback_limit = 10 if search_type == "bm25" else get_config().milvus.max_results
+        try:
+            limit = int(config.get("top_k") or config.get("max_results") or fallback_limit)
+        except (TypeError, ValueError):
+            limit = fallback_limit
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for item in candidates:
+            grouped.setdefault(str(item.get("keyword") or ""), []).append(item)
+        selected: List[Dict[str, Any]] = []
+        for keyword, items in grouped.items():
+            selected.extend(await _rerank_and_truncate(
+                items,
+                query=query,
+                limit=limit,
+                document_of=lambda item: item.get(text_key, ""),
+                context=f"字段 {field.field_id} {search_type} 候选 {keyword}",
+            ))
+        return selected
+
+    default_per_keyword = 10 if search_type == "chunk_db" else 5
+    limit = _keyword_total_limit(config, default_per_keyword)
+    return await _rerank_and_truncate(
+        candidates,
+        query=query,
+        limit=limit,
+        document_of=lambda item: item.get(text_key, ""),
+        context=f"字段 {field.field_id} {search_type} 候选",
+    )
+
+
 @retry_empty
 async def extract_table_field(
     file_id: str, field: ExtractionField, snapshot: "FileExtractionSnapshot"
@@ -2241,7 +2399,7 @@ async def extract_table_field(
         prompt = build_table_match_prompt(
             table_list,
             query_desc,
-            field.table_match_max_results,
+            len(tables),
             getattr(field, "table_match_prompt", None),
         )
         try:
@@ -2269,10 +2427,15 @@ async def extract_table_field(
             if matched:
                 matched_tables.append(table)
 
-    # 限制返回数量
+    # 先按目标表名重排候选，再应用字段的最终条数上限。
     max_results = field.table_match_max_results or 0
-    if max_results > 0 and len(matched_tables) > max_results:
-        matched_tables = matched_tables[:max_results]
+    matched_tables = await _rerank_and_truncate(
+        matched_tables,
+        query=_table_rerank_query(field),
+        limit=max_results or None,
+        document_of=lambda table: table.table_name or f"表格{table.table_index}",
+        context=f"字段 {field.field_id} 表格候选",
+    )
 
     if not matched_tables:
         return "", "", None, []
@@ -2449,19 +2612,33 @@ async def extract_text_field(
     # 调用对应的检索方法
     search_results = []
     if search_type == "context":
-        search_results = await search_context(content, search_config, snapshot.chunks)
+        search_results = await search_context(
+            content, search_config, snapshot.chunks, candidate_only=True
+        )
     elif search_type == "section":
-        search_results = await search_section(content, search_config)
+        search_results = await search_section(
+            content, search_config, candidate_only=True
+        )
     elif search_type == "rule":
-        search_results = await search_rule(content, search_config, snapshot.chunks)
+        search_results = await search_rule(
+            content, search_config, snapshot.chunks, candidate_only=True
+        )
     elif search_type == "chunk_db":
-        search_results = await search_chunk_db(file_id, search_config, snapshot.chunks)
+        search_results = await search_chunk_db(
+            file_id, search_config, snapshot.chunks, candidate_only=True
+        )
     elif search_type == "bm25":
-        search_results = search_bm25(file_id, search_config, snapshot.chunks)
+        search_results = search_bm25(
+            file_id, search_config, snapshot.chunks, candidate_only=True
+        )
     elif search_type == "vector_db":
         search_results = await search_vector_db(
-            file_id, search_config, snapshot.vector_index
+            file_id, search_config, snapshot.vector_index, candidate_only=True
         )
+
+    search_results = await _rerank_text_candidates(
+        field, search_type, search_config, search_results
+    )
 
     if not search_results:
         return "", "", None, []
@@ -3821,7 +3998,7 @@ async def test_field_extraction_stream(
                     llm_match_prompt = build_table_match_prompt(
                         table_list,
                         query_desc,
-                        field.table_match_max_results,
+                        len(tables),
                         getattr(field, "table_match_prompt", None),
                     )
                     yield {
@@ -3890,10 +4067,14 @@ async def test_field_extraction_stream(
                                 "page_num": table.page_num or "",
                             })
 
-                # 限制返回数量
                 max_results = field.table_match_max_results or 0
-                if max_results > 0 and len(matched_tables) > max_results:
-                    matched_tables = matched_tables[:max_results]
+                matched_tables = await _rerank_and_truncate(
+                    matched_tables,
+                    query=_table_rerank_query(field),
+                    limit=max_results or None,
+                    document_of=lambda table: table.get("table_name") or f"表格{table['table_index']}",
+                    context=f"字段 {field.field_id} 调试表格候选",
+                )
 
                 # 使用用户指定的表名作为统一 label
                 label = field.table_name_pattern or "表格"
@@ -3984,32 +4165,43 @@ async def test_field_extraction_stream(
                     # 调试流是串行路径，这里现取快照分块，与并发链路共用同一份检索语义
                     debug_snapshot = await load_extraction_snapshot(file_id, session)
                     search_results = await search_context(
-                        content, search_config, debug_snapshot.chunks
+                        content, search_config, debug_snapshot.chunks,
+                        candidate_only=True,
                     )
                 elif search_type == "section":
-                    search_results = await search_section(content, search_config)
+                    search_results = await search_section(
+                        content, search_config, candidate_only=True
+                    )
                 elif search_type == "rule":
                     debug_snapshot = await load_extraction_snapshot(file_id, session)
                     search_results = await search_rule(
-                        content, search_config, debug_snapshot.chunks
+                        content, search_config, debug_snapshot.chunks,
+                        candidate_only=True,
                     )
                 elif search_type == "chunk_db":
                     debug_snapshot = await load_extraction_snapshot(file_id, session)
                     search_results = await search_chunk_db(
-                        file_id, search_config, debug_snapshot.chunks
+                        file_id, search_config, debug_snapshot.chunks,
+                        candidate_only=True,
                     )
                 elif search_type == "bm25":
                     debug_snapshot = await load_extraction_snapshot(file_id, session)
                     search_results = search_bm25(
-                        file_id, search_config, debug_snapshot.chunks
+                        file_id, search_config, debug_snapshot.chunks,
+                        candidate_only=True,
                     )
                 elif search_type == "vector_db":
                     debug_snapshot = await load_extraction_snapshot(
                         file_id, session, need_vectors=True
                     )
                     search_results = await search_vector_db(
-                        file_id, search_config, debug_snapshot.vector_index
+                        file_id, search_config, debug_snapshot.vector_index,
+                        candidate_only=True,
                     )
+
+                search_results = await _rerank_text_candidates(
+                    field, search_type, search_config, search_results
+                )
 
                 # 按关键词分组构建 results_by_label
                 results_by_keyword: Dict[str, List[Dict]] = {}

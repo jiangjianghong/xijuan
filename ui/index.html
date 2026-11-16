@@ -697,6 +697,7 @@
                 <section class="runtime-help-group">
                     <h3>业务阶段</h3>
                     <article class="runtime-help-item"><h4>表名校验</h4><code>concurrency.global_table_validation</code><p>统计所有文件正在执行的表名判断。默认容量 10，并继续受文本 LLM 默认容量 16 约束。</p></article>
+                    <article class="runtime-help-item"><h4>Rerank</h4><code>concurrency.global_rerank</code><p>统计当前 worker 内正在执行的检索结果重排请求。默认容量 8；各检索方式和 hybrid 通道共享该池。</p></article>
                     <article class="runtime-help-item"><h4>字段抽取</h4><code>concurrency.global_extraction</code><p>统计所有文件正在执行的字段抽取。默认容量 8，实际还可能进入文本 LLM、Embedding 或 VL 模型通道。</p></article>
                     <article class="runtime-help-item"><h4>逻辑分析总池</h4><code>concurrency.global_analysis</code><p>文件管线规则与独立分析规则共享同一个总池。以默认配置为例，两类来源合计最多同时执行 8 条规则。judge 和 custom 规则还需要文本 LLM 槽位，calc 规则不占用文本模型通道。</p></article>
                 </section>

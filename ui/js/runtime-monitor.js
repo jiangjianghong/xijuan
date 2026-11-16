@@ -16,6 +16,7 @@
         global_llm: { short: 'LLM', note: '限制当前进程内所有普通文本模型请求，表名校验、字段抽取和逻辑分析共享该额度。' },
         global_embedding: { short: 'EMB', note: '限制向量化阶段和 vector_db 查询共同使用的 Embedding 请求。' },
         global_vl: { short: 'VL', note: '限制所有 VL 请求，局部视觉模型并发最终受该池约束。' },
+        global_rerank: { short: 'RERANK', note: '限制当前 worker 内 Cohere-compatible Rerank API 请求并发。' },
         global_table_validation: { short: 'TABLE', note: '限制跨文件并行执行的表格名称校验任务。' },
         global_extraction: { short: 'EXTRACT', note: '限制跨文件同时运行的字段抽取任务。' },
         global_analysis: { short: 'ANALYZE', note: '由文件管线分析和独立分析接口共享。' },
@@ -24,7 +25,7 @@
         mineru_parse: { short: 'MinerU', note: '由 mineru.queue_width 限制同时打向 MinerU 的解析请求，响应后释放令牌。' },
     };
     const POOL_ORDER = [
-        'global_llm', 'global_embedding', 'global_vl',
+        'global_llm', 'global_embedding', 'global_vl', 'global_rerank',
         'global_table_validation', 'global_extraction', 'global_analysis',
         'independent_analysis', 'mineru_parse', 'global_pipeline',
     ];
