@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>智能体工作台 | 析卷 AI</title>
+    <link rel="stylesheet" href="/ui/vendor/fonts/google-fonts.css">
+    <script src="/ui/vendor/lucide/lucide.min.js"></script>
+    <style>
+        :root {
+            color-scheme: light;
+            --ink: #202b28;
+            --muted: #68746f;
+            --line: #dce3df;
+            --paper: #ffffff;
+            --canvas: #f1f4f2;
+            --green: #276c56;
+            --green-soft: #e5f1eb;
+            --amber: #a65d24;
+            --amber-soft: #fbefe3;
+            --blue: #416b98;
+            --blue-soft: #eaf1f8;
+            --red: #a63c3c;
+            --red-soft: #faeaea;
+            --radius: 7px;
+            font-family: Nunito, "Segoe UI", sans-serif;
+            color: var(--ink);
+            background: var(--canvas);
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; display: grid; grid-template-rows: 62px 58px minmax(0, 1fr) 144px; }
+        button, input, textarea { font: inherit; }
+        button { color: inherit; }
+        .topbar { display: flex; align-items: center; gap: 14px; padding: 0 24px; background: #253630; color: #f4f7f5; }
+        .brand-mark { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #64786e; border-radius: 7px; color: #aad7bc; }
+        .brand-mark svg { width: 19px; height: 19px; }
+        .brand { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 750; white-space: nowrap; }
+        .brand-sub { padding-left: 12px; border-left: 1px solid #53635c; color: #c4cec8; font-size: 13px; font-weight: 500; }
+        .topbar-spacer { flex: 1; }
+        .top-link { display: inline-flex; align-items: center; gap: 7px; padding: 8px 10px; color: #e1e9e4; text-decoration: none; border-radius: 5px; font-size: 13px; }
+        .top-link:hover { background: #384b43; }
+        .top-link svg { width: 16px; height: 16px; }
+        .filebar { display: flex; align-items: center; gap: 12px; padding: 10px 24px; background: var(--paper); border-bottom: 1px solid var(--line); }
+        .field-label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 700; white-space: nowrap; }
+        .field-label svg { width: 15px; height: 15px; }
+        .file-id { width: min(520px, 52vw); height: 36px; border: 1px solid #cbd5d0; border-radius: 5px; background: #fbfcfb; color: var(--ink); padding: 0 11px; font: 12px/1.4 Consolas, "SFMono-Regular", monospace; outline: none; }
+        .file-id:focus, .question:focus { border-color: #548d76; box-shadow: 0 0 0 3px #276c561c; }
+        .file-id::placeholder { color: #9aa49f; }
+        .file-meta { display: flex; align-items: center; gap: 12px; margin-left: auto; min-width: 0; color: var(--muted); font-size: 12px; }
+        #file-name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .file-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; color: #496458; background: var(--green-soft); border-radius: 4px; white-space: nowrap; }
+        .file-pill svg { width: 14px; height: 14px; }
+        .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #89958f; }
+        .file-pill[data-state="running"] .status-dot { background: #d68a3c; animation: pulse 1.2s ease-in-out infinite; }
+        .file-pill[data-state="done"] .status-dot { background: #27895e; }
+        .file-pill[data-state="error"] .status-dot { background: #bf4848; }
+        @keyframes pulse { 50% { opacity: .35; } }
+        .workspace { min-height: 0; display: grid; grid-template-columns: 282px minmax(0, 1fr); }
+        .sidebar { min-height: 0; overflow: auto; padding: 20px 16px 18px 22px; border-right: 1px solid var(--line); background: #f7f9f7; }
+        .section-heading { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 12px; font-weight: 800; color: #47534d; }
+        .section-heading svg { width: 15px; height: 15px; color: var(--green); }
+        .tool-list { display: grid; gap: 5px; }
+        .tool-row { width: 100%; display: grid; grid-template-columns: 27px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 8px 7px; border: 1px solid transparent; border-radius: 5px; background: transparent; text-align: left; }
+        .tool-row:hover { border-color: var(--line); background: #fff; }
+        .tool-icon { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 5px; background: #e8eeeb; color: #47675a; }
+        .tool-icon svg { width: 15px; height: 15px; }
+        .tool-name { display: block; font-size: 12px; font-weight: 700; line-height: 1.2; }
+        .tool-kind { display: block; margin-top: 3px; color: #818c86; font: 10px/1.2 Consolas, monospace; }
+        .tool-state { width: 6px; height: 6px; border-radius: 50%; background: #c0c9c4; }
+        .tool-row.used .tool-state { background: #3c9568; }
+        .sidebar-divider { height: 1px; margin: 17px 0; background: var(--line); }
+        .file-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .fact { padding: 9px 10px; border: 1px solid var(--line); border-radius: 5px; background: #fff; }
+        .fact-label { color: var(--muted); font-size: 10px; }
+        .fact-value { margin-top: 4px; font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+        .main-panel { min-height: 0; display: grid; grid-template-rows: 46px minmax(0, 1fr); padding: 0 26px 20px; }
+        .trace-toolbar { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
+        .trace-title { margin: 0; font-size: 13px; font-weight: 800; }
+        .trace-count { color: var(--muted); font-size: 11px; }
+        .trace-spacer { flex: 1; }
+        .clear-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
+        .clear-btn:hover:not(:disabled) { background: #e7ece9; color: var(--ink); }
+        .clear-btn:disabled { cursor: not-allowed; opacity: .5; }
+        .clear-btn svg { width: 14px; height: 14px; }
+        .trace { min-height: 0; overflow: auto; padding: 18px 2px 14px; scroll-behavior: smooth; }
+        .empty-state { min-height: 100%; display: grid; place-content: center; justify-items: center; padding: 30px; color: var(--muted); text-align: center; }
+        .empty-icon { width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 12px; border: 1px solid #cdd9d2; border-radius: 8px; color: var(--green); background: #eaf2ed; }
+        .empty-icon svg { width: 22px; height: 22px; }
+        .empty-title { color: #3b4841; font-size: 14px; font-weight: 800; }
+        .round-divider { display: flex; align-items: center; gap: 9px; margin: 13px 0 11px; color: #62746b; font-size: 11px; font-weight: 800; }
+        .round-divider::after { height: 1px; flex: 1; content: ""; background: var(--line); }
+        .timeline-item { margin: 0 0 10px; }
+        .event-line { display: flex; align-items: flex-start; gap: 9px; color: #415049; font-size: 12px; line-height: 1.55; }
+        .event-mark { flex: 0 0 22px; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: #607168; }
+        .event-mark svg { width: 13px; height: 13px; }
+        .event-content { min-width: 0; flex: 1; }
+        .tool-card { overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+        .tool-card-head { display: flex; align-items: center; gap: 8px; padding: 9px 11px; background: #f9fbfa; }
+        .tool-card-head .event-mark { border: 0; background: var(--green-soft); color: var(--green); }
+        .tool-card-name { font-size: 12px; font-weight: 800; }
+        .tool-card-status { margin-left: auto; color: var(--muted); font-size: 10px; }
+        .tool-card-status.running { color: var(--amber); }
+        .tool-card-status.failed { color: var(--red); }
+        .tool-card-body { padding: 0 11px 11px; }
+        .tool-detail { margin-top: 8px; }
+        .tool-detail summary { color: #64716a; cursor: pointer; font-size: 10px; font-weight: 700; }
+        .tool-detail pre { max-height: 240px; overflow: auto; margin: 6px 0 0; padding: 9px; border-radius: 4px; background: #f2f5f3; color: #34433c; font: 11px/1.55 Consolas, "SFMono-Regular", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .image-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 9px; margin-top: 10px; }
+        .page-image { min-width: 0; margin: 0; overflow: hidden; border: 1px solid #d3ddd7; border-radius: 5px; background: #f8faf8; }
+        .page-image img { display: block; width: 100%; max-height: 360px; object-fit: contain; background: #e9eeeb; }
+        .page-image figcaption { padding: 6px 8px; color: #53665b; font-size: 10px; font-weight: 700; }
+        .answer-card { margin: 0 0 18px 31px; padding: 13px 15px; border: 1px solid #c5d9ce; border-left: 3px solid var(--green); border-radius: 5px; background: #f3f8f5; }
+        .answer-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; color: #32664f; font-size: 11px; font-weight: 800; }
+        .answer-head svg { width: 14px; height: 14px; }
+        .answer-text { min-height: 18px; color: #26332e; font-size: 13px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .answer-text:empty::after { content: "等待模型回答"; color: #8a9690; }
+        .error-box { padding: 9px 11px; border: 1px solid #e8c7c7; border-radius: 5px; background: var(--red-soft); color: #803434; font-size: 12px; line-height: 1.5; }
+        .composer { padding: 13px 26px 16px; border-top: 1px solid var(--line); background: #fff; }
+        .composer-inner { max-width: 1050px; margin: 0 auto; }
+        .question { display: block; width: 100%; min-height: 67px; max-height: 130px; resize: vertical; padding: 10px 12px; border: 1px solid #cbd5d0; border-radius: 5px; outline: none; color: var(--ink); background: #fcfdfc; font-size: 13px; line-height: 1.5; }
+        .question::placeholder { color: #929c97; }
+        .composer-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+        .actions-spacer { flex: 1; }
+        .run-btn, .stop-btn { min-width: 126px; height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 5px; font-size: 12px; font-weight: 800; cursor: pointer; }
+        .run-btn { background: var(--green); color: #fff; }
+        .run-btn:hover:not(:disabled) { background: #1f5a47; }
+        .run-btn:disabled { cursor: not-allowed; opacity: .55; }
+        .stop-btn { background: #fff1e8; color: #9a4c20; border: 1px solid #e8c5a9; }
+        .stop-btn:hover { background: #ffe7d7; }
+        .run-btn svg, .stop-btn svg { width: 15px; height: 15px; }
+        .hidden { display: none !important; }
+        @media (max-width: 900px) {
+            body { grid-template-rows: 58px 58px minmax(360px, 1fr) 144px; }
+            .workspace { grid-template-columns: 225px minmax(0, 1fr); }
+            .sidebar { padding-left: 14px; padding-right: 10px; }
+            .main-panel { padding-left: 18px; padding-right: 18px; }
+            .filebar { padding-left: 16px; padding-right: 16px; }
+            .composer { padding-left: 18px; padding-right: 18px; }
+        }
+        @media (max-width: 650px) {
+            body { display: flex; flex-direction: column; height: auto; min-height: 100dvh; overflow: auto; }
+            .topbar { min-height: 56px; padding: 0 13px; gap: 9px; }
+            .brand { font-size: 13px; }
+            .brand-sub { display: none; }
+            .top-link { padding: 7px; font-size: 0; }
+            .top-link svg { width: 18px; height: 18px; }
+            .filebar { min-height: 82px; flex-wrap: wrap; gap: 5px 10px; padding: 9px 13px; }
+            .filebar .field-label { flex: 0 0 auto; }
+            .file-id { width: calc(100% - 78px); flex: 1; min-width: 0; }
+            .file-meta { width: 100%; margin-left: 77px; justify-content: flex-start; }
+            .workspace { display: flex; flex-direction: column; min-height: 540px; flex: 1; }
+            .sidebar { flex: 0 0 auto; max-height: 128px; overflow: auto; padding: 10px 13px; border-right: 0; border-bottom: 1px solid var(--line); }
+            .sidebar .section-heading { margin-bottom: 7px; }
+            .tool-list { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+            .tool-row { grid-template-columns: 22px minmax(0, 1fr); gap: 5px; padding: 5px 3px; }
+            .tool-icon { width: 22px; height: 22px; }
+            .tool-icon svg { width: 13px; height: 13px; }
+            .tool-kind, .tool-state, .sidebar-divider, .file-facts { display: none; }
+            .tool-name { font-size: 9px; line-height: 1.15; overflow-wrap: anywhere; }
+            .main-panel { display: flex; flex-direction: column; min-height: 330px; flex: 1; padding: 0 13px 12px; }
+            .trace-toolbar { flex: 0 0 42px; }
+            .trace { flex: 1; overflow: auto; padding-top: 13px; }
+            .composer { position: sticky; bottom: 0; z-index: 2; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+            .question { min-height: 58px; max-height: 110px; }
+            .run-btn, .stop-btn { min-width: 112px; }
+            .answer-card { margin-left: 0; }
+            .image-grid { grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+        }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand-mark" aria-hidden="true"><i data-lucide="brain-circuit"></i></div>
+        <div class="brand">析卷 AI <span class="brand-sub">智能体工作台</span></div>
+        <div class="topbar-spacer"></div>
+        <a class="top-link" href="/ui/" title="返回析卷 AI"><i data-lucide="arrow-left"></i><span>返回主系统</span></a>
+    </header>
+
+    <section class="filebar" aria-label="当前文档">
+        <label class="field-label" for="file-id"><i data-lucide="file-search"></i>文件 ID</label>
+        <input id="file-id" class="file-id" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="输入已处理文件的 file_id">
+        <div class="file-meta">
+            <span id="file-state" class="file-pill" data-state="idle"><span class="status-dot"></span><span id="status-text">待运行</span></span>
+            <span id="file-name"></span>
+        </div>
+    </section>
+
+    <div class="workspace">
+        <aside class="sidebar">
+            <h2 class="section-heading"><i data-lucide="library"></i>可用工具</h2>
+            <div id="tool-list" class="tool-list"></div>
+            <div class="sidebar-divider"></div>
+            <h2 class="section-heading"><i data-lucide="files"></i>文档索引</h2>
+            <div class="file-facts">
+                <div class="fact"><div class="fact-label">文本分块</div><div id="chunk-count" class="fact-value">—</div></div>
+                <div class="fact"><div class="fact-label">解析表格</div><div id="table-count" class="fact-value">—</div></div>
+                <div class="fact"><div class="fact-label">章节标题</div><div id="section-count" class="fact-value">—</div></div>
+                <div class="fact"><div class="fact-label">工具轮次</div><div id="round-count" class="fact-value">0</div></div>
+            </div>
+        </aside>
+
+        <main class="main-panel">
+            <div class="trace-toolbar">
+                <h1 class="trace-title">分析过程</h1>
+                <span id="trace-count" class="trace-count">等待运行</span>
+                <span class="trace-spacer"></span>
+                <button id="clear-button" class="clear-btn" type="button" title="清空当前过程"><i data-lucide="trash-2"></i>清空</button>
+            </div>
+            <section id="trace" class="trace" aria-live="polite" aria-label="Agent 迭代过程">
+                <div class="empty-state" id="empty-state">
+                    <div class="empty-icon"><i data-lucide="scan-search"></i></div>
+                    <div class="empty-title">等待开始分析</div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <form id="composer" class="composer">
+        <div class="composer-inner">
+            <textarea id="question" class="question" maxlength="12000" placeholder="输入要分析的问题…" aria-label="分析问题" required></textarea>
+            <div class="composer-actions">
+                <span class="actions-spacer"></span>
+                <button id="stop-button" class="stop-btn hidden" type="button"><i data-lucide="square"></i>中止</button>
+                <button id="run-button" class="run-btn" type="submit"><i data-lucide="play"></i>开始分析</button>
+            </div>
+        </div>
+    </form>
+
+    <script>
+        (() => {
+            const toolRows = [
+                ["search_context", "上下文", "文本"], ["list_sections", "章节列表", "结构"],
+                ["read_section", "读取章节", "结构"], ["search_rule", "规则段落", "文本"],
+                ["search_chunk_db", "分块检索", "数据库"], ["search_bm25", "BM25", "排序"],
+                ["search_vector_db", "向量检索", "语义"], ["search_page", "页文本", "文本"],
+                ["list_tables", "表格列表", "结构"], ["read_table", "读取表格", "结构"],
+                ["web_search", "联网搜索", "网页"], ["pdf_reader", "PDF 页图", "视觉"],
+            ];
+            const toolIcons = {
+                search_context: "text-search", list_sections: "list-tree", read_section: "book-open-text",
+                search_rule: "list-filter", search_chunk_db: "database", search_bm25: "list-ordered",
+                search_vector_db: "scan-search", search_page: "files", list_tables: "table-2",
+                read_table: "table-properties", web_search: "globe-2", pdf_reader: "scan-eye",
+            };
+            const elements = Object.fromEntries([
+                "file-id", "file-state", "status-text", "file-name", "tool-list", "chunk-count",
+                "table-count", "section-count", "round-count", "trace-count", "trace", "empty-state",
+                "composer", "question", "run-button", "stop-button", "clear-button",
+            ].map(id => [id, document.getElementById(id)]));
+            let controller = null;
+            let eventCount = 0;
+            let currentRound = 0;
+            let answerNode = null;
+            const toolCards = new Map();
+            const usedTools = new Set();
+
+            function icon(name) {
+                const i = document.createElement("i");
+                i.setAttribute("data-lucide", name);
+                return i;
+            }
+            function refreshIcons() {
+                if (window.lucide) window.lucide.createIcons({ attrs: { "stroke-width": 1.8 } });
+            }
+            function setStatus(text, state = "idle") {
+                elements["status-text"].textContent = text;
+                elements["file-state"].dataset.state = state;
+            }
+            function escapeText(value) {
+                return String(value ?? "");
+            }
+            function makeToolList() {
+                for (const [id, label, kind] of toolRows) {
+                    const row = document.createElement("div");
+                    row.className = "tool-row";
+                    row.dataset.tool = id;
+                    const mark = document.createElement("span");
+                    mark.className = "tool-icon";
+                    mark.append(icon(toolIcons[id] || "wrench"));
+                    const copy = document.createElement("span");
+                    copy.innerHTML = `<span class="tool-name"></span><span class="tool-kind"></span>`;
+                    copy.querySelector(".tool-name").textContent = label;
+                    copy.querySelector(".tool-kind").textContent = kind;
+                    const state = document.createElement("span");
+                    state.className = "tool-state";
+                    row.append(mark, copy, state);
+                    elements["tool-list"].append(row);
+                }
+                refreshIcons();
+            }
+            function clearRun() {
+                elements.trace.replaceChildren();
+                elements["empty-state"].classList.add("hidden");
+                eventCount = 0;
+                currentRound = 0;
+                answerNode = null;
+                toolCards.clear();
+                usedTools.clear();
+                elements["chunk-count"].textContent = "—";
+                elements["table-count"].textContent = "—";
+                elements["section-count"].textContent = "—";
+                elements["file-name"].textContent = "";
+                document.querySelectorAll(".tool-row.used").forEach(row => row.classList.remove("used"));
+                elements["round-count"].textContent = "0";
+                elements["trace-count"].textContent = "准备开始";
+            }
+            function countEvent() {
+                eventCount += 1;
+                elements["trace-count"].textContent = `${eventCount} 个过程事件`;
+            }
+            function appendLine(message, iconName = "activity") {
+                const item = document.createElement("div");
+                item.className = "timeline-item event-line";
+                const mark = document.createElement("span");
+                mark.className = "event-mark";
+                mark.append(icon(iconName));
+                const text = document.createElement("span");
+                text.className = "event-content";
+                text.textContent = message;
+                item.append(mark, text);
+                elements.trace.append(item);
+                countEvent();
+                refreshIcons();
+                elements.trace.scrollTop = elements.trace.scrollHeight;
+                return item;
+            }
+            function addRound(round, maxRounds) {
+                const divider = document.createElement("div");
+                divider.className = "round-divider";
+                divider.textContent = `第 ${round} 轮${maxRounds ? ` / ${maxRounds}` : ""}`;
+                elements.trace.append(divider);
+                currentRound = round;
+                answerNode = null;
+                elements["round-count"].textContent = String(Math.max(0, round - 1));
+                countEvent();
+                elements.trace.scrollTop = elements.trace.scrollHeight;
+            }
+            function ensureAnswer() {
+                if (answerNode) return answerNode;
+                const card = document.createElement("article");
+                card.className = "answer-card";
+                const head = document.createElement("div");
+                head.className = "answer-head";
+                head.append(icon("sparkles"), document.createTextNode("模型回答"));
+                const text = document.createElement("div");
+                text.className = "answer-text";
+                card.append(head, text);
+                elements.trace.append(card);
+                answerNode = text;
+                refreshIcons();
+                return answerNode;
+            }
+            function createToolCard(round, index, name, callId) {
+                const key = `${round}:${index}`;
+                let card = toolCards.get(key);
+                if (card) {
+                    if (callId) toolCards.set(callId, card);
+                    return card;
+                }
+                const wrapper = document.createElement("article");
+                wrapper.className = "timeline-item tool-card";
+                const head = document.createElement("div");
+                head.className = "tool-card-head";
+                const mark = document.createElement("span");
+                mark.className = "event-mark";
+                mark.append(icon(toolIcons[name] || "wrench"));
+                const title = document.createElement("span");
+                title.className = "tool-card-name";
+                title.textContent = name || "工具调用";
+                const state = document.createElement("span");
+                state.className = "tool-card-status running";
+                state.textContent = "准备调用";
+                head.append(mark, title, state);
+                const body = document.createElement("div");
+                body.className = "tool-card-body";
+                const argDetail = document.createElement("details");
+                argDetail.className = "tool-detail";
+                argDetail.open = true;
+                const argSummary = document.createElement("summary");
+                argSummary.textContent = "调用参数";
+                const argPre = document.createElement("pre");
+                argDetail.append(argSummary, argPre);
+                body.append(argDetail);
+                wrapper.append(head, body);
+                elements.trace.append(wrapper);
+                card = { wrapper, title, state, argPre, body, round, index, callId };
+                toolCards.set(key, card);
+                if (callId) toolCards.set(callId, card);
+                refreshIcons();
+                elements.trace.scrollTop = elements.trace.scrollHeight;
+                return card;
+            }
+            function showToolResult(event) {
+                let card = toolCards.get(event.tool_call_id);
+                if (!card) card = createToolCard(event.round || currentRound, 0, event.name, event.tool_call_id);
+                card.title.textContent = event.name || card.title.textContent;
+                card.state.className = "tool-card-status";
+                let parsed;
+                try { parsed = JSON.parse(event.content); } catch { parsed = event.content; }
+                card.state.textContent = parsed && typeof parsed === "object" && parsed.error ? "执行失败" : "已完成";
+                if (parsed && typeof parsed === "object" && parsed.error) card.state.classList.add("failed");
+                const resultDetail = document.createElement("details");
+                resultDetail.className = "tool-detail";
+                resultDetail.open = true;
+                const summary = document.createElement("summary");
+                summary.textContent = "工具结果";
+                const pre = document.createElement("pre");
+                pre.textContent = typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2);
+                resultDetail.append(summary, pre);
+                card.body.append(resultDetail);
+                if (Array.isArray(event.images) && event.images.length) {
+                    const grid = document.createElement("div");
+                    grid.className = "image-grid";
+                    for (const imageData of event.images) {
+                        const figure = document.createElement("figure");
+                        figure.className = "page-image";
+                        const image = document.createElement("img");
+                        image.src = imageData.data_url;
+                        image.alt = `PDF 第 ${imageData.page} 页`;
+                        image.loading = "lazy";
+                        const caption = document.createElement("figcaption");
+                        caption.textContent = `PDF 第 ${imageData.page} 页`;
+                        figure.append(image, caption);
+                        grid.append(figure);
+                    }
+                    card.body.append(grid);
+                }
+                countEvent();
+                refreshIcons();
+                elements.trace.scrollTop = elements.trace.scrollHeight;
+            }
+            function showError(message) {
+                const item = document.createElement("div");
+                item.className = "timeline-item error-box";
+                item.textContent = message || "运行失败";
+                elements.trace.append(item);
+                countEvent();
+                elements.trace.scrollTop = elements.trace.scrollHeight;
+            }
+            function handleEvent(event) {
+                switch (event.type) {
+                    case "status": setStatus(event.message || "处理中", "running"); appendLine(event.message || "处理中"); break;
+                    case "context_ready":
+                        elements["chunk-count"].textContent = String(event.chunk_count ?? "—");
+                        elements["table-count"].textContent = String(event.table_count ?? "—");
+                        elements["section-count"].textContent = String(event.section_count ?? "—");
+                        elements["file-name"].textContent = event.file_name || "";
+                        appendLine("文档上下文已就绪", "files");
+                        break;
+                    case "round_start": addRound(event.round, event.max_rounds); break;
+                    case "synthesis_start": answerNode = null; appendLine("整理已有证据", "file-check-2"); break;
+                    case "token": ensureAnswer().textContent += event.text || ""; elements.trace.scrollTop = elements.trace.scrollHeight; break;
+                    case "tool_call_delta": {
+                        const card = createToolCard(event.round, event.index, "工具调用", event.id);
+                        if (event.name_delta) card.title.textContent = (card.title.textContent === "工具调用" ? "" : card.title.textContent) + event.name_delta;
+                        card.argPre.textContent += event.arguments_delta || "";
+                        elements.trace.scrollTop = elements.trace.scrollHeight;
+                        break;
+                    }
+                    case "tool_call": {
+                        const card = createToolCard(event.round, event.index ?? 0, event.name, event.tool_call_id);
+                        card.title.textContent = event.name || "工具调用";
+                        card.state.textContent = "执行中";
+                        card.state.className = "tool-card-status running";
+                        card.argPre.textContent = JSON.stringify(event.arguments || {}, null, 2);
+                        if (!usedTools.has(event.name)) {
+                            usedTools.add(event.name);
+                            document.querySelector(`.tool-row[data-tool="${CSS.escape(event.name || "")}"]`)?.classList.add("used");
+                        }
+                        elements["round-count"].textContent = String(event.round || 0);
+                        break;
+                    }
+                    case "tool_result": showToolResult(event); break;
+                    case "retry": appendLine(event.message || "正在重试", "rotate-cw"); break;
+                    case "done":
+                        setStatus("分析完成", "done");
+                        elements["round-count"].textContent = String(event.rounds || 0);
+                        appendLine(`分析完成 · ${event.rounds || 0} 轮工具调用`, "check");
+                        break;
+                    case "error": setStatus("运行失败", "error"); showError(event.message); break;
+                    default: break;
+                }
+            }
+            async function consumeStream(response) {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const blocks = buffer.split(/\r?\n\r?\n/);
+                    buffer = blocks.pop() || "";
+                    for (const block of blocks) {
+                        const data = block.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n");
+                        if (!data) continue;
+                        try { handleEvent(JSON.parse(data)); }
+                        catch (error) { console.error("Invalid Agent event", error); }
+                    }
+                }
+                buffer += decoder.decode();
+                if (buffer.trim()) {
+                    const data = buffer.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n");
+                    if (data) handleEvent(JSON.parse(data));
+                }
+            }
+            async function startRun(event) {
+                event.preventDefault();
+                const fileId = elements["file-id"].value.trim();
+                const question = elements.question.value.trim();
+                if (!fileId || !question || controller) return;
+                clearRun();
+                controller = new AbortController();
+                elements["run-button"].disabled = true;
+                elements["clear-button"].disabled = true;
+                elements["file-id"].disabled = true;
+                elements["stop-button"].classList.remove("hidden");
+                setStatus("正在连接", "running");
+                try {
+                    const response = await fetch("/agent/stream", {
+                        method: "POST",
+                        credentials: "same-origin",
+                        headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+                        body: JSON.stringify({ file_id: fileId, question }),
+                        signal: controller.signal,
+                    });
+                    if (!response.ok) {
+                        let message = `请求失败（${response.status}）`;
+                        try { const body = await response.json(); message = body.detail || message; } catch {}
+                        setStatus("请求失败", "error");
+                        showError(message);
+                        return;
+                    }
+                    await consumeStream(response);
+                } catch (error) {
+                    if (error.name === "AbortError") {
+                        setStatus("已中止", "idle");
+                        appendLine("本次分析已中止", "square");
+                    } else {
+                        setStatus("连接中断", "error");
+                        showError(error.message || "连接中断");
+                    }
+                } finally {
+                    controller = null;
+                    elements["run-button"].disabled = false;
+                    elements["clear-button"].disabled = false;
+                    elements["file-id"].disabled = false;
+                    elements["stop-button"].classList.add("hidden");
+                }
+            }
+            elements.composer.addEventListener("submit", startRun);
+            elements["stop-button"].addEventListener("click", () => controller?.abort());
+            elements["clear-button"].addEventListener("click", () => {
+                if (controller) controller.abort();
+                clearRun();
+                elements.trace.append(elements["empty-state"]);
+                elements["empty-state"].classList.remove("hidden");
+                setStatus("待运行", "idle");
+            });
+            elements["file-id"].addEventListener("input", () => { elements["file-name"].textContent = ""; });
+            makeToolList();
+            refreshIcons();
+        })();
+    </script>
+</body>
+</html>

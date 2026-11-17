@@ -33,6 +33,7 @@ def test_settings_script_defines_all_groups_and_secret_actions():
         "extraction",
         "table_name_validation",
         "analysis",
+        "agent",
         "rerank",
         "vl_model",
         "web_search",

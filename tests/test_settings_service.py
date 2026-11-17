@@ -135,6 +135,7 @@ def test_public_config_only_exposes_allowed_groups_and_secret_status(config_path
         "extraction",
         "table_name_validation",
         "analysis",
+        "agent",
         "rerank",
         "vl_model",
         "web_search",
@@ -157,6 +158,7 @@ def test_public_config_only_exposes_allowed_groups_and_secret_status(config_path
         assert secret not in serialized
     assert payload["config"]["embedding"]["api_key"] == {"configured": True}
     assert payload["config"]["rerank"]["api_key"] == {"configured": True}
+    assert payload["config"]["agent"]["api_key"] == {"configured": False}
     assert payload["readonly"]["embedding"] == [
         "embedding_dim",
         "batch_size",
@@ -196,6 +198,21 @@ def test_analysis_model_settings_and_secret_are_independent(config_path: Path):
     written = YAML().load(config_path.read_text(encoding="utf-8"))
     assert "enable_thinking" not in written["analysis"]
     assert "extra_body" not in written["analysis"]
+
+
+def test_agent_model_secret_and_round_limit_are_settings_managed(config_path: Path):
+    service = SettingsService(config_path)
+    before = service.read_public_config()
+    result = service.update_config(
+        base_version=before["version"],
+        changes={"agent": {"base_url": "http://agent.test/v1", "model": "vision-agent", "max_rounds": 18}},
+        secrets={"agent.api_key": {"action": "replace", "value": "agent-secret"}},
+    )
+
+    assert result["config"]["agent"]["api_key"] == {"configured": True}
+    assert "agent-secret" not in repr(result)
+    assert get_config().agent.model == "vision-agent"
+    assert get_config().agent.max_rounds == 18
 
 
 def test_retired_model_fields_cannot_be_updated(config_path: Path):

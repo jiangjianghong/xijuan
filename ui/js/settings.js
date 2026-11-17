@@ -18,6 +18,7 @@ const SettingsManager = {
         { id: 'extraction', label: '字段提取', icon: 'scan-text', description: '字段提取使用的语言模型' },
         { id: 'table_name_validation', label: '表格名校验', icon: 'table-properties', description: '独立的表格名称识别模型配置' },
         { id: 'analysis', label: '逻辑分析', icon: 'waypoints', description: '独立的分析模型与计算精度，需单独配置服务地址和模型名称' },
+        { id: 'agent', label: '智能体 Agent', icon: 'bot', description: '工具调用、文本回答和 PDF 图片共用的 OpenAI 兼容模型；最大迭代轮数即时生效' },
         { id: 'rerank', label: 'Rerank 重排', icon: 'list-filter', description: 'Cohere-compatible 候选结果重排模型' },
         { id: 'vl_model', label: 'VL 视觉模型', icon: 'scan-eye', description: '视觉模型、图像限制与并发' },
         { id: 'web_search', label: '博查网络搜索', icon: 'search', description: 'Judge 规则使用的联网搜索服务' },
@@ -78,6 +79,15 @@ const SettingsManager = {
             ['extra_params', '附加参数', 'json', { rows: 6 }],
             ['calc_precision', '计算精度', 'number', { min: 0, unit: '位小数' }],
             ['judge_timeout', '分析超时', 'number', { min: 1, unit: '秒，judge 与 custom 规则共用' }],
+        ],
+        agent: [
+            ['base_url', '服务地址', 'url'], ['model', '模型名称', 'text'],
+            ['api_key', 'API Key', 'secret'],
+            ['timeout', '请求超时', 'number', { min: 1, unit: '秒' }],
+            ['retry_count', '连接重试次数', 'number', { min: 1 }],
+            ['temperature', '温度', 'number', { min: 0, step: 0.1 }],
+            ['max_tokens', '单次最大输出 Token', 'number', { min: 1 }],
+            ['max_rounds', '最大工具迭代轮数', 'number', { min: 1, max: 100, unit: '轮，默认 25；达到上限后整理已有证据' }],
         ],
         rerank: [
             ['base_url', '服务地址', 'url'], ['model', '模型名称', 'text'],

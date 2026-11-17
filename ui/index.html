@@ -97,6 +97,10 @@
                 <i data-lucide="book-open" class="w-4 h-4"></i>
                 API
             </button>
+            <a class="nav-btn rounded-full" href="/agent" aria-label="打开智能体工作台">
+                <i data-lucide="bot" class="w-4 h-4"></i>
+                智能体
+            </a>
         </nav>
         <div class="doctype-bar" style="margin-left:auto; display:flex; align-items:center; gap:8px;">
             <i data-lucide="folder" class="w-4 h-4 text-bio-med"></i>
@@ -693,11 +697,11 @@
                     <article class="runtime-help-item"><h4>文本 LLM</h4><code>concurrency.global_llm</code><p>统计当前 worker 内正在执行的文本模型 HTTP 请求。默认容量 16；表名校验、文本字段抽取以及 judge/custom 分析调用共同竞争，calc 不占用。</p></article>
                     <article class="runtime-help-item"><h4>Embedding</h4><code>concurrency.global_embedding</code><p>统计当前 worker 内正在执行的向量模型请求。默认容量 4；向量写入和 vector_db 检索共同竞争。</p></article>
                     <article class="runtime-help-item"><h4>VL 视觉</h4><code>concurrency.global_vl</code><p>统计当前 worker 内正在执行的 VL 请求。默认容量 8；所有 VL 抽取方式共享，局部 max_concurrent 不能突破该总池。</p></article>
+                    <article class="runtime-help-item"><h4>Rerank</h4><code>concurrency.global_rerank</code><p>统计当前 worker 内正在执行的检索结果重排请求。默认容量 8；各检索方式和 hybrid 通道共享该池。</p></article>
                 </section>
                 <section class="runtime-help-group">
                     <h3>业务阶段</h3>
                     <article class="runtime-help-item"><h4>表名校验</h4><code>concurrency.global_table_validation</code><p>统计所有文件正在执行的表名判断。默认容量 10，并继续受文本 LLM 默认容量 16 约束。</p></article>
-                    <article class="runtime-help-item"><h4>Rerank</h4><code>concurrency.global_rerank</code><p>统计当前 worker 内正在执行的检索结果重排请求。默认容量 8；各检索方式和 hybrid 通道共享该池。</p></article>
                     <article class="runtime-help-item"><h4>字段抽取</h4><code>concurrency.global_extraction</code><p>统计所有文件正在执行的字段抽取。默认容量 8，实际还可能进入文本 LLM、Embedding 或 VL 模型通道。</p></article>
                     <article class="runtime-help-item"><h4>逻辑分析总池</h4><code>concurrency.global_analysis</code><p>文件管线规则与独立分析规则共享同一个总池。以默认配置为例，两类来源合计最多同时执行 8 条规则。judge 和 custom 规则还需要文本 LLM 槽位，calc 规则不占用文本模型通道。</p></article>
                 </section>

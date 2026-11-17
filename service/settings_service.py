@@ -27,6 +27,7 @@ OPEN_GROUPS = (
     "extraction",
     "table_name_validation",
     "analysis",
+    "agent",
     "rerank",
     "vl_model",
     "web_search",
@@ -40,11 +41,12 @@ EMBEDDING_READONLY = ["embedding_dim", "batch_size", "timeout", "retry_count"]
 
 SECRET_PATHS = {
     "analysis.api_key",
+    "agent.api_key",
     "embedding.api_key",
     "extraction.api_key",
+    "rerank.api_key",
     "table_name_validation.api_key",
     "vl_model.api_key",
-    "rerank.api_key",
     "web_search.api_key",
 }
 

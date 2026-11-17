@@ -98,6 +98,17 @@ analysis:
   calc_precision: 2                                     # calc 规则结果保留的小数位数
   judge_timeout: 60                                     # 分析单次 LLM 请求超时（秒）；judge 与 custom 规则、正式与调试路径共用
 
+# Agent（工具调用、文本回答与 PDF 图片共用同一 OpenAI 兼容模型）
+agent:
+  base_url: "http://your-agent-server/v1"                # 支持流式 chat/completions、function calling 与视觉输入
+  model: "your-agent-model"                             # 同一个模型负责工具决策、最终回答和 PDF 页图阅读
+  api_key: "your-api-key"                               # Agent 模型 API 密钥
+  timeout: 180                                           # 单次流式模型请求超时（秒）
+  retry_count: 2                                        # 尚未收到模型内容时的连接重试次数
+  temperature: 0.1                                      # Agent 模型温度
+  max_tokens: 4096                                      # 单次模型回复 Token 上限
+  max_rounds: 25                                        # 自动工具迭代上限；设置页可调整，范围 1-100
+
 # 检索结果重排（Cohere-compatible /rerank）
 rerank:
   base_url: "http://your-rerank-server/v2"             # API 根地址，客户端会追加 /rerank

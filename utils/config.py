@@ -268,12 +268,26 @@ class AnalysisConfig(BaseModel):
         return _validate_extra_params(value)
 
 
+class AgentConfig(BaseModel):
+    """Agent 工具调用、文字回答和 PDF 图片阅读共用的 OpenAI 兼容模型。"""
+
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+    timeout: int = Field(180, ge=1)
+    retry_count: int = Field(2, ge=1)
+    temperature: float = Field(0.1, ge=0)
+    max_tokens: int = Field(4096, ge=1)
+    max_rounds: int = Field(25, ge=1, le=100)
+
+
 class RerankConfig(BaseModel):
     base_url: str = ""
     model: str = ""
     api_key: str = ""
     timeout: int = Field(30, ge=1)
     retry_count: int = Field(2, ge=1)
+
 
 class ConcurrencyConfig(BaseModel):
     global_llm: int = Field(16, ge=1)
@@ -389,6 +403,7 @@ class AppConfig(BaseSettings):
     extraction: ExtractionConfig = ExtractionConfig()
     table_name_validation: TableNameValidationConfig = TableNameValidationConfig()
     analysis: AnalysisConfig = AnalysisConfig()
+    agent: AgentConfig = AgentConfig()
     rerank: RerankConfig = RerankConfig()
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
     vl_model: VLModelConfig = VLModelConfig()

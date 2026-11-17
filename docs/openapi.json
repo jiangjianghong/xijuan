@@ -5861,10 +5861,92 @@
         ],
         "description": "\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。"
       }
+    },
+    "/agent/stream": {
+      "post": {
+        "tags": [
+          "智能体工作台"
+        ],
+        "summary": "Run Agent Stream",
+        "operationId": "run_agent_stream_agent_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Requested-With",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "XMLHttpRequest"
+            },
+            "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
+          }
+        ],
+        "description": "\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。"
+      }
     }
   },
   "components": {
     "schemas": {
+      "AgentRunRequest": {
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "File Id"
+          },
+          "question": {
+            "type": "string",
+            "maxLength": 12000,
+            "minLength": 1,
+            "title": "Question"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_id",
+          "question"
+        ],
+        "title": "AgentRunRequest"
+      },
       "AllowCreate": {
         "properties": {
           "base_version": {
@@ -6234,7 +6316,7 @@
               }
             ],
             "title": "Model Config",
-            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_params(object，合并到请求顶层；可包含 extra_body 等嵌套参数)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_params(object，合并到请求顶层)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_params(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行；未设置 extra_params.enable_thinking 时继承 extraction 中该键，其它附加参数（包括 extra_body）不继承。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_params(object，合并到请求顶层)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count 别名；别名与规范字段冲突时拒绝请求。extra_params 的 JSON 对象按键合并，覆盖 temperature/top_p；model/messages/stream 由系统控制。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。附加参数可按需设置 enable_thinking 等供应商参数；空对象表示不附加参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。管理员会话、API Key 和 IP 白名单调用者均可按相同字段规则覆盖模型连接与参数。 同一批次所有 items 共用本配置。"
+            "description": "可选的本次请求模型配置，按分组部分覆盖设置；未传字段沿用服务器设置。model_config 不传、传 null 或 {} 均不覆盖设置，分组值必须是对象。\n\nextraction：base_url(str)、model(str)、api_key(str)、timeout(int>=1)、retry_count(int>=1)、max_context_length(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_params(object，合并到请求顶层；可包含 extra_body 等嵌套参数)。\n\nanalysis：base_url(str)、model(str)、api_key(str)、retry_count(int>=1)、temperature(float>=0)、top_p(float 0..1 或 null)、extra_params(object，合并到请求顶层)、calc_precision(int>=0)、judge_timeout(int>=1)。\n\nrerank：base_url/model/api_key(str)、timeout/retry_count(int>=1)，用于 Cohere-compatible /rerank；请求级覆盖仍使用服务器 global_rerank 并发池。\n\ntable_name_validation：base_url/model/api_key(str 或 null)、timeout/retry_count/max_context_length/max_context_lines(int>=1 或 null)、temperature(float>=0 或 null)、top_p(float 0..1 或 null)、extra_params(object 或 null)；max_concurrency 不允许覆盖。base_url/model 为空或 null 时继承 extraction；api_key 仅 null 时继承，空字符串不发送鉴权头。timeout/retry_count/max_context_length/temperature/top_p 为 null 时继承 extraction；max_context_lines 为 null 时使用 3 行；未设置 extra_params.enable_thinking 时继承 extraction 中该键，其它附加参数（包括 extra_body）不继承。\n\nvl_model：base_url/api_key/model(str)、temperature(float>=0)、max_tokens/timeout/default_max_pixels(int>=1)、extra_params(object，合并到请求顶层)；global_max_concurrency 与 pdf_storage_dir 不允许覆盖。\n\nembedding 仅支持 base_url/model/api_key(str)，兼容 model_name；embedding_dim/batch_size/timeout/retry_count 不允许覆盖。\n\nextraction/table_name_validation 兼容 llm_base_url、llm_model、llm_api_key、llm_timeout、llm_retry_count 别名；别名与规范字段冲突时拒绝请求。extra_params 的 JSON 对象按键合并，覆盖 temperature/top_p；model/messages/stream 由系统控制。timeout/judge_timeout 单位为秒；retry_count 是包含首次调用的最大尝试次数。附加参数可按需设置 enable_thinking 等供应商参数；空对象表示不附加参数。不支持 concurrency 或其它并发字段，仍使用服务器并发限制。管理员会话、API Key 和 IP 白名单调用者均可按相同字段规则覆盖模型连接与参数。 同一批次所有 items 共用本配置。"
           },
           "mode": {
             "$ref": "#/components/schemas/AnalysisRunModeEnum",

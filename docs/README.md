@@ -49,6 +49,7 @@
 <!-- AUTOGEN:endpoint-index -->
 | 方法 | 路径 | 分组 | 摘要 | 文档 |
 |---|---|---|---|---|
+| POST | `/agent/stream` | 其他 | Run Agent Stream | [api/overview.md](api/overview.md) |
 | GET | `/analysis/rules` | 逻辑分析 | 列出分析规则 | [api/analysis.md](api/analysis.md) |
 | POST | `/analysis/rules` | 逻辑分析 | 新增/更新分析规则（upsert） | [api/analysis.md](api/analysis.md) |
 | DELETE | `/analysis/rules/{rule_id}` | 逻辑分析 | 删除分析规则 | [api/analysis.md](api/analysis.md) |
