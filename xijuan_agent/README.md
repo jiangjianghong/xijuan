@@ -24,4 +24,6 @@
 - 表格：`list_tables` 列出表名和索引，`read_table` 按索引读取内容，不运行表名匹配模式。
 - 外部与视觉：`web_search` 调用已配置的博查搜索；`pdf_reader` 按页码范围渲染页图，并将图像放回同一 Agent 模型上下文。
 
-每次文档工具调用都会显式携带文件范围：批量检索、章节/表格列表传 `file_ids`（默认传入当前消息的全部引用文件，结果标注 `file_id/file_name`）；章节、表格和 `pdf_reader` 精读传单个 `file_id`。服务端会拒绝不属于当前消息引用范围的 ID。章节和表格先列索引，再用 `file_id + index` 精确读取。各工具的参数、边界和结果语义定义在 `tools.py` 的 OpenAI function schemas 中。
+文档在当前对话中持续引用，无需每条消息重新添加；新对话会清空文件范围。每次文档工具调用都会显式携带文件范围：批量检索、章节/表格列表传 `file_ids`（默认传入当前对话已添加的全部文件，结果标注 `file_id/file_name`）；章节、表格和 `pdf_reader` 精读传单个 `file_id`。服务端会拒绝不属于当前对话引用范围的 ID。章节和表格先列索引，再用 `file_id + index` 精确读取。各工具的参数、边界和结果语义定义在 `tools.py` 的 OpenAI function schemas 中。
+
+Agent 模型请求支持 `agent.extra_params`，设置页“附加参数”会把 JSON 对象合并到 Chat Completions 顶层请求中。流式响应里的 `reasoning_content`、`reasoning`、`analysis` 或 `thinking` 增量会通过 SSE 独立发送，工作台在默认收起的“思考过程”区域显示。

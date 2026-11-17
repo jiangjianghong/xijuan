@@ -65,6 +65,18 @@ def test_agent_config_defaults_to_twenty_five_rounds_and_caps_at_one_hundred():
         AgentConfig(context_max_tokens=4000, context_compress_threshold=5000)
 
 
+def test_agent_extra_params_are_merged_and_cannot_replace_request_structure():
+    config = AgentConfig(extra_params={"enable_thinking": True, "thinking_budget": 4096})
+    payload = agent._request_payload([{"role": "user", "content": "分析"}], config, True)
+
+    assert payload["enable_thinking"] is True
+    assert payload["thinking_budget"] == 4096
+    assert payload["messages"] == [{"role": "user", "content": "分析"}]
+    assert payload["stream"] is True
+    with pytest.raises(ValueError):
+        AgentConfig(extra_params={"messages": []})
+
+
 def test_agent_stream_route_is_registered():
     from scripts.gen_openapi import build_app
 
@@ -286,6 +298,7 @@ async def test_stream_agent_places_pdf_images_after_all_tool_replies(monkeypatch
 @pytest.mark.asyncio
 async def test_stream_turn_emits_text_and_reconstructs_tool_calls(monkeypatch):
     chunks = [
+        {"choices": [{"delta": {"reasoning_content": "先查找付款依据。"}}]},
         {"choices": [{"delta": {"content": "正在检索"}}]},
         {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "search_context", "arguments": "{\"file_ids\":[\"file-1\"],\"keywords\":[\"付款\"]}"}}]}}]},
         {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
@@ -331,9 +344,11 @@ async def test_stream_turn_emits_text_and_reconstructs_tool_calls(monkeypatch):
     events = [event async for event in agent._stream_turn([], config, round_number=1, use_tools=True)]
 
     assert [event["type"] for event in events if event["type"] == "token"] == ["token"]
+    assert [event["text"] for event in events if event["type"] == "thinking"] == ["先查找付款依据。"]
     complete = events[-1]
     assert complete["type"] == "turn_complete"
     assert complete["message"]["content"] == "正在检索"
+    assert complete["message"]["reasoning_content"] == "先查找付款依据。"
     call = complete["message"]["tool_calls"][0]
     assert call["function"]["name"] == "search_context"
     assert json.loads(call["function"]["arguments"]) == {"file_ids": ["file-1"], "keywords": ["付款"]}

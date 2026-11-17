@@ -205,7 +205,12 @@ def test_agent_model_secret_and_round_limit_are_settings_managed(config_path: Pa
     before = service.read_public_config()
     result = service.update_config(
         base_version=before["version"],
-        changes={"agent": {"base_url": "http://agent.test/v1", "model": "vision-agent", "max_rounds": 18}},
+        changes={"agent": {
+            "base_url": "http://agent.test/v1",
+            "model": "vision-agent",
+            "max_rounds": 18,
+            "extra_params": {"enable_thinking": True},
+        }},
         secrets={"agent.api_key": {"action": "replace", "value": "agent-secret"}},
     )
 
@@ -213,6 +218,7 @@ def test_agent_model_secret_and_round_limit_are_settings_managed(config_path: Pa
     assert "agent-secret" not in repr(result)
     assert get_config().agent.model == "vision-agent"
     assert get_config().agent.max_rounds == 18
+    assert get_config().agent.extra_params == {"enable_thinking": True}
 
 
 def test_retired_model_fields_cannot_be_updated(config_path: Path):

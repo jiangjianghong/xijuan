@@ -42,6 +42,8 @@ def test_settings_script_defines_all_groups_and_secret_actions():
         assert group in script
     for action in ("keep", "replace", "clear"):
         assert action in script
+    agent_fields = script.split("agent: [", 1)[1].split("rerank: [", 1)[0]
+    assert "['extra_params', '附加参数', 'json'" in agent_fields
 
 
 def test_api_client_exposes_settings_methods_and_error_status():

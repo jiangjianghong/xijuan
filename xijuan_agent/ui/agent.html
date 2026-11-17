@@ -136,6 +136,13 @@
         .page-figure img { display: block; width: 100%; max-height: 340px; object-fit: contain; background: #e8ede9; }
         .page-figure figcaption { padding: 6px 8px; color: var(--muted); font-size: 10px; font-weight: 800; }
         .error-note { padding: 10px 12px; border: 1px solid #edcccc; border-radius: 7px; color: var(--danger); background: var(--danger-soft); font-size: 12px; line-height: 1.55; }
+        .thinking-details { margin: 0 0 14px; padding-left: 11px; border-left: 2px solid #9bbdac; color: var(--muted); }
+        .thinking-summary { display: flex; align-items: center; gap: 8px; min-height: 28px; cursor: pointer; color: #486557; font-size: 12px; font-weight: 700; list-style: none; }
+        .thinking-summary::-webkit-details-marker { display: none; }
+        .thinking-summary::after { content: ""; width: 6px; height: 6px; margin-left: 1px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg) translateY(-2px); opacity: .55; }
+        .thinking-details[open] .thinking-summary::after { transform: rotate(225deg) translate(-1px, -1px); }
+        .thinking-body { max-height: 280px; overflow: auto; padding: 5px 4px 7px 0; font-size: 12px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .thinking-round + .thinking-round { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); }
         .composer-wrap { padding: 16px 30px 22px; border-top: 1px solid var(--line); background: var(--paper); }
         .composer { width: min(900px, 100%); margin: 0 auto; }
         .composer-shell { overflow: hidden; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--sheet); box-shadow: 0 9px 26px rgba(23,37,30,.06); }
@@ -242,12 +249,12 @@
     <main class="workbench">
         <aside class="rail">
             <div class="rail-heading">
-                <div><h1>证据工作台</h1><p>每条消息都可以带自己的文件引用。</p></div>
+                <div><h1>证据工作台</h1><p>文档在当前对话持续引用，新对话会清空。</p></div>
                 <i data-lucide="scan-search"></i>
             </div>
             <section class="rail-section">
-                <h2 class="rail-section-title"><i data-lucide="paperclip"></i>当前消息引用</h2>
-                <div id="reference-summary" class="ref-summary"><div class="ref-empty">还没有添加文件。发送问题前，请先选择已处理完成的 PDF。</div></div>
+                <h2 class="rail-section-title"><i data-lucide="paperclip"></i>对话文档</h2>
+                <div id="reference-summary" class="ref-summary"><div class="ref-empty">尚未加入文档。添加已处理完成的 PDF 后即可连续追问。</div></div>
             </section>
             <section class="rail-section">
                 <h2 class="rail-section-title"><i data-lucide="wrench"></i>可用证据工具</h2>
@@ -284,7 +291,7 @@
             <div id="composer-files" class="composer-files"></div>
             <textarea id="question" class="question" maxlength="12000" placeholder="询问文档中的事实、规则、数字或差异……" aria-label="研究问题" required></textarea>
             <div class="composer-actions">
-                <button id="attach-files" class="attach-button" type="button" title="添加文件引用"><i data-lucide="paperclip"></i><span>添加文件</span></button>
+                <button id="attach-files" class="attach-button" type="button" title="为当前对话添加文档"><i data-lucide="paperclip"></i><span>添加文件</span></button>
                 <span class="composer-hint">Ctrl / ⌘ + Enter 发送</span>
                 <span class="composer-spacer"></span>
                 <button id="stop-button" class="stop-button hidden" type="button"><i data-lucide="square"></i>停止</button>
@@ -295,10 +302,10 @@
 </div>
 
 <dialog id="file-picker" aria-labelledby="file-picker-title">
-    <div class="picker-head"><h2 id="file-picker-title">添加文件引用</h2><button id="close-picker" type="button" aria-label="关闭"><i data-lucide="x"></i></button></div>
+    <div class="picker-head"><h2 id="file-picker-title">添加文档到对话</h2><button id="close-picker" type="button" aria-label="关闭"><i data-lucide="x"></i></button></div>
     <div class="picker-search"><input id="file-search" type="search" placeholder="搜索文件名或 file_id" autocomplete="off"></div>
     <div id="file-list" class="file-list"><div class="picker-empty">正在加载文件……</div></div>
-    <div class="picker-foot"><span id="picker-count">已选择 0 个</span><span class="composer-spacer"></span><button id="cancel-picker" class="picker-cancel" type="button">取消</button><button id="add-picker" class="picker-add" type="button">加入当前消息</button></div>
+    <div class="picker-foot"><span id="picker-count">待加入 0 份</span><span class="composer-spacer"></span><button id="cancel-picker" class="picker-cancel" type="button">取消</button><button id="add-picker" class="picker-add" type="button">加入对话</button></div>
 </dialog>
 
 <script>
@@ -312,7 +319,7 @@
         ["web_search", "联网", "globe-2"], ["pdf_reader", "PDF 页图", "scan-eye"],
     ];
     const els = Object.fromEntries(["tool-catalog", "reference-summary", "workspace-note", "conversation-status", "chat-scroll", "chat-inner", "welcome", "composer", "composer-files", "question", "attach-files", "send-button", "stop-button", "new-chat", "file-picker", "close-picker", "cancel-picker", "add-picker", "file-search", "file-list", "picker-count"].map(id => [id, document.getElementById(id)]));
-    const state = { history: [], pendingFiles: [], pickerFiles: new Map(), pickerSelection: new Set(), pickerPage: 1, pickerTotal: 0, pickerLoading: false, controller: null, searchTimer: null, currentRun: null };
+    const state = { history: [], conversationFiles: [], pickerFiles: new Map(), pickerSelection: new Set(), pickerPage: 1, pickerTotal: 0, pickerLoading: false, controller: null, searchTimer: null, currentRun: null };
 
     const icon = name => { const node = document.createElement("i"); node.setAttribute("data-lucide", name); return node; };
     const refreshIcons = () => window.lucide?.createIcons({ attrs: { "stroke-width": 1.8 } });
@@ -325,10 +332,10 @@
     }
     function renderReferenceSummary() {
         els["reference-summary"].replaceChildren();
-        if (!state.pendingFiles.length) {
-            const empty = document.createElement("div"); empty.className = "ref-empty"; empty.textContent = "还没有添加文件。发送问题前，请先选择已处理完成的 PDF."; els["reference-summary"].append(empty); return;
+        if (!state.conversationFiles.length) {
+            const empty = document.createElement("div"); empty.className = "ref-empty"; empty.textContent = "尚未加入文档。添加已处理完成的 PDF 后即可连续追问。"; els["reference-summary"].append(empty); return;
         }
-        for (const file of state.pendingFiles) {
+        for (const file of state.conversationFiles) {
             const item = document.createElement("div"); item.className = "ref-item"; item.title = file.file_id;
             item.append(icon("file-text"));
             const copy = document.createElement("div");
@@ -340,13 +347,11 @@
     }
     function renderComposerFiles() {
         els["composer-files"].replaceChildren();
-        for (const file of state.pendingFiles) {
+        for (const file of state.conversationFiles) {
             const chip = document.createElement("span"); chip.className = "pending-chip"; chip.title = file.file_id;
             chip.append(icon("file-text"));
             const label = document.createElement("span"); label.textContent = file.file_name || file.file_id; chip.append(label);
-            const remove = document.createElement("button"); remove.type = "button"; remove.setAttribute("aria-label", `移除 ${file.file_name || file.file_id}`); remove.append(icon("x"));
-            remove.addEventListener("click", () => { state.pendingFiles = state.pendingFiles.filter(item => item.file_id !== file.file_id); renderComposerFiles(); renderReferenceSummary(); });
-            chip.append(remove); els["composer-files"].append(chip);
+            els["composer-files"].append(chip);
         }
         refreshIcons();
     }
@@ -358,26 +363,36 @@
         refreshIcons();
     }
     function markTool(name) { els["tool-catalog"].querySelector(`[data-tool="${CSS.escape(name || "")}"]`)?.classList.add("used"); }
-    function addFileChips(parent, files) {
-        if (!Array.isArray(files) || !files.length) return;
-        const wrap = document.createElement("div"); wrap.className = "file-chips";
-        for (const file of files) { const chip = document.createElement("span"); chip.className = "file-chip"; chip.title = file.file_id; chip.append(icon("file-text")); const label = document.createElement("span"); label.textContent = file.file_name || file.file_id; chip.append(label); wrap.append(chip); }
-        parent.append(wrap);
-    }
-    function createMessage(role, text, files) {
+    function createMessage(role, text) {
         els["welcome"].classList.add("hidden");
         const article = document.createElement("article"); article.className = `message ${role}`;
         const meta = document.createElement("div"); meta.className = "message-meta"; meta.append(icon(role === "user" ? "user-round" : "sparkles"), document.createTextNode(role === "user" ? "你" : "析卷 AI")); article.append(meta);
-        if (role === "user") addFileChips(article, files);
         const bubble = document.createElement("div"); bubble.className = "bubble"; bubble.textContent = text || ""; article.append(bubble);
         els["chat-inner"].append(article); refreshIcons(); scrollToBottom(); return { article, bubble };
     }
     function createAssistantMessage() {
-        const view = createMessage("assistant", "", []);
+        const view = createMessage("assistant", "");
         view.bubble.textContent = "";
         const answer = document.createElement("div"); answer.className = "answer-text"; answer.textContent = "";
         const evidence = document.createElement("div"); evidence.className = "evidence";
-        view.bubble.replaceChildren(answer, evidence); view.answer = answer; view.evidence = evidence; view.toolCards = new Map(); return view;
+        view.bubble.replaceChildren(answer, evidence); view.answer = answer; view.evidence = evidence; view.toolCards = new Map(); view.thinkingRounds = new Map(); return view;
+    }
+    function appendThinking(run, event) {
+        const view = run.view;
+        if (!view.thinkingDetails) {
+            const details = document.createElement("details"); details.className = "thinking-details";
+            const summary = document.createElement("summary"); summary.className = "thinking-summary"; summary.textContent = "思考过程";
+            const body = document.createElement("div"); body.className = "thinking-body";
+            details.append(summary, body); view.bubble.prepend(details); view.thinkingDetails = details; view.thinkingBody = body;
+        }
+        const round = event.round ?? 0;
+        let segment = view.thinkingRounds.get(round);
+        if (!segment) {
+            segment = document.createElement("div"); segment.className = "thinking-round";
+            view.thinkingRounds.set(round, segment); view.thinkingBody.append(segment);
+        }
+        segment.textContent += event.text || "";
+        scrollToBottom();
     }
     function createToolCard(run, event) {
         const slot = `slot:${event.round ?? 0}:${event.index ?? 0}`;
@@ -415,6 +430,7 @@
             case "context_ready": appendEvidenceNote(run, `已载入 ${event.files?.length || 0} 份引用文件的检索上下文`); break;
             case "context_window": if (event.compressed) appendEvidenceNote(run, "已将较早工具证据整理为对话记忆"); break;
             case "context_compact": appendEvidenceNote(run, "正在整理较早的工具结果"); break;
+            case "thinking": appendThinking(run, event); break;
             case "token": run.view.answer.textContent += event.text || ""; scrollToBottom(); break;
             case "tool_call_delta": { const card = createToolCard(run, { ...event, name: event.name_delta || "工具调用" }); if (event.name_delta && card.label.textContent === "工具调用") card.label.textContent = event.name_delta; card.argsPre.textContent += event.arguments_delta || ""; break; }
             case "tool_call": { const card = createToolCard(run, event); run.toolCards.set(event.tool_call_id, card); card.label.textContent = event.name || "工具调用"; card.status.textContent = "执行中"; card.argsPre.textContent = JSON.stringify(event.arguments || {}, null, 2); break; }
@@ -431,8 +447,8 @@
         buffer += decoder.decode(); if (buffer.trim()) { const data = buffer.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n"); if (data) handleEvent(run, JSON.parse(data)); }
     }
     async function submit(event) {
-        event.preventDefault(); const question = els["question"].value.trim(); if (!question || !state.pendingFiles.length || state.controller) return;
-        const files = [...state.pendingFiles]; const ids = files.map(file => file.file_id); createMessage("user", question, files); const view = createAssistantMessage(); const run = { view, toolCards: new Map() }; state.currentRun = run; state.pendingFiles = []; renderComposerFiles(); renderReferenceSummary(); els["question"].value = ""; state.controller = new AbortController(); els["send-button"].disabled = true; els["attach-files"].disabled = true; els["stop-button"].classList.remove("hidden"); setStatus("正在研究", "running");
+        event.preventDefault(); const question = els["question"].value.trim(); if (!question || !state.conversationFiles.length || state.controller) return;
+        const ids = state.conversationFiles.map(file => file.file_id); createMessage("user", question); const view = createAssistantMessage(); const run = { view, toolCards: new Map() }; state.currentRun = run; els["question"].value = ""; state.controller = new AbortController(); els["send-button"].disabled = true; els["attach-files"].disabled = true; els["stop-button"].classList.remove("hidden"); setStatus("正在研究", "running");
         try {
             const response = await fetch("/agent/stream", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" }, body: JSON.stringify({ file_ids: ids, question, history: state.history }), signal: state.controller.signal });
             if (!response.ok) { let message = `请求失败（${response.status}）`; try { const body = await response.json(); message = body.detail || message; } catch {} showError(run, message); setStatus("请求失败", "error"); return; }
@@ -440,10 +456,10 @@
         } catch (error) { if (error.name === "AbortError") { appendEvidenceNote(run, "本次研究已停止"); setStatus("已停止", "idle"); } else { showError(run, error.message || "连接中断"); setStatus("连接中断", "error"); } }
         finally { state.controller = null; state.currentRun = null; els["send-button"].disabled = false; els["attach-files"].disabled = false; els["stop-button"].classList.add("hidden"); }
     }
-    function clearConversation() { state.controller?.abort(); state.controller = null; state.history = []; state.pendingFiles = []; els["chat-inner"].replaceChildren(els["welcome"]); els["welcome"].classList.remove("hidden"); renderComposerFiles(); renderReferenceSummary(); setStatus("准备就绪", "idle"); els["question"].focus(); }
+    function clearConversation() { state.controller?.abort(); state.controller = null; state.history = []; state.conversationFiles = []; els["chat-inner"].replaceChildren(els["welcome"]); els["welcome"].classList.remove("hidden"); renderComposerFiles(); renderReferenceSummary(); setStatus("准备就绪", "idle"); els["question"].focus(); }
     function selectedCount() {
-        els["picker-count"].textContent = `已选择 ${state.pickerSelection.size} 个 · 最多 20`;
-        els["add-picker"].disabled = state.pickerSelection.size === 0 || state.pickerSelection.size > 20;
+        els["picker-count"].textContent = `待加入 ${state.pickerSelection.size} 份 · 已引用 ${state.conversationFiles.length}/20`;
+        els["add-picker"].disabled = state.pickerSelection.size === 0 || state.conversationFiles.length + state.pickerSelection.size > 20;
     }
     function formatDate(value) { if (!value) return ""; try { return new Date(value).toLocaleDateString("zh-CN", { year: "numeric", month: "numeric", day: "numeric" }); } catch { return ""; } }
     function renderFileList(items, { append = false } = {}) {
@@ -451,8 +467,8 @@
         if (append) previousMore?.remove(); else els["file-list"].replaceChildren();
         if (!items.length && !append) { const empty = document.createElement("div"); empty.className = "picker-empty"; empty.textContent = "没有找到已处理完成的文件"; els["file-list"].append(empty); selectedCount(); return; }
         for (const file of items) {
-            state.pickerFiles.set(file.file_id, file); const row = document.createElement("div"); row.className = "file-row"; const input = document.createElement("input"); input.type = "checkbox"; input.id = `file-${file.file_id}`; input.checked = state.pickerSelection.has(file.file_id); input.disabled = !input.checked && state.pickerSelection.size >= 20; input.addEventListener("change", () => { if (input.checked) state.pickerSelection.add(file.file_id); else state.pickerSelection.delete(file.file_id); els["file-list"].querySelectorAll('input[type="checkbox"]').forEach(box => { if (!box.checked) box.disabled = state.pickerSelection.size >= 20; }); selectedCount(); });
-            const label = document.createElement("label"); label.htmlFor = input.id; const name = document.createElement("strong"); name.textContent = file.file_name || file.file_id; const id = document.createElement("span"); id.textContent = file.file_id; label.append(name, id); const time = document.createElement("time"); time.textContent = formatDate(file.create_time); row.append(input, label, time); els["file-list"].append(row);
+            state.pickerFiles.set(file.file_id, file); const row = document.createElement("div"); row.className = "file-row"; const input = document.createElement("input"); input.type = "checkbox"; input.id = `file-${file.file_id}`; const alreadyAdded = state.conversationFiles.some(item => item.file_id === file.file_id); input.checked = alreadyAdded || state.pickerSelection.has(file.file_id); input.disabled = alreadyAdded || (!input.checked && state.pickerSelection.size >= 20 - state.conversationFiles.length); input.addEventListener("change", () => { if (input.checked) state.pickerSelection.add(file.file_id); else state.pickerSelection.delete(file.file_id); els["file-list"].querySelectorAll('input[type="checkbox"]').forEach(box => { if (!box.checked) box.disabled = state.pickerSelection.size >= 20 - state.conversationFiles.length; }); selectedCount(); });
+            const label = document.createElement("label"); label.htmlFor = input.id; const name = document.createElement("strong"); name.textContent = file.file_name || file.file_id; const id = document.createElement("span"); id.textContent = file.file_id; label.append(name, id); const time = document.createElement("time"); time.textContent = alreadyAdded ? "已加入对话" : formatDate(file.create_time); row.append(input, label, time); els["file-list"].append(row);
         }
         if (state.pickerPage * 50 < state.pickerTotal) { const more = document.createElement("button"); more.className = "load-more"; more.type = "button"; more.textContent = "加载更多文件"; more.disabled = state.pickerLoading; more.addEventListener("click", () => loadFiles(true)); els["file-list"].append(more); }
         selectedCount();
@@ -469,8 +485,8 @@
         catch (error) { els["file-list"].innerHTML = `<div class="picker-empty">${escapeHtml(error.message || "无法加载文件")}</div>`; }
         finally { state.pickerLoading = false; const more = els["file-list"].querySelector(".load-more"); if (more) more.disabled = false; }
     }
-    function openPicker() { state.pickerSelection = new Set(state.pendingFiles.map(file => file.file_id)); state.pickerFiles = new Map(state.pendingFiles.map(file => [file.file_id, file])); els["file-search"].value = ""; els["file-picker"].showModal(); loadFiles(); setTimeout(() => els["file-search"].focus(), 0); }
-    function addSelectedFiles() { state.pendingFiles = [...state.pickerSelection].map(id => state.pickerFiles.get(id)).filter(Boolean); renderComposerFiles(); renderReferenceSummary(); els["file-picker"].close(); els["question"].focus(); }
+    function openPicker() { state.pickerSelection = new Set(); state.pickerFiles = new Map(); els["file-search"].value = ""; els["file-picker"].showModal(); loadFiles(); setTimeout(() => els["file-search"].focus(), 0); }
+    function addSelectedFiles() { const existingIds = new Set(state.conversationFiles.map(file => file.file_id)); state.conversationFiles = [...state.conversationFiles, ...[...state.pickerSelection].map(id => state.pickerFiles.get(id)).filter(file => file && !existingIds.has(file.file_id))]; renderComposerFiles(); renderReferenceSummary(); els["file-picker"].close(); els["question"].focus(); }
     els["composer"].addEventListener("submit", submit);
     els["question"].addEventListener("keydown", event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); els["composer"].requestSubmit(); } });
     els["attach-files"].addEventListener("click", openPicker); els["close-picker"].addEventListener("click", () => els["file-picker"].close()); els["cancel-picker"].addEventListener("click", () => els["file-picker"].close()); els["add-picker"].addEventListener("click", addSelectedFiles); els["new-chat"].addEventListener("click", clearConversation); els["stop-button"].addEventListener("click", () => state.controller?.abort());

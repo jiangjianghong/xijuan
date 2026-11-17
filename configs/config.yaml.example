@@ -111,6 +111,7 @@ agent:
   context_max_tokens: 24000                             # 对话上下文估算上限；浏览器刷新前持续保留
   context_compress_threshold: 18000                     # 超过此值时压缩较早工具结果
   context_recent_tool_rounds: 4                         # 保留最近多少组工具调用的原始结果
+  extra_params: {}                                      # Agent Chat Completions 附加参数，如 enable_thinking
 
 # 检索结果重排（Cohere-compatible /rerank）
 rerank:

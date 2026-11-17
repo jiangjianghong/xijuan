@@ -282,6 +282,12 @@ class AgentConfig(BaseModel):
     context_max_tokens: int = Field(24_000, ge=4_000, le=200_000)
     context_compress_threshold: int = Field(18_000, ge=1_000, le=200_000)
     context_recent_tool_rounds: int = Field(4, ge=1, le=50)
+    extra_params: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("extra_params", mode="before")
+    @classmethod
+    def validate_extra_params(cls, value: Any) -> Any:
+        return _validate_extra_params(value)
 
     @model_validator(mode="after")
     def validate_context_window(self) -> "AgentConfig":
