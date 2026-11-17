@@ -13,8 +13,8 @@ from loguru import logger
 from utils.concurrency import get_limiter
 from utils.config import AgentConfig, get_config
 from service.extraction_service import parse_sections
-from xijuan_agent.context import compact_messages, remove_image_messages, sanitize_history
-from xijuan_agent.tools import AgentFileContext, AgentToolContext, TOOL_DEFINITIONS, ToolOutput, execute_tool
+from xijuan_agent.context import ContextWindow, estimate_tokens, remove_image_messages, sanitize_history
+from xijuan_agent.tools import AgentFileContext, AgentToolContext, TOOL_DEFINITIONS, ToolOutput, execute_tool, limit_tool_output
 
 
 SYSTEM_PROMPT = """你是析卷文档研究智能体。用户会在当前对话中添加一个或多个已处理的 PDF 文件；这些文件在对话期间持续有效，开始新对话后清空。你可以迭代调用文档检索、表格读取、联网搜索和 PDF 图片阅读工具。
@@ -50,6 +50,45 @@ def _request_payload(messages: list[dict[str, Any]], config: AgentConfig, use_to
         payload["tool_choice"] = "auto"
     payload.update(config.extra_params)
     return payload
+
+
+def _request_overhead(config: AgentConfig, use_tools: bool) -> int:
+    """把实际工具定义和最大输出预留计入窗口预算，兼容附加参数的输出配置。"""
+    payload = _request_payload([], config, use_tools)
+    reserved = max(
+        [config.max_tokens]
+        + [value for key in ("max_tokens", "max_completion_tokens")
+           if isinstance((value := payload.get(key)), int) and not isinstance(value, bool) and value > 0]
+    )
+    schemas = payload.get("tools")
+    return reserved + (estimate_tokens([{"role": "system", "content": schemas}]) if schemas else 0)
+
+
+def _fit_summary_input(messages: list[dict[str, Any]], config: AgentConfig) -> None:
+    """摘要也按最终序列化长度检查预算，不能忽略引号、换行等 JSON 转义。"""
+    overhead = _request_overhead(config, False)
+    if estimate_tokens(messages) + overhead <= config.context_max_tokens:
+        return
+    transcript = messages[-1]["content"]
+    marker = "\n[中间部分因摘要输入预算省略]\n"
+
+    def clipped(chars: int) -> str:
+        if chars <= len(marker):
+            return transcript[:chars]
+        half = (chars - len(marker)) // 2
+        return transcript[:half] + marker + (transcript[-half:] if half else "")
+
+    low, high = 0, len(transcript)
+    while low < high:
+        middle = (low + high + 1) // 2
+        messages[-1]["content"] = clipped(middle)
+        if estimate_tokens(messages) + overhead <= config.context_max_tokens:
+            low = middle
+        else:
+            high = middle - 1
+    messages[-1]["content"] = clipped(low)
+    if estimate_tokens(messages) + overhead > config.context_max_tokens:
+        raise ValueError("Agent 上下文预算不足以容纳摘要指令和输出预留")
 
 
 async def _stream_turn(
@@ -180,6 +219,7 @@ async def stream_agent(
         yield _sse({"type": "error", "message": "当前消息至少需要引用一个文件"})
         return
     yield _sse({"type": "status", "message": "正在读取文档检索上下文"})
+    window: ContextWindow | None = None
     try:
         async with get_session_factory()() as session:
             file_contexts: dict[str, AgentFileContext] = {}
@@ -205,7 +245,7 @@ async def stream_agent(
                     file_name=file_row.file_name or file_id,
                     snapshot=snapshot,
                 )
-        context = AgentToolContext(file_id=file_ids[0], files=file_contexts)
+        context = AgentToolContext(file_id=file_ids[0], files=file_contexts, tool_result_max_chars=config.tool_result_max_chars)
         yield _sse({
             "type": "context_ready",
             "files": [
@@ -236,7 +276,12 @@ async def stream_agent(
         ]
 
         async def summarize_old_history(transcript: str) -> str:
-            summary_config = config.model_copy(update={"max_tokens": min(config.max_tokens, 1600), "temperature": 0.1})
+            summary_output = min(config.max_tokens, 1600)
+            summary_extra = dict(config.extra_params)
+            summary_extra.pop("max_tokens", None)
+            if "max_completion_tokens" in summary_extra:
+                summary_extra["max_completion_tokens"] = summary_output
+            summary_config = config.model_copy(update={"max_tokens": summary_output, "temperature": 0.1, "extra_params": summary_extra})
             summary_messages = [
                 {
                     "role": "system",
@@ -249,6 +294,7 @@ async def stream_agent(
                 },
                 {"role": "user", "content": transcript},
             ]
+            _fit_summary_input(summary_messages, summary_config)
             summary_text = ""
             async for summary_event in _stream_turn(summary_messages, summary_config, round_number=0, use_tools=False):
                 if summary_event["type"] == "token":
@@ -260,34 +306,30 @@ async def stream_agent(
             # 模型未返回摘要时以截断回退，保住可用的旧证据摘要。
             return transcript[-6000:]
 
-        messages, compacted, context_tokens = await compact_messages(
-            messages,
+        window = ContextWindow(
             threshold_tokens=config.context_compress_threshold,
             max_tokens=config.context_max_tokens,
             recent_tool_rounds=config.context_recent_tool_rounds,
             summarize=summarize_old_history,
         )
-        yield _sse({"type": "context_window", "compressed": compacted, "estimated_tokens": context_tokens})
         used_rounds = 0
         last_usage = None
 
         while True:
-            messages, compacted_now, context_tokens = await compact_messages(
-                messages,
-                threshold_tokens=config.context_compress_threshold,
-                max_tokens=config.context_max_tokens,
-                recent_tool_rounds=config.context_recent_tool_rounds,
-                summarize=summarize_old_history,
-            )
-            if compacted_now:
-                yield _sse({"type": "context_compact", "estimated_tokens": context_tokens})
+            use_tools = used_rounds < config.max_rounds
+            overhead_tokens = _request_overhead(config, use_tools)
+            async for event in window.prepare(messages, overhead_tokens=overhead_tokens):
+                yield _sse(event)
+            yield _sse({"type": "context_window", "estimated_tokens": estimate_tokens(messages),
+                        "estimated_request_tokens": estimate_tokens(messages) + overhead_tokens,
+                        "max_tokens": config.context_max_tokens})
             round_number = used_rounds + 1
             yield _sse({"type": "round_start", "round": round_number, "max_rounds": config.max_rounds})
             turn_message = None
             turn_error = None
             turn_usage = None
             async for event in _stream_turn(
-                messages, config, round_number=round_number, use_tools=used_rounds < config.max_rounds
+                messages, config, round_number=round_number, use_tools=use_tools
             ):
                 if event["type"] == "turn_complete":
                     turn_message = event["message"]
@@ -332,8 +374,9 @@ async def stream_agent(
                         output = await execute_tool(name, arguments, context)
                     except Exception as exc:
                         logger.warning("Agent 工具 {} 执行失败: {}", name, exc)
-                        output = ToolOutput(content=json.dumps({"error": str(exc)[:1000]}, ensure_ascii=False))
+                        output = ToolOutput(content=json.dumps({"error": str(exc)}, ensure_ascii=False))
 
+                output = limit_tool_output(output, config.tool_result_max_chars)
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": output.content, "_agent_tool_round": used_rounds})
                 yield _sse({
                     "type": "tool_result",
@@ -357,24 +400,11 @@ async def stream_agent(
             if used_rounds >= config.max_rounds:
                 yield _sse({"type": "status", "message": "已达到迭代上限，正在整理现有证据"})
                 yield _sse({"type": "synthesis_start", "round": used_rounds})
-                # 禁用工具，避免超过配置的调用轮数。
-                turn_message = None
-                turn_error = None
-                async for event in _stream_turn(messages, config, round_number=used_rounds, use_tools=False):
-                    if event["type"] == "turn_complete":
-                        turn_message = event["message"]
-                        turn_usage = event.get("usage") or turn_usage
-                    elif event["type"] == "turn_error":
-                        turn_error = event.get("message")
-                    else:
-                        yield _sse(event)
-                if turn_error:
-                    yield _sse({"type": "error", "message": turn_error})
-                    return
-                if turn_message:
-                    messages.append(turn_message)
-                break
+                # 继续统一循环，最终回答同样经过预算检查，并禁用工具。
 
+        completed = await window.finish(messages)
+        if completed:
+            yield _sse(completed)
         persistent_history = remove_image_messages(messages[1:])
         yield _sse({"type": "history_state", "messages": persistent_history})
         yield _sse({"type": "done", "rounds": used_rounds, "usage": turn_usage or last_usage})
@@ -383,4 +413,7 @@ async def stream_agent(
     except Exception as exc:
         logger.exception("Agent 执行失败 file_ids={}", file_ids)
         yield _sse({"type": "error", "message": str(exc)[:1000]})
+    finally:
+        if window is not None:
+            await window.close()
 

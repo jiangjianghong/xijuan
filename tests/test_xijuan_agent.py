@@ -15,6 +15,7 @@ from xijuan_agent.tools import (
     ToolOutput,
     _parse_page_selection,
     execute_tool,
+    limit_tool_output,
 )
 
 
@@ -59,10 +60,15 @@ def test_agent_config_defaults_to_twenty_five_rounds_and_caps_at_one_hundred():
     assert AgentConfig().context_max_tokens == 24000
     assert AgentConfig().context_compress_threshold == 18000
     assert AgentConfig().context_recent_tool_rounds == 4
+    assert AgentConfig().tool_result_max_chars == 20000
     with pytest.raises(ValueError):
         AgentConfig(max_rounds=101)
     with pytest.raises(ValueError):
         AgentConfig(context_max_tokens=4000, context_compress_threshold=5000)
+    with pytest.raises(ValueError):
+        AgentConfig(tool_result_max_chars=999)
+    with pytest.raises(ValueError):
+        AgentConfig(tool_result_max_chars=200001)
 
 
 def test_agent_extra_params_are_merged_and_cannot_replace_request_structure():
@@ -202,6 +208,9 @@ def test_history_trimming_preserves_complete_turn_boundaries_and_estimates_image
     ]}]
     assert estimate_tokens(with_image) < 2000
 
+    long_tool_history = [{"role": "tool", "tool_call_id": "large", "content": "字" * 90000}]
+    assert sanitize_history(long_tool_history) == long_tool_history
+
 
 @pytest.mark.asyncio
 async def test_pdf_reader_rejects_more_than_eight_pages_before_file_access():
@@ -209,6 +218,71 @@ async def test_pdf_reader_rejects_more_than_eight_pages_before_file_access():
 
     with pytest.raises(ValueError, match="最多读取 8 页"):
         await execute_tool("pdf_reader", {"file_id": "missing", "start_page": 1, "end_page": 9}, context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [4000, 20000, 35000])
+async def test_tool_text_limit_is_configurable_and_preserves_json_and_sources(limit):
+    snapshot = _snapshot(
+        "# 1 长章节\n" + '正文含"引号"和换行\n' * 6000,
+        tables=(TableRow(0, "长表格", '<table><td title="金额">100</td></table>' * 4000, 0, 20, "2"),),
+    )
+    context = AgentToolContext(
+        files={"file-1": AgentFileContext("file-1", "文档.pdf", snapshot)},
+        tool_result_max_chars=limit,
+    )
+    for tool, args, key in (
+        ("read_section", {"file_id": "file-1", "section_index": 0}, "content"),
+        ("read_table", {"file_id": "file-1", "table_index": 0}, "table_content"),
+    ):
+        output = (await execute_tool(tool, args, context)).content
+        result = json.loads(output)
+        assert len(output) <= limit
+        assert len(output) > limit - 30
+        assert result["truncated"] is True
+        assert result["file_id"] == "file-1" and result["file_name"] == "文档.pdf"
+        assert len(result[key]) > 1000
+        assert "preview" not in result
+
+
+@pytest.mark.asyncio
+async def test_page_text_defaults_to_settings_instead_of_twelve_thousand_chars():
+    snapshot = _snapshot(pages={1: "正文" * 7400 + "页尾标记"})
+    context = AgentToolContext(file_id="file-1", snapshot=snapshot)
+    output = (await execute_tool("search_page", {"file_ids": ["file-1"], "page_range": "1"}, context)).content
+    assert "页尾标记" in output and len(output) < 20000
+    assert json.loads(output)["truncated"] is False
+    context.tool_result_max_chars = 35000
+    context.snapshot.page_contents[1] = "正文" * 13000 + "较大预算页尾"
+    output = (await execute_tool("search_page", {"file_ids": ["file-1"], "page_range": "1"}, context)).content
+    assert "较大预算页尾" in output and 20000 < len(output) < 35000
+
+
+def test_request_budget_accounts_for_tool_schemas_and_output_overrides():
+    config = AgentConfig(max_tokens=4096, extra_params={"max_completion_tokens": 6000})
+    assert agent._request_overhead(config, False) == 6000
+    assert agent._request_overhead(config, True) > 6000
+
+
+def test_error_and_pdf_text_outputs_obey_the_same_final_character_limit():
+    error = ToolOutput(json.dumps({"error": "\n" * 1000}, ensure_ascii=False))
+    limited = limit_tool_output(error, 1000)
+    assert len(limited.content) <= 1000
+    assert json.loads(limited.content)["error"]
+    assert json.loads(limited.content)["truncated"] is True
+    images = ({"page": 1, "data_url": "data:image/jpeg;base64,AA"},)
+    pdf = limit_tool_output(ToolOutput("PDF 页图说明" * 1000, images), 1000)
+    assert len(pdf.content) <= 1000
+    assert pdf.images == images
+
+
+@pytest.mark.parametrize("text", ['"' * 15000, '\\\n' * 10000], ids=["quotes", "backslashes-and-newlines"])
+def test_summary_input_budget_counts_json_escaping(text):
+    config = AgentConfig(max_tokens=1600, context_max_tokens=8000, context_compress_threshold=6000)
+    messages = [{"role": "system", "content": "摘要指令"}, {"role": "user", "content": text}]
+    agent._fit_summary_input(messages, config)
+    assert estimate_tokens(messages) + agent._request_overhead(config, False) <= config.context_max_tokens
+    assert "因摘要输入预算省略" in messages[-1]["content"]
 
 
 @pytest.mark.asyncio
@@ -293,6 +367,59 @@ async def test_stream_agent_places_pdf_images_after_all_tool_replies(monkeypatch
     assert [message["tool_call_id"] for message in captured_messages if message["role"] == "tool"] == ["call_pdf", "call_search"]
     assert any(event["type"] == "tool_result" and event["images"] for event in events)
     assert events[-1]["type"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_final_synthesis_waits_for_summary_and_respects_budget(monkeypatch):
+    import model.database
+    from service import extraction_snapshot
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def execute(self, _statement):
+            return SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(
+                file_id="file-1", file_name="合同.pdf", type_id="default", input_params={},
+            ))
+
+    async def load_snapshot(*_args, **_kwargs):
+        return _snapshot()
+
+    config = AgentConfig(max_rounds=1, max_tokens=200, context_max_tokens=8000, context_compress_threshold=6000)
+    monkeypatch.setattr(model.database, "get_session_factory", lambda: lambda: FakeSession())
+    monkeypatch.setattr(extraction_snapshot, "load_extraction_snapshot", load_snapshot)
+    monkeypatch.setattr(agent, "get_config", lambda: SimpleNamespace(agent=config))
+    requested = []
+
+    async def fake_turn(messages, turn_config, *, round_number, use_tools):
+        assert estimate_tokens(messages) + agent._request_overhead(turn_config, use_tools) <= config.context_max_tokens
+        requested.append((round_number, use_tools))
+        if round_number == 0:
+            yield {"type": "token", "text": "已记录关键金额与来源"}
+            return
+        if use_tools:
+            message = {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "long_result", "function": {"name": "read_table", "arguments": '{"file_id":"file-1","table_index":0}'}},
+            ]}
+        else:
+            assert any(str(message.get("content", "")).startswith("[xijuan_agent_memory]") for message in messages)
+            message = {"role": "assistant", "content": "最终回答"}
+        yield {"type": "turn_complete", "message": message}
+
+    async def execute(_name, _args, context):
+        assert context.tool_result_max_chars == 20000
+        return ToolOutput("证据" * 9900)
+
+    monkeypatch.setattr(agent, "_stream_turn", fake_turn)
+    monkeypatch.setattr(agent, "execute_tool", execute)
+    events = [json.loads(item.split("\n", 1)[0][6:]) async for item in agent.stream_agent("file-1", "金额是什么？")]
+    assert events[-1]["type"] == "done"
+    assert any(event.get("state") == "waiting" for event in events)
+    assert requested == [(1, True), (0, False), (2, False)]
 
 
 @pytest.mark.asyncio

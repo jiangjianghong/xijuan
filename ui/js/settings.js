@@ -89,9 +89,10 @@ const SettingsManager = {
             ['max_tokens', '单次最大输出 Token', 'number', { min: 1 }],
             ['extra_params', '附加参数', 'json', { rows: 6 }],
             ['max_rounds', '最大工具迭代轮数', 'number', { min: 1, max: 100, unit: '轮，默认 25；达到上限后整理已有证据' }],
-            ['context_max_tokens', '上下文上限', 'number', { min: 4000, unit: '估算 Token，默认 24000' }],
-            ['context_compress_threshold', '上下文压缩阈值', 'number', { min: 1000, unit: '估算 Token，默认 18000' }],
-            ['context_recent_tool_rounds', '保留工具轮次', 'number', { min: 1, max: 50, unit: '组，默认 4' }],
+            ['context_max_tokens', '模型上下文预算', 'number', { min: 4000, max: 200000, unit: '估算 Token，默认 24000；含消息、工具定义及输出预留，按实际模型容量配置' }],
+            ['context_compress_threshold', '后台整理阈值', 'number', { min: 1000, max: 200000, unit: '预计请求 Token，默认 18000；后台摘要，触及预算上限才等待' }],
+            ['context_recent_tool_rounds', '保留工具调用组', 'number', { min: 1, max: 50, unit: '组，默认 4；预算不足时允许整理最近组' }],
+            ['tool_result_max_chars', '单次工具结果上限', 'number', { min: 1000, max: 200000, unit: '字符，默认 20000；适用于工具文本结果，PDF 页图不按字符截断' }],
         ],
         rerank: [
             ['base_url', '服务地址', 'url'], ['model', '模型名称', 'text'],

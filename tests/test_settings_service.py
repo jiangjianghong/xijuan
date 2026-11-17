@@ -209,6 +209,7 @@ def test_agent_model_secret_and_round_limit_are_settings_managed(config_path: Pa
             "base_url": "http://agent.test/v1",
             "model": "vision-agent",
             "max_rounds": 18,
+            "tool_result_max_chars": 32000,
             "extra_params": {"enable_thinking": True},
         }},
         secrets={"agent.api_key": {"action": "replace", "value": "agent-secret"}},
@@ -218,6 +219,9 @@ def test_agent_model_secret_and_round_limit_are_settings_managed(config_path: Pa
     assert "agent-secret" not in repr(result)
     assert get_config().agent.model == "vision-agent"
     assert get_config().agent.max_rounds == 18
+    assert get_config().agent.tool_result_max_chars == 32000
+    assert result["config"]["agent"]["tool_result_max_chars"] == 32000
+    assert YAML().load(config_path.read_text(encoding="utf-8"))["agent"]["tool_result_max_chars"] == 32000
     assert get_config().agent.extra_params == {"enable_thinking": True}
 
 

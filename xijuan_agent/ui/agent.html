@@ -422,14 +422,39 @@
         refreshIcons(); scrollToBottom();
     }
     function appendEvidenceNote(run, text) { const note = document.createElement("div"); note.className = "evidence-note"; note.append(icon("sparkles"), document.createTextNode(text)); run.view.evidence.append(note); refreshIcons(); scrollToBottom(); }
+    function updateCompaction(run, event) {
+        if (event.task_id && event.task_id < (run.compactionTaskId || 0)) return;
+        run.compactionTaskId = event.task_id || run.compactionTaskId || 0;
+        const state = event.state || "completed";
+        if (state === "skipped" || state === "cancelled") { run.compactionNote?.remove(); run.compactionNote = null; return; }
+        const labels = {
+            started: "正在后台整理较早的工具结果，可继续研究",
+            waiting: "正在等待后台整理完成，以满足上下文预算",
+            completed: "较早的工具结果已整理为对话记忆",
+        };
+        if (!labels[state]) return;
+        if (!run.compactionNote) {
+            const note = document.createElement("div"); note.className = "evidence-note context-note";
+            note.setAttribute("role", "status"); note.setAttribute("aria-live", "polite");
+            run.view.evidence.append(note); run.compactionNote = note;
+        }
+        run.compactionNote.dataset.state = state;
+        run.compactionNote.replaceChildren(icon("sparkles"), document.createTextNode(labels[state]));
+        refreshIcons(); scrollToBottom();
+    }
+    function clearPendingCompaction(run) {
+        if (run.compactionNote && run.compactionNote.dataset.state !== "completed") {
+            run.compactionNote.remove(); run.compactionNote = null;
+        }
+    }
     function showError(run, text) { const note = document.createElement("div"); note.className = "error-note"; note.textContent = text || "运行失败"; run.view.evidence.append(note); refreshIcons(); scrollToBottom(); }
     function scrollToBottom() { requestAnimationFrame(() => { els["chat-scroll"].scrollTop = els["chat-scroll"].scrollHeight; }); }
     function handleEvent(run, event) {
         switch (event.type) {
             case "status": setStatus(event.message || "处理中", "running"); break;
             case "context_ready": appendEvidenceNote(run, `已载入 ${event.files?.length || 0} 份引用文件的检索上下文`); break;
-            case "context_window": if (event.compressed) appendEvidenceNote(run, "已将较早工具证据整理为对话记忆"); break;
-            case "context_compact": appendEvidenceNote(run, "正在整理较早的工具结果"); break;
+            case "context_window": break;
+            case "context_compact": updateCompaction(run, event); break;
             case "thinking": appendThinking(run, event); break;
             case "token": run.view.answer.textContent += event.text || ""; scrollToBottom(); break;
             case "tool_call_delta": { const card = createToolCard(run, { ...event, name: event.name_delta || "工具调用" }); if (event.name_delta && card.label.textContent === "工具调用") card.label.textContent = event.name_delta; card.argsPre.textContent += event.arguments_delta || ""; break; }
@@ -437,8 +462,8 @@
             case "tool_result": showToolResult(run, event); break;
             case "retry": appendEvidenceNote(run, event.message || "模型连接重试"); break;
             case "history_state": state.history = Array.isArray(event.messages) ? event.messages : state.history; break;
-            case "done": setStatus("准备就绪", "done"); run.view.answer.dataset.complete = "true"; break;
-            case "error": setStatus("本次请求失败", "error"); showError(run, event.message); break;
+            case "done": clearPendingCompaction(run); setStatus("准备就绪", "done"); run.view.answer.dataset.complete = "true"; break;
+            case "error": clearPendingCompaction(run); setStatus("本次请求失败", "error"); showError(run, event.message); break;
         }
     }
     async function consumeStream(run, response) {
@@ -454,7 +479,7 @@
             if (!response.ok) { let message = `请求失败（${response.status}）`; try { const body = await response.json(); message = body.detail || message; } catch {} showError(run, message); setStatus("请求失败", "error"); return; }
             await consumeStream(run, response);
         } catch (error) { if (error.name === "AbortError") { appendEvidenceNote(run, "本次研究已停止"); setStatus("已停止", "idle"); } else { showError(run, error.message || "连接中断"); setStatus("连接中断", "error"); } }
-        finally { state.controller = null; state.currentRun = null; els["send-button"].disabled = false; els["attach-files"].disabled = false; els["stop-button"].classList.add("hidden"); }
+        finally { clearPendingCompaction(run); state.controller = null; state.currentRun = null; els["send-button"].disabled = false; els["attach-files"].disabled = false; els["stop-button"].classList.add("hidden"); }
     }
     function clearConversation() { state.controller?.abort(); state.controller = null; state.history = []; state.conversationFiles = []; els["chat-inner"].replaceChildren(els["welcome"]); els["welcome"].classList.remove("hidden"); renderComposerFiles(); renderReferenceSummary(); setStatus("准备就绪", "idle"); els["question"].focus(); }
     function selectedCount() {

@@ -25,7 +25,7 @@ from utils.vl_client import pdf_path, render_pages_to_b64
 from utils.web_search import bocha_web_search
 
 
-MAX_RESULT_CHARS = 30000
+DEFAULT_RESULT_MAX_CHARS = 20000
 MAX_PDF_PAGES_PER_CALL = 8
 FILE_IDS_PROPERTY = {
     "type": "array",
@@ -61,6 +61,7 @@ class AgentToolContext:
     snapshot: FileExtractionSnapshot | None = None
     file_name: str = ""
     files: dict[str, AgentFileContext] = dataclass_field(default_factory=dict)
+    tool_result_max_chars: int = DEFAULT_RESULT_MAX_CHARS
     vector_index: FileVectorIndex | None = None
     vector_index_loaded: bool = False
     vector_index_error: str | None = None
@@ -137,7 +138,7 @@ TOOL_DEFINITIONS = [
     ),
     _tool(
         "read_section",
-        "按 list_sections 返回的 file_id 和 section_index 读取对应文件的完整章节正文，并包含其下级小节；目录条目会尽量映射到对应正文。请先列章节再精确读取，不能把标题文字当索引。章节过长时结果会在 30000 字符处截断，并明确标记。",
+        "按 list_sections 返回的 file_id 和 section_index 读取对应文件的完整章节正文，并包含其下级小节；目录条目会尽量映射到对应正文。请先列章节再精确读取，不能把标题文字当索引。文本结果受 Agent 设置中的单次工具结果上限约束（默认 20000 字符），超长时保留来源并明确标记截断。",
         {"file_id": {"type": "string", "minLength": 1, "description": "由 list_sections 返回的来源文件 ID。"}, "section_index": {"type": "integer", "minimum": 0, "description": "由 list_sections 返回、且只在该 file_id 内有效的章节索引。"}},
         ["file_id", "section_index"],
     ),
@@ -168,7 +169,7 @@ TOOL_DEFINITIONS = [
     _tool(
         "search_page",
         "按页码范围读取 file_ids 指定文件 MinerU 逐页 Markdown 文本，不调用视觉模型。页码范围会在每个文件内分别解释，结果带 file_id/file_name/page_num；扫描图片中未识别出的内容请改用 pdf_reader。比较全部引用文档时传入全部 file_ids；只查某个文档时传入单个 ID。",
-        {"file_ids": FILE_IDS_PROPERTY, "page_range": {"type": "string", "minLength": 1, "description": "单页、闭区间页码（如 4-6）或 all。"}, "max_chars": {"type": "integer", "minimum": 500, "maximum": 20000, "description": "返回 Markdown 的总字符上限，默认 12000。"}},
+        {"file_ids": FILE_IDS_PROPERTY, "page_range": {"type": "string", "minLength": 1, "description": "单页、闭区间页码（如 4-6）或 all。"}, "max_chars": {"type": "integer", "minimum": 500, "maximum": 200000, "description": "可选较小的 Markdown 字符窗口；省略时使用 Agent 设置的单次工具结果上限（默认 20000 字符），不能突破该设置。"}},
         ["file_ids", "page_range"],
     ),
     _tool(
@@ -179,7 +180,7 @@ TOOL_DEFINITIONS = [
     ),
     _tool(
         "read_table",
-        "按 list_tables 返回的 file_id 与 table_index 读取一个表格的完整解析内容，并附表名与页码。此工具按索引精确读取，不执行 exact/fuzzy/contains/LLM 表名匹配。超长表格内容会在 30000 字符处截断并标记。",
+        "按 list_tables 返回的 file_id 与 table_index 读取一个表格的完整解析内容，并附表名与页码。此工具按索引精确读取，不执行 exact/fuzzy/contains/LLM 表名匹配。文本结果受 Agent 设置中的单次工具结果上限约束（默认 20000 字符），超长时保留来源并明确标记截断。",
         {"file_id": {"type": "string", "minLength": 1, "description": "由 list_tables 返回的来源文件 ID。"}, "table_index": {"type": "integer", "minimum": 0, "description": "由 list_tables 返回、且只在该 file_id 内有效的表格索引。"}},
         ["file_id", "table_index"],
     ),
@@ -215,14 +216,61 @@ def _keywords(value: Any) -> list[str]:
     return result
 
 
-def _json_result(value: Any) -> str:
-    serialized = json.dumps(value, ensure_ascii=False, default=str)
-    if len(serialized) <= MAX_RESULT_CHARS:
+def _json_result(value: Any, max_chars: int = DEFAULT_RESULT_MAX_CHARS) -> str:
+    """限制最终 JSON 字符数，保留来源与截断标记，避免重复包装长正文。"""
+    def encode(item: Any) -> str:
+        return json.dumps(item, ensure_ascii=False, default=str, separators=(",", ":"))
+
+    serialized = encode(value)
+    if len(serialized) <= max_chars:
         return serialized
-    return json.dumps(
-        {"truncated": True, "preview": serialized[:MAX_RESULT_CHARS], "message": "工具结果超过 30000 字符，已截断。"},
-        ensure_ascii=False,
-    )
+    message = f"工具结果超过 {max_chars} 字符，已截断；可缩小检索范围或调高 Agent 设置中的单次工具结果上限。"
+    text_key = next((key for key in ("content", "table_content", "error") if isinstance(value, dict) and isinstance(value.get(key), str)), None)
+    if text_key:
+        result = {**value, "truncated": True, "message": message}
+        text = value[text_key]
+        key = text_key
+    else:
+        sources = []
+        stack = [value]
+        while stack and len(sources) < 20:
+            item = stack.pop()
+            if isinstance(item, dict):
+                if item.get("file_id"):
+                    source = {key: item[key] for key in ("file_id", "file_name", "page_num", "section_index", "table_index") if key in item}
+                    if source not in sources:
+                        sources.append(source)
+                stack.extend(part for part in item.values() if isinstance(part, (dict, list)))
+            elif isinstance(item, list):
+                stack.extend(reversed(item))
+        result = {"truncated": True, "sources": sources, "original_chars": len(serialized), "message": message}
+        text, key = serialized, "preview"
+    result[key] = ""
+    # 极小预算或超长来源名称时退化为有明确标记的预览，保证 JSON 始终有效。
+    if len(encode(result)) > max_chars:
+        result = {"truncated": True, "message": message}
+        text, key = serialized, "preview"
+    low, high = 0, min(len(text), max_chars)
+    while low < high:
+        middle = (low + high + 1) // 2
+        result[key] = text[:middle]
+        if len(encode(result)) <= max_chars:
+            low = middle
+        else:
+            high = middle - 1
+    result[key] = text[:low]
+    return encode(result)
+
+
+def limit_tool_output(output: ToolOutput, max_chars: int) -> ToolOutput:
+    """统一约束普通结果、异常结果及 PDF 文本说明；图片单独保留。"""
+    if len(output.content) <= max_chars:
+        return output
+    try:
+        value = json.loads(output.content)
+    except (TypeError, ValueError):
+        value = {"content": output.content}
+    return ToolOutput(_json_result(value, max_chars), output.images)
 
 
 def _parse_page_selection(raw: str, available: list[int]) -> list[int]:
@@ -350,6 +398,9 @@ async def _vector_index(file_context: AgentFileContext, context: AgentToolContex
 
 
 async def execute_tool(name: str, args: dict[str, Any], context: AgentToolContext) -> ToolOutput:
+    def result_json(value: Any) -> str:
+        return _json_result(value, context.tool_result_max_chars)
+
     available_files = context.iter_files()
     if not available_files:
         raise ValueError("当前消息没有有效的文件上下文")
@@ -373,7 +424,7 @@ async def execute_tool(name: str, args: dict[str, Any], context: AgentToolContex
                 item.snapshot.chunks,
             )
             rows.extend(_tag_source(item, row) for row in found)
-        return ToolOutput(_json_result(_merge_ranked(rows, top_k)))
+        return ToolOutput(result_json(_merge_ranked(rows, top_k)))
 
     if name == "list_sections":
         result = []
@@ -382,7 +433,7 @@ async def execute_tool(name: str, args: dict[str, Any], context: AgentToolContex
                 _tag_source(item, {"section_index": section.index, "number": section.number, "title": section.title, "level": section.level, "numbered": section.numbered, "is_toc": section.is_toc})
                 for section in parse_sections(item.snapshot.content)
             )
-        return ToolOutput(_json_result(result))
+        return ToolOutput(result_json(result))
 
     if name == "read_section":
         item = _selected_file(args, context)
@@ -396,8 +447,8 @@ async def execute_tool(name: str, args: dict[str, Any], context: AgentToolContex
             if body_matches:
                 section = min(body_matches, key=lambda entry: (entry.index < index, abs(entry.index - index)))
         body = item.snapshot.content[section.start_pos:section.tree_end_pos]
-        result = _tag_source(item, {"section_index": section.index, "number": section.number, "title": section.title, "level": section.level, "content": body[:MAX_RESULT_CHARS], "truncated": len(body) > MAX_RESULT_CHARS})
-        return ToolOutput(_json_result(result))
+        result = _tag_source(item, {"section_index": section.index, "number": section.number, "title": section.title, "level": section.level, "content": body, "truncated": False})
+        return ToolOutput(result_json(result))
 
     if name == "search_rule":
         keywords = _keywords(args.get("keywords"))
@@ -416,7 +467,7 @@ async def execute_tool(name: str, args: dict[str, Any], context: AgentToolContex
         for item in files:
             found = await search_rule(item.snapshot.content, search_config, item.snapshot.chunks)
             rows.extend(_tag_source(item, row) for row in found)
-        return ToolOutput(_json_result(_merge_ranked(rows, top_k)))
+        return ToolOutput(result_json(_merge_ranked(rows, top_k)))
 
     if name == "search_chunk_db":
         keywords = _keywords(args.get("keywords"))
@@ -429,7 +480,7 @@ async def execute_tool(name: str, args: dict[str, Any], context: AgentToolContex
                 item.snapshot.chunks,
             )
             rows.extend(_tag_source(item, row) for row in found)
-        return ToolOutput(_json_result(_merge_ranked(rows, top_k)))
+        return ToolOutput(result_json(_merge_ranked(rows, top_k)))
 
     if name == "search_bm25":
         query = args.get("query_text")
@@ -440,7 +491,7 @@ async def execute_tool(name: str, args: dict[str, Any], context: AgentToolContex
         for item in files:
             found = await asyncio.to_thread(search_bm25, item.file_id, {"query_text": query.strip(), "top_k": top_k}, item.snapshot.chunks)
             rows.extend(_tag_source(item, row) for row in found)
-        return ToolOutput(_json_result(_merge_ranked(rows, top_k)))
+        return ToolOutput(result_json(_merge_ranked(rows, top_k)))
 
     if name == "search_vector_db":
         query = args.get("query_text")
@@ -456,13 +507,13 @@ async def execute_tool(name: str, args: dict[str, Any], context: AgentToolContex
                 rows.extend(_tag_source(item, row) for row in found)
             except ValueError as exc:
                 errors.append({"file_id": item.file_id, "file_name": item.file_name, "error": str(exc)})
-        return ToolOutput(_json_result({"results": _merge_ranked(rows, top_k), "errors": errors}))
+        return ToolOutput(result_json({"results": _merge_ranked(rows, top_k), "errors": errors}))
 
     if name == "search_page":
         page_range = args.get("page_range")
         if not isinstance(page_range, str) or not page_range.strip():
             raise ValueError("page_range 不能为空")
-        max_chars = _bounded_int(args.get("max_chars"), "max_chars", 12000, 500, 20000)
+        max_chars = min(context.tool_result_max_chars, _bounded_int(args.get("max_chars"), "max_chars", context.tool_result_max_chars, 500, 200000))
         result = []
         chars_left = max_chars
         for item in files:
@@ -475,7 +526,7 @@ async def execute_tool(name: str, args: dict[str, Any], context: AgentToolContex
                 fragment = (content or "")[:chars_left]
                 result.append(_tag_source(item, {"page_num": int(page), "content": fragment, "truncated": len(fragment) < len(content or "")}))
                 chars_left -= len(fragment)
-        return ToolOutput(_json_result({"pages": result, "truncated": chars_left <= 0}))
+        return ToolOutput(result_json({"pages": result, "truncated": chars_left <= 0}))
 
     if name == "list_tables":
         result = []
@@ -484,7 +535,7 @@ async def execute_tool(name: str, args: dict[str, Any], context: AgentToolContex
                 _tag_source(item, {"table_index": table.table_index, "table_name": table.table_name or f"表格{table.table_index}", "page_num": table.page_num or ""})
                 for table in sorted(item.snapshot.tables, key=lambda entry: entry.table_index)
             )
-        return ToolOutput(_json_result(result))
+        return ToolOutput(result_json(result))
 
     if name == "read_table":
         item = _selected_file(args, context)
@@ -493,8 +544,8 @@ async def execute_tool(name: str, args: dict[str, Any], context: AgentToolContex
         if table is None:
             raise ValueError("table_index 不存在；请先调用 list_tables，并确认 file_id")
         content = table.table_content or ""
-        result = _tag_source(item, {"table_index": index, "table_name": table.table_name or f"表格{index}", "page_num": table.page_num or "", "table_content": content[:MAX_RESULT_CHARS], "truncated": len(content) > MAX_RESULT_CHARS})
-        return ToolOutput(_json_result(result))
+        result = _tag_source(item, {"table_index": index, "table_name": table.table_name or f"表格{index}", "page_num": table.page_num or "", "table_content": content, "truncated": False})
+        return ToolOutput(result_json(result))
 
     if name == "web_search":
         query = args.get("query")
@@ -506,11 +557,11 @@ async def execute_tool(name: str, args: dict[str, Any], context: AgentToolContex
         if freshness is not None and freshness not in allowed_freshness:
             raise ValueError("freshness 不合法")
         formatted, results = await bocha_web_search(query.strip(), count=count, freshness=freshness)
-        return ToolOutput(_json_result({"summary": formatted, "results": results}))
+        return ToolOutput(result_json({"summary": formatted, "results": results}))
 
     if name == "pdf_reader":
         item = _selected_file(args, context)
-        return await _execute_pdf_reader(item, args)
+        return limit_tool_output(await _execute_pdf_reader(item, args), context.tool_result_max_chars)
 
     raise ValueError(f"未知工具: {name}")
 
