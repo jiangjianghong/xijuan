@@ -108,6 +108,9 @@ agent:
   temperature: 0.1                                      # Agent 模型温度
   max_tokens: 4096                                      # 单次模型回复 Token 上限
   max_rounds: 25                                        # 自动工具迭代上限；设置页可调整，范围 1-100
+  context_max_tokens: 24000                             # 对话上下文估算上限；浏览器刷新前持续保留
+  context_compress_threshold: 18000                     # 超过此值时压缩较早工具结果
+  context_recent_tool_rounds: 4                         # 保留最近多少组工具调用的原始结果
 
 # 检索结果重排（Cohere-compatible /rerank）
 rerank:

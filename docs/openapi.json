@@ -5862,23 +5862,52 @@
         "description": "\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。"
       }
     },
-    "/agent/stream": {
-      "post": {
+    "/agent/files": {
+      "get": {
         "tags": [
           "智能体工作台"
         ],
-        "summary": "Run Agent Stream",
-        "operationId": "run_agent_stream_agent_stream_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentRunRequest"
-              }
+        "summary": "搜索可引用的已处理文件",
+        "description": "只返回 `progress=complete` 的文件，供智能体工作台搜索并多选引用。`q` 同时匹配文件名和 file_id；结果按创建时间倒序分页。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。",
+        "operationId": "list_agent_files_agent_files_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Q"
             }
           },
-          "required": true
-        },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "页码，从 1 开始。"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 20,
+              "title": "Page Size"
+            },
+            "description": "每页条数。"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -5906,6 +5935,56 @@
           {
             "APIKey": []
           }
+        ]
+      }
+    },
+    "/agent/stream": {
+      "post": {
+        "tags": [
+          "智能体工作台"
+        ],
+        "summary": "流式运行析卷智能体",
+        "operationId": "run_agent_stream_agent_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "description": "为当前消息加载一个或多个已处理文件，使用配置中的 Agent 模型自主迭代调用检索工具，并通过 SSE 推送 token、工具调用、工具结果、PDF 页图和浏览器内存上下文状态。`file_ids` 只作用于当前消息；`history` 由浏览器保存的多轮模型消息组成，刷新页面后丢失。\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。",
+        "security": [
+          {
+            "AdminSession": []
+          },
+          {
+            "APIKey": []
+          }
         ],
         "parameters": [
           {
@@ -5918,8 +5997,7 @@
             },
             "description": "管理员登录/会话写请求必填；程序以 API Key 或 IP 白名单调用时可省略。"
           }
-        ],
-        "description": "\n\n**访问权限**：管理员会话、API Key 或 IP 白名单。白名单匹配来源 IP/CIDR，不匹配端口。 登录请求及使用 Cookie 的写请求必须携带 `X-Requested-With: XMLHttpRequest`。"
+        ]
       }
     }
   },
@@ -5927,10 +6005,24 @@
     "schemas": {
       "AgentRunRequest": {
         "properties": {
+          "file_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "File Ids"
+          },
           "file_id": {
-            "type": "string",
-            "maxLength": 64,
-            "minLength": 1,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "File Id"
           },
           "question": {
@@ -5938,11 +6030,19 @@
             "maxLength": 12000,
             "minLength": 1,
             "title": "Question"
+          },
+          "history": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "maxItems": 240,
+            "title": "History"
           }
         },
         "type": "object",
         "required": [
-          "file_id",
           "question"
         ],
         "title": "AgentRunRequest"

@@ -88,6 +88,9 @@ const SettingsManager = {
             ['temperature', '温度', 'number', { min: 0, step: 0.1 }],
             ['max_tokens', '单次最大输出 Token', 'number', { min: 1 }],
             ['max_rounds', '最大工具迭代轮数', 'number', { min: 1, max: 100, unit: '轮，默认 25；达到上限后整理已有证据' }],
+            ['context_max_tokens', '上下文上限', 'number', { min: 4000, unit: '估算 Token，默认 24000' }],
+            ['context_compress_threshold', '上下文压缩阈值', 'number', { min: 1000, unit: '估算 Token，默认 18000' }],
+            ['context_recent_tool_rounds', '保留工具轮次', 'number', { min: 1, max: 50, unit: '组，默认 4' }],
         ],
         rerank: [
             ['base_url', '服务地址', 'url'], ['model', '模型名称', 'text'],

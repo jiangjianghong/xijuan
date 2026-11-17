@@ -978,6 +978,25 @@ ENRICHMENTS: Dict[str, Dict[str, Dict[str, Any]]] = {
             ),
         },
     },
+    "/agent/files": {
+        "get": {
+            "summary": "搜索可引用的已处理文件",
+            "description": (
+                "只返回 `progress=complete` 的文件，供智能体工作台搜索并多选引用。"
+                "`q` 同时匹配文件名和 file_id；结果按创建时间倒序分页。"
+            ),
+        },
+    },
+    "/agent/stream": {
+        "post": {
+            "summary": "流式运行析卷智能体",
+            "description": (
+                "为当前消息加载一个或多个已处理文件，使用配置中的 Agent 模型自主迭代调用检索工具，"
+                "并通过 SSE 推送 token、工具调用、工具结果、PDF 页图和浏览器内存上下文状态。"
+                "`file_ids` 只作用于当前消息；`history` 由浏览器保存的多轮模型消息组成，刷新页面后丢失。"
+            ),
+        },
+    },
 }
 
 

@@ -7,7 +7,9 @@ import pytest
 from service.extraction_snapshot import FileExtractionSnapshot, TableRow
 from utils.config import AgentConfig
 from xijuan_agent import agent
+from xijuan_agent.context import compact_messages, estimate_tokens, sanitize_history
 from xijuan_agent.tools import (
+    AgentFileContext,
     AgentToolContext,
     TOOL_DEFINITIONS,
     ToolOutput,
@@ -32,6 +34,11 @@ def test_tool_catalog_has_split_section_and_table_workflows():
     tools = {item["function"]["name"]: item["function"] for item in TOOL_DEFINITIONS}
 
     assert {"list_sections", "read_section", "list_tables", "read_table", "pdf_reader"} <= tools.keys()
+    for name in ("search_context", "list_sections", "search_rule", "search_chunk_db", "search_bm25", "search_vector_db", "search_page", "list_tables"):
+        assert "file_ids" in tools[name]["parameters"]["required"]
+    assert "file_id" in tools["read_section"]["parameters"]["required"]
+    assert "file_id" in tools["read_table"]["parameters"]["required"]
+    assert "file_id" in tools["pdf_reader"]["parameters"]["required"]
     assert "section_index" in tools["read_section"]["parameters"]["required"]
     assert "table_index" in tools["read_table"]["parameters"]["required"]
     assert "最多 8 页" in tools["pdf_reader"]["description"]
@@ -49,15 +56,31 @@ def test_parse_page_selection_validates_and_expands_ranges():
 
 def test_agent_config_defaults_to_twenty_five_rounds_and_caps_at_one_hundred():
     assert AgentConfig().max_rounds == 25
+    assert AgentConfig().context_max_tokens == 24000
+    assert AgentConfig().context_compress_threshold == 18000
+    assert AgentConfig().context_recent_tool_rounds == 4
     with pytest.raises(ValueError):
         AgentConfig(max_rounds=101)
+    with pytest.raises(ValueError):
+        AgentConfig(context_max_tokens=4000, context_compress_threshold=5000)
 
 
 def test_agent_stream_route_is_registered():
     from scripts.gen_openapi import build_app
 
-    operation = build_app().openapi()["paths"]["/agent/stream"]["post"]
+    schema = build_app().openapi()
+    operation = schema["paths"]["/agent/stream"]["post"]
     assert "text/event-stream" in operation["responses"]["200"]["content"]
+    assert "/agent/files" in schema["paths"]
+
+
+def test_agent_request_accepts_multiple_references_and_legacy_file_id():
+    from xijuan_agent.router import AgentRunRequest
+
+    assert AgentRunRequest(file_ids=["a", "b", "a"], question="问题").file_ids == ["a", "b"]
+    assert AgentRunRequest(file_id="legacy", question="问题").file_ids == ["legacy"]
+    with pytest.raises(ValueError):
+        AgentRunRequest(question="缺文件")
 
 
 @pytest.mark.asyncio
@@ -68,17 +91,104 @@ async def test_section_and_table_tools_list_then_read_by_index():
     )
     context = AgentToolContext(file_id="file-1", snapshot=snapshot)
 
-    sections = json.loads((await execute_tool("list_sections", {}, context)).content)
+    sections = json.loads((await execute_tool("list_sections", {"file_ids": ["file-1"]}, context)).content)
     assert [item["title"] for item in sections] == ["总则", "范围", "附则"]
     assert sections[1]["level"] > sections[0]["level"]
 
-    section = json.loads((await execute_tool("read_section", {"section_index": 0}, context)).content)
+    section = json.loads((await execute_tool("read_section", {"file_id": "file-1", "section_index": 0}, context)).content)
     assert "适用范围" in section["content"]
 
-    tables = json.loads((await execute_tool("list_tables", {}, context)).content)
+    tables = json.loads((await execute_tool("list_tables", {"file_ids": ["file-1"]}, context)).content)
     assert tables == [{"table_index": 0, "table_name": "费用表", "page_num": "2"}]
-    table = json.loads((await execute_tool("read_table", {"table_index": 0}, context)).content)
+    table = json.loads((await execute_tool("read_table", {"file_id": "file-1", "table_index": 0}, context)).content)
     assert "100" in table["table_content"]
+
+
+@pytest.mark.asyncio
+async def test_multi_file_tools_merge_sources_and_keep_file_boundaries():
+    from xijuan_agent.tools import AgentFileContext
+
+    first = _snapshot("# 1 付款\n合同一约定付款期限为三十天。")
+    second = FileExtractionSnapshot(
+        file_id="file-2", type_id="default", content="# 1 付款\n合同二约定付款期限为四十五天。",
+        page_mapping=[], page_contents={}, tables=(), chunks=(),
+    )
+    context = AgentToolContext(files={
+        "file-1": AgentFileContext("file-1", "合同一.pdf", first),
+        "file-2": AgentFileContext("file-2", "合同二.pdf", second),
+    })
+
+    found = json.loads((await execute_tool("search_context", {"file_ids": ["file-1", "file-2"], "keywords": ["付款期限"]}, context)).content)
+    assert {row["file_id"] for row in found} == {"file-1", "file-2"}
+    assert {row["file_name"] for row in found} == {"合同一.pdf", "合同二.pdf"}
+    selected = json.loads((await execute_tool("search_context", {"file_ids": ["file-2"], "keywords": ["付款期限"]}, context)).content)
+    assert {row["file_id"] for row in selected} == {"file-2"}
+
+    sections = json.loads((await execute_tool("list_sections", {"file_ids": ["file-1", "file-2"]}, context)).content)
+    assert {row["file_id"] for row in sections} == {"file-1", "file-2"}
+    section = json.loads((await execute_tool("read_section", {"file_id": "file-2", "section_index": 0}, context)).content)
+    assert section["file_name"] == "合同二.pdf"
+    assert "四十五天" in section["content"]
+
+    with pytest.raises(ValueError, match="不在当前消息引用范围"):
+        await execute_tool("read_section", {"file_id": "outside", "section_index": 0}, context)
+
+    with pytest.raises(ValueError, match="不在当前消息引用范围"):
+        await execute_tool("list_sections", {"file_ids": ["outside"]}, context)
+    with pytest.raises(ValueError, match="必须在参数中提供非空 file_ids"):
+        await execute_tool("list_tables", {}, context)
+
+
+@pytest.mark.asyncio
+async def test_context_window_summarizes_old_tool_groups_and_keeps_recent_group():
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "旧问题"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "old", "function": {"name": "search_context", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "old", "content": "OLD_EVIDENCE " + "x" * 500},
+        {"role": "assistant", "content": "旧回答"},
+        {"role": "user", "content": "新问题"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "new", "function": {"name": "search_rule", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "new", "content": "NEW_EVIDENCE " + "y" * 500},
+        {"role": "assistant", "content": "新回答"},
+        {"role": "user", "content": "当前问题"},
+    ]
+    summaries = []
+
+    async def summarize(text):
+        summaries.append(text)
+        return "已记录早期付款证据"
+
+    result, changed, tokens = await compact_messages(
+        messages, threshold_tokens=100, max_tokens=4000, recent_tool_rounds=1, summarize=summarize,
+    )
+
+    assert changed
+    assert tokens <= 4000
+    assert summaries and "OLD_EVIDENCE" in summaries[0]
+    assert "OLD_EVIDENCE" not in json.dumps(result, ensure_ascii=False)
+    assert any("NEW_EVIDENCE" in str(item.get("content")) for item in result)
+    assert any(str(item.get("content", "")).startswith("[xijuan_agent_memory]") for item in result)
+
+
+def test_history_trimming_preserves_complete_turn_boundaries_and_estimates_images_without_base64():
+    history = [
+        {"role": "user", "content": "第一轮"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "function": {"name": "x", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "结果"},
+        {"role": "assistant", "content": "回答"},
+        {"role": "user", "content": "第二轮"},
+        {"role": "assistant", "content": "答复"},
+    ]
+    trimmed = sanitize_history(history, max_messages=4)
+    assert [item["role"] for item in trimmed] == ["user", "assistant"]
+    assert trimmed[0]["content"] == "第二轮"
+
+    with_image = [{"role": "user", "content": [
+        {"type": "text", "text": "图片"},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + "A" * 100_000}},
+    ]}]
+    assert estimate_tokens(with_image) < 2000
 
 
 @pytest.mark.asyncio
@@ -86,7 +196,7 @@ async def test_pdf_reader_rejects_more_than_eight_pages_before_file_access():
     context = AgentToolContext(file_id="missing", snapshot=_snapshot())
 
     with pytest.raises(ValueError, match="最多读取 8 页"):
-        await execute_tool("pdf_reader", {"start_page": 1, "end_page": 9}, context)
+        await execute_tool("pdf_reader", {"file_id": "missing", "start_page": 1, "end_page": 9}, context)
 
 
 @pytest.mark.asyncio
@@ -108,8 +218,8 @@ async def test_vector_index_loads_only_on_first_vector_tool_call(monkeypatch):
     monkeypatch.setattr(tools, "search_vector_db", search_vector)
     context = AgentToolContext(file_id="file-1", snapshot=_snapshot())
 
-    await execute_tool("search_vector_db", {"query_text": "付款"}, context)
-    await execute_tool("search_vector_db", {"query_text": "期限"}, context)
+    await execute_tool("search_vector_db", {"file_ids": ["file-1"], "query_text": "付款"}, context)
+    await execute_tool("search_vector_db", {"file_ids": ["file-1"], "query_text": "期限"}, context)
 
     assert calls == 1
 
@@ -142,8 +252,8 @@ async def test_stream_agent_places_pdf_images_after_all_tool_replies(monkeypatch
     monkeypatch.setattr(agent, "get_config", lambda: SimpleNamespace(agent=AgentConfig(max_rounds=2)))
 
     tool_calls = [
-        {"id": "call_pdf", "type": "function", "function": {"name": "pdf_reader", "arguments": "{\"start_page\":1,\"end_page\":1}"}},
-        {"id": "call_search", "type": "function", "function": {"name": "search_context", "arguments": "{\"keywords\":[\"付款\"]}"}},
+        {"id": "call_pdf", "type": "function", "function": {"name": "pdf_reader", "arguments": "{\"file_id\":\"file-1\",\"start_page\":1,\"end_page\":1}"}},
+        {"id": "call_search", "type": "function", "function": {"name": "search_context", "arguments": "{\"file_ids\":[\"file-1\"],\"keywords\":[\"付款\"]}"}},
     ]
     captured_messages = []
     first_turn = True
@@ -177,7 +287,7 @@ async def test_stream_agent_places_pdf_images_after_all_tool_replies(monkeypatch
 async def test_stream_turn_emits_text_and_reconstructs_tool_calls(monkeypatch):
     chunks = [
         {"choices": [{"delta": {"content": "正在检索"}}]},
-        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "search_context", "arguments": "{\"keywords\":[\"付款\"]}"}}]}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "search_context", "arguments": "{\"file_ids\":[\"file-1\"],\"keywords\":[\"付款\"]}"}}]}}]},
         {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
         {"choices": [], "usage": {"total_tokens": 12}},
     ]
@@ -226,5 +336,5 @@ async def test_stream_turn_emits_text_and_reconstructs_tool_calls(monkeypatch):
     assert complete["message"]["content"] == "正在检索"
     call = complete["message"]["tool_calls"][0]
     assert call["function"]["name"] == "search_context"
-    assert json.loads(call["function"]["arguments"]) == {"keywords": ["付款"]}
+    assert json.loads(call["function"]["arguments"]) == {"file_ids": ["file-1"], "keywords": ["付款"]}
     assert complete["usage"]["total_tokens"] == 12

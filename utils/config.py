@@ -279,6 +279,15 @@ class AgentConfig(BaseModel):
     temperature: float = Field(0.1, ge=0)
     max_tokens: int = Field(4096, ge=1)
     max_rounds: int = Field(25, ge=1, le=100)
+    context_max_tokens: int = Field(24_000, ge=4_000, le=200_000)
+    context_compress_threshold: int = Field(18_000, ge=1_000, le=200_000)
+    context_recent_tool_rounds: int = Field(4, ge=1, le=50)
+
+    @model_validator(mode="after")
+    def validate_context_window(self) -> "AgentConfig":
+        if self.context_compress_threshold > self.context_max_tokens:
+            raise ValueError("context_compress_threshold 不能大于 context_max_tokens")
+        return self
 
 
 class RerankConfig(BaseModel):
