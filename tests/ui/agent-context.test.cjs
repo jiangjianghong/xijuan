@@ -7,8 +7,8 @@ const { JSDOM } = require('jsdom');
 function setup() {
   const html = fs.readFileSync(path.join(__dirname, '../../xijuan_agent/ui/agent.html'), 'utf8');
   const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true });
-  const script = [...dom.window.document.querySelectorAll('script')].find(node => !node.src && node.textContent.includes('function handleEvent'));
-  dom.window.eval(script.textContent.replace(/\}\)\(\);\s*$/, 'window.agentTest = { handleEvent, createAssistantMessage }; })();'));
+  const script = fs.readFileSync(path.join(__dirname, '../../ui/js/agent.js'), 'utf8');
+  dom.window.eval(script.replace(/\}\)\(\);\s*$/, 'window.agentTest = { handleEvent, createAssistantMessage }; })();'));
   const view = dom.window.agentTest.createAssistantMessage();
   const run = { view, toolCards: new Map() };
   const event = data => dom.window.agentTest.handleEvent(run, { type: 'context_compact', ...data });

@@ -1,0 +1,172 @@
+{
+ "version": 1,
+ "kind": "app",
+ "at": "2026-11-17T08:34:36.633Z",
+ "seed": 1028258708,
+ "input": {
+  "kind": "workspace",
+  "brief": "析卷 AI 多文档研究工作台，文件引用、提问、检索证据和连续回答，优雅的纸白与墨绿",
+  "theme": "light",
+  "screens": [
+   "home",
+   "inbox"
+  ],
+  "keep": [
+   "palette",
+   "type"
+  ],
+  "style": "editorial-greeting"
+ },
+ "style": {
+  "id": "editorial-greeting",
+  "name": "Editorial greeting",
+  "theme": "light",
+  "basis": "2 screens: a team workspace home and a personal insights home",
+  "suits": [
+   "workspace",
+   "creator"
+  ],
+  "idea": "A personal or team home that opens with a typeset greeting in a centred column; every number below it is set at regular weight on tonal panels.",
+  "colourBudget": "under 2% for the accent; tonal panels carry the structure",
+  "tokens": {
+   "ground": "#ffffff",
+   "surface": "#f9f9f9",
+   "raised": "#ffffff",
+   "border": "#eaeaea",
+   "rule": "#f3f3f3",
+   "control": "#d9d9d6",
+   "text": "#1f201d",
+   "muted": "#636361",
+   "accent": "#1b6e66",
+   "positive": "#2e7d32",
+   "negative": "#b42318",
+   "warning": "#92400e",
+   "chart": [
+    "#1f201d",
+    "#1b6e66",
+    "#8c8c88"
+   ],
+   "pills": {
+    "positive": [
+     "#dcfae5",
+     "#04250e"
+    ],
+    "negative": [
+     "#fdecea",
+     "#7a1d14"
+    ],
+    "warning": [
+     "#fffbeb",
+     "#92400e"
+    ],
+    "neutral": [
+     "#f3f3f3",
+     "#3d3d3a"
+    ]
+   },
+   "radius": {
+    "card": 22,
+    "control": 999
+   },
+   "font": {
+    "family": "Instrument Sans",
+    "second": "Instrument Serif, for the greeting only",
+    "fallback": "Inter, system-ui, sans-serif",
+    "sizes": {
+     "title": 48,
+     "section": 14,
+     "kpi": 32,
+     "body": 14,
+     "small": 12
+    },
+    "weights": [
+     400,
+     500,
+     600
+    ],
+    "note": "The 48px title is the serif greeting; set in the sans it is 24/400. Every figure is 400."
+   },
+   "density": "sparse",
+   "rowHeight": 63,
+   "sidebarWidth": 224,
+   "gap": 16,
+   "pad": 20,
+   "controlHeight": 38
+  },
+  "shell": "open-plane",
+  "shellAlternatives": [
+   "framed-sheet"
+  ],
+  "signature": "The greeting is the h1, in a centred 1100px column on a real 12-column grid (77px columns, 16px gutters), with spans that change by row but share column lines (3/3/3/3, then 9/3, then 6/6, so every internal edge meets one above it). Every figure below is set at regular weight on tonal panels, one layer each: a panel one step off white holds its title and its content directly; a white inner card is used once, for the main chart.",
+  "identity": [
+   "The greeting names this team or household and today's one fact, set from the data (\"Morning, Okoro house. The car is ready by 06:10.\"), never \"Welcome back\".",
+   "Each person's stable hue as a pale tint on their avatar and their own lane or column (a couple and their joint account as three lanes): identity, not data, so it stays out of the chart legends.",
+   "A surface from the product's world in place of #f9f9f9, one level toward its material (a sage for a garden, a stone for a kitchen, a blue-grey for a studio), with the page white kept."
+  ],
+  "avoid": [
+   "an emoji in the greeting",
+   "a tracked uppercase date above the greeting (put the date after it or in the grey line below)",
+   "a 624-864px column on a desktop screen (both were flagged as wasted width)",
+   "a tray around every card (a grey panel with a white card 6px inside it, on every block, read as a bento template in testing)",
+   "red as the accent: in testing red marked a record week of upgrades and read as an alarm; red is for the failing fact only"
+  ],
+  "notes": "One studied screen set its greeting in a serif at 48/700 and its counts in a mono; the other set the greeting at 24/400 in the sans. The red is the second screen's chart red moved two degrees of hue out of the house terracotta range. After testing, the studied red accent was replaced by a deep teal: red on good news read as an alarm."
+ },
+ "shell": {
+  "id": "open-plane",
+  "name": "Open plane",
+  "basis": "5 of 23 screens",
+  "suits": [
+   "finance",
+   "wallet",
+   "workspace",
+   "creator",
+   "analytics"
+  ],
+  "numbers": {
+   "sidebarWidth": "230-256 (230, 240, 256 in the study; 280 and 292 with a built-in icon rail)",
+   "separation": "none, or one 1px hairline; the sidebar sits on the page ground or within 1-2% of it",
+   "navPitch": 34,
+   "navRowHeight": 32,
+   "navIcon": "16px outline, about 1.5px stroke",
+   "navLabel": "14px, 400, grey or ink",
+   "activeItem": "neutral grey pill, radius 6-12, inset 8-12px from the sidebar edges (#e9e9e9-#ededed)",
+   "topBar": "none",
+   "canvas": "fluid with a 24-64px gutter, or a centred 1100px column"
+  },
+  "blueprint": "The labelled sidebar sits on the page ground with nothing or one hairline between it and the canvas; there is no top bar, and the page header and cards sit straight on the ground about 32-36px from the top. Workspace or account switcher at the top of the sidebar, primary nav on a 34px pitch, groups under 12-13px sentence-case grey labels with 22-56px of air above, utilities and the user row pushed to the bottom. Cards are white on the off-white ground (or the sidebar is white with a 1px border on a #f9fafb canvas). The canvas is fluid with one gutter value, or a centred column for personal homes.",
+  "phone": "The sidebar folds into a 48px top bar holding the screen's name, a menu button that opens a full-screen sheet with the nav and the switcher, and at most one action. Content takes the full width with 16px margins."
+ },
+ "screens": [
+  {
+   "name": "home",
+   "pattern": {
+    "id": "workspace-home-greeting",
+    "name": "Workspace home with a greeting",
+    "screen": "home",
+    "kinds": [
+     "workspace",
+     "creator"
+    ],
+    "basis": "a team workspace home; a personal insights home",
+    "blueprint": "A centred column on a real 12-column grid (77px columns, 16px gutters, 1100px), about 72px from the top. The greeting is the h1 (48/700 in a serif, or 24/400 in the sans), with the date after it or in a grey line under it, never as a tracked eyebrow, and no emoji. 50px below, 4 count tiles spanning 3 columns each (128px tall, 16px padding): label, value at regular weight in tabular or mono figures, a plain caption ('Ready when you are'), no deltas. Then spans that change by row but share column lines (9 + 3, then 6 + 6, so each internal edge meets one above it) for the main objects: panels with 20px padding, a 14/600 title, a count chip and a 'View all' link, holding row cards 63px tall with 8px gaps, one step lighter than the panel with a border one step darker. Pale tints may code the panels, each in the hue of the tile that counts it. Only a floating composer, if there is one, carries a shadow, and it must not cover the last rows.",
+    "phone": "Greeting at 24-28px; tiles in a 2 x 2 grid; panels stack in reading order."
+   }
+  },
+  {
+   "name": "inbox",
+   "pattern": {
+    "id": "inbox-triage",
+    "name": "Inbox triage",
+    "screen": "inbox",
+    "kinds": [
+     "support",
+     "workspace"
+    ],
+    "basis": "assembled from the study's list, feed and rail measurements; no inbox screen was in the study",
+    "blueprint": "Three regions on one ground: the navigation (a 230px sidebar or a 55px rail), the list, and the open item with its details. The list column has a fixed width (the study's fixed columns are 306 and 384px) and its own toolbar: saved views as underline tabs or a select, a 32px search, the count. Rows are two-line, 64-80px: line 1 is who (14/600) with the time in words right-aligned in grey ('9 min', 'Yesterday'); line 2 is the subject or last message in 13-14px grey, truncated to one line with an ellipsis. Unread rows set the name at 600 and add a 6px dot or a 16px count circle; read rows keep the name and subject in ink at 400 (grey is for meta only, never for a row's identity: faded urgent rows were the top complaint in testing). One status mark per row (priority or SLA, as a pale pill or words, not both). The selected row takes the --active fill of the nav pill (optionally a 2px accent bar inside its left edge), so it is never confused with a hover or a focus ring; never a saturated fill. The row's meta sits in fixed right-aligned slots (assignee 20px, channel 14px, priority 14px) so it lines up as columns; priority is printed only above normal. The open item fills the remaining width; its details (customer, plan, history) sit in a fixed column of 306-384px as key-value rows on a 28-32px pitch.",
+    "phone": "One region at a time: the list fills the screen; choosing a row pushes the conversation; the details open from a button in its header; back returns to the list at the same scroll position."
+   }
+  }
+ ]
+}

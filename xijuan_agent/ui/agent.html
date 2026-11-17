@@ -6,518 +6,96 @@
     <meta name="color-scheme" content="light">
     <title>析卷 AI · 文档研究</title>
     <link rel="stylesheet" href="/ui/vendor/fonts/google-fonts.css">
+    <link rel="stylesheet" href="/ui/css/agent.css">
     <script src="/ui/vendor/lucide/lucide.min.js"></script>
-    <style>
-        :root {
-            color-scheme: light;
-            --paper: #fbfcfa;
-            --sheet: #ffffff;
-            --wash: #f0f4f1;
-            --wash-2: #e8efeb;
-            --ink: #17251e;
-            --muted: #65736b;
-            --faint: #8d9891;
-            --line: #dbe4de;
-            --line-strong: #c5d3ca;
-            --accent: #1e6a50;
-            --accent-strong: #174e3d;
-            --accent-soft: #e3f0ea;
-            --warm: #b86d35;
-            --warm-soft: #fff0e3;
-            --danger: #a64b4b;
-            --danger-soft: #fbeceb;
-            --radius: 10px;
-            --font: Nunito, "Segoe UI", sans-serif;
-            --serif: Lora, Georgia, serif;
-        }
-        * { box-sizing: border-box; }
-        html, body { min-height: 100%; }
-        body {
-            margin: 0;
-            color: var(--ink);
-            background: var(--paper);
-            font-family: var(--font);
-            height: 100dvh; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; overflow: hidden;
-        }
-        button, input, textarea { font: inherit; }
-        button { color: inherit; }
-        button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible {
-            outline: 3px solid #74ab95;
-            outline-offset: 2px;
-        }
-        .app-frame { min-height: 0; display: grid; grid-template-rows: 58px minmax(0, 1fr); }
-        .topbar {
-            display: flex; align-items: center; gap: 14px; padding: 0 28px;
-            background: var(--wash-2); border-bottom: 1px solid var(--line);
-        }
-        .brand-mark { width: 32px; height: 32px; display: grid; place-items: center; color: var(--accent); border: 1px solid var(--line-strong); border-radius: 8px; background: var(--paper); }
-        .brand-mark svg { width: 17px; height: 17px; }
-        .brand { display: flex; align-items: baseline; gap: 11px; font-weight: 800; letter-spacing: .01em; }
-        .brand small { color: var(--muted); font-size: 12px; font-weight: 600; }
-        .topbar-spacer { flex: 1; }
-        .top-link, .quiet-button {
-            display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 10px;
-            border: 0; border-radius: 6px; background: transparent; color: var(--muted); text-decoration: none; cursor: pointer; font-size: 12px; font-weight: 700;
-        }
-        .top-link:hover, .quiet-button:hover { color: var(--ink); background: var(--sheet); }
-        .top-link svg, .quiet-button svg { width: 15px; height: 15px; }
-        .workbench { min-height: 0; display: grid; grid-template-columns: 264px minmax(0, 1fr); }
-        .rail {
-            min-height: 0; overflow: auto; padding: 24px 18px 24px 24px;
-            background: var(--wash); border-right: 1px solid var(--line);
-        }
-        .rail-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 18px; }
-        .rail-heading h1 { margin: 0; font-size: 17px; line-height: 1.1; }
-        .rail-heading p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
-        .rail-heading svg { flex: none; width: 20px; height: 20px; color: var(--accent); }
-        .rail-section { margin-top: 24px; }
-        .rail-section-title { display: flex; align-items: center; gap: 7px; margin: 0 0 10px; color: var(--muted); font-size: 11px; font-weight: 800; }
-        .rail-section-title svg { width: 14px; height: 14px; color: var(--accent); }
-        .ref-summary { display: grid; gap: 7px; }
-        .ref-empty { padding: 12px; border: 1px dashed var(--line-strong); border-radius: 7px; color: var(--faint); font-size: 11px; line-height: 1.5; background: rgba(255,255,255,.44); }
-        .ref-item { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--sheet); }
-        .ref-item svg { width: 15px; height: 15px; color: var(--accent); }
-        .ref-item strong, .ref-item span { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .ref-item strong { font-size: 11px; }
-        .ref-item span { margin-top: 2px; color: var(--faint); font-size: 10px; }
-        .tool-catalog { display: grid; gap: 4px; }
-        .catalog-row { display: grid; grid-template-columns: 21px minmax(0, 1fr) 6px; gap: 8px; align-items: center; padding: 6px 5px; border-radius: 5px; color: var(--muted); }
-        .catalog-row.used { color: var(--accent-strong); background: var(--accent-soft); }
-        .catalog-row svg { width: 14px; height: 14px; }
-        .catalog-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 700; }
-        .catalog-row i { width: 5px; height: 5px; border-radius: 50%; background: var(--line-strong); }
-        .catalog-row.used i { background: var(--accent); }
-        .workspace-note { color: var(--muted); font-size: 11px; line-height: 1.6; }
-        .workspace-note strong { color: var(--ink); }
-        .conversation { min-width: 0; min-height: 0; display: grid; grid-template-rows: 54px minmax(0, 1fr); background: var(--sheet); }
-        .conversation-bar { display: flex; align-items: center; gap: 10px; padding: 0 34px; border-bottom: 1px solid var(--line); }
-        .conversation-bar h2 { margin: 0; font-size: 14px; }
-        .conversation-status { color: var(--muted); font-size: 11px; }
-        .conversation-actions { display: flex; gap: 3px; margin-left: auto; }
-        .chat-scroll { min-height: 0; overflow: auto; padding: 34px 34px 44px; scroll-behavior: smooth; }
-        .chat-inner { width: min(900px, 100%); margin: 0 auto; }
-        .welcome { min-height: 430px; display: grid; place-content: center; justify-items: center; padding: 50px 20px; text-align: center; }
-        .welcome-mark { width: 58px; height: 58px; display: grid; place-items: center; margin-bottom: 20px; border: 1px solid var(--line-strong); border-radius: 13px; color: var(--accent); background: var(--accent-soft); }
-        .welcome-mark svg { width: 27px; height: 27px; }
-        .welcome h3 { max-width: 380px; margin: 0; font-family: var(--serif); font-size: 28px; font-weight: 500; line-height: 1.18; }
-        .welcome p { max-width: 430px; margin: 13px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
-        .message { display: grid; gap: 10px; margin: 0 auto 28px; animation: rise-in .34s ease both; }
-        .message.user { justify-items: end; }
-        .message.assistant { justify-items: stretch; }
-        .message-meta { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; font-weight: 700; }
-        .message-meta svg { width: 14px; height: 14px; color: var(--accent); }
-        .bubble { max-width: min(760px, 92%); padding: 14px 16px; border-radius: 10px; font-size: 14px; line-height: 1.72; white-space: pre-wrap; overflow-wrap: anywhere; }
-        .user .bubble { color: #f8fbf9; background: var(--accent-strong); }
-        .assistant .bubble { max-width: none; color: var(--ink); background: #f6f8f6; border: 1px solid var(--line); }
-        .file-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 9px; }
-        .file-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 250px; padding: 4px 7px; border-radius: 5px; color: var(--accent-strong); background: var(--accent-soft); font-size: 10px; font-weight: 800; }
-        .file-chip svg { width: 12px; height: 12px; flex: none; }
-        .file-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .evidence { display: grid; gap: 8px; margin-top: 11px; }
-        .evidence-note { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
-        .evidence-note svg { width: 14px; height: 14px; color: var(--accent); }
-        .tool-card { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--sheet); }
-        .tool-card summary { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 0 12px; cursor: pointer; list-style: none; }
-        .tool-card summary::-webkit-details-marker { display: none; }
-        .tool-card summary::after { content: ""; width: 7px; height: 7px; margin-left: 4px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg) translateY(-2px); opacity: .55; }
-        .tool-card[open] summary::after { transform: rotate(225deg) translate(-1px, -1px); }
-        .tool-glyph { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px; color: var(--accent); background: var(--accent-soft); }
-        .tool-glyph svg { width: 13px; height: 13px; }
-        .tool-name { font-size: 11px; font-weight: 800; }
-        .tool-state { margin-left: auto; color: var(--muted); font-size: 10px; }
-        .tool-state.fail { color: var(--danger); }
-        .tool-body { display: grid; gap: 7px; padding: 0 12px 12px; border-top: 1px solid var(--line); }
-        .tool-subdetail { margin-top: 8px; }
-        .tool-subdetail summary { min-height: 28px; padding: 0; color: var(--muted); font-size: 10px; }
-        .tool-subdetail summary::after { width: 5px; height: 5px; }
-        pre { max-height: 230px; overflow: auto; margin: 5px 0 0; padding: 9px; border-radius: 5px; color: #314039; background: var(--wash); font: 11px/1.55 Consolas, "SFMono-Regular", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-        .page-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-top: 8px; }
-        .page-figure { overflow: hidden; margin: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--wash); }
-        .page-figure img { display: block; width: 100%; max-height: 340px; object-fit: contain; background: #e8ede9; }
-        .page-figure figcaption { padding: 6px 8px; color: var(--muted); font-size: 10px; font-weight: 800; }
-        .error-note { padding: 10px 12px; border: 1px solid #edcccc; border-radius: 7px; color: var(--danger); background: var(--danger-soft); font-size: 12px; line-height: 1.55; }
-        .thinking-details { margin: 0 0 14px; padding-left: 11px; border-left: 2px solid #9bbdac; color: var(--muted); }
-        .thinking-summary { display: flex; align-items: center; gap: 8px; min-height: 28px; cursor: pointer; color: #486557; font-size: 12px; font-weight: 700; list-style: none; }
-        .thinking-summary::-webkit-details-marker { display: none; }
-        .thinking-summary::after { content: ""; width: 6px; height: 6px; margin-left: 1px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg) translateY(-2px); opacity: .55; }
-        .thinking-details[open] .thinking-summary::after { transform: rotate(225deg) translate(-1px, -1px); }
-        .thinking-body { max-height: 280px; overflow: auto; padding: 5px 4px 7px 0; font-size: 12px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
-        .thinking-round + .thinking-round { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); }
-        .composer-wrap { padding: 16px 30px 22px; border-top: 1px solid var(--line); background: var(--paper); }
-        .composer { width: min(900px, 100%); margin: 0 auto; }
-        .composer-shell { overflow: hidden; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--sheet); box-shadow: 0 9px 26px rgba(23,37,30,.06); }
-        .composer-files { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 0; }
-        .pending-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 270px; padding: 5px 7px; border: 1px solid #b8d4c6; border-radius: 5px; color: var(--accent-strong); background: var(--accent-soft); font-size: 10px; font-weight: 800; }
-        .pending-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .pending-chip button { width: 17px; height: 17px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--accent); cursor: pointer; }
-        .pending-chip button:hover { background: rgba(30,106,80,.12); }
-        .pending-chip svg { width: 11px; height: 11px; }
-        .question { display: block; width: 100%; min-height: 74px; max-height: 180px; resize: vertical; padding: 13px 13px 6px; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 14px; line-height: 1.6; }
-        .question::placeholder { color: #9aa69f; }
-        .composer-actions { display: flex; align-items: center; gap: 7px; padding: 7px 9px 9px; }
-        .composer-hint { color: var(--faint); font-size: 10px; }
-        .composer-spacer { flex: 1; }
-        .attach-button, .send-button, .stop-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px; padding: 0 11px; border: 0; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 800; }
-        .attach-button { color: var(--accent-strong); background: var(--accent-soft); }
-        .attach-button:hover { background: #d5e9df; }
-        .send-button { min-width: 84px; color: #fff; background: var(--accent); }
-        .send-button:hover:not(:disabled) { background: var(--accent-strong); }
-        .stop-button { color: #8f4a22; background: var(--warm-soft); border: 1px solid #efc9aa; }
-        .send-button:disabled, .attach-button:disabled { cursor: not-allowed; opacity: .5; }
-        .attach-button svg, .send-button svg, .stop-button svg { width: 14px; height: 14px; }
-        .hidden { display: none !important; }
-        dialog { width: min(620px, calc(100vw - 28px)); max-height: min(680px, calc(100dvh - 36px)); padding: 0; border: 1px solid var(--line-strong); border-radius: 12px; color: var(--ink); background: var(--sheet); box-shadow: 0 22px 70px rgba(23,37,30,.2); }
-        dialog::backdrop { background: rgba(23,37,30,.18); }
-        .picker-head { display: flex; align-items: center; gap: 12px; padding: 18px 18px 13px; border-bottom: 1px solid var(--line); }
-        .picker-head h2 { margin: 0; font-size: 16px; }
-        .picker-head button { width: 30px; height: 30px; display: grid; place-items: center; margin-left: auto; border: 0; border-radius: 5px; background: transparent; cursor: pointer; }
-        .picker-head button:hover { background: var(--wash); }
-        .picker-head svg { width: 16px; height: 16px; }
-        .picker-search { padding: 13px 18px; border-bottom: 1px solid var(--line); }
-        .picker-search input { width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px; outline: 0; color: var(--ink); background: var(--paper); font-size: 12px; }
-        .file-list { max-height: 420px; overflow: auto; padding: 8px 18px; }
-        .file-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 10px 4px; border-bottom: 1px solid var(--line); }
-        .file-row:last-child { border-bottom: 0; }
-        .file-row input { width: 16px; height: 16px; accent-color: var(--accent); }
-        .file-row label { min-width: 0; cursor: pointer; }
-        .file-row strong, .file-row span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .file-row strong { font-size: 12px; }
-        .file-row span { margin-top: 3px; color: var(--muted); font-size: 10px; }
-        .file-row time { color: var(--faint); font-size: 10px; }
-        .load-more { display: block; width: 100%; height: 34px; margin-top: 8px; border: 0; border-radius: 5px; color: var(--accent-strong); background: var(--wash); cursor: pointer; font-size: 11px; font-weight: 800; }
-        .load-more:hover { background: var(--accent-soft); }
-        .load-more:disabled { cursor: wait; opacity: .55; }
-        .picker-empty { padding: 36px 8px; color: var(--muted); text-align: center; font-size: 12px; }
-        .picker-foot { display: flex; align-items: center; gap: 10px; padding: 13px 18px 17px; border-top: 1px solid var(--line); }
-        .picker-foot span { color: var(--muted); font-size: 11px; }
-        .picker-foot .composer-spacer { flex: 1; }
-        .picker-cancel, .picker-add { height: 34px; padding: 0 12px; border: 0; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 800; }
-        .picker-cancel { color: var(--muted); background: var(--wash); }
-        .picker-add { color: #fff; background: var(--accent); }
-        @keyframes rise-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        @media (max-width: 900px) {
-            .topbar { padding: 0 18px; }
-            .workbench { grid-template-columns: 220px minmax(0, 1fr); }
-            .rail { padding-left: 16px; padding-right: 12px; }
-            .conversation-bar, .chat-scroll { padding-left: 22px; padding-right: 22px; }
-            .composer-wrap { padding-left: 20px; padding-right: 20px; }
-        }
-        @media (max-width: 650px) {
-            body { height: 100dvh; overflow: hidden; }
-            .app-frame { min-height: 0; grid-template-rows: 54px minmax(0, 1fr); }
-            .topbar { padding: 0 13px; gap: 9px; }
-            .brand { font-size: 13px; }
-            .brand small { display: none; }
-            .top-link { padding: 0 7px; font-size: 0; }
-            .top-link svg { width: 17px; height: 17px; }
-            .workbench { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) 128px; }
-            .rail { order: 2; min-height: 0; max-height: none; padding: 10px 13px; border-right: 0; border-top: 1px solid var(--line); overflow: auto; }
-            .rail-heading { margin-bottom: 11px; }
-            .rail-heading p, .workspace-note { display: none; }
-            .rail-section { margin-top: 14px; }
-            .rail-section:first-of-type { margin-top: 0; }
-            .tool-catalog { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; }
-            .catalog-row { grid-template-columns: 17px minmax(0, 1fr); padding: 6px 4px; }
-            .catalog-row i { display: none; }
-            .catalog-row span { font-size: 9px; }
-            .conversation { order: 1; min-height: 0; grid-template-rows: 49px minmax(0, 1fr); }
-            .conversation-bar { padding: 0 13px; }
-            .conversation-bar h2 { font-size: 13px; }
-            .chat-scroll { padding: 20px 13px 28px; }
-            .welcome { min-height: 350px; }
-            .welcome h3 { font-size: 24px; }
-            .bubble { max-width: 96%; font-size: 13px; }
-            .composer-wrap { position: relative; z-index: 3; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
-            .composer-hint { display: none; }
-            .attach-button { font-size: 0; width: 34px; padding: 0; }
-            .attach-button svg { width: 15px; height: 15px; }
-            .send-button, .stop-button { min-width: 76px; }
-        }
-        @media (prefers-reduced-motion: reduce) {
-            *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
-        }
-    </style>
 </head>
 <body>
 <div class="app-frame">
-    <header class="topbar">
-        <div class="brand-mark" aria-hidden="true"><i data-lucide="book-open-check"></i></div>
-        <div class="brand">析卷 AI <small>文档研究工作台</small></div>
-        <div class="topbar-spacer"></div>
-        <a class="top-link" href="/ui/" title="返回主系统"><i data-lucide="arrow-left"></i><span>返回主系统</span></a>
-    </header>
-    <main class="workbench">
-        <aside class="rail">
-            <div class="rail-heading">
-                <div><h1>证据工作台</h1><p>文档在当前对话持续引用，新对话会清空。</p></div>
-                <i data-lucide="scan-search"></i>
-            </div>
-            <section class="rail-section">
-                <h2 class="rail-section-title"><i data-lucide="paperclip"></i>对话文档</h2>
-                <div id="reference-summary" class="ref-summary"><div class="ref-empty">尚未加入文档。添加已处理完成的 PDF 后即可连续追问。</div></div>
+    <aside class="rail" id="reference-panel" aria-label="研究资料">
+        <div class="brand">
+            <svg class="brand-symbol" viewBox="0 0 40 44" fill="none" aria-hidden="true"><path d="M7 5h15c7 0 11 4 11 10v24H18C11 39 7 35 7 29V5Z" stroke="currentColor" stroke-width="1.7"/><path d="M13 5v23c0 4 3 6 7 6h13M19 5v18c0 4 3 6 7 6h7" stroke="currentColor" stroke-width="1.7"/></svg>
+            <div><div class="brand-name">析卷<span>AI</span></div><div class="brand-description">让每一份文档，成为洞见</div></div>
+            <button id="close-rail" class="icon-button rail-close" type="button" aria-label="关闭资料面板"><i data-lucide="x"></i></button>
+        </div>
+        <button id="new-chat" class="new-chat" type="button"><i data-lucide="plus"></i>开启新研究</button>
+        <div class="rail-content">
+            <section aria-labelledby="reference-heading">
+                <div class="section-heading"><h2 id="reference-heading">本次研究资料</h2><span id="reference-count" class="reference-count">0 / 20</span></div>
+                <div id="reference-summary" class="ref-summary"></div>
+                <button id="rail-add-files" class="source-add" type="button"><i data-lucide="plus"></i>从文档库添加</button>
+                <p id="source-caption" class="source-caption">选择已处理完成的 PDF，建立本次研究的资料范围。</p>
             </section>
-            <section class="rail-section">
-                <h2 class="rail-section-title"><i data-lucide="wrench"></i>可用证据工具</h2>
+            <details class="tool-section">
+                <summary><span>研究工具</span><span id="tool-total" class="tool-total">12</span><i data-lucide="chevron-down"></i></summary>
                 <div id="tool-catalog" class="tool-catalog"></div>
+            </details>
+            <section class="workspace">
+                <div class="workspace-head"><span>对话记忆</span><span id="context-usage">尚未开始</span></div>
+                <div class="context-meter" id="context-meter" role="meter" aria-label="上下文估算用量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="context-fill"></span></div>
+                <div id="workspace-note" class="workspace-note">智能体按需检索章节、表格与原始页图，保留证据，连接上下文。</div>
             </section>
-            <section class="rail-section">
-                <h2 class="rail-section-title"><i data-lucide="info"></i>工作状态</h2>
-                <div class="workspace-note" id="workspace-note">模型会在当前消息内自主选择检索工具，并把较早的工具证据整理成记忆。</div>
-            </section>
-        </aside>
-        <section class="conversation" aria-label="多轮对话">
-            <div class="conversation-bar">
-                <h2>研究对话</h2>
-                <span id="conversation-status" class="conversation-status">准备就绪</span>
-                <div class="conversation-actions">
-                    <button id="new-chat" class="quiet-button" type="button" title="清空当前对话"><i data-lucide="plus"></i><span>新对话</span></button>
+        </div>
+        <div class="rail-footer"><a href="/ui/" class="return-link"><i data-lucide="arrow-left"></i>返回文档工作台</a><p class="session-note">当前研究仅在此页面保留</p></div>
+    </aside>
+    <button class="rail-backdrop" id="rail-backdrop" type="button" aria-label="关闭资料面板" tabindex="-1"></button>
+    <main class="conversation" id="conversation" aria-label="文档研究对话">
+        <header class="conversation-bar">
+            <button id="toggle-rail" class="icon-button mobile-menu" type="button" aria-label="打开资料面板" aria-controls="reference-panel" aria-expanded="false"><i data-lucide="panel-left"></i></button>
+            <div class="conversation-heading"><h1>文档研究</h1><span id="conversation-status" class="conversation-status" role="status" data-state="idle">准备就绪</span></div>
+            <div class="conversation-actions"><button id="export-chat" class="quiet-button" type="button" title="导出当前研究为 Markdown" aria-label="导出研究" disabled><i data-lucide="download"></i><span>导出研究</span></button></div>
+        </header>
+        <div class="scroll-region">
+            <div id="chat-scroll" class="chat-scroll" tabindex="0" aria-label="研究记录">
+                <div id="chat-inner" class="chat-inner">
+                    <section id="welcome" class="welcome" aria-labelledby="welcome-title">
+                        <svg class="welcome-symbol" viewBox="0 0 64 70" fill="none" aria-hidden="true"><path d="M10 8h24c11 0 18 7 18 17v37H28c-11 0-18-7-18-17V8Z" stroke="currentColor" stroke-width="1.5"/><path d="M20 8v35c0 7 4 11 11 11h21" stroke="currentColor" stroke-width="1.5"/><path d="M30 8v27c0 7 4 11 11 11h11" stroke="currentColor" stroke-width="1.5"/></svg>
+                        <h2 id="welcome-title">从文档，到洞见。</h2>
+                        <p class="welcome-description">把值得追问的问题，交给析卷。<span>连接多份文档，在原文、数据与证据之间找到答案。</span></p>
+                        <button class="welcome-start" id="welcome-add-files" type="button"><i data-lucide="plus"></i><span>选择研究文档</span><i data-lucide="arrow-right"></i></button>
+                        <div class="prompt-section">
+                            <div class="prompt-heading"><i data-lucide="corner-down-right"></i>也可以从这些问题开始</div>
+                            <div class="prompt-grid">
+                                <button class="prompt-card" type="button" data-prompt="请梳理这些文档的核心观点，归纳重要结论，并标注对应的文档与页码。"><strong>读懂核心观点</strong><i data-lucide="arrow-up-right"></i><span>梳理脉络，提炼关键结论</span></button>
+                                <button class="prompt-card" type="button" data-prompt="请对比这些文档中相同主题的关键差异，使用表格呈现，并说明各项差异的原文依据。"><strong>对比文档差异</strong><i data-lucide="arrow-up-right"></i><span>交叉阅读，发现不同之处</span></button>
+                                <button class="prompt-card" type="button" data-prompt="请找出文档中的关键数据与重要表格，核对数字的统计口径，并标注数据来源与页码。"><strong>追溯关键数据</strong><i data-lucide="arrow-up-right"></i><span>核对数字，让结论有据可循</span></button>
+                            </div>
+                        </div>
+                    </section>
                 </div>
             </div>
-            <div id="chat-scroll" class="chat-scroll">
-                <div id="chat-inner" class="chat-inner">
-                    <div id="welcome" class="welcome">
-                        <div class="welcome-mark"><i data-lucide="layers-3"></i></div>
-                        <h3>从一组文档开始研究</h3>
-                        <p>添加一份或多份已处理文件，提出问题。检索证据、章节、表格与 PDF 页图会沿着回答逐步展开。</p>
+            <button id="jump-latest" class="jump-latest hidden" type="button"><i data-lucide="arrow-down"></i>回到最新内容</button>
+        </div>
+        <div class="composer-wrap">
+            <form id="composer" class="composer">
+                <div class="composer-shell">
+                    <div id="composer-files" class="composer-files"></div>
+                    <label class="sr-only" for="question">研究问题</label>
+                    <textarea id="question" class="question" rows="2" maxlength="12000" placeholder="你想从文档中了解什么？" aria-describedby="composer-guidance" required></textarea>
+                    <div class="composer-actions">
+                        <button id="attach-files" class="attach-button" type="button"><i data-lucide="paperclip"></i><span>添加文档</span></button>
+                        <span class="composer-spacer"></span>
+                        <span class="composer-hint">Ctrl / ⌘ + Enter</span>
+                        <button id="stop-button" class="stop-button hidden" type="button"><i data-lucide="square"></i>停止研究</button>
+                        <button id="send-button" class="send-button" type="submit" disabled><span>开始研究</span><i data-lucide="arrow-up"></i></button>
                     </div>
                 </div>
-            </div>
-        </section>
+                <div class="composer-footnote"><span id="composer-guidance">添加文档后，即可开始有据可循的研究</span><span>重要结论，请结合原文核对</span></div>
+            </form>
+        </div>
     </main>
 </div>
-<div class="composer-wrap">
-    <form id="composer" class="composer">
-        <div class="composer-shell">
-            <div id="composer-files" class="composer-files"></div>
-            <textarea id="question" class="question" maxlength="12000" placeholder="询问文档中的事实、规则、数字或差异……" aria-label="研究问题" required></textarea>
-            <div class="composer-actions">
-                <button id="attach-files" class="attach-button" type="button" title="为当前对话添加文档"><i data-lucide="paperclip"></i><span>添加文件</span></button>
-                <span class="composer-hint">Ctrl / ⌘ + Enter 发送</span>
-                <span class="composer-spacer"></span>
-                <button id="stop-button" class="stop-button hidden" type="button"><i data-lucide="square"></i>停止</button>
-                <button id="send-button" class="send-button" type="submit"><i data-lucide="arrow-up"></i>发送</button>
-            </div>
-        </div>
-    </form>
-</div>
-
-<dialog id="file-picker" aria-labelledby="file-picker-title">
-    <div class="picker-head"><h2 id="file-picker-title">添加文档到对话</h2><button id="close-picker" type="button" aria-label="关闭"><i data-lucide="x"></i></button></div>
-    <div class="picker-search"><input id="file-search" type="search" placeholder="搜索文件名或 file_id" autocomplete="off"></div>
-    <div id="file-list" class="file-list"><div class="picker-empty">正在加载文件……</div></div>
-    <div class="picker-foot"><span id="picker-count">待加入 0 份</span><span class="composer-spacer"></span><button id="cancel-picker" class="picker-cancel" type="button">取消</button><button id="add-picker" class="picker-add" type="button">加入对话</button></div>
+<dialog id="file-picker" aria-labelledby="file-picker-title" aria-describedby="file-picker-description">
+    <div class="picker-head"><div><h2 id="file-picker-title">选择研究文档</h2><p id="file-picker-description">从已完成处理的 PDF 中选择，最多引用 20 份。</p></div><button id="close-picker" class="icon-button" type="button" aria-label="关闭"><i data-lucide="x"></i></button></div>
+    <div class="picker-search"><i data-lucide="search"></i><label class="sr-only" for="file-search">搜索文档</label><input id="file-search" type="search" maxlength="200" placeholder="搜索文档名称或文件 ID" autocomplete="off"></div>
+    <div class="picker-list-heading"><span>文档库</span><span id="picker-total" role="status">正在载入</span></div>
+    <div id="file-list" class="file-list" aria-busy="false"></div>
+    <div class="picker-foot"><span id="picker-count" role="status">尚未选择文档</span><span class="composer-spacer"></span><button id="cancel-picker" class="picker-cancel" type="button">取消</button><button id="add-picker" class="picker-add" type="button" disabled>加入研究</button></div>
 </dialog>
-
-<script>
-(() => {
-    const TOOLS = [
-        ["search_context", "上下文", "text-search"], ["search_rule", "规则", "list-filter"],
-        ["search_chunk_db", "分块", "database"], ["search_bm25", "BM25", "list-ordered"],
-        ["search_vector_db", "向量", "scan-search"], ["search_page", "页文本", "files"],
-        ["list_sections", "章节列表", "list-tree"], ["read_section", "读取章节", "book-open-text"],
-        ["list_tables", "表格列表", "table-2"], ["read_table", "读取表格", "table-properties"],
-        ["web_search", "联网", "globe-2"], ["pdf_reader", "PDF 页图", "scan-eye"],
-    ];
-    const els = Object.fromEntries(["tool-catalog", "reference-summary", "workspace-note", "conversation-status", "chat-scroll", "chat-inner", "welcome", "composer", "composer-files", "question", "attach-files", "send-button", "stop-button", "new-chat", "file-picker", "close-picker", "cancel-picker", "add-picker", "file-search", "file-list", "picker-count"].map(id => [id, document.getElementById(id)]));
-    const state = { history: [], conversationFiles: [], pickerFiles: new Map(), pickerSelection: new Set(), pickerPage: 1, pickerTotal: 0, pickerLoading: false, controller: null, searchTimer: null, currentRun: null };
-
-    const icon = name => { const node = document.createElement("i"); node.setAttribute("data-lucide", name); return node; };
-    const refreshIcons = () => window.lucide?.createIcons({ attrs: { "stroke-width": 1.8 } });
-    const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
-    const toolIcon = name => TOOLS.find(item => item[0] === name)?.[2] || "wrench";
-
-    function setStatus(text, stateName = "idle") {
-        els["conversation-status"].textContent = text;
-        els["workspace-note"].dataset.state = stateName;
-    }
-    function renderReferenceSummary() {
-        els["reference-summary"].replaceChildren();
-        if (!state.conversationFiles.length) {
-            const empty = document.createElement("div"); empty.className = "ref-empty"; empty.textContent = "尚未加入文档。添加已处理完成的 PDF 后即可连续追问。"; els["reference-summary"].append(empty); return;
-        }
-        for (const file of state.conversationFiles) {
-            const item = document.createElement("div"); item.className = "ref-item"; item.title = file.file_id;
-            item.append(icon("file-text"));
-            const copy = document.createElement("div");
-            const name = document.createElement("strong"); name.textContent = file.file_name || file.file_id;
-            const id = document.createElement("span"); id.textContent = file.file_id;
-            copy.append(name, id); item.append(copy); els["reference-summary"].append(item);
-        }
-        refreshIcons();
-    }
-    function renderComposerFiles() {
-        els["composer-files"].replaceChildren();
-        for (const file of state.conversationFiles) {
-            const chip = document.createElement("span"); chip.className = "pending-chip"; chip.title = file.file_id;
-            chip.append(icon("file-text"));
-            const label = document.createElement("span"); label.textContent = file.file_name || file.file_id; chip.append(label);
-            els["composer-files"].append(chip);
-        }
-        refreshIcons();
-    }
-    function renderCatalog() {
-        for (const [name, label, iconName] of TOOLS) {
-            const row = document.createElement("div"); row.className = "catalog-row"; row.dataset.tool = name;
-            row.append(icon(iconName)); const text = document.createElement("span"); text.textContent = label; row.append(text, document.createElement("i")); els["tool-catalog"].append(row);
-        }
-        refreshIcons();
-    }
-    function markTool(name) { els["tool-catalog"].querySelector(`[data-tool="${CSS.escape(name || "")}"]`)?.classList.add("used"); }
-    function createMessage(role, text) {
-        els["welcome"].classList.add("hidden");
-        const article = document.createElement("article"); article.className = `message ${role}`;
-        const meta = document.createElement("div"); meta.className = "message-meta"; meta.append(icon(role === "user" ? "user-round" : "sparkles"), document.createTextNode(role === "user" ? "你" : "析卷 AI")); article.append(meta);
-        const bubble = document.createElement("div"); bubble.className = "bubble"; bubble.textContent = text || ""; article.append(bubble);
-        els["chat-inner"].append(article); refreshIcons(); scrollToBottom(); return { article, bubble };
-    }
-    function createAssistantMessage() {
-        const view = createMessage("assistant", "");
-        view.bubble.textContent = "";
-        const answer = document.createElement("div"); answer.className = "answer-text"; answer.textContent = "";
-        const evidence = document.createElement("div"); evidence.className = "evidence";
-        view.bubble.replaceChildren(answer, evidence); view.answer = answer; view.evidence = evidence; view.toolCards = new Map(); view.thinkingRounds = new Map(); return view;
-    }
-    function appendThinking(run, event) {
-        const view = run.view;
-        if (!view.thinkingDetails) {
-            const details = document.createElement("details"); details.className = "thinking-details";
-            const summary = document.createElement("summary"); summary.className = "thinking-summary"; summary.textContent = "思考过程";
-            const body = document.createElement("div"); body.className = "thinking-body";
-            details.append(summary, body); view.bubble.prepend(details); view.thinkingDetails = details; view.thinkingBody = body;
-        }
-        const round = event.round ?? 0;
-        let segment = view.thinkingRounds.get(round);
-        if (!segment) {
-            segment = document.createElement("div"); segment.className = "thinking-round";
-            view.thinkingRounds.set(round, segment); view.thinkingBody.append(segment);
-        }
-        segment.textContent += event.text || "";
-        scrollToBottom();
-    }
-    function createToolCard(run, event) {
-        const slot = `slot:${event.round ?? 0}:${event.index ?? 0}`;
-        const key = event.tool_call_id || slot;
-        let card = run.toolCards.get(key) || run.toolCards.get(slot); if (card) { run.toolCards.set(key, card); return card; }
-        const details = document.createElement("details"); details.className = "tool-card";
-        const summary = document.createElement("summary");
-        const glyph = document.createElement("span"); glyph.className = "tool-glyph"; glyph.append(icon(toolIcon(event.name)));
-        const label = document.createElement("span"); label.className = "tool-name"; label.textContent = event.name || "工具调用";
-        const status = document.createElement("span"); status.className = "tool-state"; status.textContent = "执行中";
-        summary.append(glyph, label, status); details.append(summary);
-        const body = document.createElement("div"); body.className = "tool-body";
-        const args = document.createElement("details"); args.className = "tool-subdetail"; args.open = true; const argsSummary = document.createElement("summary"); argsSummary.textContent = "调用参数"; const argsPre = document.createElement("pre"); args.append(argsSummary, argsPre);
-        body.append(args); details.append(body); run.view.evidence.append(details); card = { details, label, status, argsPre, body }; run.toolCards.set(key, card); run.toolCards.set(slot, card); markTool(event.name); refreshIcons(); scrollToBottom(); return card;
-    }
-    function parseResult(raw) { try { return JSON.parse(raw); } catch { return raw; } }
-    function showToolResult(run, event) {
-        const card = createToolCard(run, event); const parsed = parseResult(event.content); const failed = parsed && typeof parsed === "object" && parsed.error;
-        card.status.textContent = failed ? "失败" : "完成"; if (failed) card.status.classList.add("fail");
-        const resultDetails = document.createElement("details"); resultDetails.className = "tool-subdetail";
-        const resultSummary = document.createElement("summary"); resultSummary.textContent = "工具结果"; const resultPre = document.createElement("pre"); resultPre.textContent = typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2); resultDetails.append(resultSummary, resultPre); card.body.append(resultDetails);
-        if (Array.isArray(event.images) && event.images.length) {
-            const grid = document.createElement("div"); grid.className = "page-grid";
-            for (const imageData of event.images) { const figure = document.createElement("figure"); figure.className = "page-figure"; const image = document.createElement("img"); image.src = imageData.data_url; image.alt = `${imageData.file_name || "PDF"} 第 ${imageData.page} 页`; image.loading = "lazy"; const caption = document.createElement("figcaption"); caption.textContent = `${imageData.file_name || imageData.file_id || "PDF"} · 第 ${imageData.page} 页`; figure.append(image, caption); grid.append(figure); }
-            card.body.append(grid);
-        }
-        refreshIcons(); scrollToBottom();
-    }
-    function appendEvidenceNote(run, text) { const note = document.createElement("div"); note.className = "evidence-note"; note.append(icon("sparkles"), document.createTextNode(text)); run.view.evidence.append(note); refreshIcons(); scrollToBottom(); }
-    function updateCompaction(run, event) {
-        if (event.task_id && event.task_id < (run.compactionTaskId || 0)) return;
-        run.compactionTaskId = event.task_id || run.compactionTaskId || 0;
-        const state = event.state || "completed";
-        if (state === "skipped" || state === "cancelled") { run.compactionNote?.remove(); run.compactionNote = null; return; }
-        const labels = {
-            started: "正在后台整理较早的工具结果，可继续研究",
-            waiting: "正在等待后台整理完成，以满足上下文预算",
-            completed: "较早的工具结果已整理为对话记忆",
-        };
-        if (!labels[state]) return;
-        if (!run.compactionNote) {
-            const note = document.createElement("div"); note.className = "evidence-note context-note";
-            note.setAttribute("role", "status"); note.setAttribute("aria-live", "polite");
-            run.view.evidence.append(note); run.compactionNote = note;
-        }
-        run.compactionNote.dataset.state = state;
-        run.compactionNote.replaceChildren(icon("sparkles"), document.createTextNode(labels[state]));
-        refreshIcons(); scrollToBottom();
-    }
-    function clearPendingCompaction(run) {
-        if (run.compactionNote && run.compactionNote.dataset.state !== "completed") {
-            run.compactionNote.remove(); run.compactionNote = null;
-        }
-    }
-    function showError(run, text) { const note = document.createElement("div"); note.className = "error-note"; note.textContent = text || "运行失败"; run.view.evidence.append(note); refreshIcons(); scrollToBottom(); }
-    function scrollToBottom() { requestAnimationFrame(() => { els["chat-scroll"].scrollTop = els["chat-scroll"].scrollHeight; }); }
-    function handleEvent(run, event) {
-        switch (event.type) {
-            case "status": setStatus(event.message || "处理中", "running"); break;
-            case "context_ready": appendEvidenceNote(run, `已载入 ${event.files?.length || 0} 份引用文件的检索上下文`); break;
-            case "context_window": break;
-            case "context_compact": updateCompaction(run, event); break;
-            case "thinking": appendThinking(run, event); break;
-            case "token": run.view.answer.textContent += event.text || ""; scrollToBottom(); break;
-            case "tool_call_delta": { const card = createToolCard(run, { ...event, name: event.name_delta || "工具调用" }); if (event.name_delta && card.label.textContent === "工具调用") card.label.textContent = event.name_delta; card.argsPre.textContent += event.arguments_delta || ""; break; }
-            case "tool_call": { const card = createToolCard(run, event); run.toolCards.set(event.tool_call_id, card); card.label.textContent = event.name || "工具调用"; card.status.textContent = "执行中"; card.argsPre.textContent = JSON.stringify(event.arguments || {}, null, 2); break; }
-            case "tool_result": showToolResult(run, event); break;
-            case "retry": appendEvidenceNote(run, event.message || "模型连接重试"); break;
-            case "history_state": state.history = Array.isArray(event.messages) ? event.messages : state.history; break;
-            case "done": clearPendingCompaction(run); setStatus("准备就绪", "done"); run.view.answer.dataset.complete = "true"; break;
-            case "error": clearPendingCompaction(run); setStatus("本次请求失败", "error"); showError(run, event.message); break;
-        }
-    }
-    async function consumeStream(run, response) {
-        const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
-        while (true) { const { value, done } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const blocks = buffer.split(/\r?\n\r?\n/); buffer = blocks.pop() || ""; for (const block of blocks) { const data = block.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n"); if (data) { try { handleEvent(run, JSON.parse(data)); } catch (error) { console.error("Invalid Agent event", error); } } } }
-        buffer += decoder.decode(); if (buffer.trim()) { const data = buffer.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n"); if (data) handleEvent(run, JSON.parse(data)); }
-    }
-    async function submit(event) {
-        event.preventDefault(); const question = els["question"].value.trim(); if (!question || !state.conversationFiles.length || state.controller) return;
-        const ids = state.conversationFiles.map(file => file.file_id); createMessage("user", question); const view = createAssistantMessage(); const run = { view, toolCards: new Map() }; state.currentRun = run; els["question"].value = ""; state.controller = new AbortController(); els["send-button"].disabled = true; els["attach-files"].disabled = true; els["stop-button"].classList.remove("hidden"); setStatus("正在研究", "running");
-        try {
-            const response = await fetch("/agent/stream", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" }, body: JSON.stringify({ file_ids: ids, question, history: state.history }), signal: state.controller.signal });
-            if (!response.ok) { let message = `请求失败（${response.status}）`; try { const body = await response.json(); message = body.detail || message; } catch {} showError(run, message); setStatus("请求失败", "error"); return; }
-            await consumeStream(run, response);
-        } catch (error) { if (error.name === "AbortError") { appendEvidenceNote(run, "本次研究已停止"); setStatus("已停止", "idle"); } else { showError(run, error.message || "连接中断"); setStatus("连接中断", "error"); } }
-        finally { clearPendingCompaction(run); state.controller = null; state.currentRun = null; els["send-button"].disabled = false; els["attach-files"].disabled = false; els["stop-button"].classList.add("hidden"); }
-    }
-    function clearConversation() { state.controller?.abort(); state.controller = null; state.history = []; state.conversationFiles = []; els["chat-inner"].replaceChildren(els["welcome"]); els["welcome"].classList.remove("hidden"); renderComposerFiles(); renderReferenceSummary(); setStatus("准备就绪", "idle"); els["question"].focus(); }
-    function selectedCount() {
-        els["picker-count"].textContent = `待加入 ${state.pickerSelection.size} 份 · 已引用 ${state.conversationFiles.length}/20`;
-        els["add-picker"].disabled = state.pickerSelection.size === 0 || state.conversationFiles.length + state.pickerSelection.size > 20;
-    }
-    function formatDate(value) { if (!value) return ""; try { return new Date(value).toLocaleDateString("zh-CN", { year: "numeric", month: "numeric", day: "numeric" }); } catch { return ""; } }
-    function renderFileList(items, { append = false } = {}) {
-        const previousMore = els["file-list"].querySelector(".load-more");
-        if (append) previousMore?.remove(); else els["file-list"].replaceChildren();
-        if (!items.length && !append) { const empty = document.createElement("div"); empty.className = "picker-empty"; empty.textContent = "没有找到已处理完成的文件"; els["file-list"].append(empty); selectedCount(); return; }
-        for (const file of items) {
-            state.pickerFiles.set(file.file_id, file); const row = document.createElement("div"); row.className = "file-row"; const input = document.createElement("input"); input.type = "checkbox"; input.id = `file-${file.file_id}`; const alreadyAdded = state.conversationFiles.some(item => item.file_id === file.file_id); input.checked = alreadyAdded || state.pickerSelection.has(file.file_id); input.disabled = alreadyAdded || (!input.checked && state.pickerSelection.size >= 20 - state.conversationFiles.length); input.addEventListener("change", () => { if (input.checked) state.pickerSelection.add(file.file_id); else state.pickerSelection.delete(file.file_id); els["file-list"].querySelectorAll('input[type="checkbox"]').forEach(box => { if (!box.checked) box.disabled = state.pickerSelection.size >= 20 - state.conversationFiles.length; }); selectedCount(); });
-            const label = document.createElement("label"); label.htmlFor = input.id; const name = document.createElement("strong"); name.textContent = file.file_name || file.file_id; const id = document.createElement("span"); id.textContent = file.file_id; label.append(name, id); const time = document.createElement("time"); time.textContent = alreadyAdded ? "已加入对话" : formatDate(file.create_time); row.append(input, label, time); els["file-list"].append(row);
-        }
-        if (state.pickerPage * 50 < state.pickerTotal) { const more = document.createElement("button"); more.className = "load-more"; more.type = "button"; more.textContent = "加载更多文件"; more.disabled = state.pickerLoading; more.addEventListener("click", () => loadFiles(true)); els["file-list"].append(more); }
-        selectedCount();
-    }
-    async function loadFiles(append = false) {
-        if (state.pickerLoading) return;
-        if (!append) {
-            state.pickerPage = 1;
-            state.pickerFiles = new Map([...state.pickerFiles].filter(([id]) => state.pickerSelection.has(id)));
-            els["file-list"].innerHTML = '<div class="picker-empty">正在加载文件……</div>';
-        }
-        state.pickerLoading = true;
-        try { const page = append ? state.pickerPage + 1 : 1; const params = new URLSearchParams({ q: els["file-search"].value.trim(), page: String(page), page_size: "50" }); const response = await fetch(`/agent/files?${params}`, { credentials: "same-origin" }); if (!response.ok) throw new Error(`文件列表请求失败（${response.status}）`); const body = await response.json(); state.pickerPage = page; state.pickerTotal = body.total || 0; renderFileList(body.items || [], { append }); }
-        catch (error) { els["file-list"].innerHTML = `<div class="picker-empty">${escapeHtml(error.message || "无法加载文件")}</div>`; }
-        finally { state.pickerLoading = false; const more = els["file-list"].querySelector(".load-more"); if (more) more.disabled = false; }
-    }
-    function openPicker() { state.pickerSelection = new Set(); state.pickerFiles = new Map(); els["file-search"].value = ""; els["file-picker"].showModal(); loadFiles(); setTimeout(() => els["file-search"].focus(), 0); }
-    function addSelectedFiles() { const existingIds = new Set(state.conversationFiles.map(file => file.file_id)); state.conversationFiles = [...state.conversationFiles, ...[...state.pickerSelection].map(id => state.pickerFiles.get(id)).filter(file => file && !existingIds.has(file.file_id))]; renderComposerFiles(); renderReferenceSummary(); els["file-picker"].close(); els["question"].focus(); }
-    els["composer"].addEventListener("submit", submit);
-    els["question"].addEventListener("keydown", event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); els["composer"].requestSubmit(); } });
-    els["attach-files"].addEventListener("click", openPicker); els["close-picker"].addEventListener("click", () => els["file-picker"].close()); els["cancel-picker"].addEventListener("click", () => els["file-picker"].close()); els["add-picker"].addEventListener("click", addSelectedFiles); els["new-chat"].addEventListener("click", clearConversation); els["stop-button"].addEventListener("click", () => state.controller?.abort());
-    els["file-search"].addEventListener("input", () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(loadFiles, 220); });
-    renderCatalog(); renderComposerFiles(); renderReferenceSummary(); refreshIcons();
-})();
-</script>
+<dialog id="new-chat-dialog" aria-labelledby="new-chat-title">
+    <h2 id="new-chat-title">开启一项新研究？</h2><p>当前对话和引用文档将被清空。需要保留结果时，可以先导出研究记录。</p>
+    <div class="dialog-actions"><button id="cancel-new-chat" class="picker-cancel" type="button">继续当前研究</button><button id="confirm-new-chat" class="picker-add" type="button">开启新研究</button></div>
+</dialog>
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+<script src="/ui/js/agent.js"></script>
 </body>
 </html>
