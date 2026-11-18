@@ -49,6 +49,9 @@ docs/superpowers/specs/*.md
 .auth-checks/
 Thumbs.db
 
+# UI 视觉检查生成的截图、测量数据与临时预览资料
+.taste-skill/
+
 # VL：原始 PDF 字节持久化目录
 uploads/
 

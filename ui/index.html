@@ -18,12 +18,12 @@
         theme: {
             extend: {
                 colors: {
-                    'bio-dark': '#2C4C3B',
-                    'bio-med': '#4F775D',
-                    'bio-light': '#8DAA91',
-                    'bio-pale': '#E8EFE6',
-                    'earth': '#8B735B',
-                    'sand': '#F5F2EB',
+                    'bio-dark': '#243936',
+                    'bio-med': '#287365',
+                    'bio-light': '#8DAAA2',
+                    'bio-pale': '#EDF3F0',
+                    'earth': '#7C7668',
+                    'sand': '#F3F5F3',
                 },
                 fontFamily: {
                     sans: ['Nunito', 'sans-serif'],
@@ -55,105 +55,91 @@
     <!-- Custom Styles (loaded after Tailwind for higher specificity) -->
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="css/auth.css">
+    <link rel="stylesheet" href="css/workbench.css">
     <script src="js/auth.js"></script>
 </head>
-<body class="antialiased font-sans bg-sand text-bio-dark">
-    <!-- Background Decorations -->
-    <div class="fixed inset-0 pointer-events-none z-0 overflow-hidden" aria-hidden="true">
-        <div class="absolute -top-20 -left-20 w-96 h-96 bg-bio-light/10 rounded-full blur-3xl animate-float"></div>
-        <div class="absolute -bottom-32 -right-16 w-[500px] h-[500px] bg-bio-pale/20 rounded-full blur-3xl animate-float" style="animation-delay:3s;"></div>
-    </div>
-
-    <!-- Header -->
-    <header class="header glass-card relative z-10">
-        <button class="runtime-monitor-entry" type="button" title="打开并发运行台" aria-label="打开并发运行台" onclick="App.switchPage('runtime-monitor')">
-            <i data-lucide="leaf" class="w-6 h-6 text-bio-med"></i>
-        </button>
-        <h1 id="app-title" class="app-title font-serif text-bio-dark" role="button" tabindex="0"
-            title="查看数据统计" onclick="App.switchPage('statistics')">析卷 AI</h1>
-        <nav class="header-nav">
-            <span class="nav-indicator"></span>
-            <button class="nav-btn active rounded-full" data-page="file-processing" onclick="App.switchPage('file-processing')">
-                <i data-lucide="file-text" class="w-4 h-4"></i>
-                文件处理
+<body class="workbench antialiased font-sans bg-sand text-bio-dark">
+    <a class="skip-link" href="#workspace-title">跳转到主内容</a>
+    <!-- 导航、工作范围与业务内容分层；保留全部原有业务入口。 -->
+    <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
+    <aside class="workspace-sidebar" id="workspace-sidebar" aria-label="主导航">
+        <div class="workspace-brand">
+            <button class="runtime-monitor-entry brand-mark" type="button" title="打开并发运行台" aria-label="打开并发运行台" onclick="App.switchPage('runtime-monitor')">
+                <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M7 5h12l6 6v16H7V5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M19 5v6h6M11 16h10M11 20h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M3 11v19h17" stroke="currentColor" stroke-opacity=".45" stroke-width="1.7" stroke-linecap="round"/></svg>
             </button>
-            <button class="nav-btn rounded-full" data-page="rule-config" onclick="App.switchPage('rule-config')">
-                <i data-lucide="settings" class="w-4 h-4"></i>
-                规则配置
-            </button>
-            <button class="nav-btn rounded-full" data-page="stream-demo" onclick="App.switchPage('stream-demo')">
-                <i data-lucide="radio" class="w-4 h-4"></i>
-                流式演示
-            </button>
-            <button class="nav-btn rounded-full" data-page="invocations" onclick="App.switchPage('invocations')">
-                <i data-lucide="list-checks" class="w-4 h-4"></i>
-                调用日志
-            </button>
-            <button class="nav-btn rounded-full" data-page="runtime-logs" onclick="App.switchPage('runtime-logs')">
-                <i data-lucide="square-terminal" class="w-4 h-4"></i>
-                实时日志
-            </button>
-            <button class="nav-btn rounded-full" data-page="api-docs" onclick="App.switchPage('api-docs')">
-                <i data-lucide="book-open" class="w-4 h-4"></i>
-                API
-            </button>
-            <a class="nav-btn rounded-full" href="/agent" aria-label="打开智能体工作台（Beta）">
-                <i data-lucide="bot" class="w-4 h-4"></i>
-                智能体
-                <span class="shrink-0 rounded-full border border-bio-med/20 bg-bio-pale px-1.5 py-0.5 text-[11px] font-bold leading-none text-bio-med" aria-hidden="true">Beta</span>
-            </a>
-        </nav>
-        <div class="doctype-bar" style="margin-left:auto; display:flex; align-items:center; gap:8px;">
-            <i data-lucide="folder" class="w-4 h-4 text-bio-med"></i>
-            <label style="font-size:13px; color:#4F775D;">项目</label>
-            <select id="project-selector" class="status-filter" data-hover="1" style="min-width:130px;" onchange="DocTypeManager.onProjectChange()"></select>
-            <label style="font-size:13px; color:#4F775D;">文档类型</label>
-            <select id="doctype-selector" class="status-filter" data-hover="1" style="min-width:140px;"></select>
-            <button class="btn btn-secondary" style="padding:4px 10px; font-size:12px;" onclick="DocTypeManager.openManageDialog()">管理</button>
-            <button class="btn btn-secondary settings-entry-btn" type="button" onclick="SettingsManager.open()" title="系统设置">
-                <i data-lucide="settings" class="w-4 h-4"></i><span>设置</span>
-            </button>
-            <button class="btn btn-secondary" type="button" onclick="Auth.logout()" title="退出管理员登录">退出</button>
+            <div><div id="app-title" class="app-title" role="button" tabindex="0" title="查看数据统计" onclick="App.switchPage('statistics')">析卷 <span>AI</span></div><span class="brand-caption">文档智能工作台</span></div>
+            <button id="sidebar-close" class="shell-icon-button mobile-only" type="button" aria-label="关闭导航"><i data-lucide="x"></i></button>
         </div>
+        <button class="workspace-search" id="workspace-command-open" type="button" aria-haspopup="dialog"><i data-lucide="search"></i><span>快速前往</span><kbd>Ctrl K</kbd></button>
+        <nav class="header-nav" aria-label="工作台模块">
+            <span class="nav-indicator" aria-hidden="true"></span>
+            <p class="nav-group-label">工作空间</p>
+            <button class="nav-btn active" data-page="file-processing" onclick="App.switchPage('file-processing')" aria-current="page"><i data-lucide="files"></i><span>文件处理</span><span id="nav-queue-count" class="nav-count" hidden></span></button>
+            <button class="nav-btn" data-page="rule-config" onclick="App.switchPage('rule-config')"><i data-lucide="sliders-horizontal"></i><span>规则配置</span></button>
+            <button class="nav-btn" data-page="stream-demo" onclick="App.switchPage('stream-demo')"><i data-lucide="workflow"></i><span>流式演示</span></button>
+            <a class="nav-btn agent-nav whitespace-nowrap" href="/agent" aria-label="打开智能体工作台（Beta）"><i data-lucide="bot"></i><span>智能体</span><span class="agent-beta" aria-hidden="true">Beta</span><i data-lucide="arrow-up-right" class="nav-end-icon"></i></a>
+            <p class="nav-group-label">洞察与运行</p>
+            <button class="nav-btn" data-page="statistics" onclick="App.switchPage('statistics')"><i data-lucide="chart-no-axes-combined"></i><span>数据统计</span></button>
+            <button class="nav-btn" data-page="runtime-monitor" onclick="App.switchPage('runtime-monitor')"><i data-lucide="activity"></i><span>并发运行台</span></button>
+            <button class="nav-btn" data-page="invocations" onclick="App.switchPage('invocations')"><i data-lucide="list-checks"></i><span>调用日志</span></button>
+            <button class="nav-btn" data-page="runtime-logs" onclick="App.switchPage('runtime-logs')"><i data-lucide="square-terminal"></i><span>实时日志</span></button>
+            <p class="nav-group-label">开发与管理</p>
+            <button class="nav-btn" data-page="api-docs" onclick="App.switchPage('api-docs')"><i data-lucide="book-open"></i><span>API 手册</span></button>
+            <button class="nav-btn settings-entry-btn" type="button" onclick="SettingsManager.open()"><i data-lucide="settings-2"></i><span>系统设置</span></button>
+        </nav>
+        <div class="sidebar-bottom">
+            <div class="sidebar-note"><i data-lucide="scan-text"></i><span>从文档到洞察<br><small>让信息有迹可循</small></span></div>
+            <button class="sidebar-account" type="button" onclick="Auth.logout()" title="退出管理员登录"><i data-lucide="log-out"></i><span>退出登录</span></button>
+        </div>
+    </aside>
+    <header class="header workbench-topbar">
+        <button id="sidebar-toggle" class="shell-icon-button mobile-only" type="button" aria-label="打开导航" aria-expanded="false" aria-controls="workspace-sidebar"><i data-lucide="panel-left"></i></button>
+        <div class="workspace-breadcrumb"><span>工作台</span><i data-lucide="chevron-right"></i><span id="workspace-breadcrumb-current">文件处理</span></div>
+        <div class="doctype-bar">
+            <div class="scope-field"><label for="project-selector">项目</label><select id="project-selector" class="status-filter" aria-label="当前项目" onchange="DocTypeManager.onProjectChange()"></select></div>
+            <span class="scope-separator" aria-hidden="true">/</span>
+            <div class="scope-field"><label for="doctype-selector">文档类型</label><select id="doctype-selector" class="status-filter" aria-label="当前文档类型"></select></div>
+            <button class="shell-icon-button scope-manage" type="button" onclick="DocTypeManager.openManageDialog()" title="管理项目与文档类型" aria-label="管理项目与文档类型"><i data-lucide="folder-cog"></i></button>
+        </div>
+        <div class="workspace-scope-note" id="workspace-scope-note" hidden><i data-lucide="globe-2"></i><span></span></div>
     </header>
+    <div class="workspace-sheet" id="workspace-sheet">
+        <div class="workspace-page-heading">
+            <div><h1 id="workspace-title" tabindex="-1">文件处理</h1><p id="workspace-description">将 PDF 转化为结构化信息，让每一份文档都清晰可用。</p></div>
+            <div class="workspace-heading-actions" id="workspace-file-actions">
+                <button id="workspace-refresh" class="btn btn-secondary" type="button" title="刷新文件列表"><i data-lucide="refresh-cw"></i><span>刷新</span></button>
+                <button class="btn btn-primary" type="button" onclick="document.getElementById('file-input').click()"><i data-lucide="plus"></i><span>上传文件</span></button>
+            </div>
+        </div>
 
     <!-- Page: File Processing -->
     <div id="page-file-processing" class="page-container active relative z-10">
     <main class="main-content">
-        <!-- Upload Area -->
-        <section class="upload-section glass-card">
-            <div id="upload-area" class="upload-area rounded-3xl">
-                <div class="upload-icon">
-                    <i data-lucide="upload-cloud" class="w-12 h-12 mx-auto"></i>
+        <div class="file-workspace-top">
+            <section class="upload-section glass-card">
+                <div id="upload-area" class="upload-area" role="button" tabindex="0" aria-label="选择或拖拽 PDF 文件上传，支持多选">
+                    <div class="upload-document" aria-hidden="true"><div class="document-back"></div><div class="document-front"><svg viewBox="0 0 32 32" fill="none"><path d="M10 19v-8m0 0-3 3m3-3 3 3M7 23h18M19 12h6M19 16h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>PDF</span></div></div>
+                    <div class="upload-copy"><h2>从一份 PDF 开始</h2><p class="upload-text">拖拽文件至此，或<span class="upload-link">选择文件 <i data-lucide="arrow-up-right"></i></span></p><p class="upload-hint">支持批量上传 · 自动解析与提取</p></div>
+                    <input type="file" id="file-input" accept=".pdf" multiple hidden>
                 </div>
-                <p class="upload-text">拖拽 PDF 文件到此处，或点击选择文件</p>
-                <p class="upload-hint">仅支持 .pdf 格式</p>
-                <input type="file" id="file-input" accept=".pdf" multiple hidden>
-                <!-- Corner leaf decoration -->
-                <svg class="absolute top-2 right-2 w-8 h-8 text-bio-light/30 pointer-events-none" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <path d="M17 8C8 10 5.9 16.17 3.82 21.34L5.71 22l1-2.3A4.49 4.49 0 0 0 8 20c4 0 8.5-3 9-8 .5-5-4-5.5-4-5.5s5 1 5 6c0 4.28-3.5 8-9 8a6.45 6.45 0 0 1-2-.3"/>
-                </svg>
-            </div>
-        </section>
-
-        <!-- Queue Section -->
-        <section class="queue-section">
-            <div class="queue-header">
-                <h2 class="section-title">当前队列</h2>
-                <button class="btn btn-secondary btn-sm" onclick="App.openAllQueueModal()">查看全部</button>
-            </div>
-            <div id="queue-container" class="queue-container">
-                <div class="queue-empty">暂无处理任务</div>
-            </div>
-        </section>
+            </section>
+            <section class="queue-section">
+                <div class="queue-header"><div class="queue-heading"><span class="queue-status-dot" aria-hidden="true"></span><h2 class="section-title">处理队列</h2><span id="workspace-queue-count" class="queue-total">0 个任务</span></div><button class="text-button" type="button" onclick="App.openAllQueueModal()">查看全部<i data-lucide="arrow-up-right"></i></button></div>
+                <div id="queue-container" class="queue-container"><div class="queue-empty"><span>队列已就绪</span><small>上传文件后，可在这里跟踪处理进度</small></div></div>
+            </section>
+        </div>
+        <div class="processing-flow-wrap"><div class="flow-label"><i data-lucide="workflow"></i><span>处理流程</span></div><ol class="processing-flow" aria-label="PDF 的六阶段处理流程">
+            <li data-flow-stage="parsing"><span>01</span>文档解析</li><li data-flow-stage="tableing"><span>02</span>表格校验</li><li data-flow-stage="chunking"><span>03</span>智能分块</li><li data-flow-stage="embedding"><span>04</span>向量存储</li><li data-flow-stage="extracting"><span>05</span>字段提取</li><li data-flow-stage="analyzing"><span>06</span>逻辑分析</li>
+        </ol><button class="flow-demo-link" type="button" onclick="App.switchPage('stream-demo')" aria-label="前往流式演示查看处理流程"><i data-lucide="arrow-right"></i></button></div>
 
         <!-- File List Section -->
         <section class="file-list-section glass-card">
             <div class="list-header">
-                <h2 class="section-title">文件列表</h2>
+                <div class="file-list-heading"><h2 class="section-title">文档库</h2><span id="workspace-file-total" class="file-total" aria-live="polite">正在加载</span></div>
                 <div class="list-actions">
-                    <select id="status-filter" class="status-filter">
+                    <select id="status-filter" class="status-filter" aria-label="按处理状态筛选文件">
                         <option value="">全部状态</option>
+                        <option value="queued">排队中</option>
                         <option value="parsing">解析中</option>
                         <option value="tableing">AI校验表格名中</option>
                         <option value="chunking">分块中</option>
@@ -829,6 +815,7 @@
             </section>
         </main>
     </div><!-- /page-statistics -->
+    </div><!-- /workspace-sheet -->
 
     <!-- Rule Modal -->
     <div id="rule-modal-overlay" class="rule-modal-overlay">
@@ -1287,6 +1274,12 @@
     <script src="js/api-docs.js"></script>
     <script src="js/statistics.js"></script>
     <script src="js/runtime-monitor.js"></script>
+    <script src="js/workbench.js"></script>
+    <dialog id="workspace-command" class="workspace-command" aria-labelledby="workspace-command-title">
+        <div class="command-search-row"><i data-lucide="search"></i><label id="workspace-command-title" class="sr-only" for="workspace-command-input">快速前往功能</label><input id="workspace-command-input" type="search" placeholder="搜索功能、设置或操作…" autocomplete="off" aria-controls="workspace-command-results"><button id="workspace-command-close" class="command-escape" type="button" aria-label="关闭快速导航">Esc</button></div>
+        <div id="workspace-command-results" class="command-results"></div><div class="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>Enter</kbd> 前往</span><span>析卷 AI 工作台</span></div>
+    </dialog>
+    <div id="workspace-announcer" class="sr-only" role="status" aria-live="polite"></div>
     <!-- Initialize Lucide icons -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {

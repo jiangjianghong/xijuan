@@ -98,6 +98,9 @@ const CustomSelect = {
         trigger.setAttribute('role', 'combobox');
         trigger.setAttribute('aria-haspopup', 'listbox');
         trigger.setAttribute('aria-expanded', 'false');
+        // 原生 select 的可访问名称同步到增强后的交互控件。
+        const accessibleName = select.getAttribute('aria-label') || select.labels?.[0]?.textContent?.trim() || select.title;
+        if (accessibleName) trigger.setAttribute('aria-label', accessibleName);
 
         const label = document.createElement('span');
         label.className = 'cs-label';
@@ -110,6 +113,9 @@ const CustomSelect = {
 
         wrapper.appendChild(trigger);
         select.classList.add('cs-native');
+        // 原生节点仅保存表单值，避免键盘和读屏重复进入同一个下拉控件。
+        select.tabIndex = -1;
+        select.setAttribute('aria-hidden', 'true');
 
         const syncLabel = () => {
             const opt = select.options[select.selectedIndex];
@@ -168,8 +174,10 @@ const CustomSelect = {
 
         trigger.addEventListener('keydown', e => {
             if (select.disabled) return;
+            if (this.state.activeWrapper === wrapper) return;
             if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                 e.preventDefault();
+                e.stopPropagation();
                 this.open(wrapper, trigger, select);
             }
         });
@@ -180,11 +188,18 @@ const CustomSelect = {
 
         const dropdown = document.createElement('div');
         dropdown.className = 'cs-dropdown';
+        dropdown.id = `cs-listbox-${this._listboxId = (this._listboxId || 0) + 1}`;
+        dropdown.setAttribute('role', 'listbox');
+        dropdown.setAttribute('aria-label', trigger.getAttribute('aria-label') || '选项');
         if (wrapper.classList.contains('cs-pill')) dropdown.classList.add('cs-dropdown-pill');
 
         Array.from(select.options).forEach((opt, idx) => {
             const item = document.createElement('div');
             item.className = 'cs-option';
+            item.id = `${dropdown.id}-${idx}`;
+            item.setAttribute('role', 'option');
+            item.setAttribute('aria-selected', String(idx === select.selectedIndex));
+            if (opt.disabled) item.setAttribute('aria-disabled', 'true');
             if (idx === select.selectedIndex) item.classList.add('cs-selected');
             if (opt.disabled) item.classList.add('cs-disabled');
             item.textContent = opt.textContent;
@@ -202,6 +217,7 @@ const CustomSelect = {
         document.body.appendChild(dropdown);
         wrapper.classList.add('cs-active');
         trigger.setAttribute('aria-expanded', 'true');
+        trigger.setAttribute('aria-controls', dropdown.id);
 
         // hover 模式：面板挂在 body 上，鼠标从触发器移到面板途中要保持展开
         if (wrapper.classList.contains('cs-hover')) {
@@ -222,6 +238,7 @@ const CustomSelect = {
         const focusItem = i => {
             items.forEach(it => it.classList.remove('cs-focused'));
             items[i]?.classList.add('cs-focused');
+            if (items[i]) trigger.setAttribute('aria-activedescendant', items[i].id);
             items[i]?.scrollIntoView({ block: 'nearest' });
         };
         focusItem(focusIdx);
@@ -236,11 +253,13 @@ const CustomSelect = {
                 e.preventDefault();
                 focusIdx = (focusIdx - 1 + items.length) % items.length;
                 focusItem(focusIdx);
-            } else if (e.key === 'Enter') {
+            } else if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
                 items[focusIdx]?.click();
             } else if (e.key === 'Escape') {
                 e.preventDefault();
+                this.close();
+            } else if (e.key === 'Tab') {
                 this.close();
             }
         };
@@ -271,6 +290,8 @@ const CustomSelect = {
         activeDropdown.classList.remove('cs-open');
         activeWrapper?.classList.remove('cs-active');
         activeTrigger?.setAttribute('aria-expanded', 'false');
+        activeTrigger?.removeAttribute('aria-controls');
+        activeTrigger?.removeAttribute('aria-activedescendant');
         if (activeKeyHandler) document.removeEventListener('keydown', activeKeyHandler);
 
         const el = activeDropdown;

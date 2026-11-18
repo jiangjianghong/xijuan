@@ -4,14 +4,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_settings_button_is_immediately_after_manage_button():
+def test_settings_and_type_management_remain_accessible_in_new_shell():
     html = (ROOT / "ui/index.html").read_text(encoding="utf-8")
-
-    manage = html.index("DocTypeManager.openManageDialog()")
-    settings = html.index("SettingsManager.open()")
-
-    assert manage < settings
-    assert settings - manage < 400
+    sidebar = html.split('id="workspace-sidebar"', 1)[1].split('</aside>', 1)[0]
+    topbar = html.split('class="header workbench-topbar"', 1)[1].split('</header>', 1)[0]
+    assert 'SettingsManager.open()' in sidebar
+    assert 'DocTypeManager.openManageDialog()' in topbar
+    assert 'aria-label="管理项目与文档类型"' in topbar
 
 
 def test_settings_dialog_and_script_are_present():

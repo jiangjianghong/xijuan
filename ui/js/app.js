@@ -35,7 +35,7 @@ const App = {
 
         const requestedPage = new URLSearchParams(window.location.search).get('page');
         if (requestedPage && document.getElementById(`page-${requestedPage}`)) {
-            this.switchPage(requestedPage);
+            this.switchPage(requestedPage, { history: 'replace' });
         }
 
         // 初始化导航滑动指示器位置
@@ -101,15 +101,25 @@ const App = {
     bindEvents() {
         // 上传区域
         this.els.uploadArea.addEventListener('click', () => this.els.fileInput.click());
-        this.els.fileInput.addEventListener('change', (e) => this.handleFiles(e.target.files));
+        this.els.fileInput.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files);
+            e.target.value = ''; // 同一份文件再次选择时仍然触发上传。
+            this.handleFiles(files);
+        });
+        this.els.uploadArea.addEventListener('keydown', (e) => {
+            if (e.target === this.els.uploadArea && (e.key === 'Enter' || e.key === ' ')) {
+                e.preventDefault();
+                this.els.fileInput.click();
+            }
+        });
 
         // 拖拽
         this.els.uploadArea.addEventListener('dragover', (e) => {
             e.preventDefault();
             this.els.uploadArea.classList.add('drag-over');
         });
-        this.els.uploadArea.addEventListener('dragleave', () => {
-            this.els.uploadArea.classList.remove('drag-over');
+        this.els.uploadArea.addEventListener('dragleave', (e) => {
+            if (!this.els.uploadArea.contains(e.relatedTarget)) this.els.uploadArea.classList.remove('drag-over');
         });
         this.els.uploadArea.addEventListener('drop', (e) => {
             e.preventDefault();
@@ -153,7 +163,7 @@ const App = {
 
         // Tab 切换
         document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => this.switchTab(e.target.dataset.tab));
+            btn.addEventListener('click', (e) => this.switchTab(e.currentTarget.dataset.tab));
         });
 
         // 上传失败卡片操作
@@ -293,8 +303,9 @@ const App = {
     },
 
     renderQueue() {
+        document.dispatchEvent(new CustomEvent('workbench:queue', { detail: { items: [...this.state.queue.values()] } }));
         if (this.state.queue.size === 0) {
-            this.els.queueContainer.innerHTML = '<div class="queue-empty">暂无处理任务</div>';
+            this.els.queueContainer.innerHTML = '<div class="queue-empty"><span>队列已就绪</span><small>上传文件后，可在这里跟踪处理进度</small></div>';
             return;
         }
 
@@ -442,26 +453,50 @@ const App = {
     // ─────────────────────────────────────────────────────────
 
     async loadFileList() {
+        const generation = this._fileListGeneration = (this._fileListGeneration || 0) + 1;
+        const typeId = API.getCurrentTypeId();
+        const section = document.querySelector('.file-list-section');
+        section?.setAttribute('aria-busy', 'true');
         try {
             const data = await API.getFileList(
                 this.state.currentPage,
                 this.state.pageSize,
                 this.state.statusFilter
             );
+            // 切换类型、筛选或分页后，较晚返回的旧请求不得覆盖当前视图。
+            if (generation !== this._fileListGeneration || typeId !== API.getCurrentTypeId()) return;
+            const viewKey = `${typeId}:${this.state.currentPage}:${this.state.statusFilter}`;
+            if (this._fileListViewKey !== viewKey) this.state.selectedIds.clear();
+            this._fileListViewKey = viewKey;
+            const visibleIds = new Set(data.items.map(item => item.file_id));
+            this.state.selectedIds.forEach(id => { if (!visibleIds.has(id)) this.state.selectedIds.delete(id); });
             this.renderFileList(data);
+            this.updateSelectAllState();
             this.renderPagination(data);
+            document.dispatchEvent(new CustomEvent('workbench:files', { detail: { total: data.total, page: data.page, count: data.items.length } }));
         } catch (error) {
+            if (generation !== this._fileListGeneration) return;
+            if (!this.els.fileListBody.children.length) {
+                this.els.fileListBody.innerHTML = '<tr><td colspan="6"><div class="workspace-empty"><strong>暂时无法加载文档库</strong><p>请检查连接后重试。</p><button class="btn btn-secondary" type="button" onclick="App.loadFileList()">重新加载</button></div></td></tr>';
+            }
             Toast.error('加载文件列表失败');
+            document.dispatchEvent(new CustomEvent('workbench:files', { detail: { error: true } }));
+        } finally {
+            if (generation === this._fileListGeneration) section?.setAttribute('aria-busy', 'false');
         }
     },
 
     renderFileList(data) {
+        this._fileItems = {};
         if (data.items.length === 0) {
             this.els.fileListBody.innerHTML = `
-                <tr><td colspan="6" style="text-align: center; padding: 40px; color: var(--text-secondary);">
-                    暂无文件
+                <tr><td colspan="6">
+                    <div class="workspace-empty"><strong>${this.state.statusFilter ? '没有符合此状态的文件' : '文档库等待第一份文件'}</strong>
+                    <p>${this.state.statusFilter ? '试试其他处理状态，或清除筛选。' : '上传 PDF 后，解析结果、提取字段与分析结论将在这里汇集。'}</p>
+                    <button class="btn btn-secondary" type="button" onclick="${this.state.statusFilter ? "App.clearFileFilter()" : "document.getElementById('file-input').click()"}">${this.state.statusFilter ? '清除筛选' : '选择 PDF 文件'}</button></div>
                 </td></tr>
             `;
+            this.updateBatchDeleteBtn();
             return;
         }
 
@@ -472,14 +507,15 @@ const App = {
             const statusClass = Utils.getStatusClass(item.progress);
             const statusText = Utils.getStatusText(item.progress);
             const isSelected = this.state.selectedIds.has(item.file_id);
+            const safeName = Utils.escapeHtml(item.file_name).replace(/"/g, '&quot;');
 
             html += `
-                <tr data-id="${item.file_id}" class="${isSelected ? 'selected' : ''}" style="animation-delay: ${index * 50}ms">
+                <tr data-id="${item.file_id}" class="${isSelected ? 'selected' : ''}">
                     <td class="col-checkbox" onclick="event.stopPropagation()">
-                        <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="App.toggleSelect('${item.file_id}', this.checked)">
+                        <input type="checkbox" aria-label="选择文件 ${safeName}" ${isSelected ? 'checked' : ''} onchange="App.toggleSelect('${item.file_id}', this.checked)">
                     </td>
                     <td class="col-name" onclick="App.openDrawer('${item.file_id}')">
-                        <span class="file-name-cell" title="${Utils.escapeHtml(item.file_name)}">${Utils.escapeHtml(item.file_name)}</span>
+                        <button type="button" class="file-name-cell" title="${safeName}">${Utils.escapeHtml(item.file_name)}</button>
                     </td>
                     <td class="col-size">${Utils.formatFileSize(item.file_size)}</td>
                     <td class="col-time">${Utils.formatDateTime(item.create_time)}</td>
@@ -541,6 +577,11 @@ const App = {
         this.els.pagination.innerHTML = html;
     },
 
+    clearFileFilter() {
+        this.els.statusFilter.value = '';
+        this.els.statusFilter.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+
     goToPage(page) {
         this.state.currentPage = page;
         this.state.selectedIds.clear();
@@ -576,6 +617,7 @@ const App = {
             row.querySelector('input[type="checkbox"]').checked = checked;
         });
         this.updateBatchDeleteBtn();
+        this.updateSelectAllState();
     },
 
     updateRowSelection(fileId, checked) {
@@ -586,6 +628,7 @@ const App = {
     updateSelectAllState() {
         const rows = this.els.fileListBody.querySelectorAll('tr[data-id]');
         this.els.selectAll.checked = rows.length > 0 && this.state.selectedIds.size === rows.length;
+        this.els.selectAll.indeterminate = this.state.selectedIds.size > 0 && this.state.selectedIds.size < rows.length;
     },
 
     updateBatchDeleteBtn() {
@@ -666,19 +709,26 @@ const App = {
     // ─────────────────────────────────────────────────────────
 
     async openDrawer(fileId) {
+        this._drawerReturnFocus = document.activeElement;
         this.state.currentFileId = fileId;
         this.els.drawerOverlay.classList.add('active');
+        this.els.detailDrawer.setAttribute('role', 'dialog');
+        this.els.detailDrawer.setAttribute('aria-modal', 'true');
+        this.els.detailDrawer.setAttribute('aria-labelledby', 'drawer-filename');
+        this.els.drawerClose.focus({ preventScroll: true });
         await this.loadDrawerContent(fileId);
     },
 
     closeDrawer() {
         this.els.drawerOverlay.classList.remove('active');
         this.state.currentFileId = null;
+        if (this._drawerReturnFocus?.isConnected) this._drawerReturnFocus.focus({ preventScroll: true });
     },
 
     async loadDrawerContent(fileId) {
         try {
             const detail = await API.getFileDetail(fileId);
+            if (this.state.currentFileId !== fileId) return;
             this.els.drawerFilename.textContent = detail.file_name;
             this.els.drawerFilesize.textContent = Utils.formatFileSize(detail.file_size);
             // 入参标签页复用这份详情，避免切标签时重复请求
@@ -1282,12 +1332,21 @@ const App = {
     // 页面切换
     // ─────────────────────────────────────────────────────────
 
-    switchPage(page) {
+    switchPage(page, options = {}) {
+        const target = document.getElementById('page-' + page);
+        if (!target || !target.classList.contains('page-container')) return;
+        const previous = document.querySelector('.page-container.active')?.id.replace('page-', '');
+        if (this.state.currentView === page && options.history !== 'none') return;
+        this._pageScroll = this._pageScroll || {};
+        if (previous) this._pageScroll[previous] = window.scrollY;
+        this.state.currentView = page;
         if (window.history && window.history.replaceState) {
             const url = new URL(window.location.href);
-            if (page === 'runtime-monitor') url.searchParams.set('page', 'runtime-monitor');
-            else if (url.searchParams.get('page') === 'runtime-monitor') url.searchParams.delete('page');
-            window.history.replaceState(null, '', url.pathname + (url.search ? url.search : '') + url.hash);
+            if (page === 'file-processing') url.searchParams.delete('page');
+            else url.searchParams.set('page', page);
+            if (options.history !== 'none' && url.href !== window.location.href) {
+                window.history[options.history === 'replace' ? 'replaceState' : 'pushState'](null, '', url.pathname + url.search + url.hash);
+            }
         }
 
         // 切换导航按钮
@@ -1295,11 +1354,12 @@ const App = {
         document.querySelectorAll('.nav-btn').forEach(btn => {
             const match = btn.dataset.page === page;
             btn.classList.toggle('active', match);
+            if (match) btn.setAttribute('aria-current', 'page');
+            else btn.removeAttribute('aria-current');
             if (match) targetBtn = btn;
         });
 
-        // 滑动指示器：统计页没有对应导航按钮，此时把指示器收起，
-        // 否则它会停在上一个按钮下方，显得某个导航项仍处于选中态。
+        // 导航滑动底板与当前模块同步，非导航页面不保留误导性的选中态。
         const indicator = document.querySelector('.nav-indicator');
         if (targetBtn) {
             if (indicator) indicator.style.opacity = '';
@@ -1312,7 +1372,6 @@ const App = {
         document.querySelectorAll('.page-container').forEach(el => {
             el.classList.remove('active');
         });
-        const target = document.getElementById('page-' + page);
         if (target) target.classList.add('active');
 
         // 首次进入规则配置时加载数据
@@ -1363,6 +1422,8 @@ const App = {
                 Statistics.deactivate();
             }
         }
+        window.scrollTo({ top: this._pageScroll[page] || 0, behavior: 'instant' });
+        document.dispatchEvent(new CustomEvent('workbench:page', { detail: { page, previous, animate: previous !== page } }));
     },
 
     updateNavIndicator(btn) {
@@ -1372,8 +1433,10 @@ const App = {
         const navRect = nav.getBoundingClientRect();
         const btnRect = btn.getBoundingClientRect();
         const left = btnRect.left - navRect.left;
+        const top = btnRect.top - navRect.top + nav.scrollTop;
         indicator.style.width = btnRect.width + 'px';
-        indicator.style.transform = `translateX(${left}px)`;
+        indicator.style.height = btnRect.height + 'px';
+        indicator.style.transform = `translate(${left}px, ${top}px)`;
     },
 
     // ─────────────────────────────────────────────────────────
