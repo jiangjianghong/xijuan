@@ -84,17 +84,16 @@ function accessContext() {
         querySelectorAll: selector => selector === 'button' ? buttons : tabs,
         querySelector: () => controls,
     };
-    const overlay = { active: true, classList: {
-        contains: () => overlay.active, remove: () => { overlay.active = false; },
-    } };
+    const page = { classList: { contains: name => name === 'active' } };
     const elements = {
-        'access-settings': rootElement, 'settings-modal-overlay': overlay,
+        'access-settings': rootElement, 'page-settings': page,
         'access-body': { innerHTML: '', textContent: '' }, 'access-error': { textContent: '' },
         'access-key-panel': { hidden: true }, 'access-copy-status': { textContent: '' },
         'access-key-value': { value: '', focus() {}, select() {} },
     };
     const context = {
         document: { getElementById: id => elements[id] || null },
+        window: { removeEventListener() {} },
         Auth: { locked: false }, Utils: { escapeHtml: String },
         API: { request: async () => ({ data: payload }) },
     };
@@ -103,7 +102,7 @@ function accessContext() {
     return { context, access: context.AccessControl, elements, inputs, tabs, buttons };
 }
 
-test('访问控制嵌入设置分组，密钥在分组内展示，关闭设置清除明文', async () => {
+test('访问控制嵌入设置分组，密钥在分组内展示，离开设置页清除明文', async () => {
     const { context, access, elements } = accessContext();
     const html = fs.readFileSync(path.join(root, 'ui/index.html'), 'utf8');
     elements['access-settings-template'] = { innerHTML: html.match(/<template id="access-settings-template">([\s\S]*?)<\/template>/)[1] };
@@ -122,8 +121,7 @@ test('访问控制嵌入设置分组，密钥在分组内展示，关闭设置�
     assert.equal(elements['access-key-panel'].hidden, false);
     assert.equal(elements['access-key-value'].value, 'xj_once_only');
     assert.equal(access.payload.key, undefined);
-    context.SettingsManager.setDirty = () => {};
-    context.SettingsManager.close();
+    context.SettingsManager.deactivate();
     assert.equal(elements['access-key-value'].value, '');
     assert.equal(elements['access-key-panel'].hidden, true);
     assert.equal(access.payload, null);

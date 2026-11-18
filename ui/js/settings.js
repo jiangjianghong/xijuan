@@ -6,25 +6,28 @@ const SettingsManager = {
     original: {},
     draftBeforeAuth: null,
     dirty: false,
-    pendingOpen: false,
+    loading: false,
+    saving: false,
     secretState: {},
-    scrollSpyHandler: null,
+    scrollFrame: null,
+    pendingGroup: null,
+    lastJump: null,
 
     GROUPS: [
         { id: 'access_control', label: '接口访问控制', icon: 'shield-check', description: '管理调用程序的密钥与免密访问来源，操作后即时生效' },
-        { id: 'mineru', label: 'MinerU', icon: 'file-scan', description: 'PDF 解析服务与上传限制' },
-        { id: 'chunking', label: '文本分块', icon: 'split', description: '文本切分长度、重叠与分隔符' },
-        { id: 'embedding', label: '向量化', icon: 'binary', description: 'Embedding 服务连接与只读运行参数' },
-        { id: 'extraction', label: '字段提取', icon: 'scan-text', description: '字段提取使用的语言模型' },
-        { id: 'table_name_validation', label: '表格名校验', icon: 'table-properties', description: '独立的表格名称识别模型配置' },
-        { id: 'analysis', label: '逻辑分析', icon: 'waypoints', description: '独立的分析模型与计算精度，需单独配置服务地址和模型名称' },
-        { id: 'agent', label: '智能体 Agent', icon: 'bot', description: '工具调用、文本回答和 PDF 图片共用的 OpenAI 兼容模型；最大迭代轮数即时生效' },
-        { id: 'rerank', label: 'Rerank 重排', icon: 'list-filter', description: 'Cohere-compatible 候选结果重排模型' },
-        { id: 'vl_model', label: 'VL 视觉模型', icon: 'scan-eye', description: '视觉模型、图像限制与并发' },
-        { id: 'web_search', label: '博查网络搜索', icon: 'search', description: 'Judge 规则使用的联网搜索服务' },
         { id: 'callback', label: '异步回调', icon: 'webhook', description: '管线阶段通知 POST 的请求超时' },
         { id: 'storage', label: 'PDF 存储', icon: 'hard-drive', description: '原始 PDF 容量和保留时间' },
         { id: 'concurrency', label: '模型并发', icon: 'gauge', description: '模型通道、业务阶段与单任务并发上限' },
+        { id: 'mineru', label: 'MinerU', icon: 'file-scan', description: 'PDF 解析服务与上传限制' },
+        { id: 'chunking', label: '文本分块', icon: 'split', description: '文本切分长度、重叠与分隔符' },
+        { id: 'table_name_validation', label: '表格名校验', icon: 'table-properties', description: '独立的表格名称识别模型配置' },
+        { id: 'extraction', label: '字段提取', icon: 'scan-text', description: '字段提取使用的语言模型' },
+        { id: 'analysis', label: '逻辑分析', icon: 'waypoints', description: '独立的分析模型与计算精度，需单独配置服务地址和模型名称' },
+        { id: 'embedding', label: '向量化', icon: 'binary', description: 'Embedding 服务连接与只读运行参数' },
+        { id: 'agent', label: '智能体 Agent', icon: 'bot', description: '工具调用、文本回答和 PDF 图片共用的 OpenAI 兼容模型；最大迭代轮数即时生效' },
+        { id: 'vl_model', label: 'VL 视觉模型', icon: 'scan-eye', description: '视觉模型、图像限制与并发' },
+        { id: 'rerank', label: 'Rerank 重排', icon: 'list-filter', description: 'Cohere-compatible 候选结果重排模型' },
+        { id: 'web_search', label: '博查网络搜索', icon: 'search', description: 'Judge 规则使用的联网搜索服务' },
     ],
 
     FIELDS: {
@@ -148,15 +151,33 @@ const SettingsManager = {
         return Utils.escapeHtml(String(value ?? ''));
     },
 
-    async open() {
-        this.pendingOpen = true;
-        try {
-            const session = await API.getSettingsSession();
-            if (!session.authenticated) return this.openLogin();
-            await this.loadAndShow();
-        } catch (error) {
-            Toast.error('检查设置会话失败: ' + error.message);
-        }
+    isActive() {
+        return document.getElementById('page-settings')?.classList.contains('active');
+    },
+
+    activate() {
+        window.addEventListener('scroll', this.scheduleGroupSync, { passive: true });
+        window.addEventListener('resize', this.scheduleGroupSync);
+        // 切换工作台页面保留表单草稿，但不保留一次性展示的 API Key。
+        if ((this.dirty || this.saving) && !this.draftBeforeAuth) {
+            if (!Auth.locked && !AccessControl.root) AccessControl.mount();
+        } else this.load();
+    },
+
+    deactivate() {
+        AccessControl.unmount();
+        window.removeEventListener('scroll', this.scheduleGroupSync);
+        window.removeEventListener('resize', this.scheduleGroupSync);
+        if (this.scrollFrame !== null) cancelAnimationFrame(this.scrollFrame);
+        this.scrollFrame = null;
+        this.pendingGroup = null;
+        this.lastJump = null;
+    },
+
+    renderNavigation(nav) {
+        nav.innerHTML = `<ul>${this.GROUPS.map(({ id, label }) =>
+            `<li><button type="button" class="settings-subnav-item" data-jump-group="${id}">${label}</button></li>`
+        ).join('')}</ul>`;
     },
 
     openLogin() {
@@ -171,7 +192,6 @@ const SettingsManager = {
     closeLogin() {
         if (Auth.locked) return;
         document.getElementById('settings-login-overlay').classList.remove('active');
-        this.pendingOpen = false;
     },
 
     async login(event) {
@@ -186,7 +206,7 @@ const SettingsManager = {
             Auth.unlock();
             document.getElementById('settings-login-overlay').classList.remove('active');
             input.value = '';
-            if (this.pendingOpen || this.draftBeforeAuth) await this.loadAndShow(true);
+            if (this.isActive()) this.activate();
         } catch (error) {
             errorEl.textContent = error.message;
         } finally {
@@ -194,46 +214,57 @@ const SettingsManager = {
         }
     },
 
-    async loadAndShow(afterRelogin = false) {
-        const oldDraft = afterRelogin ? this.draftBeforeAuth : null;
-        const data = await API.getRuntimeSettings();
-        this.payload = data;
-        this.original = structuredClone(data.config);
-        this.secretState = {};
-        this.render();
-        const restoredDraft = Boolean(oldDraft && oldDraft.version === data.version);
-        if (restoredDraft) this.restoreDraft(oldDraft);
-        else if (oldDraft) Toast.info('配置已变化，请重新应用之前的修改');
-        this.draftBeforeAuth = null;
-        this.pendingOpen = false;
-        document.getElementById('settings-modal-overlay').classList.add('active');
-        this.setDirty(restoredDraft);
-        lucide.createIcons();
-    },
-
-    close() {
-        if (this.dirty && !confirm('有尚未保存的设置，确定关闭吗？')) return;
-        AccessControl.unmount();
-        document.getElementById('settings-modal-overlay').classList.remove('active');
-        this.setDirty(false);
+    async load() {
+        if (this.loading || Auth.locked) return;
+        this.loading = true;
+        const body = document.getElementById('settings-page-body');
+        const state = document.getElementById('settings-load-state');
+        const message = document.getElementById('settings-load-message');
+        const retry = document.getElementById('settings-retry-btn');
+        const draftScroll = this.draftBeforeAuth ? window.scrollY : 0;
+        body.hidden = true;
+        state.hidden = false;
+        retry.hidden = true;
+        message.textContent = '正在加载系统设置…';
+        try {
+            const data = await API.getRuntimeSettings();
+            if (!this.isActive()) return;
+            const oldDraft = this.draftBeforeAuth;
+            this.payload = data;
+            this.original = structuredClone(data.config);
+            this.secretState = {};
+            this.render();
+            const restoredDraft = Boolean(oldDraft && oldDraft.version === data.version);
+            if (restoredDraft) this.restoreDraft(oldDraft);
+            else if (oldDraft) Toast.info('配置已变化，请重新应用之前的修改');
+            this.draftBeforeAuth = null;
+            this.setDirty(restoredDraft);
+            body.hidden = false;
+            state.hidden = true;
+            if (restoredDraft && draftScroll) window.scrollTo({ top: draftScroll, behavior: 'instant' });
+            lucide.createIcons();
+            if (this.pendingGroup) this.jumpToGroup(this.pendingGroup);
+            else this.scheduleGroupSync();
+        } catch (error) {
+            message.textContent = '加载系统设置失败：' + error.message;
+            retry.hidden = false;
+        } finally {
+            this.loading = false;
+        }
     },
 
     render() {
         AccessControl.unmount();
-        const nav = document.getElementById('settings-group-nav');
         const body = document.getElementById('settings-form-body');
-        nav.innerHTML = this.GROUPS.map((group, index) => `
-            <button type="button" class="settings-nav-item${index === 0 ? ' active' : ''}"
-                    data-settings-nav="${group.id}" onclick="SettingsManager.scrollToGroup('${group.id}')">
-                <i data-lucide="${group.icon}" class="w-4 h-4"></i><span>${group.label}</span>
-            </button>`).join('');
         body.innerHTML = this.GROUPS.map(group => this.renderGroup(group)).join('');
         body.querySelectorAll('.settings-fields input, .settings-fields select, .settings-fields textarea').forEach(el => {
             el.addEventListener('input', () => this.setDirty(true));
             el.addEventListener('change', () => this.setDirty(true));
         });
-        this.bindScrollSpy();
-        AccessControl.mount();
+        if (this.isActive() && !Auth.locked) {
+            AccessControl.mount();
+            this.scheduleGroupSync();
+        }
     },
 
     renderGroup(group) {
@@ -242,10 +273,11 @@ const SettingsManager = {
         const content = group.id === 'access_control'
             ? document.getElementById('access-settings-template').innerHTML
             : `<div class="settings-fields">${fields}</div>`;
-        return `<section class="settings-section" id="settings-group-${group.id}" data-settings-group="${group.id}">
+        return `<section class="settings-section" id="settings-group-${group.id}" data-settings-group="${group.id}"
+            aria-labelledby="settings-title-${group.id}">
             <header class="settings-section-header">
                 <div class="settings-section-icon"><i data-lucide="${group.icon}" class="w-5 h-5"></i></div>
-                <div><h4>${group.label}</h4><p>${group.description}</p></div>
+                <div><h2 id="settings-title-${group.id}" tabindex="-1">${group.label}</h2><p>${group.description}</p></div>
             </header>
             ${content}
         </section>`;
@@ -330,40 +362,60 @@ const SettingsManager = {
         this.setDirty(true);
     },
 
-    scrollToGroup(group) {
-        document.getElementById(`settings-group-${group}`).scrollIntoView({ behavior: 'smooth', block: 'start' });
-        this.setActiveGroup(group);
+    scheduleGroupSync() {
+        if (SettingsManager.scrollFrame !== null) return;
+        SettingsManager.scrollFrame = requestAnimationFrame(() => {
+            SettingsManager.scrollFrame = null;
+            SettingsManager.syncActiveGroup();
+        });
     },
 
-    bindScrollSpy() {
-        const body = document.getElementById('settings-form-body');
-        if (this.scrollSpyHandler) body.removeEventListener('scroll', this.scrollSpyHandler);
-        this.scrollSpyHandler = () => this.syncActiveGroupToScroll();
-        body.addEventListener('scroll', this.scrollSpyHandler, { passive: true });
-    },
-
-    syncActiveGroupToScroll() {
-        const body = document.getElementById('settings-form-body');
+    syncActiveGroup() {
+        const nav = document.getElementById('settings-subnav');
+        const body = document.getElementById('settings-page-body');
+        if (nav.hidden || body.hidden) return;
+        // 靠近页尾时多个分组可能跳到同一位置，优先保留用户明确选择的分组。
+        if (this.lastJump?.top === window.scrollY) return;
+        this.lastJump = null;
         const sections = [...body.querySelectorAll('[data-settings-group]')];
         if (!sections.length) return;
-
-        let activeSection = sections[0];
-        const activationLine = body.getBoundingClientRect().top + 24;
-        for (const section of sections) {
-            if (section.getBoundingClientRect().top > activationLine) break;
-            activeSection = section;
+        const line = body.querySelector('.settings-toolbar').getBoundingClientRect().bottom + 12;
+        let section = sections[0];
+        for (const item of sections) {
+            if (item.getBoundingClientRect().top > line) break;
+            section = item;
         }
-        if (body.scrollTop + body.clientHeight >= body.scrollHeight - 2) {
-            activeSection = sections[sections.length - 1];
+        const root = document.scrollingElement;
+        if (window.scrollY > 0 && window.scrollY + window.innerHeight >= root.scrollHeight - 2) {
+            section = sections[sections.length - 1];
         }
-        this.setActiveGroup(activeSection.dataset.settingsGroup);
+        this.markActiveGroup(section.dataset.settingsGroup);
     },
 
-    setActiveGroup(group) {
-        const items = [...document.querySelectorAll('.settings-nav-item')];
-        items.forEach(item => item.classList.toggle('active', item.dataset.settingsNav === group));
-        const activeItem = items.find(item => item.dataset.settingsNav === group);
-        activeItem?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    markActiveGroup(group) {
+        const nav = document.getElementById('settings-subnav');
+        const current = nav.querySelector('[aria-current="location"]');
+        if (current?.dataset.jumpGroup === group) return;
+        const index = this.GROUPS.findIndex(item => item.id === group);
+        if (index < 0) return;
+        nav.style.setProperty('--settings-row', index);
+        current?.removeAttribute('aria-current');
+        nav.querySelector(`[data-jump-group="${group}"]`)?.setAttribute('aria-current', 'location');
+    },
+
+    jumpToGroup(group) {
+        if (!this.isActive()) return;
+        const section = document.getElementById(`settings-group-${group}`);
+        if (!section?.getClientRects().length) {
+            this.pendingGroup = group;
+            document.getElementById('workspace-title').focus({ preventScroll: true });
+            return;
+        }
+        this.pendingGroup = null;
+        section.scrollIntoView({ behavior: 'instant', block: 'start' });
+        this.lastJump = { top: window.scrollY };
+        document.getElementById(`settings-title-${group}`).focus({ preventScroll: true });
+        this.markActiveGroup(group);
     },
 
     parseControl(control) {
@@ -388,14 +440,19 @@ const SettingsManager = {
         document.querySelectorAll('#settings-form [data-path]').forEach(control => {
             if (control.disabled) return;
             const [group, field] = control.dataset.path.split('.');
-            values[group][field] = this.parseControl(control);
+            try { values[group][field] = this.parseControl(control); }
+            catch (error) { error.control = control; throw error; }
         });
         const secrets = {};
         Object.entries(this.secretState).forEach(([path, state]) => {
             if (state.action === 'replace') {
                 const input = document.querySelector(`[data-secret-path="${path}"] .settings-secret-input`);
                 const value = input.value.trim();
-                if (!value) throw new Error(`${path} 的新密钥不能为空`);
+                if (!value) {
+                    const error = new Error(`${path} 的新密钥不能为空`);
+                    error.control = input;
+                    throw error;
+                }
                 secrets[path] = { action: 'replace', value };
             } else if (state.action === 'clear') secrets[path] = { action: 'clear' };
         });
@@ -420,9 +477,17 @@ const SettingsManager = {
 
     async save(event) {
         event.preventDefault();
+        if (this.saving || !this.payload) return;
         let draft;
         try { draft = this.collectDraft(); }
-        catch (error) { Toast.error(error.message); return; }
+        catch (error) {
+            if (error.control) {
+                error.control.scrollIntoView({ behavior: 'instant', block: 'center' });
+                error.control.focus({ preventScroll: true });
+            }
+            Toast.error(error.message);
+            return;
+        }
         const payload = {
             base_version: this.payload.version,
             changes: this.buildChanges(draft.values),
@@ -433,6 +498,7 @@ const SettingsManager = {
             return;
         }
         const button = document.getElementById('settings-save-btn');
+        this.saving = true;
         button.disabled = true;
         try {
             const updated = await API.updateRuntimeSettings(payload);
@@ -446,8 +512,6 @@ const SettingsManager = {
         } catch (error) {
             if (error.status === 401) {
                 this.draftBeforeAuth = draft;
-                document.getElementById('settings-modal-overlay').classList.remove('active');
-                this.pendingOpen = true;
                 this.openLogin();
             } else if (error.status === 409) {
                 this.conflictDraft = draft;
@@ -457,6 +521,7 @@ const SettingsManager = {
                 Toast.error('保存失败: ' + error.message);
             }
         } finally {
+            this.saving = false;
             button.disabled = !this.dirty;
         }
     },
@@ -512,14 +577,9 @@ const SettingsManager = {
 
     setDirty(value) {
         this.dirty = value;
-        document.getElementById('settings-dirty-dot')?.classList.toggle('active', value);
         const status = document.getElementById('settings-save-status');
-        if (status) status.textContent = value ? '有未保存的修改' : '没有未保存的修改';
+        if (status) status.textContent = value ? '未保存' : '';
         const button = document.getElementById('settings-save-btn');
-        if (button) button.disabled = !value;
-    },
-
-    async logout() {
-        await Auth.logout();
+        if (button) button.disabled = this.saving || !value;
     },
 };

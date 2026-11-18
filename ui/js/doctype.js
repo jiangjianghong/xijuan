@@ -85,7 +85,7 @@ const DocTypeManager = {
         API.setCurrentTypeId(sel.value);
         this._currentName = sel.options[sel.selectedIndex]?.text || sel.value;
         this._reloadCurrentType();
-        Toast.success('已切换文档类型: ' + sel.options[sel.selectedIndex].text);
+        this.announceScopeChange('文档类型', this._currentName);
     },
 
     // 切换项目：拉该项目类型 → 重置当前类型为首个（未分组回退 default）→ 联动刷新
@@ -94,10 +94,12 @@ const DocTypeManager = {
         if (!sel) return;
         const projectId = sel.value;
         API.setCurrentProjectId(projectId);
+        const request = this._projectChangeRequest = (this._projectChangeRequest || 0) + 1;
         let types = [];
         try {
             types = await API.listDocTypes({ projectId }) || [];
         } catch (e) { console.warn(e); }
+        if (request !== this._projectChangeRequest) return;
         this.selectorTypes = types;
         let nextType;
         if (types.some(t => t.type_id === 'default')) nextType = 'default';
@@ -107,7 +109,12 @@ const DocTypeManager = {
         this._currentName = (types.find(t => t.type_id === nextType) || {}).type_name || nextType;
         this.renderSelector();
         this._reloadCurrentType();
-        Toast.success('已切换项目: ' + (sel.options[sel.selectedIndex]?.text || projectId));
+        this.announceScopeChange('项目', sel.options[sel.selectedIndex]?.text || projectId);
+    },
+
+    announceScopeChange(label, name) {
+        const announcer = document.getElementById('workspace-announcer');
+        if (announcer) announcer.textContent = `已切换${label}：${name}`;
     },
 
     // 选用/切换当前类型后，刷新依赖「当前类型」的页面区域

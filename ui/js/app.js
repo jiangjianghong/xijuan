@@ -1337,6 +1337,7 @@ const App = {
         if (!target || !target.classList.contains('page-container')) return;
         const previous = document.querySelector('.page-container.active')?.id.replace('page-', '');
         if (this.state.currentView === page && options.history !== 'none') return;
+        if (previous === 'settings' && page !== previous) SettingsManager.deactivate();
         this._pageScroll = this._pageScroll || {};
         if (previous) this._pageScroll[previous] = window.scrollY;
         this.state.currentView = page;
@@ -1373,6 +1374,7 @@ const App = {
             el.classList.remove('active');
         });
         if (target) target.classList.add('active');
+        if (page === 'settings' && page !== previous) SettingsManager.activate();
 
         // 首次进入规则配置时加载数据
         if (page === 'rule-config' && !RuleConfig.state.loaded.fields) {

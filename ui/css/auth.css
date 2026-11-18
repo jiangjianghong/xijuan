@@ -25,6 +25,7 @@
 .access-tabs button { padding: 8px 16px; border: 0; background: transparent; border-radius: 6px; color: #59675e; cursor: pointer; font: inherit; }
 .access-tabs button[aria-pressed="true"] { background: #e8efe6; color: #2C4C3B; font-weight: 700; }
 .access-settings > .access-note { margin: 12px 0 20px; }
+.access-settings .auth-error:empty { display: none; }
 .access-create { display: grid; grid-template-columns: 1fr 1fr auto; gap: 16px; align-items: end; margin-bottom: 20px; }
 .access-create label { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .access-create input { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid #bac7bf; padding: 10px; border-radius: 6px; font: inherit; }
@@ -41,7 +42,7 @@
 .access-empty { text-align: center; padding: 32px 16px; color: #59675e; background: #f5f7f4; border-radius: 8px; }
 .access-note { color: #59675e; font-size: 13px; margin: 20px 0 0; }
 .access-key-panel { padding: 20px; margin: 20px 0; border: 1px solid #bac7bf; border-radius: 8px; background: #f5f7f4; }
-.access-key-panel h5 { margin: 0; font-size: 16px; font-weight: 700; }
+.access-key-panel h3 { margin: 0; font-size: 16px; font-weight: 700; }
 .access-key-panel p { color: #59675e; margin: 8px 0 16px; }
 .access-key-panel input { box-sizing: border-box; width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #bac7bf; border-radius: 6px; font: 14px/1.5 monospace; }
 .access-key-actions { display: flex; justify-content: flex-end; gap: 12px; }

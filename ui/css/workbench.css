@@ -72,9 +72,20 @@ body.workbench {
 .workbench .nav-indicator { height: 40px; width: 100%; border-radius: 7px; background: #e1e8e2; transition: transform 420ms var(--ease-out), opacity 180ms; }
 .workbench .agent-beta { font-size: 11px; font-weight: 600; border: 1px solid #d8dfd8; color: #69776d; border-radius: 4px; padding: 1px 4px; line-height: 14px; flex-shrink: 0; }
 .workbench .nav-end-icon { margin-left: auto; width: 13px !important; height: 13px !important; color: #6e7b73; }
+#settings-nav-button[aria-expanded="true"] .nav-end-icon { transform: rotate(180deg); }
+.settings-subnav { flex: 0 0 auto; margin: 2px 4px 8px 20px; padding: 3px 4px 3px 10px; border-left: 1px solid #d8e1d9; }
+.settings-subnav ul { display: grid; grid-auto-rows: 1fr; margin: 0; padding: 0; list-style: none; }
+/* 底板与首项共享网格，再按行高滑到选中项。 */
+.settings-subnav li:first-child, .settings-subnav ul::before { grid-area: 1 / 1; }
+.settings-subnav ul:has([aria-current="location"])::before { content: ''; border-radius: 6px; background: #e1e8e2; pointer-events: none; transform: translateY(calc(var(--settings-row, 0) * 100%)); transition: transform 420ms var(--ease-out); }
+.settings-subnav-item { position: relative; display: block; width: 100%; height: 100%; min-height: 32px; padding: 5px 8px; border-radius: 6px; color: #526459; font-size: 12px; line-height: 1.5; text-align: left; cursor: pointer; }
+.settings-subnav-item:hover:not([aria-current]) { background: #e8ede8; }
+.settings-subnav-item[aria-current="location"] { color: #233d33; font-weight: 700; }
 .nav-count { margin-left: auto; min-width: 21px; text-align: center; font-variant-numeric: tabular-nums; font-size: 11px; line-height: 20px; background: #fff; border-radius: 5px; }
 .sidebar-bottom { padding: 14px 2px 0; margin-top: auto; }
 .sidebar-note { display: flex; align-items: center; gap: 11px; padding: 16px 10px; border-top: 1px solid #dfe5de; font-size: 12px; color: #53665a; line-height: 1.8; }
+.workspace-sidebar.settings-open .sidebar-note { display: none; }
+.workspace-sidebar.settings-open .header-nav { overscroll-behavior-y: contain; }
 .sidebar-note > svg { width: 24px; height: 24px; stroke-width: 1.1; }
 .sidebar-note small { color: #6a786f; font-size: 11px; }
 .sidebar-account { display: flex; gap: 10px; align-items: center; width: 100%; padding: 9px 10px; color: #64736a; background: transparent; border: 0; cursor: pointer; border-radius: 6px; font-size: 12px; }
@@ -108,7 +119,7 @@ body.workbench {
 .workspace-page-heading p { color: var(--text-secondary); font-size: 13px; margin-top: 8px; line-height: 1.8; }
 .workspace-heading-actions { display: flex; gap: 10px; flex-shrink: 0; }
 .workbench .page-container { min-width: 0; z-index: auto; }
-.workbench :is(.main-content,.rule-config-content,.stream-demo-content,.runtime-log-content,.api-docs-content,.stats-content,.invocation-page,.runtime-design-main) { max-width: none; width: 100%; padding: 0 28px 28px; margin: 0; gap: 24px; }
+.workbench :is(.main-content,.rule-config-content,.stream-demo-content,.runtime-log-content,.api-docs-content,.stats-content,.invocation-page,.runtime-design-main,.settings-content) { max-width: none; width: 100%; padding: 0 28px 28px; margin: 0; gap: 24px; }
 .workbench .main-content { display: flex; flex-direction: column; }
 .workbench .section-title { font-size: 14px; font-weight: 700; letter-spacing: 0; }
 .workbench .panel-title { font-size: 14px; font-weight: 700; }
@@ -292,8 +303,7 @@ body.workbench {
 .workbench .rule-modal-close { border-radius: 7px; }
 .workbench .drawer-tabs { border-color: var(--border); }
 .workbench .tab-btn { border-radius: 6px 6px 0 0; }
-.workbench .settings-modal { border-radius: 16px; }
-.workbench .settings-nav-item { border-radius: 7px; }
+.workbench .toast-container { top: calc(var(--topbar-height) + 12px); right: 16px; max-width: calc(100vw - 32px); align-items: flex-end; }
 .workbench .toast { border-radius: 10px; box-shadow: 0 6px 28px #24332e14; }
 .workspace-command { position: fixed; inset: 15vh 0 auto; width: min(560px,calc(100vw - 32px)); max-height: 70vh; margin: 0 auto; padding: 0; border: 1px solid #dce5d8; border-radius: 14px; color: var(--text-primary); background: #fff; box-shadow: 0 28px 100px #1b31253a; overflow: hidden; }
 .workspace-command[open] { animation: command-open 220ms var(--ease-out); }
@@ -322,7 +332,7 @@ body.workbench {
     .workbench { --sidebar-width: 244px; }
     .workspace-sheet { margin-right: 12px; }
     .workspace-page-heading { padding: 36px 40px 30px; }
-    .workbench :is(.main-content,.rule-config-content,.stream-demo-content,.runtime-log-content,.api-docs-content,.stats-content,.invocation-page,.runtime-design-main) { padding-left: 40px; padding-right: 40px; }
+    .workbench :is(.main-content,.rule-config-content,.stream-demo-content,.runtime-log-content,.api-docs-content,.stats-content,.invocation-page,.runtime-design-main,.settings-content) { padding-left: 40px; padding-right: 40px; }
     .workbench .upload-area { min-height: 196px; }
 }
 @media (max-height: 810px) and (min-width: 1101px) {
@@ -355,7 +365,7 @@ body.workbench {
     .workbench .doctype-bar { width: auto; flex-wrap: nowrap; gap: 8px; }
     .scope-field .cs-wrapper { width: 145px; }
     .workspace-page-heading { padding: 26px 24px 24px; }
-    .workbench :is(.main-content,.rule-config-content,.stream-demo-content,.runtime-log-content,.api-docs-content,.stats-content,.invocation-page,.runtime-design-main) { padding: 0 24px 24px; }
+    .workbench :is(.main-content,.rule-config-content,.stream-demo-content,.runtime-log-content,.api-docs-content,.stats-content,.invocation-page,.runtime-design-main,.settings-content) { padding: 0 24px 24px; }
     .workspace-page-heading h1 { font-size: 24px; }
     .processing-flow li:not(:last-child)::after { display: none; }
     .processing-flow-wrap { gap: 14px; }
@@ -374,7 +384,7 @@ body.workbench {
     .workbench .scope-field .cs-trigger { height: 28px; min-height: 28px; }
     .workspace-sheet { border-radius: 12px; }
     .workspace-page-heading { padding: 24px 20px; }
-    .workbench :is(.main-content,.rule-config-content,.stream-demo-content,.runtime-log-content,.api-docs-content,.stats-content,.invocation-page,.runtime-design-main) { padding: 0 20px 24px; gap: 20px; }
+    .workbench :is(.main-content,.rule-config-content,.stream-demo-content,.runtime-log-content,.api-docs-content,.stats-content,.invocation-page,.runtime-design-main,.settings-content) { padding: 0 20px 24px; gap: 20px; }
     .file-workspace-top { gap: 16px; grid-template-columns: 1fr; }
     .workbench .upload-area { min-height: 142px; }
     .workbench .queue-section { padding: 14px 16px; gap: 10px; }
@@ -409,7 +419,7 @@ body.workbench {
     .workspace-heading-actions { gap: 6px; }
     #workspace-refresh { display: none; }
     .workbench .workspace-heading-actions .btn { min-height: 36px; padding: 7px 9px; font-size: 11px; white-space: nowrap; }
-    .workbench :is(.main-content,.rule-config-content,.stream-demo-content,.runtime-log-content,.api-docs-content,.stats-content,.invocation-page,.runtime-design-main) { padding: 0 16px 24px; gap: 18px; }
+    .workbench :is(.main-content,.rule-config-content,.stream-demo-content,.runtime-log-content,.api-docs-content,.stats-content,.invocation-page,.runtime-design-main,.settings-content) { padding: 0 16px 24px; gap: 18px; }
     .workbench .upload-area { padding: 18px; justify-content: flex-start; gap: 18px; min-height: 132px; }
     .upload-copy h2 { font-size: 17px; }
     .workbench .upload-text { font-size: 11px; }

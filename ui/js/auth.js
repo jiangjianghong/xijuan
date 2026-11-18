@@ -23,9 +23,6 @@ const Auth = {
         this.locked = false;
         document.body.classList.remove('auth-locked');
         document.getElementById('settings-login-overlay')?.classList.remove('active');
-        if (typeof AccessControl !== 'undefined' && document.getElementById('settings-modal-overlay')?.classList.contains('active')) {
-            AccessControl.mount();
-        }
     },
     async login(event) {
         event.preventDefault();

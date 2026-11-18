@@ -40,7 +40,7 @@ async function main() {
                 await page.waitForTimeout(450);
                 await overflow(pageId);
                 assert.equal(await page.locator('.nav-btn[aria-current="page"]').count(),1);
-                if(width<=1100) assert.equal(await page.evaluate(()=>document.activeElement.id),'workspace-title');
+                if(width<=1100 && pageId!=='settings') assert.equal(await page.evaluate(()=>document.activeElement.id),'workspace-title');
                 assert.equal(await page.locator('.doctype-bar').isVisible(),['file-processing','rule-config','stream-demo'].includes(pageId));
             };
             await navigate('rule-config');
@@ -116,22 +116,144 @@ async function main() {
             await page.waitForSelector('#doctype-table-body tr');
             await overflow('类型管理');
             await page.locator('#doctype-modal-overlay .rule-modal-close').click();
-            if(width<=1100) await page.locator('#sidebar-toggle').click();
-            await page.locator('.settings-entry-btn').click();
-            await page.waitForSelector('#settings-modal-overlay.active');
-            await overflow('系统设置');
-            await page.screenshot({path:path.join(output,`settings-${width}.png`),fullPage:true});
-            await page.locator('#settings-modal-overlay .rule-modal-close').click();
+
+            const project = page.getByRole('combobox', { name: '当前项目' });
+            const doctype = page.getByRole('combobox', { name: '当前文档类型' });
+            await project.click();
+            await page.getByRole('option', { name: /示例项目/ }).click();
+            await page.waitForFunction(()=>document.getElementById('workspace-announcer').textContent.includes('已切换项目'));
+            await doctype.click();
+            await page.getByRole('option', { name: /合同审查/ }).click();
+            await project.click();
+            await page.getByRole('option', { name: '未分组' }).click();
+            await page.waitForFunction(()=>document.getElementById('workspace-announcer').textContent === '已切换项目：未分组');
+            assert.equal(await page.locator('#toast-container .toast').count(),0);
+            await page.evaluate(()=>Toast.info('通知测试'));
+            const toast = page.getByText('通知测试', {exact:true});
+            assert.ok((await toast.boundingBox()).y >= (await project.boundingBox()).y + (await project.boundingBox()).height);
+            assert.equal(await toast.evaluate(el=>getComputedStyle(el).pointerEvents),'none');
+            await project.click();
+            await page.keyboard.press('Escape');
+            await toast.evaluate(el=>el.remove());
+
+            await navigate('settings');
+            await page.waitForSelector('#access-body input[name="name"]');
+            assert.equal(new URL(page.url()).searchParams.get('page'),'settings');
+            assert.equal(await page.locator('#workspace-title').textContent(),'系统设置');
+            assert.equal(await page.locator('#page-settings [role="dialog"]').count(),0);
+            assert.equal(await page.locator('#page-settings [data-jump-group]').count(),0);
+            const settingsNavButton=page.locator('#settings-nav-button');
+            const directory=page.getByRole('group',{name:'系统设置分组'});
+            assert.equal(await settingsNavButton.getAttribute('aria-expanded'),'true');
+            if(width<=1100) assert.equal(await page.locator('#sidebar-toggle').getAttribute('aria-expanded'),'true');
+            assert.equal(await directory.getByRole('button').count(),14);
+            assert.equal(await directory.locator(':scope > ul:only-child > li > button:only-child').count(),14);
+            assert.equal(await page.locator('#settings-form [data-settings-group]:visible').count(),14);
+            const checkSettingsWidth=()=>page.locator('.settings-content').evaluate(main=>{
+                const style=getComputedStyle(main);
+                const width=main.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);
+                return ['.settings-toolbar','#settings-form-body'].every(selector=>Math.abs(main.querySelector(selector).clientWidth-width)<=1);
+            });
+            assert.ok(await checkSettingsWidth(),'表单和保存栏应铺满内容区');
+            if(width===1440) {
+                await page.setViewportSize({width:1920,height:900});
+                assert.ok(await checkSettingsWidth(),'宽屏不应出现额外留白');
+                await page.setViewportSize({width,height:900});
+            }
+            await page.screenshot({path:path.join(output,`settings-${width}.png`),fullPage:false});
+            const jumpTo=async group=>{
+                if(width<=1100 && await page.locator('#sidebar-toggle').getAttribute('aria-expanded')==='false') {
+                    await page.locator('#sidebar-toggle').click();
+                }
+                await directory.locator(`[data-jump-group="${group}"]`).click();
+                assert.equal(await page.locator(`[data-jump-group="${group}"]`).getAttribute('aria-current'),'location');
+                if(width<=1100) assert.equal(await page.locator('#sidebar-toggle').getAttribute('aria-expanded'),'false');
+                assert.equal(await page.evaluate(()=>document.activeElement.id),`settings-title-${group}`);
+                const heading=await page.locator(`#settings-title-${group}`).boundingBox();
+                const toolbar=await page.locator('.settings-toolbar').boundingBox();
+                assert.ok(heading.y>=toolbar.y+toolbar.height && heading.y<900);
+                if(width>1100) await page.waitForFunction(()=>{
+                    const list=document.querySelector('#settings-subnav ul');
+                    const indicator=getComputedStyle(list,'::before');
+                    const item=list.querySelector('[aria-current="location"]');
+                    const offset=item.getBoundingClientRect().top-list.getBoundingClientRect().top;
+                    return indicator.transitionProperty==='transform' && parseFloat(indicator.transitionDuration)>0 &&
+                        Math.abs(new DOMMatrix(indicator.transform).m42-offset)<1;
+                });
+            };
+            await jumpTo('chunking');
+            const chunkSize=page.locator('[data-path="chunking.chunk_size"]');
+            await chunkSize.fill('1234');
+            await jumpTo('agent');
+            assert.equal(await chunkSize.isVisible(),true);
+            await overflow('设置表单');
+            await page.screenshot({path:path.join(output,`settings-agent-${width}.png`),fullPage:false});
+            assert.equal(await chunkSize.inputValue(),'1234');
+            assert.equal(await page.locator('#settings-save-btn').isEnabled(),true);
+            await page.locator('#settings-group-vl_model').evaluate(el=>el.scrollIntoView({block:'start',behavior:'instant'}));
+            await page.waitForFunction(()=>document.querySelector('[data-jump-group="vl_model"]').getAttribute('aria-current')==='location');
+            await page.goBack();
+            await page.waitForSelector('#page-file-processing.active');
+            assert.equal(await settingsNavButton.getAttribute('aria-expanded'),'false');
+            assert.equal(await page.locator('#settings-subnav').isVisible(),false);
+            await page.goForward();
+            await page.waitForSelector('#page-settings.active');
+            assert.equal(await settingsNavButton.getAttribute('aria-expanded'),'true');
+            assert.equal(await chunkSize.inputValue(),'1234');
+            await page.reload();
+            await page.waitForSelector('#access-body input[name="name"]');
+            assert.equal(await chunkSize.inputValue(),'1000');
+            if(width===1440) {
+                // 只模拟接口响应，不写入实际运行时配置。
+                const config=await page.evaluate(()=>API.getRuntimeSettings());
+                const reply=(route,data,status=200)=>route.fulfill({status,json:{code:status,data}});
+                await page.route('**/settings/config',async route=>{
+                    if(route.request().method()==='GET') return reply(route,config);
+                    const payload=route.request().postDataJSON();
+                    assert.equal(payload.base_version,'preview');
+                    assert.deepEqual(payload.changes,{chunking:{chunk_size:1234},mineru:{queue_width:5}});
+                    return route.fulfill({status:401,json:{detail:'会话已过期'}});
+                });
+                await page.route('**/auth/login',route=>reply(route,{authenticated:true}));
+                await chunkSize.fill('0');
+                const mineruWidth=page.locator('[data-path="mineru.queue_width"]');
+                await mineruWidth.fill('5');
+                await page.locator('#settings-save-btn').click();
+                assert.equal(await chunkSize.evaluate(el=>el===document.activeElement),true);
+                await chunkSize.fill('1234');
+                await page.locator('#settings-save-btn').click();
+                await page.waitForSelector('#settings-login-overlay.active');
+                await page.locator('#settings-password').fill('fixture-password');
+                await page.locator('#settings-login-submit').click();
+                await page.waitForSelector('#settings-login-overlay',{state:'hidden'});
+                await page.waitForSelector('#settings-save-btn:enabled');
+                assert.equal(await chunkSize.inputValue(),'1234');
+                assert.equal(await mineruWidth.inputValue(),'5');
+                await page.unroute('**/settings/config');
+                await page.route('**/settings/config',async route=>{
+                    assert.equal(route.request().method(),'PATCH');
+                    config.config.chunking.chunk_size=1234;
+                    config.config.mineru.queue_width=5;
+                    await reply(route,{...config,version:'saved'});
+                });
+                await page.locator('#settings-save-btn').click();
+                await page.waitForSelector('#settings-save-btn:disabled');
+                await page.getByText('配置已保存并即时生效',{exact:true}).waitFor();
+                await page.unroute('**/settings/config');
+                await page.unroute('**/auth/login');
+            }
             if(width<=1100) {
                 await page.locator('#sidebar-toggle').click();
                 assert.equal(await page.locator('#workspace-sheet').evaluate(el=>el.inert),true);
-                await page.screenshot({path:path.join(output,`navigation-${width}.png`),fullPage:true});
+                await page.screenshot({path:path.join(output,`navigation-${width}.png`),fullPage:false});
                 await page.keyboard.press('Escape');
                 assert.equal(await page.locator('#workspace-sheet').evaluate(el=>el.inert),false);
                 assert.equal(await page.evaluate(()=>document.activeElement.id),'sidebar-toggle');
             }
             await page.emulateMedia({reducedMotion:'reduce'});
             await navigate('invocations');
+            assert.equal(await settingsNavButton.getAttribute('aria-expanded'),'false');
+            assert.equal(await page.locator('#settings-subnav').isVisible(),false);
             assert.equal(await page.evaluate(()=>Workbench.animations.length),0);
             assert.equal(errors.length,0,errors.join('\n'));
             console.log(`${width}px：页面、导航、日志展开/结果、历史、筛选、选择、详情、减少动效均通过`);

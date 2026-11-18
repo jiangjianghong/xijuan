@@ -85,7 +85,8 @@
             <button class="nav-btn" data-page="runtime-logs" onclick="App.switchPage('runtime-logs')"><i data-lucide="square-terminal"></i><span>实时日志</span></button>
             <p class="nav-group-label">开发与管理</p>
             <button class="nav-btn" data-page="api-docs" onclick="App.switchPage('api-docs')"><i data-lucide="book-open"></i><span>API 手册</span></button>
-            <button class="nav-btn settings-entry-btn" type="button" onclick="SettingsManager.open()"><i data-lucide="settings-2"></i><span>系统设置</span></button>
+            <button class="nav-btn" id="settings-nav-button" data-page="settings" type="button" onclick="App.switchPage('settings')" aria-expanded="false" aria-controls="settings-subnav"><i data-lucide="settings-2"></i><span>系统设置</span><i data-lucide="chevron-down" class="nav-end-icon" aria-hidden="true"></i></button>
+            <div id="settings-subnav" class="settings-subnav" role="group" aria-label="系统设置分组" hidden></div>
         </nav>
         <div class="sidebar-bottom">
             <div class="sidebar-note"><i data-lucide="scan-text"></i><span>从文档到洞察<br><small>让信息有迹可循</small></span></div>
@@ -815,6 +816,26 @@
             </section>
         </main>
     </div><!-- /page-statistics -->
+
+    <div id="page-settings" class="page-container">
+        <main class="settings-content" aria-labelledby="workspace-title">
+            <div class="settings-load-state" id="settings-load-state">
+                <p id="settings-load-message" role="status">正在加载系统设置…</p>
+                <button id="settings-retry-btn" class="btn btn-secondary" type="button" onclick="SettingsManager.load()" hidden>重试</button>
+            </div>
+            <div id="settings-page-body" hidden>
+                <div class="settings-toolbar">
+                    <span id="settings-save-status" class="settings-save-status" role="status"></span>
+                    <button class="btn btn-primary" type="submit" form="settings-form" id="settings-save-btn" disabled>
+                        <i data-lucide="save" class="w-4 h-4"></i><span>保存修改</span>
+                    </button>
+                </div>
+                <form id="settings-form" class="settings-form" onsubmit="SettingsManager.save(event)">
+                    <div id="settings-form-body"></div>
+                </form>
+            </div>
+        </main>
+    </div><!-- /page-settings -->
     </div><!-- /workspace-sheet -->
 
     <!-- Rule Modal -->
@@ -893,7 +914,7 @@
     </div>
 
     <!-- Toast Container -->
-    <div id="toast-container" class="toast-container"></div>
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
     <!-- File Row Action Menu (shared, fixed-positioned) -->
     <div id="file-action-menu" class="file-action-menu"></div>
@@ -1192,48 +1213,15 @@
         </div>
     </div>
 
-    <!-- Runtime Settings Modal -->
-    <div id="settings-modal-overlay" class="rule-modal-overlay settings-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
-        <div class="rule-modal settings-modal">
-            <div class="rule-modal-header settings-modal-header">
-                <div>
-                    <h3 id="settings-modal-title">系统设置</h3>
-                    <p>保存后对新请求和新任务即时生效</p>
-                </div>
-                <button class="rule-modal-close" type="button" onclick="SettingsManager.close()" aria-label="关闭">&times;</button>
-            </div>
-            <div class="settings-workspace">
-                <nav id="settings-group-nav" class="settings-group-nav" aria-label="设置分组"></nav>
-                <form id="settings-form" class="settings-form" onsubmit="SettingsManager.save(event)">
-                    <div id="settings-form-body" class="settings-form-body"></div>
-                </form>
-            </div>
-            <div class="settings-savebar">
-                <div class="settings-save-status">
-                    <span id="settings-dirty-dot" class="settings-dirty-dot"></span>
-                    <span id="settings-save-status">没有未保存的修改</span>
-                </div>
-                <div class="settings-save-actions">
-                    <button class="btn btn-secondary" type="button" onclick="SettingsManager.logout()">
-                        <i data-lucide="log-out" class="w-4 h-4"></i><span>退出登录</span>
-                    </button>
-                    <button class="btn btn-primary" type="submit" form="settings-form" id="settings-save-btn" disabled>
-                        <i data-lucide="save" class="w-4 h-4"></i><span>保存修改</span>
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <template id="access-settings-template">
         <div id="access-settings" class="access-settings">
             <div class="access-tabs" role="group" aria-label="访问控制类型">
                 <button type="button" data-access-tab="keys" aria-pressed="true" onclick="AccessControl.select('keys')">API Key</button>
                 <button type="button" data-access-tab="allowlist" aria-pressed="false" onclick="AccessControl.select('allowlist')">IP 白名单</button>
             </div>
-            <p class="access-note">本分组的创建、启停和删除操作即时生效，无需点击底部「保存修改」。</p>
+            <p class="access-note">密钥和白名单的变更即时生效，无需点击「保存修改」。</p>
             <section id="access-key-panel" class="access-key-panel" aria-labelledby="access-key-title" hidden>
-                <h5 id="access-key-title">保存你的 API Key</h5>
+                <h3 id="access-key-title">保存你的 API Key</h3>
                 <p>完整密钥仅显示这一次。离开设置或收起后无法再次查看，请妥善保存。</p>
                 <label for="access-key-value">完整密钥</label>
                 <input id="access-key-value" form="" readonly autocomplete="off" spellcheck="false">

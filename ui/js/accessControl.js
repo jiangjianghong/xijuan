@@ -26,7 +26,7 @@ const AccessControl = {
     isCurrent(generation) {
         return generation === this.generation && this.root?.isConnected && !Auth.locked
             && this.root === document.getElementById('access-settings')
-            && document.getElementById('settings-modal-overlay').classList.contains('active');
+            && document.getElementById('page-settings')?.classList.contains('active');
     },
     async reload() {
         if (!this.root) return;

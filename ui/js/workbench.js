@@ -9,12 +9,16 @@ const Workbench = {
         invocations: { title: '调用日志', description: '追溯每一次调用，从输入、处理过程到最终结果。', icon: 'list-checks', group: '洞察与运行' },
         'runtime-logs': { title: '实时日志', description: '连接运行日志流，让执行细节与异常即时可见。', icon: 'square-terminal', group: '洞察与运行' },
         'api-docs': { title: 'API 手册', description: '查阅接口、参数与返回结构，将文档能力接入你的业务。', icon: 'book-open', group: '开发与管理' },
+        settings: { title: '系统设置', description: '保存后对新请求和新任务生效。', icon: 'settings-2', group: '开发与管理' },
     },
     animations: [],
     commandIndex: 0,
 
     init() {
         this.sidebar = document.getElementById('workspace-sidebar');
+        this.settingsNav = document.getElementById('settings-subnav');
+        this.settingsNavButton = document.getElementById('settings-nav-button');
+        SettingsManager.renderNavigation(this.settingsNav);
         this.dialog = document.getElementById('workspace-command');
         this.commandInput = document.getElementById('workspace-command-input');
         this.compact = window.matchMedia('(max-width: 1100px)');
@@ -26,13 +30,22 @@ const Workbench = {
             ...Object.entries(this.pages).map(([page, meta]) => ({ ...meta, action: () => App.switchPage(page) })),
             { title: '上传 PDF 文件', icon: 'file-up', group: '文件处理', action: () => { App.switchPage('file-processing'); document.getElementById('file-input').click(); } },
             { title: '管理项目与文档类型', icon: 'folder-cog', group: '开发与管理', action: () => DocTypeManager.openManageDialog() },
-            { title: '系统设置', icon: 'settings-2', group: '开发与管理', action: () => SettingsManager.open() },
             { title: '智能体工作台', icon: 'bot', group: 'Beta', action: () => { location.href = '/agent'; } },
         ];
         document.getElementById('sidebar-toggle').addEventListener('click', () => this.openSidebar());
         document.getElementById('sidebar-close').addEventListener('click', () => this.closeSidebar());
         document.getElementById('sidebar-backdrop').addEventListener('click', () => this.closeSidebar());
         this.sidebar.addEventListener('click', event => {
+            const settingGroup = event.target.closest('#settings-subnav [data-jump-group]');
+            if (settingGroup) {
+                this.closeSidebar(false);
+                SettingsManager.jumpToGroup(settingGroup.dataset.jumpGroup);
+                return;
+            }
+            if (event.target.closest('#settings-nav-button')) {
+                this.revealSettingsNavigation();
+                return;
+            }
             const samePage = document.body.classList.contains('nav-open') && event.target.closest('.nav-btn[data-page].active');
             if (event.target.closest('.nav-btn,.sidebar-account,.runtime-monitor-entry,#app-title')) this.closeSidebar(false);
             if (samePage) document.getElementById('workspace-title').focus({ preventScroll: true });
@@ -94,9 +107,17 @@ const Workbench = {
         const meta = this.pages[page];
         if (!meta) return;
         const fromSidebar = document.body.classList.contains('nav-open');
-        this.closeSidebar(false);
+        const settings = page === 'settings';
+        this.sidebar.classList.toggle('settings-open', settings);
+        this.settingsNav.hidden = !settings;
+        this.settingsNavButton.setAttribute('aria-expanded', String(settings));
+        if (!settings) this.closeSidebar(false);
         document.getElementById('workspace-title').textContent = meta.title;
-        if (fromSidebar) document.getElementById('workspace-title').focus({ preventScroll: true });
+        if (fromSidebar && !settings) document.getElementById('workspace-title').focus({ preventScroll: true });
+        if (settings) {
+            SettingsManager.syncActiveGroup();
+            this.revealSettingsNavigation();
+        }
         document.getElementById('workspace-description').textContent = meta.description;
         document.getElementById('workspace-breadcrumb-current').textContent = meta.title;
         document.getElementById('workspace-file-actions').hidden = page !== 'file-processing';
@@ -108,6 +129,7 @@ const Workbench = {
             statistics: '全部文档 · 按时间范围统计', invocations: '全部调用 · 跨文档类型',
             'runtime-monitor': '当前 worker · 实时监控', 'runtime-logs': '运行日志 · 全局视图',
             'api-docs': '开发者参考 · API',
+            settings: '全局设置',
         }[page] || '';
         document.getElementById('workspace-announcer').textContent = `已切换到${meta.title}`;
         document.title = `${meta.title} · 析卷 AI`;
@@ -155,6 +177,20 @@ const Workbench = {
         if (!this.compact.matches) this.sidebar.removeAttribute('aria-modal');
     },
 
+    revealSettingsNavigation() {
+        if (this.settingsNav.hidden || this.sidebar.inert) return;
+        const nav = this.settingsNav.closest('.header-nav');
+        const current = this.settingsNav.querySelector('[aria-current="location"]');
+        // 首次展开露出几项入口；重开抽屉时定位到正文所在分组。
+        const target = current && current.dataset.jumpGroup !== 'access_control'
+            ? current : this.settingsNav.querySelector('ul li:nth-child(3)');
+        if (!target) return;
+        const rail = nav.getBoundingClientRect();
+        const row = target.getBoundingClientRect();
+        if (row.bottom > rail.bottom - 8) nav.scrollTop += row.bottom - rail.bottom + 8;
+        else if (row.top < rail.top + 8) nav.scrollTop += row.top - rail.top - 8;
+    },
+
     openSidebar() {
         if (!this.compact.matches) return;
         this.sidebarReturnFocus = document.activeElement;
@@ -162,6 +198,7 @@ const Workbench = {
         document.getElementById('sidebar-backdrop').hidden = false;
         document.getElementById('sidebar-toggle').setAttribute('aria-expanded', 'true');
         this.sidebar.inert = false;
+        this.revealSettingsNavigation();
         this.sidebar.setAttribute('role', 'dialog');
         this.sidebar.setAttribute('aria-modal', 'true');
         document.getElementById('workspace-sheet').inert = true;

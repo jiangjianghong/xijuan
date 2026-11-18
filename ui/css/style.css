@@ -1324,6 +1324,7 @@ h1, h2, h3, h4, h5, h6,
     display: flex;
     flex-direction: column;
     gap: 8px;
+    pointer-events: none;
 }
 
 .toast {
@@ -1334,6 +1335,7 @@ h1, h2, h3, h4, h5, h6,
     box-shadow: var(--shadow-hover);
     animation: toastIn 0.3s ease-out;
     max-width: 360px;
+    overflow-wrap: anywhere;
 }
 
 .toast.removing {
@@ -4894,21 +4896,12 @@ input[type="checkbox"] {
     flex-shrink: 0;
 }
 /* ── 系统运行时设置 ─────────────────────────────────────── */
-.settings-entry-btn {
-    padding: 4px 10px;
-    font-size: 12px;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-}
-
 .settings-login-modal {
     width: min(440px, calc(100vw - 32px));
     max-width: 440px;
 }
 
-.settings-login-modal .rule-modal-header p,
-.settings-modal-header p {
+.settings-login-modal .rule-modal-header p {
     margin: 3px 0 0;
     color: #6b7f72;
     font-size: 12px;
@@ -4939,108 +4932,74 @@ input[type="checkbox"] {
     font-size: 12px;
 }
 
-.settings-modal-overlay {
-    padding: 18px;
+.settings-content {
+    --settings-section-offset: calc(var(--topbar-height) + 64px);
 }
 
-.settings-modal {
-    width: min(1120px, calc(100vw - 36px));
-    max-width: 1120px;
-    height: min(840px, calc(100vh - 36px));
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    overflow: hidden;
-}
-
-.settings-workspace {
-    min-height: 0;
-    display: grid;
-    grid-template-columns: 190px minmax(0, 1fr);
-    border-top: 1px solid #dce7de;
-    border-bottom: 1px solid #dce7de;
-}
-
-.settings-group-nav {
-    min-width: 0;
-    max-width: 100%;
-    overflow-y: auto;
-    padding: 14px 10px;
-    background: #f4f7f3;
-    border-right: 1px solid #dce7de;
-}
-
-.settings-nav-item {
-    width: 100%;
-    min-height: 38px;
+.settings-load-state {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 8px 10px;
-    border: 0;
-    border-radius: 6px;
-    color: #4f6658;
-    background: transparent;
-    font-size: 13px;
-    text-align: left;
-    cursor: pointer;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 20px 0;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
 }
 
-.settings-nav-item:hover,
-.settings-nav-item.active {
-    color: #244735;
-    background: #e3ece4;
+.settings-toolbar {
+    position: sticky;
+    top: var(--topbar-height);
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    min-height: 56px;
+    padding: 8px 0;
+    border-block: 1px solid var(--border);
+    background: #fff;
 }
 
 .settings-form {
     min-width: 0;
-    overflow: hidden;
 }
 
-.settings-form-body {
-    height: 100%;
-    overflow-y: auto;
-    scroll-behavior: smooth;
+.settings-form :is(input, select, textarea, button) {
+    scroll-margin-top: var(--settings-section-offset);
 }
 
 .settings-section {
-    padding: 22px 26px 26px;
-    border-bottom: 1px solid #e1e9e2;
-    scroll-margin-top: 0;
+    padding: 26px 0 30px;
+    border-top: 1px solid var(--border);
+    scroll-margin-top: var(--settings-section-offset);
 }
 
-.settings-section:last-child {
-    border-bottom: 0;
-}
+.settings-section:first-child { border-top: 0; }
 
 .settings-section-header {
     display: flex;
     align-items: flex-start;
     gap: 11px;
-    margin-bottom: 18px;
+    margin-bottom: 24px;
 }
 
 .settings-section-icon {
-    width: 34px;
-    height: 34px;
-    flex: 0 0 34px;
-    display: grid;
-    place-items: center;
-    border-radius: 6px;
-    color: #37694e;
-    background: #e6efe7;
+    flex: 0 0 auto;
+    margin-top: 2px;
+    color: var(--text-secondary);
 }
 
-.settings-section-header h4 {
+.settings-section-header h2 {
     margin: 0;
     color: #263d31;
-    font-size: 16px;
-    font-weight: 800;
+    font-size: 18px;
+    font-weight: 700;
 }
 
 .settings-section-header p {
     margin: 3px 0 0;
-    color: #718078;
-    font-size: 12px;
+    color: var(--text-secondary);
+    font-size: 13px;
 }
 
 .settings-fields {
@@ -5180,43 +5139,16 @@ input[type="checkbox"] {
     font-size: 12px;
 }
 
-.settings-savebar {
-    min-width: 0;
-    min-height: 62px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 10px 18px;
-    background: #fff;
-}
-
-.settings-save-status,
-.settings-save-actions,
-.settings-save-actions .btn {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-}
-
-.settings-save-actions {
-    min-width: 0;
+#settings-save-btn {
+    flex: 0 0 auto;
+    min-height: 38px;
+    white-space: nowrap;
 }
 
 .settings-save-status {
-    color: #68766d;
+    color: #88581e;
     font-size: 12px;
-}
-
-.settings-dirty-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #b9c4bc;
-}
-
-.settings-dirty-dot.active {
-    background: #b97837;
+    white-space: nowrap;
 }
 
 @media (max-width: 760px) {
@@ -5242,31 +5174,10 @@ input[type="checkbox"] {
         min-width: 0 !important;
         flex: 1 1 120px;
     }
-    .settings-modal-overlay { padding: 8px; }
-    .settings-modal {
-        width: calc(100vw - 16px);
-        height: calc(100vh - 16px);
-    }
-    .settings-workspace {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto minmax(0, 1fr);
-    }
-    .settings-group-nav {
-        width: 100%;
-        display: flex;
-        gap: 5px;
-        overflow-x: auto;
-        overflow-y: hidden;
-        padding: 8px;
-        border-right: 0;
-        border-bottom: 1px solid #dce7de;
-    }
-    .settings-nav-item {
-        width: auto;
-        flex: 0 0 auto;
-        white-space: nowrap;
-    }
-    .settings-section { padding: 18px 14px 22px; }
+}
+
+@media (max-width: 800px) {
+    .settings-section { padding-top: 22px; }
     .settings-fields { grid-template-columns: minmax(0, 1fr); }
     .settings-secret-field { grid-column: auto; }
     .settings-secret-control {
@@ -5275,23 +5186,11 @@ input[type="checkbox"] {
     .settings-secret-status,
     .settings-secret-input { grid-column: 1 / -1; }
     .settings-secret-clear { grid-column: 3; }
-    .settings-savebar { align-items: flex-start; }
-    .settings-save-actions { flex-wrap: wrap; justify-content: flex-end; }
 }
 
 @media (max-width: 480px) {
     .settings-password-row { grid-template-columns: 1fr; }
-    .settings-savebar { flex-direction: column; align-items: stretch; }
-    .settings-save-actions {
-        width: 100%;
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .settings-save-actions .btn {
-        min-width: 0;
-        width: 100%;
-        justify-content: center;
-    }
+    .settings-toolbar { gap: 8px; }
 }
 
 /* ─── 并发运行台：与统计页同为普通内页（全站 header 保留，工具条在内容区） ─── */

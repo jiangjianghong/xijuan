@@ -47,6 +47,7 @@ const pools = [
     ['global_pipeline', '文件管线', '管线', 4, 2],
 ].map(([id,label,group,limit,active]) => ({ id,label,group,limit,active,queued: 0,scope:'global',completed:12,status:'normal',constraints:[],tasks:[],gate_wait_p95_ms:18,total_wait_p95_ms:180 }));
 const mime = { '.css':'text/css', '.js':'text/javascript', '.html':'text/html', '.svg':'image/svg+xml', '.ttf':'font/ttf', '.woff2':'font/woff2' };
+const modelConfig = {base_url:'',model:'',api_key:{configured:false},timeout:30,retry_count:2,temperature:0.1,top_p:null,extra_params:{}};
 function createFixtureServer({ before = false } = {}) {
     return http.createServer((req, res) => {
         const url = new URL(req.url, 'http://localhost');
@@ -91,10 +92,19 @@ function createFixtureServer({ before = false } = {}) {
         });
         if (pathname === '/settings/session') return send({authenticated:true});
         if (pathname === '/settings/config') return send({version:'preview',config:{
-            ...Object.fromEntries(['embedding','extraction','table_name_validation','analysis','agent','rerank','vl_model','web_search'].map(group=>[group,{base_url:'',model:'',api_key:{configured:false}}])),
             mineru:{base_url:'',backend:'pipeline',queue_width:4,parse_timeout:600,max_file_size:104857600},
             chunking:{chunk_size:1000,chunk_overlap:100,max_chunk_size:2000,separators:['\n\n']},
+            embedding:modelConfig,
+            extraction:{...modelConfig,max_context_length:12000},
+            table_name_validation:{...modelConfig,base_url:null,model:null,max_context_length:null,max_context_lines:null},
+            analysis:{...modelConfig,calc_precision:2,judge_timeout:30},
+            agent:{...modelConfig,max_tokens:4096,max_rounds:25,context_max_tokens:24000,context_compress_threshold:18000,context_recent_tool_rounds:4,tool_result_max_chars:20000},
+            rerank:modelConfig,
+            vl_model:{...modelConfig,max_tokens:4096,default_max_pixels:1048576,pdf_storage_dir:'uploads'},
+            web_search:{...modelConfig,count:5,summary:false,freshness:'noLimit',max_result_length:1000},
             storage:{max_total_bytes:0,max_retention_minutes:0,cleanup_interval_minutes:10},
+            callback:{timeout:2.5},
+            concurrency:{global_llm:16,global_embedding:4,global_vl:8,global_rerank:4,global_table_validation:10,global_extraction:8,global_analysis:3,task_table_validation:4,task_extraction:4,task_file_analysis:2,task_embedding:2,independent_analysis:2,global_pipeline:4},
         }});
         if (pathname.startsWith('/settings/access')) return send({version:'preview',api_keys:[],ip_allowlist:[],allowed_origins:[],trusted_proxies:[]});
         const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/ui\//,'').replace(/^\//,'');
